@@ -10,7 +10,6 @@ Source components copied and adapted under src/components/easyui/:
 - PillNavigation.tsx (global page tabs, toolbar/form segments and shared-layout selection)
 - NotificationBell.tsx (extracted bell trigger, arrival shake and unread dot)
 - LiquidToggle.tsx (controlled SVG blob switch and spring deformation)
-- SlidePagination.tsx (shared numbered pagination, upstream rounded geometry and sliding indicator)
 - DataTable.tsx (sorting, search, selection, animated bulk toolbar, Show more and responsive cards)
 - Supporting chart primitives, monotone path utility, motion tokens and cn utility
 

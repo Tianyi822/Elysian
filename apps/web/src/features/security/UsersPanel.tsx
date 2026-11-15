@@ -1,4 +1,4 @@
-import { useEffect, useId, useMemo } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import type { HostUser } from '@elysian/contracts'
 import { HOST_USER_LOGIN_METHOD_LABELS, HOST_USER_STATUS_LABELS } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
@@ -8,7 +8,8 @@ import { StatusTag } from '../../components/StatusTag'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
 import { RefreshButton } from '../../components/RefreshState'
 import { Pencil, Trash2 } from '../../components/icons'
-import { SearchInput } from '../../components/SearchInput'
+import { DataTable } from '../../components/DataTable'
+import { TableBatchActions } from '../../components/TableBatchActions'
 import { useUsersStore } from '../../stores/usersStore'
 import { ACTION_CLASS } from './sshCardParts'
 import { HostUserDialog } from './HostUserDialog'
@@ -36,7 +37,9 @@ export function UsersPanel() {
   const openCreate = useUsersStore((s) => s.openCreate)
   const syncFromSystem = useUsersStore((s) => s.syncFromSystem)
   const load = useUsersStore((s) => s.load)
-  const searchInputId = useId()
+  const [selected, setSelected] = useState<(string | number)[]>([])
+  const removeUser = useUsersStore(s => s.removeUser)
+  const removingUserIds = useUsersStore(s => s.removingUserIds)
   const filtered = useMemo(() => filterHostUsers(search, users), [search, users])
 
   useEffect(() => {
@@ -71,130 +74,44 @@ export function UsersPanel() {
         <Button variant="primary" type="button" onClick={() => openCreate()} className={ACTION_CLASS}>
           创建用户
         </Button>
-        <div className="relative ml-auto w-full sm:w-64">
-          <SearchInput
-            id={searchInputId}
-            label="搜索用户名或备注"
-            value={search}
-            onChange={setSearch}
-            placeholder="搜索用户名或备注"
-            className="w-full"
-          />
-        </div>
         <RefreshButton
           onPress={() => void syncFromSystem(gateway)}
           busy={syncing}
           label={syncing ? '正在从系统同步账号' : '从系统同步账号'}
         />
       </div>
-      {/* 表格坐在面板里：行悬停向上步进一级表面；首列钉住，窄屏下其余列横向滚动。 */}
-      <div className="relative rounded-xl" aria-busy={syncing}>
-        <div
-          role="region"
-          aria-label="主机账号表"
-          className="overflow-x-auto panel-surface"
-        >
-          {/* 44rem 是六列都不挤的下限：低于它整表横向滚动，而不是把备注压成几个字。
-              备注与权限组要放中文，给得宽；操作列定宽，只占两枚按钮的宽度。 */}
-          <table className="w-full min-w-[44rem] table-fixed border-separate border-spacing-0 text-left text-sm">
-            <colgroup>
-              <col className="w-[16%]" />
-              <col className="w-[18%]" />
-              <col className="w-[16%]" />
-              <col className="w-[10%]" />
-              <col className="w-[32%]" />
-              <col className="w-14" />
-            </colgroup>
-            <thead>
-              <tr>
-                {['用户名', '权限组', '登录方式', '状态', '备注', '操作'].map((label, index) => (
-                  <th
-                    key={label}
-                    scope="col"
-                    className={`border-b border-line bg-surface px-3 py-2.5 text-xs font-medium text-fg-muted ${
-                      index === 0 ? 'sticky left-0 z-20 border-r' : ''
-                    }`}
-                  >
-                    {label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {filtered.length === 0 ? (
-                <tr>
-                  <td colSpan={6} className="border-b border-line px-3 py-8 text-center text-sm text-fg-muted">
-                    {users.length === 0
-                      ? '还没有主机账号，点左上角「创建用户」新建一个'
-                      : '没有匹配的账号，换个关键词或清空搜索'}
-                  </td>
-                </tr>
-              ) : (
-                filtered.map((user) => <UserRow key={user.id} user={user} />)
-              )}
-            </tbody>
-          </table>
-        </div>
-      </div>
-      <p className="mt-3 text-xs tabular-nums text-fg-muted">
-        {search.trim() ? `匹配 ${filtered.length} 个 · 共 ${users.length} 个主机账号` : `共 ${users.length} 个主机账号`}
-      </p>
+      <DataTable rows={filtered} ariaLabel="主机账号表" query={search} onQueryChange={setSearch}
+        filterMode="external" searchPlaceholder="搜索用户名或备注" busy={syncing}
+        getRowId={user => user.id} getRowLabel={user => user.name} selected={selected} onSelectionChange={setSelected}
+        columns={[
+          { key: 'name', header: '用户名', primary: true, accessor: user => user.name, width: '16%' },
+          { key: 'group', header: '权限组', accessor: user => user.name, width: '18%', cell: user => <span className="inline-flex items-center gap-1.5"><span>{user.name}</span>{user.isAdmin ? <StatusTag label="管理员" tone="warning" /> : null}</span> },
+          { key: 'login', header: '登录方式', accessor: user => HOST_USER_LOGIN_METHOD_LABELS[user.loginMethod], width: '16%' },
+          { key: 'status', header: '状态', accessor: user => HOST_USER_STATUS_LABELS[user.status], width: '10%', cell: user => <StatusTag label={HOST_USER_STATUS_LABELS[user.status]} tone={user.status === 'active' ? 'success' : 'neutral'} /> },
+          { key: 'note', header: '备注', accessor: user => user.note, width: '28%', cell: user => <span title={user.note || undefined}>{user.note || '—'}</span> },
+          { key: 'actions', header: '操作', sortable: false, width: '12%', cell: user => <UserActions user={user} /> },
+        ]}
+        bulkActions={ids => <TableBatchActions selectedRows={users.filter(user => ids.includes(user.id))}
+          getRowId={user => user.id} getRowLabel={user => user.name} disabled={syncing}
+          onSucceeded={ids => setSelected(current => current.filter(id => !ids.includes(id)))}
+          actions={[{ key: 'remove', label: '删除', danger: true,
+            description: isDockerRuntime() ? '真实执行 userdel（不带 -r）：主目录与文件保留，主组移除，授权 SSH 密钥失效；以账号身份运行的任务需另行处理。最后一个管理员仍受系统保护。' : '从演示数据集移除账号及其主组，以它授权的 SSH 密钥失效；不会触碰真实系统账号。',
+            eligible: user => removingUserIds.includes(user.id) ? '账号正在删除' : user.name === 'root' ? 'Root 账号受保护' : undefined,
+            execute: rows => removeUser(gateway, rows[0]!.id),
+          }]} />}
+      />
       {dialogUser !== undefined ? <HostUserDialog /> : null}
       <HostUserRemoveDialog />
     </div>
   )
 }
 
-function UserRow({ user }: { user: HostUser }) {
-  const openEdit = useUsersStore((s) => s.openEdit)
-  const openRemove = useUsersStore((s) => s.openRemove)
-
-  return (
-    <tr className="group transition-colors hover:bg-surface-raised">
-      {/* 用户名钉在左边：窄屏横向滚动时它始终在视线里。 */}
-      <td className="sticky left-0 z-10 whitespace-nowrap border-b border-r border-line bg-surface px-3 py-2.5 font-medium text-fg group-hover:bg-surface-raised">
-        {user.name}
-      </td>
-      {/* 主组与用户名同名，管理员组另加一个标记——这就是 Linux 的分组形态，不另造枚举。 */}
-      <td className="border-b border-line px-3 py-2.5">
-        <span className="flex items-center gap-1.5">
-          <span className="truncate tabular-nums text-fg-muted">{user.name}</span>
-          {user.isAdmin ? <StatusTag label="管理员" tone="warning" /> : null}
-        </span>
-      </td>
-      <td className="border-b border-line px-3 py-2.5 text-fg-muted">
-        {HOST_USER_LOGIN_METHOD_LABELS[user.loginMethod]}
-      </td>
-      <td className="border-b border-line px-3 py-2.5">
-        <StatusTag
-          label={HOST_USER_STATUS_LABELS[user.status]}
-          tone={user.status === 'active' ? 'success' : 'neutral'}
-        />
-      </td>
-      <td className="border-b border-line px-3 py-2.5 text-fg-muted">
-        {user.note ? (
-          <span className="block truncate" title={user.note}>
-            {user.note}
-          </span>
-        ) : (
-          '—'
-        )}
-      </td>
-      <td className="border-b border-line px-3 py-2.5">
-        <div className="flex items-center justify-start gap-1">
-          <IconButton label={`修改 ${user.name}`} variant="ghost" onPress={() => openEdit(user)}>
-            <Pencil aria-hidden size={14} />
-          </IconButton>
-          <IconButton
-            label={`删除 ${user.name}`}
-            variant="ghost"
-            tone="danger-hover"
-            onPress={() => openRemove(user)}
-          >
-            <Trash2 aria-hidden size={14} />
-          </IconButton>
-        </div>
-      </td>
-    </tr>
-  )
+function UserActions({ user }: { user: HostUser }) {
+  const openEdit = useUsersStore(s => s.openEdit)
+  const openRemove = useUsersStore(s => s.openRemove)
+  const removing = useUsersStore(s => s.removingUserIds.includes(user.id))
+  return <div className="flex items-center gap-1">
+    <IconButton label={`修改 ${user.name}`} variant="ghost" disabled={removing} onPress={() => openEdit(user)}><Pencil aria-hidden size={14} /></IconButton>
+    <IconButton label={`删除 ${user.name}`} variant="ghost" tone="danger-hover" disabled={removing} onPress={() => openRemove(user)}><Trash2 aria-hidden size={14} /></IconButton>
+  </div>
 }

@@ -70,12 +70,35 @@ beforeEach(async () => {
 
 
 async function editMain(user: ReturnType<typeof userEvent.setup>) {
-  await user.click(within(screen.getByText('gpt-5').closest('tr')!).getByRole('button', { name: /编辑/ }))
+  await user.click(within(screen.getByText('gpt-5').closest<HTMLElement>('[role="row"]')!).getByRole('button', { name: /编辑/ }))
   return screen.getByRole('dialog')
 }
 const toInput = (service: Awaited<ReturnType<ModelSettingsMockAdapter['listModelServices']>>[number]) => ({ name: service.name, provider: service.provider, apiFormat: service.apiFormat, baseUrl: service.baseUrl, active: service.active, models: service.models.map(model => ({ id: model.id, model: model.model, contextTokens: model.contextTokens, outputTokens: model.outputTokens, capabilities: model.capabilities, enabled: model.enabled })) })
 
 describe('模型服务表单', () => {
+  it('表格批量停用先确认，同服务只保存一次且保留未选择模型', async () => {
+    const adapter = new ModelSettingsMockAdapter()
+    await adapter.createModelService({ name: '批量选择服务', provider: 'openai-compatible', apiFormat: 'responses', baseUrl: 'https://batch.example.com/v1', active: true, credential: 'batch-secret',
+      models: ['batch-one', 'batch-two', 'batch-keep'].map(model => ({ model, contextTokens: 32000, outputTokens: 4096, capabilities: { text: true, tools: true, source: '测试' }, enabled: true })) })
+    const save = vi.spyOn(adapter, 'updateModelService')
+    const user = userEvent.setup()
+    await renderReady('/settings', makePageGateway(adapter))
+    await user.click(screen.getByRole('checkbox', { name: '选择 batch-one' }))
+    await user.click(screen.getByRole('checkbox', { name: '选择 batch-two' }))
+    await user.click(screen.getByRole('button', { name: '批量停用' }))
+    const confirm = screen.getByRole('dialog', { name: '确认批量停用？' })
+    expect(save).not.toHaveBeenCalled()
+    await user.click(within(confirm).getByRole('button', { name: '确认批量停用' }))
+    const result = await screen.findByRole('dialog', { name: '批量停用结果' })
+    expect(result).toHaveTextContent('batch-one：成功')
+    expect(result).toHaveTextContent('batch-two：成功')
+    expect(save).toHaveBeenCalledTimes(1)
+    expect(save.mock.calls[0]![1].models.map(model => model.enabled)).toEqual([false, false, true])
+    expect(save.mock.calls[0]![1]).not.toHaveProperty('credential')
+    await user.click(within(result).getByRole('button', { name: '关闭' }))
+    expect(screen.getByRole('checkbox', { name: '选择 batch-one' })).toHaveAttribute('aria-checked', 'false')
+  })
+
   it('模型页不显示重复说明，刷新与新建操作同排且 DeepSeek 显示官方输出上限', async () => {
     await renderReady('/settings')
     expect(screen.queryByText('配置 Ely 会话使用的模型服务。')).toBeNull()
@@ -234,7 +257,7 @@ describe('模型服务表单', () => {
     expect(saved.models).toHaveLength(2)
     expect(saved.models.every(model => model.hasCredential && !('credential' in model))).toBe(true)
     for (const model of saved.models) expect(model.capabilities).toMatchObject({ text: true, tools: true, structuredOutput: true, systemMessages: true, webSearch: false, pdf: false })
-    expect(within(screen.getByRole('button', { name: '编辑 custom-two' }).closest('tr')!).getByText('已停用')).toBeDefined()
+    expect(within(screen.getByRole('button', { name: '编辑 custom-two' }).closest<HTMLElement>('[role="row"]')!).getByText('已停用')).toBeDefined()
   })
   it('多模态输入与推理等级可编辑，保存时保留已有的模型能力与 PDF 声明', async () => {
     const adapter = new ModelSettingsMockAdapter()
@@ -462,14 +485,14 @@ describe('模型服务表单', () => {
     await user.click(within(dialog).getByRole('button', { name: '保存模型配置' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).toBeNull())
     expect(update.mock.calls[2]?.[1]).not.toHaveProperty('credential')
-    expect(within(screen.getByText('gpt-5').closest('tr')!).getByText('已配置 API Key')).toBeDefined()
+    expect(within(screen.getByText('gpt-5').closest<HTMLElement>('[role="row"]')!).getByText('已配置 API Key')).toBeDefined()
   })
   it('CAS 冲突保留服务与模型草稿，明确采用最新修订后再保存', async () => {
     const adapter = new ModelSettingsMockAdapter()
     const user = userEvent.setup()
     await renderReady('/settings', makePageGateway(adapter))
     const service = (await adapter.listModelServices())[0]!
-    await user.click(within(screen.getByText(service.models[0]!.model).closest('tr')!).getByRole('button', { name: /编辑/ }))
+    await user.click(within(screen.getByText(service.models[0]!.model).closest<HTMLElement>('[role="row"]')!).getByRole('button', { name: /编辑/ }))
     const dialog = screen.getByRole('dialog')
     fireEvent.change(within(dialog).getByLabelText('名称'), { target: { value: '保留的服务草稿' } })
     await user.click(within(dialog).getByRole('button', { name: '编辑模型 1' }))
@@ -488,7 +511,7 @@ describe('模型服务表单', () => {
     vi.spyOn(adapter, 'listModelServices').mockResolvedValueOnce([]).mockRejectedValueOnce(new Error('模型目录断开'))
     const user = userEvent.setup()
     renderCapabilitiesPage('/settings', makePageGateway(adapter))
-    expect(await screen.findByText('还没有模型配置')).toBeDefined()
+    expect(await screen.findByText('没有结果')).toBeDefined()
     await user.click(screen.getByRole('button', { name: '刷新模型配置' }))
     expect(await screen.findByText('模型目录断开')).toBeDefined()
     await user.click(screen.getByRole('button', { name: '重试' }))

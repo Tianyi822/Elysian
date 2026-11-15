@@ -40,7 +40,7 @@ describe('用户管理页签', () => {
     expect(demoBadge.closest('[role="status"]')).not.toBeNull()
 
     const table = within(usersPanel()).getByRole('table')
-    expect(within(table).getAllByRole('columnheader').map((cell) => cell.textContent)).toEqual([
+    expect(within(table).getAllByRole('columnheader').map((cell) => cell.textContent).filter(Boolean)).toEqual([
       '用户名',
       '权限组',
       '登录方式',
@@ -51,7 +51,7 @@ describe('用户管理页签', () => {
 
     const rows = userRows()
     expect(rows).toHaveLength(SEED_HOST_USERS.length)
-    expect(rows.map((row) => row.children[0]?.textContent)).toEqual([
+    expect(rows.map((row) => row.children[1]?.textContent)).toEqual([
       'deploy',
       'monitor',
       'lisi',
@@ -62,17 +62,16 @@ describe('用户管理页签', () => {
       'audit',
     ])
     // 权限组：主组与用户名同名，管理员另加标记
-    expect(rows[3]?.children[1]?.textContent).toContain('wangwu')
-    expect(rows[5]?.children[1]?.textContent).toContain('管理员')
+    expect(rows[3]?.children[2]?.textContent).toContain('wangwu')
+    expect(rows[5]?.children[2]?.textContent).toContain('管理员')
     // 状态不靠颜色单独表达；备注为空显示 —
     expect(within(rows[4] as HTMLElement).getByText('已停用')).toBeInTheDocument()
-    expect(rows[2]?.children[4]?.textContent).toBe('—')
+    expect(rows[2]?.children[5]?.textContent).toBe('—')
     expect(
-      screen.getByText(`共 ${SEED_HOST_USERS.length} 个主机账号`),
+      screen.getByText(`${SEED_HOST_USERS.length} 行`),
     ).toBeInTheDocument()
 
-    // 首列钉住，窄屏下靠它把用户名留在视线里
-    expect(rows[0]?.children[0]).toHaveClass('sticky', 'left-0')
+    expect(within(rows[0] as HTMLElement).getByRole('checkbox', { name: '选择 deploy' })).toBeInTheDocument()
   })
 
   it('搜索：按用户名与备注过滤，无结果给空态', async () => {
@@ -80,18 +79,18 @@ describe('用户管理页签', () => {
     const input = screen.getByLabelText('搜索用户名或备注')
 
     await user.type(input, '运维')
-    expect(userRows()).toHaveLength(1)
-    expect(userRows()[0]?.children[0]?.textContent).toBe('wangwu')
-    expect(screen.getByText(`匹配 1 个 · 共 ${SEED_HOST_USERS.length} 个主机账号`)).toBeInTheDocument()
+    await waitFor(() => expect(userRows()).toHaveLength(1))
+    expect(userRows()[0]?.children[1]?.textContent).toBe('wangwu')
+    expect(within(usersPanel()).getByText('1 行')).toBeInTheDocument()
 
     await user.clear(input)
     await user.type(input, 'BACKUP')
-    expect(userRows()).toHaveLength(1)
-    expect(userRows()[0]?.children[0]?.textContent).toBe('backup')
+    await waitFor(() => expect(userRows()).toHaveLength(1))
+    expect(userRows()[0]?.children[1]?.textContent).toBe('backup')
 
     await user.clear(input)
     await user.type(input, '不存在的人')
-    expect(screen.getByText('没有匹配的账号，换个关键词或清空搜索')).toBeInTheDocument()
+    expect(await within(usersPanel()).findByText('没有结果')).toBeInTheDocument()
   })
 
   it('从系统同步账号：忙碌态可见，完成后刷新列表并发 mock 通知', async () => {
@@ -103,9 +102,9 @@ describe('用户管理页签', () => {
     // 同步中按钮换成忙碌态，完成后列表按同步结果重新读回来
     expect(await screen.findByRole('button', { name: '正在从系统同步账号' })).toBeInTheDocument()
     await waitFor(() => expect(userRows()).toHaveLength(SEED_HOST_USERS.length))
-    expect(messageHistoryText('status')).toContain(
+    await waitFor(() => expect(messageHistoryText('status')).toContain(
       `已从系统同步账号，当前共 ${SEED_HOST_USERS.length} 个（mock，待接入真实执行）`,
-    )
+    ))
   })
 
   it('创建用户：用户名按 Linux 规则就地校验，成功后入表并发 mock 通知', async () => {
@@ -136,9 +135,9 @@ describe('用户管理页签', () => {
       expect(screen.queryByRole('dialog', { name: '创建用户' })).not.toBeInTheDocument(),
     )
     // 新账号排在第一条，摘要同步
-    expect(userRows()[0]?.children[0]?.textContent).toBe('chenyi')
+    expect(userRows()[0]?.children[1]?.textContent).toBe('chenyi')
     expect(
-      screen.getByText(`共 ${SEED_HOST_USERS.length + 1} 个主机账号`),
+      screen.getByText(`${SEED_HOST_USERS.length + 1} 行`),
     ).toBeInTheDocument()
     expect(messageHistoryText('status')).toContain(
       '账号 chenyi 已创建（mock，待接入真实执行）',
@@ -159,7 +158,7 @@ describe('用户管理页签', () => {
     await waitFor(() =>
       expect(screen.queryByRole('dialog', { name: '修改账号 backup' })).not.toBeInTheDocument(),
     )
-    const backupRow = userRows().find((row) => row.children[0]?.textContent === 'backup')
+    const backupRow = userRows().find((row) => row.children[1]?.textContent === 'backup')
     expect(backupRow?.textContent).toContain('密码或密钥')
     expect(within(backupRow as HTMLElement).getByText('已停用')).toBeInTheDocument()
     expect(messageHistoryText('status')).toContain(
@@ -215,7 +214,7 @@ describe('用户管理页签', () => {
     )
     expect(creates).toHaveLength(1)
     expect(creates[0]).toMatchObject({ name: 'chenyi', password: 'Elysian#2026Root' })
-    expect(userRows()[0]?.children[0]?.textContent).toBe('chenyi')
+    expect(userRows()[0]?.children[1]?.textContent).toBe('chenyi')
   })
 
   it('修改账号：编辑时密码留空即不发送该字段，填了才随保存透传；不含密码的登录方式不带密码', async () => {
@@ -295,12 +294,11 @@ describe('用户管理页签', () => {
     const { gateway } = userSessions({ list: async () => [] })
     await openUsersTab(gateway)
 
-    expect(screen.getByText('还没有主机账号，点左上角「创建用户」新建一个')).toBeInTheDocument()
-    expect(screen.getByText('共 0 个主机账号')).toBeInTheDocument()
+    expect(within(usersPanel()).getByText('没有结果')).toBeInTheDocument()
+    expect(within(usersPanel()).getByText('0 行')).toBeInTheDocument()
     const table = within(usersPanel()).getByRole('table')
     const rows = within(table).getAllByRole('row')
-    expect(rows).toHaveLength(2)
-    expect(rows[1]?.textContent).toContain('还没有主机账号')
+    expect(rows).toHaveLength(1)
   })
 
   it('读取失败给错误态与重试，重试成功后内容出现', async () => {

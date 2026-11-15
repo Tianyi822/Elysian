@@ -9,7 +9,8 @@ import { Download, Eye, EyeOff, Loader2, Pencil, Plus, Trash2, X } from '../../c
 import { SearchInput } from '../../components/SearchInput'
 import { StatusTag } from '../../components/StatusTag'
 import { useModelSettingsStore, validateModelInput, isRevisionConflict } from '../../stores/modelSettingsStore'
-import { EmptyState } from '../../components/states/StateViews'
+import { DataTable, type DataTableColumn } from '../../components/DataTable'
+import { TableBatchActions } from '../../components/TableBatchActions'
 import { RevisionConflictNotice } from './RevisionConflictNotice'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { SuggestionInput } from '../../components/SuggestionInput'
@@ -22,40 +23,44 @@ import { Button } from '../../components/Button'
 
 const formatTokens = (value: number) => value >= 1024 * 1024 ? `${Number((value / (1024 * 1024)).toFixed(2))}M` : value >= 1024 ? `${Math.round(value / 1024)}k` : String(value)
 const iconButton = 'inline-flex size-8 shrink-0 items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-40'
+type ModelTableRow = { service: AgentModelService; model: AgentModelService['models'][number] }
 
 /** 服务共享地址、协议与凭据，模型保留各自修订；整个服务的修改以一次 CAS 提交。 */
 export function ModelProfilesPanel({ active = true, refreshing = false, onRefresh }: { active?: boolean; refreshing?: boolean; onRefresh?: () => void }) {
+  const gateway = useGateway()
   const services = useModelSettingsStore(state => state.services)
   const search = useModelSettingsStore(state => state.search)
   const setSearch = useModelSettingsStore(state => state.setSearch)
+  const saving = useModelSettingsStore(state => state.saving)
+  const [selected, setSelected] = useState<(string | number)[]>([])
   const [editing, setEditing] = useState<AgentModelService | 'new'>()
-  const rows = useMemo(() => services.flatMap(service => service.models.map(model => ({ service, model }))).filter(({ service, model }) => [service.name, model.model, service.baseUrl].some(value => value.toLowerCase().includes(search.trim().toLowerCase()))), [services, search])
+  const allRows = useMemo(() => services.flatMap(service => service.models.map(model => ({ service, model }))), [services])
+  const rows = allRows.filter(({ service, model }) => [service.name, model.model, service.baseUrl].some(value => value.toLowerCase().includes(search.trim().toLowerCase())))
+  const columns: DataTableColumn<ModelTableRow>[] = [
+    { key: 'model', header: '模型 ID', primary: true, width: 'minmax(0,3fr)', accessor: ({ model }) => model.model, cell: ({ service, model }) => {
+      const details = `${service.name} · ${AGENT_MODEL_API_FORMATS.find(format => format.value === service.apiFormat)?.label.split(' (')[0]} · 修订 ${model.revision}`
+      return <><span className="block truncate font-mono text-xs font-medium" title={model.model}>{model.model}</span><span className="block truncate text-xs text-fg-subtle" title={details}>{details}</span></>
+    } },
+    { key: 'address', header: '服务地址', width: 'minmax(0,2.8fr)', accessor: ({ service }) => service.baseUrl, cell: ({ service }) => <><span className="block truncate font-mono text-xs" title={service.baseUrl}>{service.baseUrl}</span><span className="text-xs text-fg-subtle">{service.hasCredential ? '已配置 API Key' : '未配置 API Key'}</span></> },
+    { key: 'context', header: '上下文', accessor: ({ model }) => model.contextTokens, cell: ({ model }) => <span className="tabular-nums text-fg-muted">{formatTokens(model.contextTokens)}</span> },
+    { key: 'output', header: '输出', accessor: ({ model }) => model.outputTokens, cell: ({ model }) => <span className="tabular-nums text-fg-muted">{formatTokens(model.outputTokens)}</span> },
+    { key: 'capabilities', header: '能力', accessor: ({ model }) => model.capabilities.image || model.capabilities.video ? '多模态' : '文本', cell: ({ model }) => <StatusTag label={model.capabilities.image || model.capabilities.video ? '多模态' : '文本'} tone="info" /> },
+    { key: 'status', header: '状态', accessor: ({ model }) => model.active, cell: ({ model }) => <StatusTag label={model.active ? '已启用' : '已停用'} tone={model.active ? 'success' : 'neutral'} /> },
+    { key: 'actions', header: '操作', sortable: false, cell: ({ service, model }) => <Button variant="ghost" size="icon" type="button" disabled={saving} onClick={() => setEditing(service)} aria-label={`编辑 ${model.model}`} className={iconButton}><Pencil aria-hidden size={14} /></Button> },
+  ]
   return <div className="flex flex-col gap-3">
     <div className="flex flex-wrap items-center gap-2">
       <Button variant="primary" type="button" onClick={() => setEditing('new')} className={CTL_PRIMARY}><span className="inline-flex items-center gap-1.5"><Plus aria-hidden size={14} />新建模型配置</span></Button>
-      <div className="relative min-w-0 flex-1 sm:max-w-72">
-        <SearchInput id="agent-models-search" label="搜索模型 ID、服务或地址" value={search}
-          onChange={setSearch} placeholder="搜索模型 ID、服务或地址" className="w-full" />
-      </div>
       {onRefresh ? <RefreshButton label="刷新模型配置" busy={refreshing} onPress={onRefresh} /> : null}
     </div>
-    {rows.length === 0 ? <EmptyState title={search.trim() ? '没有匹配的模型配置' : '还没有模型配置'} description={search.trim() ? '换个关键词，或清空过滤查看全部模型配置。' : '添加 DeepSeek、智谱或自定义模型服务，同一服务可配置多个模型。'} /> : <div role="region" aria-label="模型配置列表" tabIndex={0} className="table-scrollbar min-w-0 overflow-x-auto panel-surface">
-      <table className="w-full min-w-[54rem] table-fixed border-separate border-spacing-0 text-left text-sm">
-        <colgroup>{['30%', '28%', '8%', '8%', '10%', '9%', '7%'].map((width, index) => <col key={index} style={{ width }} />)}</colgroup>
-        <thead><tr>{['模型 ID', '服务地址', '上下文', '输出', '能力', '状态', '操作'].map((label, index) => <th key={label} scope="col" className={`border-b border-line bg-surface px-3 py-2.5 text-xs font-medium text-fg-muted ${index === 0 ? 'sticky left-0 z-20 border-r' : ''}`}>{label}</th>)}</tr></thead>
-        <tbody>{rows.map(({ service, model }) => {
-          const details = `${service.name} · ${AGENT_MODEL_API_FORMATS.find(format => format.value === service.apiFormat)?.label.split(' (')[0]} · 修订 ${model.revision}`
-          return <tr key={model.id} className="group transition-colors hover:bg-surface-raised">
-          <td className="sticky left-0 z-10 border-b border-r border-line bg-surface px-3 py-3 transition-colors group-hover:bg-surface-raised"><span className="block truncate font-mono text-xs font-medium" title={model.model}>{model.model}</span><span className="block truncate text-xs text-fg-subtle" title={details}>{details}</span></td>
-          <td className="border-b border-line px-3 py-3"><span className="block truncate font-mono text-xs" title={service.baseUrl}>{service.baseUrl}</span><span className="text-xs text-fg-subtle">{service.hasCredential ? '已配置 API Key' : '未配置 API Key'}</span></td>
-          <td className="border-b border-line px-3 py-3 tabular-nums text-fg-muted">{formatTokens(model.contextTokens)}</td>
-          <td className="border-b border-line px-3 py-3 tabular-nums text-fg-muted">{formatTokens(model.outputTokens)}</td>
-          <td className="border-b border-line px-3 py-3"><StatusTag label={model.capabilities.image || model.capabilities.video ? '多模态' : '文本'} tone="info" /></td>
-          <td className="border-b border-line px-3 py-3"><StatusTag label={model.active ? '已启用' : '已停用'} tone={model.active ? 'success' : 'neutral'} /></td>
-          <td className="border-b border-line px-3 py-3"><Button variant="ghost" size="icon" type="button" onClick={() => setEditing(service)} aria-label={`编辑 ${model.model}`} className={iconButton}><Pencil aria-hidden size={14} /></Button></td>
-        </tr>})}</tbody>
-      </table>
-    </div>}
+    <DataTable active={active} rows={rows} columns={columns} getRowId={row => row.model.id} getRowLabel={row => row.model.model}
+      ariaLabel="模型配置列表" query={search} onQueryChange={setSearch} filterMode="external" searchPlaceholder="搜索模型 ID、服务或地址"
+      selected={selected} onSelectionChange={setSelected} selectionKey="settings-models" busy={saving}
+      bulkActions={() => <TableBatchActions selectedRows={allRows.filter(row => selected.includes(row.model.id))} getRowId={row => row.model.id} getRowLabel={row => row.model.model} disabled={saving}
+        onSucceeded={ids => setSelected(current => current.filter(id => !ids.includes(id)))} actions={[true, false].map(enabled => ({ key: enabled ? 'enable' : 'disable', label: enabled ? '批量启用' : '批量停用', groupBy: (row: ModelTableRow) => row.service.id,
+          eligible: ({ service, model }: ModelTableRow) => enabled && !service.active ? '所属服务已停用，请先编辑并启用服务' : model.enabled === enabled ? `模型已${enabled ? '启用' : '停用'}` : undefined,
+          execute: (items: readonly ModelTableRow[]) => useModelSettingsStore.getState().setModelsEnabled(gateway, items[0]!.service, items.map(row => row.model.id), enabled),
+        }))} />} />
     {editing !== undefined && <ModelServiceDialog visible={active} service={editing === 'new' ? undefined : editing} onClose={() => setEditing(undefined)} />}
   </div>
 }

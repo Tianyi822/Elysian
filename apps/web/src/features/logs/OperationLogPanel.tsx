@@ -13,11 +13,10 @@ import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { formatLoginTime } from '../../components/format'
 import { CTL_TOOLBAR } from '../../components/formControl'
-import { SearchInput } from '../../components/SearchInput'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
-import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
+import { ErrorState, LoadingState } from '../../components/states/StateViews'
 import { useOperationLogStore } from '../../stores/operationLogStore'
 import { useLogReportNotifications } from './useLogReportNotifications'
 import type {
@@ -42,28 +41,6 @@ import { Button } from '../../components/Button'
  * 不需要各自维护一套外观。列宽是可算的：日期时间列是固定 19 字符的等宽数字，
  * 其余每列按最长中文标签取整档，只有操作内容列吃掉剩余宽度。
  */
-
-/** 固定列的宽度（px）：日期时间 w-44、分类 w-28、操作对象 w-40、结果 w-24。 */
-export const OPERATION_LOG_COLUMN_PX = {
-  time: 176,
-  category: 112,
-  target: 160,
-  result: 96,
-} as const
-
-/** 操作内容列的最小宽度（px）：约 32 个中文字符，「改了什么」要一眼看得出。 */
-export const OPERATION_LOG_CONTENT_MIN_PX = 480
-
-/** 表格最小宽度 = 五列之和；窄于它的视口整表横向滚动，不压缩列。 */
-export const OPERATION_LOG_TABLE_MIN_PX =
-  OPERATION_LOG_COLUMN_PX.time +
-  OPERATION_LOG_COLUMN_PX.category +
-  OPERATION_LOG_COLUMN_PX.target +
-  OPERATION_LOG_CONTENT_MIN_PX +
-  OPERATION_LOG_COLUMN_PX.result
-
-/** `OPERATION_LOG_TABLE_MIN_PX` 的 Tailwind 写法；改列宽时两处一起改（测试断言两者相等）。 */
-export const OPERATION_LOG_TABLE_MIN_WIDTH_CLASS = 'min-w-[1024px]'
 
 /** 结果 → 状态标签色调：失败取危险色；文字由契约标签表给出，颜色只是辅助。 */
 export function outcomeTone(result: OperationLogOutcome): StatusTone {
@@ -151,58 +128,12 @@ function OperationDetails({ entry }: { entry: OperationLogEntry }) {
   )
 }
 
-/** 单元格的公共外框：行底分割线加内距，四个字以内的短内容列都用它。 */
-const CELL_CLASS = 'border-b border-line px-3 py-2.5'
-
 const COLUMNS: readonly LogColumn<OperationLogEntry>[] = [
-  {
-    label: '日期时间',
-    widthClass: 'w-44',
-    cell: (entry) => (
-      <td className={`${CELL_CLASS} tabular-nums text-fg-muted`}>{formatLoginTime(entry.at)}</td>
-    ),
-  },
-  {
-    label: '分类',
-    widthClass: 'w-28',
-    cell: (entry) => (
-      <td className={CELL_CLASS}>
-        <StatusTag label={OPERATION_LOG_CATEGORY_LABELS[entry.category]} />
-      </td>
-    ),
-  },
-  {
-    label: '操作对象',
-    widthClass: 'w-40',
-    cell: (entry) => (
-      // 没有对象时给破折号，不省略整列——空单元格会被读成「渲染漏了」。
-      <td className={`${CELL_CLASS} text-fg-muted`}>
-        <span className="block truncate">{entry.target ?? '—'}</span>
-      </td>
-    ),
-  },
-  {
-    // 不设宽度：这一列吃掉剩余，表格的 min-width 给它兜住 480px 的下限。
-    label: '操作内容',
-    cell: (entry) => (
-      <LogMessageCell
-        text={operationLogContent(entry)}
-        details={<OperationDetails entry={entry} />}
-      />
-    ),
-  },
-  {
-    label: '结果',
-    widthClass: 'w-24',
-    cell: (entry) => (
-      <td className={CELL_CLASS}>
-        <StatusTag
-          label={OPERATION_LOG_OUTCOME_LABELS[entry.result]}
-          tone={outcomeTone(entry.result)}
-        />
-      </td>
-    ),
-  },
+  { key: 'at', header: '日期时间', width: '176px', accessor: entry => new Date(entry.at), cell: entry => <span className="tabular-nums text-fg-muted">{formatLoginTime(entry.at)}</span> },
+  { key: 'category', header: '分类', width: '112px', accessor: entry => OPERATION_LOG_CATEGORY_LABELS[entry.category], cell: entry => <StatusTag label={OPERATION_LOG_CATEGORY_LABELS[entry.category]} /> },
+  { key: 'target', header: '操作对象', width: 'minmax(120px,1fr)', accessor: entry => entry.target, cell: entry => <span className="block truncate text-fg-muted">{entry.target ?? '—'}</span> },
+  { key: 'content', header: '操作内容', primary: true, width: 'minmax(240px,2fr)', accessor: operationLogContent, cell: entry => <LogMessageCell text={operationLogContent(entry)} details={<OperationDetails entry={entry} />} /> },
+  { key: 'result', header: '结果', width: '96px', accessor: entry => OPERATION_LOG_OUTCOME_LABELS[entry.result], cell: entry => <StatusTag label={OPERATION_LOG_OUTCOME_LABELS[entry.result]} tone={outcomeTone(entry.result)} /> },
 ]
 
 export function OperationLogPanel() {
@@ -251,19 +182,6 @@ export function OperationLogPanel() {
     )
   }
 
-  const filtersClear =
-    categoryFilter === 'all' && resultFilter === 'all' && trimmedSearch.length === 0
-
-  // 一条记录都没有：先讲清楚这个页签是干什么的，不摆空表。
-  if (total === 0 && filtersClear) {
-    return (
-      <EmptyState
-        title="还没有操作日志"
-        description="通过面板按钮改动系统或数据库的动作都会记录在这里。"
-      />
-    )
-  }
-
   const querying = refreshing && !loadingOlder
 
   return (
@@ -290,16 +208,6 @@ export function OperationLogPanel() {
             items={OUTCOME_ITEMS}
             value={resultFilter}
             onSelect={setResultFilter}
-          />
-        </div>
-        <div className="relative w-full md:max-w-md md:flex-1">
-          <SearchInput
-            id="operation-log-search"
-            label="搜索操作日志"
-            value={search}
-            onChange={setSearch}
-            placeholder="请输入搜索关键字"
-            className="w-full"
           />
         </div>
         <div className="flex items-center justify-between gap-3 text-xs text-fg-muted md:ml-auto">
@@ -354,12 +262,14 @@ export function OperationLogPanel() {
 
       <LogTable
         label="操作日志表"
-        minWidthClass={OPERATION_LOG_TABLE_MIN_WIDTH_CLASS}
         columns={COLUMNS}
         rows={entries}
         rowKey={(entry) => entry.id}
-        emptyMessage={filteredEmptyText(categoryFilter, trimmedSearch.length > 0)}
-        busy={querying}
+        emptyMessage={total === 0 && categoryFilter === 'all' && resultFilter === 'all' && !trimmedSearch
+          ? <><span className="block font-medium text-fg">还没有操作日志</span><span className="mt-2 block">通过面板按钮改动系统或数据库的动作都会记录在这里。</span></>
+          : filteredEmptyText(categoryFilter, trimmedSearch.length > 0)}
+        busy={querying} query={search} onQueryChange={setSearch}
+        selectionKey={`${categoryFilter}:${resultFilter}`}
       />
 
       {truncated ? (

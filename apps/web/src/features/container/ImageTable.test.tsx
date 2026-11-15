@@ -41,7 +41,7 @@ describe('ImageTable 引用与拉取状态', () => {
     const label = screen.getByRole('button', { name: '查看镜像引用 team/app:1.0' })
     expect(label).toHaveTextContent('team/app:1.0')
     expect(label).not.toHaveTextContent('dockerproxy.net')
-    await user.tab()
+    for (let i = 0; i < 15 && document.activeElement !== label; i++) await user.tab()
     const detail = await screen.findByRole('dialog', { name: '完整镜像引用' })
     expect(detail).toHaveTextContent('dockerproxy.net/team/app:1.0')
     await user.keyboard('{Escape}')

@@ -12,13 +12,14 @@ import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { SshRefreshButton, SshRefreshError } from './SshRefresh'
 import { IconButton } from '../../components/IconButton'
-import { Pagination } from '../../components/Pagination'
+import { DataTable } from '../../components/DataTable'
+import { ChipGroup } from '../../components/ChipGroup'
 import { StatusTag } from '../../components/StatusTag'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
 import { formatDateTime, formatLoginIp, formatLoginTime } from '../../components/format'
 import { RefreshCw, TriangleAlert } from '../../components/icons'
-import { SSH_PAGE_SIZE, useSshStore } from '../../stores/sshStore'
-import { ACTION_CLASS, INPUT_CLASS, Region, SECONDARY_ACTION_CLASS, Section, SwitchToggle, TABLE_CELL_CLASS, TABLE_CONTAINER_CLASS, TABLE_HEADER_CLASS } from './sshCardParts'
+import { useSshStore } from '../../stores/sshStore'
+import { ACTION_CLASS, INPUT_CLASS, Region, SECONDARY_ACTION_CLASS, Section, SwitchToggle } from './sshCardParts'
 import { SshKeyCard } from './SshKeyCard'
 import { SshKeyCreateDialog } from './SshKeyCreateDialog'
 import { SshKeyDialog } from './SshKeyDialog'
@@ -29,10 +30,10 @@ import { randomSshPort, randomStrongPassword } from './sshRandom'
 import { Button } from '../../components/Button'
 
 /**
- * SSH 管理面板：四张卡排成两列瀑布，高度随内容，不互相拉平。
+ * SSH 管理面板：设置与数据排成两列，高度随内容，不互相拉平。
  * 左列是两张设置卡：SSH 服务（启停与登录方式、登录统计、端口）与 Root 设置（登录策略、密码、密钥）；
- * 右列是两张数据卡：SSH 密钥表与 SSH 登录记录表。
- * 窄屏单列时 DOM 顺序即视觉顺序：服务 → Root → 密钥 → 记录，设置挨着设置、数据挨着数据。
+ * 右列通过共享胶囊页签切换 SSH 密钥表与 SSH 登录记录表，两表保留各自数据与交互状态。
+ * 窄屏单列时 DOM 顺序即视觉顺序：服务 → Root → 当前数据表。
  * 数据来自 SSH adapter：Docker 运行时由 HTTP adapter 真实操作容器内 sshd，
  * 宿主机本地开发是内存演示（工具栏带「演示数据」标识）；动作完成提示按运行时如实描述。
  * 私钥一律只在创建/生成成功后的一次性弹窗里展示，查看弹窗只给公钥、指纹与元信息。
@@ -139,10 +140,7 @@ export function SshPanel() {
             <ServiceCard />
             {overview?.enabled ? <RootCard /> : null}
           </div>
-          <div className="flex min-w-0 flex-col gap-4">
-            {overview?.enabled ? <SshKeyCard /> : null}
-            <SshLoginRecordsCard />
-          </div>
+          <SshDataCard enabled={overview?.enabled ?? false} />
         </div>
       </div>
       {createKeyOpen ? <SshKeyCreateDialog /> : null}
@@ -165,110 +163,52 @@ export function SshPanel() {
   )
 }
 
-/** SSH 登录记录卡：按时间倒序列出登录事实，只读，界面不产生也不修改它。 */
-function SshLoginRecordsCard() {
-  const logInfo = useSshStore((s) => s.overview?.logInfo)
-  const loginRecords = useSshStore((s) => s.loginRecords)
-  const page = useSshStore((s) => s.recordPage)
-  const setRecordPage = useSshStore((s) => s.setRecordPage)
+type SshDataView = 'keys' | 'records'
+const SSH_DATA_VIEWS = [
+  { value: 'keys', label: 'SSH 密钥' },
+  { value: 'records', label: 'SSH 登录记录' },
+] as const
 
-  const pageCount = Math.max(1, Math.ceil(loginRecords.length / SSH_PAGE_SIZE))
-  const safePage = Math.min(page, pageCount)
-  const pageRows = loginRecords.slice((safePage - 1) * SSH_PAGE_SIZE, safePage * SSH_PAGE_SIZE)
+/** 页签持续挂载以保留滑块动画；两表独立挂载，隐藏表停用选择与批量操作。 */
+function SshDataCard({ enabled }: { enabled: boolean }) {
+  const [view, setView] = useState<SshDataView>(enabled ? 'keys' : 'records')
+  const activeView = enabled ? view : 'records'
+  useEffect(() => { if (!enabled) setView('records') }, [enabled])
 
-  return (
-    <Section title="SSH 登录记录" aside={<SshRefreshButton section="records" />} >
-      <SshRefreshError section="records" />
-      <div
-        role="region"
-        aria-label="SSH 登录记录表"
-        // 只读表格内部没有可聚焦的控件，因此这个滚动容器自己必须可聚焦：
-        // 否则窄屏下键盘用户没有任何办法把后面的列滚出来。
-        tabIndex={0}
-        className={TABLE_CONTAINER_CLASS}
-      >
-        {/* 最小宽度加首列钉住：窄屏下整表横向滚动，来源地址始终留在左边，其余列滚出来看。
-            34rem 为地址、完整时间和统一单元格内距留出空间。 */}
-        <table className="w-full min-w-[34rem] table-fixed border-separate border-spacing-0 text-left text-sm">
-          {/* 五列按内容需要分宽度：登录时间最长（精确到秒），端口、状态、用户都只有几个字符，
-              平均分会让时间列折行、把行高撑起来。 */}
-          <colgroup>
-            <col className="w-[28%]" />
-            <col className="w-[34%]" />
-            <col className="w-[12%]" />
-            <col className="w-[14%]" />
-            <col className="w-[12%]" />
-          </colgroup>
-          <thead>
-            <tr>
-              {['IP 地址', '登录时间', '端口', '状态', '用户'].map((label, index) => (
-                <th
-                  key={label}
-                  scope="col"
-                  className={`${TABLE_HEADER_CLASS} ${
-                    index === 0 ? 'sticky left-0 z-20 border-r' : ''
-                  }`}
-                >
-                  {label}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {loginRecords.length === 0 ? (
-              <tr>
-                <td colSpan={5} className="px-3 py-8 text-center text-sm text-fg-muted">
-                  {logInfo?.status === 'unavailable' ? '登录日志不可用，请检查系统日志服务与读取权限' : '还没有登录记录'}
-                </td>
-              </tr>
-            ) : (
-              pageRows.map((record) => {
-                // 回环来源（容器内自连）显示「本机」，原始地址放悬停提示：列里不再出现裸 ::1。
-                const ipLabel = formatLoginIp(record.ip)
-                return (
-                <tr key={record.id} className="group transition-none hover:bg-surface-raised">
-                  {/* 钉住的列要自带不透明底，否则滚动时后面的内容会从它下面透出来；
-                      行悬停时它也跟着步进一级，颜色与整行一致。 */}
-                  <td
-                    className={`${TABLE_CELL_CLASS} sticky left-0 z-10 whitespace-nowrap border-r bg-surface tabular-nums text-fg group-hover:bg-surface-raised`}
-                  >
-                    <span className="block truncate" title={ipLabel === record.ip ? undefined : record.ip}>
-                      {ipLabel}
-                    </span>
-                  </td>
-                  <td className={`${TABLE_CELL_CLASS} whitespace-nowrap tabular-nums text-fg-muted`}>
-                    {formatLoginTime(record.at)}
-                  </td>
-                  <td className={`${TABLE_CELL_CLASS} tabular-nums text-fg-muted`}>{record.port}</td>
-                  <td className={TABLE_CELL_CLASS}>
-                    <StatusTag
-                      label={SSH_LOGIN_RESULT_LABELS[record.result]}
-                      tone={record.result === 'succeeded' ? 'success' : 'danger'}
-                    />
-                  </td>
-                  <td className={`${TABLE_CELL_CLASS} text-fg-muted`}>
-                    <span className="block truncate" title={record.user}>{record.user}</span>
-                  </td>
-                </tr>
-                )
-              })
-            )}
-          </tbody>
-        </table>
-      </div>
-      <Pagination
-        label="登录记录分页"
-        summary={`${loginRecords.length >= 2000 ? '最近' : '共'} ${loginRecords.length} 条登录记录`}
-        page={safePage}
-        pageCount={pageCount}
-        pageSize={SSH_PAGE_SIZE}
-        onPageChange={setRecordPage}
-      />
-    </Section>
-  )
+  return <section aria-label="SSH 数据" className="min-w-0 panel-surface p-3 sm:p-4">
+    <ChipGroup ariaLabel="SSH 数据视图" items={enabled ? SSH_DATA_VIEWS : SSH_DATA_VIEWS.filter(item => item.value === 'records')}
+      value={activeView} onSelect={setView} className="max-w-full" />
+    {enabled ? <div hidden={activeView !== 'keys'} className="mt-4">
+      <SshKeyCard active={activeView === 'keys'} />
+    </div> : null}
+    <div hidden={activeView !== 'records'} className="mt-4">
+      <SshLoginRecordsCard active={activeView === 'records'} />
+    </div>
+  </section>
 }
 
-/** SSH 服务卡：服务启停与登录方式、监听端口两个设置区，外加登录统计。 */
+/** SSH 登录记录卡：按时间倒序列出登录事实，只读，界面不产生也不修改它。 */
+function SshLoginRecordsCard({ active }: { active: boolean }) {
+  const logInfo = useSshStore(s => s.overview?.logInfo)
+  const loginRecords = useSshStore(s => s.loginRecords)
+  return <section aria-label="SSH 登录记录" className="min-w-0">
+    <SshRefreshError section="records" />
+    {logInfo?.status === 'unavailable' ? <p className="mb-3 text-xs text-fg-subtle">登录日志不可用，请检查系统日志服务与读取权限</p> : null}
+    <DataTable rows={loginRecords} ariaLabel="SSH 登录记录表" active={active} getRowId={record => record.id}
+      toolbar={<SshRefreshButton section="records" />}
+      getRowLabel={record => `${formatLoginIp(record.ip)} ${formatLoginTime(record.at)}`}
+      searchPlaceholder="搜索 SSH 登录记录"
+      columns={[
+        { key: 'ip', header: 'IP 地址', primary: true, accessor: record => record.ip, width: '28%', cell: record => <span title={formatLoginIp(record.ip) === record.ip ? undefined : record.ip}>{formatLoginIp(record.ip)}</span> },
+        { key: 'at', header: '登录时间', accessor: record => record.at, width: '34%', cell: record => formatLoginTime(record.at) },
+        { key: 'port', header: '端口', accessor: record => record.port, width: '12%' },
+        { key: 'result', header: '状态', accessor: record => SSH_LOGIN_RESULT_LABELS[record.result], width: '14%', cell: record => <StatusTag label={SSH_LOGIN_RESULT_LABELS[record.result]} tone={record.result === 'succeeded' ? 'success' : 'danger'} /> },
+        { key: 'user', header: '用户', accessor: record => record.user, width: '12%' },
+      ]}
+    />
+  </section>
+}
+
 function ServiceCard() {
   const gateway = useGateway()
   const overview = useSshStore((s) => s.overview)
@@ -481,57 +421,28 @@ function SshPortConfirmDialog() {
  * 停服保留历史统计；日志不可用时给出原因，不把读取失败当成零值。
  */
 function LoginStatsRegion({ stats, logInfo }: { stats: SshLoginStats; logInfo: SshOverview['logInfo'] }) {
-  return (
-    <Region title="登录统计">
-      {logInfo?.status !== 'unavailable' ? (
-        <div className={TABLE_CONTAINER_CLASS}>
-          <table className="w-full table-fixed border-separate border-spacing-0 text-center text-sm">
-            {/* 定宽三列：窗口名、成功、失败；表头与单元格全部居中，计数用等宽数字，翻动时列宽不跳。 */}
-            <colgroup>
-              <col className="w-[40%]" />
-              <col className="w-[30%]" />
-              <col className="w-[30%]" />
-            </colgroup>
-            <thead>
-              <tr>
-                {['时间窗口', SSH_LOGIN_RESULT_LABELS.succeeded, SSH_LOGIN_RESULT_LABELS.failed].map((label) => (
-                  <th
-                    key={label}
-                    scope="col"
-                    className={`${TABLE_HEADER_CLASS} text-center`}
-                  >
-                    {label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {SSH_LOGIN_WINDOWS.map((window) => (
-                <tr key={window}>
-                  <th
-                    scope="row"
-                    className={`${TABLE_CELL_CLASS} text-center text-xs font-medium text-fg-muted`}
-                  >
-                    {SSH_LOGIN_WINDOW_LABELS[window]}
-                  </th>
-                  <td className={`${TABLE_CELL_CLASS} text-center tabular-nums text-fg`}>
-                    {stats[window].succeeded}
-                  </td>
-                  {/* 失败计数带危险色：爆破尝试是这块的重点信号，文字与颜色一起表达。 */}
-                  <td className={`${TABLE_CELL_CLASS} text-center tabular-nums text-danger`}>
-                    {stats[window].failed}
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
-        </div>
-      ) : (
-        <p className="text-xs text-fg-subtle">登录日志不可用，暂时无法统计。</p>
-      )}
-      {logInfo?.warning ? <p className="text-xs text-warning">{logInfo.warning}</p> : null}
-    </Region>
-  )
+  return <Region title="登录统计">
+    {logInfo?.status !== 'unavailable' ? <div className="overflow-hidden rounded-lg border border-line bg-surface">
+      <table aria-label="SSH 登录统计表" className="w-full table-fixed text-center text-sm tabular-nums">
+        <colgroup><col className="w-2/5" /><col className="w-[30%]" /><col className="w-[30%]" /></colgroup>
+        <thead className="bg-surface-raised text-xs text-fg-muted">
+          <tr>
+            <th scope="col" className="px-3 py-2.5 font-medium">时间窗口</th>
+            <th scope="col" className="px-3 py-2.5 font-medium">{SSH_LOGIN_RESULT_LABELS.succeeded}</th>
+            <th scope="col" className="px-3 py-2.5 font-medium">{SSH_LOGIN_RESULT_LABELS.failed}</th>
+          </tr>
+        </thead>
+        <tbody className="divide-y divide-line border-t border-line">
+          {SSH_LOGIN_WINDOWS.map(window => <tr key={window}>
+            <th scope="row" className="px-3 py-3 font-medium text-fg">{SSH_LOGIN_WINDOW_LABELS[window]}</th>
+            <td className="px-3 py-3 text-fg-muted">{stats[window].succeeded}</td>
+            <td className="px-3 py-3 text-danger">{stats[window].failed}</td>
+          </tr>)}
+        </tbody>
+      </table>
+    </div> : <p className="text-xs text-fg-subtle">登录日志不可用，暂时无法统计。</p>}
+    {logInfo?.warning ? <p className="text-xs text-warning">{logInfo.warning}</p> : null}
+  </Region>
 }
 
 /**

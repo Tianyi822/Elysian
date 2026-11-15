@@ -1,4 +1,5 @@
-import { SearchInput } from '../../components/SearchInput'
+import { DataTable, type DataTableColumn } from '../../components/DataTable'
+import { TableBatchActions } from '../../components/TableBatchActions'
 import { McpProbeDialog } from './McpProbeDialog'
 import { EMPTY_MCP_ACCESS, McpRequestedAccess } from './McpRequestedAccess'
 import { useEffect, useRef, useState } from 'react'
@@ -9,7 +10,7 @@ import { CTL_FIELD, CTL_PRIMARY, CTL_SECONDARY } from '../../components/formCont
 import { Pencil, Plus, Trash2, Eye, EyeOff } from '../../components/icons'
 import { RefreshButton } from '../../components/RefreshState'
 import { StatusTag } from '../../components/StatusTag'
-import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
+import { ErrorState, LoadingState } from '../../components/states/StateViews'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { ChipGroup } from '../../components/ChipGroup'
 import { formatDateTime } from '../../components/format'
@@ -18,34 +19,44 @@ import { JsonView } from './JsonView'
 import { RevisionConflictNotice } from './RevisionConflictNotice'
 import { useInFlightSubmit } from './useInFlightSubmit'
 import { useImeEnterGuard } from '../../components/useImeEnterGuard'
-import { ExtensionDialog, ExtensionTable, ExtensionToggle, Field, IconAction, extensionCell as cell } from './extensionUi'
+import { ExtensionDialog, ExtensionToggle, Field, IconAction } from './extensionUi'
 import { Button } from '../../components/Button'
 
 const transports = [{ value: 'streamable-http', label: 'Streamable HTTP' }, { value: 'stdio', label: '容器 stdio' }] as const
-const columns = [{ label: '服务名称', width: '22%' }, { label: '连接方式', width: '17%' }, { label: '地址 / 镜像', width: '32%' }, { label: '状态', width: '12%' }, { label: '操作', width: '17%' }]
+const mcpStateLabel = (server: AgentMCPServer) => server.revoked ? '已永久撤销' : server.active ? '已启用' : '已停用'
+const mcpCredentialLabel = (server: AgentMCPServer) => server.transport === 'stdio' ? server.stdio?.hasEnvironment ? '已配置环境变量' : '无环境变量' : server.hasCredential ? '已配置 Bearer Token' : '无身份验证'
 
 export function McpSection({ active }: { active: boolean }) {
   const gateway = useGateway()
   const state = useAgentExtensionsStore()
   const [search, setSearch] = useState('')
+  const [selected, setSelected] = useState<(string | number)[]>([])
   const [editing, setEditing] = useState<AgentMCPServer | 'new'>()
   const [detail, setDetail] = useState<AgentMCPServer>()
   const [probing, setProbing] = useState<AgentMCPServer>()
   useEffect(() => { void state.loadMcpServers(gateway, { silent: true }) }, [gateway, state.loadMcpServers])
   useFeedbackMessage(active && state.mcpStatus === 'ready' ? state.mcpErrorMessage : null)
   const rows = state.mcpServers.filter(server => [server.name, server.url, server.stdio?.image].some(value => value?.toLowerCase().includes(search.trim().toLowerCase())))
+  const columns: DataTableColumn<AgentMCPServer>[] = [
+    { key: 'name', header: '服务名称', primary: true, width: 'minmax(0,2.2fr)', accessor: server => server.name, cell: server => <span className="block truncate text-xs font-medium" title={server.name}>{server.name}</span> },
+    { key: 'transport', header: '连接方式', width: 'minmax(0,1.7fr)', accessor: server => server.transport === 'stdio' ? '容器 stdio' : 'Streamable HTTP', cell: server => <span className="text-xs text-fg-muted">{server.transport === 'stdio' ? '容器 stdio' : 'Streamable HTTP'}</span> },
+    { key: 'address', header: '地址 / 镜像', width: 'minmax(0,3.2fr)', accessor: server => server.url ?? server.stdio?.image, cell: server => <><span className="block truncate font-mono text-xs" title={server.url ?? server.stdio?.image}>{server.url ?? server.stdio?.image}</span><span className="text-xs text-fg-subtle">{mcpCredentialLabel(server)}</span></> },
+    { key: 'status', header: '状态', width: 'minmax(0,1.2fr)', accessor: mcpStateLabel, cell: server => <StatusTag label={mcpStateLabel(server)} tone={server.revoked ? 'danger' : server.active ? 'success' : 'neutral'} /> },
+    { key: 'actions', header: '操作', width: 'minmax(0,1.7fr)', sortable: false, fullWidthOnMobile: true, cell: server => <><div className="flex flex-wrap items-center gap-1"><IconAction label={`编辑 ${server.name}`} disabled={server.revoked || state.mcpSaving} onClick={() => setEditing(server)}><Pencil aria-hidden size={14} /></IconAction><Button variant="outline" type="button" className="rounded-md px-1.5 py-1 text-xs text-fg-muted hover:bg-surface-raised" onClick={() => setDetail(server)}>详情</Button><Button variant="outline" type="button" className="rounded-md px-1.5 py-1 text-xs text-fg-muted hover:bg-surface-raised disabled:opacity-40" disabled={!server.active || server.revoked || state.mcpSaving || state.probe?.status === 'loading'} onClick={() => server.transport === 'stdio' ? setProbing(server) : void state.probeMcpServer(gateway, server.id, server.revision)}>探测</Button></div>{server.transport === 'stdio' && <p className="mt-1 text-[11px] text-fg-subtle">确认后启动探测容器</p>}</> },
+  ]
   return <div className="flex flex-col gap-3">
-    <div className="flex flex-wrap items-center gap-2"><Button variant="primary" type="button" className={CTL_PRIMARY} onClick={() => setEditing('new')}><Plus aria-hidden size={14} />新建 MCP 服务</Button><SearchInput className="flex-1 sm:max-w-72" label="搜索服务名称、地址或镜像" value={search} onChange={setSearch} /><RefreshButton label="刷新 MCP 服务" busy={state.mcpRefreshing} onPress={() => void state.loadMcpServers(gateway)} /></div>
+    <div className="flex flex-wrap items-center gap-2"><Button variant="primary" type="button" className={CTL_PRIMARY} disabled={state.mcpSaving} onClick={() => setEditing('new')}><Plus aria-hidden size={14} />新建 MCP 服务</Button><RefreshButton label="刷新 MCP 服务" busy={state.mcpRefreshing} onPress={() => void state.loadMcpServers(gateway)} /></div>
     <div className="relative rounded-xl" aria-busy={state.mcpRefreshing}>
       {state.mcpStatus === 'ready' && state.mcpErrorMessage ? <p role="alert" className="mb-2 text-xs text-danger">刷新失败：{state.mcpErrorMessage}；当前保留的是上次读取结果。</p> : null}
-      {state.mcpStatus === 'idle' || state.mcpStatus === 'loading' ? <LoadingState label="正在读取 MCP 服务…" /> : state.mcpStatus === 'error' ? <ErrorState title="MCP 配置读取失败" description={state.mcpErrorMessage} onRetry={() => void state.loadMcpServers(gateway)} /> : rows.length === 0 ? <EmptyState title={search ? '没有匹配的 MCP 服务' : '还没有 MCP 服务'} description={search ? '换个关键词，或清空搜索查看全部服务。' : '添加 HTTP 或容器 stdio 服务，保存后可探测工具、资源与提示词。'} /> :
-        <><ExtensionTable label="MCP 服务列表" columns={columns}>{rows.map(server => <tr key={server.id} className="hover:bg-surface-raised">
-          <td className={cell}><span className="block truncate text-xs font-medium" title={server.name}>{server.name}</span></td>
-          <td className={`${cell} text-xs text-fg-muted`}>{server.transport === 'stdio' ? '容器 stdio' : 'Streamable HTTP'}</td>
-          <td className={cell}><span className="block truncate font-mono text-xs" title={server.url ?? server.stdio?.image}>{server.url ?? server.stdio?.image}</span><span className="text-xs text-fg-subtle">{server.transport === 'stdio' ? server.stdio?.hasEnvironment ? '已配置环境变量' : '无环境变量' : server.hasCredential ? '已配置 Bearer Token' : '无身份验证'}</span></td>
-          <td className={cell}><StatusTag label={server.revoked ? '已永久撤销' : server.active ? '已启用' : '已停用'} tone={server.revoked ? 'danger' : server.active ? 'success' : 'neutral'} /></td>
-          <td className={cell}><div className="flex flex-wrap items-center gap-1"><IconAction label={`编辑 ${server.name}`} disabled={server.revoked} onClick={() => setEditing(server)}><Pencil aria-hidden size={14} /></IconAction><Button variant="outline" type="button" className="rounded-md px-1.5 py-1 text-xs text-fg-muted hover:bg-surface-raised" onClick={() => setDetail(server)}>详情</Button><Button variant="outline" type="button" className="rounded-md px-1.5 py-1 text-xs text-fg-muted hover:bg-surface-raised disabled:opacity-40" disabled={!server.active || server.revoked || state.probe?.status === 'loading'} onClick={() => server.transport === 'stdio' ? setProbing(server) : void state.probeMcpServer(gateway, server.id, server.revision)}>探测</Button></div>{server.transport === 'stdio' && <p className="mt-1 text-[11px] text-fg-subtle">确认后启动探测容器</p>}</td>
-        </tr>)}</ExtensionTable></>}
+      {state.mcpStatus === 'idle' || state.mcpStatus === 'loading' ? <LoadingState label="正在读取 MCP 服务…" /> : state.mcpStatus === 'error' ? <ErrorState title="MCP 配置读取失败" description={state.mcpErrorMessage} onRetry={() => void state.loadMcpServers(gateway)} /> :
+        <DataTable active={active} rows={rows} columns={columns} ariaLabel="MCP 服务列表" getRowLabel={server => server.name}
+          query={search} onQueryChange={setSearch} filterMode="external" searchPlaceholder="搜索服务名称、地址或镜像"
+          selected={selected} onSelectionChange={setSelected} selectionKey="settings-mcp" busy={state.mcpSaving}
+          bulkActions={() => <TableBatchActions selectedRows={state.mcpServers.filter(server => selected.includes(server.id))} getRowId={server => server.id} getRowLabel={server => server.name} disabled={state.mcpSaving}
+            onSucceeded={ids => setSelected(current => current.filter(id => !ids.includes(id)))} actions={[true, false].map(enabled => ({ key: enabled ? 'enable' : 'disable', label: enabled ? '批量启用' : '批量停用',
+              eligible: (server: AgentMCPServer) => server.revoked ? '已永久撤销，不能启停' : server.active === enabled ? `服务已${enabled ? '启用' : '停用'}` : undefined,
+              execute: (items: readonly AgentMCPServer[]) => state.setMcpActive(gateway, items[0]!, enabled),
+            }))} />} />}
     </div>
     {probing && <McpProbeDialog key={`${probing.id}:${probing.revision}`} server={probing} visible={active} onClose={() => setProbing(undefined)} />}
     {editing !== undefined && <McpServerDialog server={editing === 'new' ? undefined : editing} visible={active} onClose={() => setEditing(undefined)} />}

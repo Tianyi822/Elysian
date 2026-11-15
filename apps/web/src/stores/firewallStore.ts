@@ -1,3 +1,4 @@
+import { securityActionFailure, securitySessionChanged, type SecurityActionResult } from './securityActionResult'
 import { captureAuthGeneration } from '../adapters/http/unauthorized'
 import type {
   FirewallForwardInput,
@@ -57,6 +58,7 @@ type FirewallState = {
   saving: boolean
   /** 开关切换的忙碌态：进行中忽略后续切换，防止两笔 in-flight 交错把界面拉离系统真实状态。 */
   toggling: boolean
+  unblockingIps: readonly string[]
   removingRuleIds: readonly string[]
   load: (gateway: ElysianGateway) => Promise<void>
   /** 变更成功后的静默重拉：不动 status，面板不闪加载态。 */
@@ -77,13 +79,13 @@ type FirewallState = {
   saveRule: (gateway: ElysianGateway, input: FirewallRuleInput) => Promise<boolean>
   saveIpRule: (gateway: ElysianGateway, input: FirewallIpRuleInput) => Promise<boolean>
   saveForward: (gateway: ElysianGateway, input: FirewallForwardInput) => Promise<boolean>
-  removeRule: (gateway: ElysianGateway, kind: 'port' | 'ip' | 'forward', ruleId: string) => Promise<void>
+  removeRule: (gateway: ElysianGateway, kind: 'port' | 'ip' | 'forward', ruleId: string) => Promise<SecurityActionResult>
   openScan: (gateway: ElysianGateway) => void
   closeScan: () => void
   refreshScan: (gateway: ElysianGateway) => Promise<void>
   toggleScanProtection: (gateway: ElysianGateway, enabled: boolean) => Promise<void>
   setScanConfig: (gateway: ElysianGateway, config: FirewallScanConfig) => Promise<void>
-  unblockIp: (gateway: ElysianGateway, ip: string) => Promise<void>
+  unblockIp: (gateway: ElysianGateway, ip: string) => Promise<SecurityActionResult>
   syncFromSystem: (gateway: ElysianGateway) => Promise<void>
 }
 
@@ -104,7 +106,17 @@ function sameReadSnapshot(snapshot: Pick<FirewallState, 'rules' | 'ipRules' | 'f
   return snapshot.rules === state.rules && snapshot.ipRules === state.ipRules && snapshot.forwards === state.forwards && snapshot.toggles === state.toggles
 }
 
-export const useFirewallStore = create<FirewallState>((set, get) => ({
+export const useFirewallStore = create<FirewallState>((set, get) => {
+  let actionAuth = captureAuthGeneration()
+  const syncActionGeneration = () => {
+    const auth = captureAuthGeneration()
+    if (auth !== actionAuth) {
+      actionAuth = auth
+      set({ removingRuleIds: [], unblockingIps: [] })
+    }
+    return auth
+  }
+  return ({
   status: 'idle',
   errorMessage: undefined,
   operationError: undefined,
@@ -131,10 +143,11 @@ export const useFirewallStore = create<FirewallState>((set, get) => ({
   syncing: false,
   saving: false,
   toggling: false,
+  unblockingIps: [],
   removingRuleIds: [],
 
   load(gateway) {
-    const auth = captureAuthGeneration()
+    const auth = syncActionGeneration()
     if (pendingLoad?.gateway === gateway && pendingLoad.auth === auth && sameReadSnapshot(pendingLoad.snapshot, get())) return pendingLoad.promise
     const hadData = get().status === 'ready'
     const operation = { gateway, auth, snapshot: { rules: get().rules, ipRules: get().ipRules, forwards: get().forwards, toggles: get().toggles }, promise: Promise.resolve() }
@@ -161,6 +174,7 @@ export const useFirewallStore = create<FirewallState>((set, get) => ({
   // 局部追加/替换会让列表落后于系统（看不见的行又让判重报错显得无中生有）。
   // 变更成功后以系统为唯一事实重拉；失败只报通知，列表保持原样。
   async refreshLists(gateway) {
+    const auth = captureAuthGeneration()
     try {
       const [toggles, rules, ipRules, forwards] = await Promise.all([
         gateway.firewall.toggles(),
@@ -168,8 +182,10 @@ export const useFirewallStore = create<FirewallState>((set, get) => ({
         gateway.firewall.listIpRules(),
         gateway.firewall.listForwards(),
       ])
+      if (auth !== captureAuthGeneration()) return
       set({ toggles, rules, ipRules, forwards, operationError: undefined })
     } catch (error) {
+      if (auth !== captureAuthGeneration()) return
       const message = error instanceof Error ? `列表同步失败：${error.message}` : '列表同步失败'
       set({ operationError: message })
       notify(message, 'danger')
@@ -319,7 +335,8 @@ export const useFirewallStore = create<FirewallState>((set, get) => ({
   },
 
   async removeRule(gateway, kind, ruleId) {
-    if (get().removingRuleIds.includes(ruleId)) return
+    const auth = syncActionGeneration()
+    if (get().removingRuleIds.includes(ruleId)) return { status: 'failed', error: '该规则正在删除，请等待完成' }
     const state = get()
     // 通知里带上规则摘要，删除哪条一目了然。
     const label =
@@ -346,15 +363,20 @@ export const useFirewallStore = create<FirewallState>((set, get) => ({
       } else {
         await gateway.firewall.removeForward(ruleId)
       }
+      if (auth !== captureAuthGeneration()) return securitySessionChanged()
       set((current) => ({ removingRuleIds: current.removingRuleIds.filter((id) => id !== ruleId) }))
       notify(`${label} 已删除${REAL_ACTION_LABEL}`)
       // 删除同样按规范成对移除 v4/v6 双生行，重拉才能反映完整后果。
       await get().refreshLists(gateway)
+      return { status: 'succeeded' }
     } catch (error) {
+      if (auth !== captureAuthGeneration()) return securitySessionChanged()
       set((current) => ({
         removingRuleIds: current.removingRuleIds.filter((id) => id !== ruleId),
       }))
       notify(error instanceof Error ? `删除失败：${error.message}` : '删除失败', 'danger')
+      if (hasUncertainOutcome(error)) await get().refreshLists(gateway)
+      return securityActionFailure(error, '删除失败')
     }
   },
 
@@ -380,8 +402,10 @@ export const useFirewallStore = create<FirewallState>((set, get) => ({
   /** 弹窗打开期间的轮询刷新：新出现的封锁 IP 顺手发通知（什么时候拦了谁）。 */
   async refreshScan(gateway) {
     if (get().scanStatus !== 'ready') return
+    const auth = captureAuthGeneration()
     try {
       const next = await gateway.firewall.scanProtection()
+      if (auth !== captureAuthGeneration()) return
       const known = new Set(get().scanProtection.blocked.map((entry) => entry.ip))
       set({ scanProtection: next, scanError: undefined })
       for (const entry of next.blocked) {
@@ -390,6 +414,7 @@ export const useFirewallStore = create<FirewallState>((set, get) => ({
         }
       }
     } catch (error) {
+      if (auth !== captureAuthGeneration()) return
       const message = error instanceof Error ? error.message : '刷新防扫描数据失败'
       if (get().scanError !== message) notify(`刷新防扫描数据失败：${message}`, 'danger')
       set({ scanError: message })
@@ -420,12 +445,21 @@ export const useFirewallStore = create<FirewallState>((set, get) => ({
   },
 
   async unblockIp(gateway, ip) {
+    const auth = syncActionGeneration()
+    if (get().unblockingIps.includes(ip)) return { status: 'failed', error: '该 IP 正在解封，请等待完成' }
+    set(state => ({ unblockingIps: [...state.unblockingIps, ip] }))
     try {
       const next = await gateway.firewall.unblockIp(ip)
-      set({ scanProtection: next })
+      if (auth !== captureAuthGeneration()) return securitySessionChanged()
+      set(state => ({ scanProtection: next, unblockingIps: state.unblockingIps.filter(item => item !== ip) }))
       notify(`已解封 IP ${ip}${REAL_ACTION_LABEL}`)
+      return { status: 'succeeded' }
     } catch (error) {
+      if (auth !== captureAuthGeneration()) return securitySessionChanged()
+      set(state => ({ unblockingIps: state.unblockingIps.filter(item => item !== ip) }))
       notify(error instanceof Error ? `解封失败：${error.message}` : '解封失败', 'danger')
+      if (hasUncertainOutcome(error)) await get().refreshScan(gateway)
+      return securityActionFailure(error, '解封失败')
     }
   },
 
@@ -445,4 +479,5 @@ export const useFirewallStore = create<FirewallState>((set, get) => ({
       set({ syncing: false })
     }
   },
-}))
+})
+})

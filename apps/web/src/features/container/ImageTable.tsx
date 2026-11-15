@@ -7,10 +7,10 @@ import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { useContainersStore } from '../../stores/containersStore'
 import { ImageReferenceLabel } from './ImageReferenceLabel'
-import './imageTable.css'
+import { DataTable, type Id } from '../../components/DataTable'
+import { TableBatchActions } from '../../components/TableBatchActions'
 import { Button } from '../../components/Button'
 
-const TH = 'whitespace-nowrap px-4 py-3 text-sm font-medium'
 const PULL_PHASE_TEXT = {
   preparing: '正在准备镜像层',
   downloading: '下载镜像层',
@@ -44,103 +44,42 @@ export function ImageTable({
   const cancelImagePull = useContainersStore((s) => s.cancelImagePull)
   const imagePullError = useContainersStore((s) => s.imagePullError)
   const dismissImagePullError = useContainersStore((s) => s.dismissImagePullError)
+  const [selected, setSelected] = useState<Id[]>([])
   const [pendingDelete, setPendingDelete] = useState<ContainerImage | null>(null)
 
   const docker = isDockerRuntime()
 
   return (
     <div className="relative rounded-xl min-w-0" aria-busy={busy}>
-      <section aria-label="镜像列表" className="image-panel panel-surface">
-        <div className="image-table-scroll table-scrollbar overflow-x-auto rounded-[inherit]">
-          <table className="image-table w-full table-fixed text-sm" aria-label="镜像列表">
-            <colgroup>
-              <col className="image-name-column" />
-              <col className="image-size-column" />
-              <col className="image-date-column" />
-              <col className="image-usage-column" />
-              <col className="image-action-column" />
-            </colgroup>
-            <thead>
-              <tr className="border-b border-line text-left text-fg-muted">
-                <th scope="col" className={TH}>名称:标签</th>
-                <th scope="col" className={`${TH} text-right`}>大小</th>
-                <th scope="col" className={TH}>拉取时间</th>
-                <th scope="col" className={`${TH} text-right`}>引用数</th>
-                <th scope="col" className={TH}>操作</th>
-              </tr>
-            </thead>
-            <tbody className="divide-y divide-line">
-              {images.map((image) => {
-                const usage = imageUsageCount(containers, image.id)
-                const removing = removingImageIds.includes(image.id)
-                const deleteTitle =
-                  usage > 0
-                    ? `被 ${usage} 个容器引用，无法删除`
-                    : removing
-                      ? '删除中…'
-                      : `删除 ${image.name}:${image.tag}`
-                return (
-                  <tr key={image.id} className="transition-colors hover:bg-surface-raised/60">
-                    <td className="px-4 py-3">
-                      {/* 两行布局：名称:标签为主信息，摘要作次要行补足辨识度。 */}
-                      <div className="truncate">
-                        <ImageReferenceLabel name={image.name} tag={image.tag} />
-                        {image.otherTags && image.otherTags.length > 0 ? (
-                          <span
-                            className="ml-2 text-xs text-fg-muted"
-                            title={image.otherTags.join('、')}
-                          >
-                            另有 {image.otherTags.length} 个标签
-                          </span>
-                        ) : null}
-                      </div>
-                      <div
-                        className="truncate font-mono text-xs text-fg-subtle"
-                        title={image.digest}
-                      >
-                        {image.digest}
-                      </div>
-                    </td>
-                    <td className="whitespace-nowrap px-4 py-3 text-right tabular-nums">{image.sizeMb} MB</td>
-                    <td className="whitespace-nowrap px-4 py-3 tabular-nums text-fg-muted">
-                      {image.pulledAt ? image.pulledAt.slice(0, 10) : '—'}
-                    </td>
-                    <td className="px-4 py-3 text-right">
-                      {usage > 0 ? (
-                        <span
-                          className="inline-flex items-center gap-1 rounded-full border border-control-line bg-surface-raised px-2 py-0.5 text-xs text-fg"
-                          title={`${image.name}:${image.tag} 被 ${usage} 个容器引用`}
-                        >
-                          <span className="font-medium tabular-nums">{usage}</span>
-                          <span className="text-fg-muted">个容器</span>
-                        </span>
-                      ) : (
-                        <span className="text-xs text-fg-subtle">未使用</span>
-                      )}
-                    </td>
-                    <td className="px-4 py-3">
-                      <Button variant="destructive"
-                        type="button"
-                        disabled={usage > 0 || removing}
-                        title={deleteTitle}
-                        onClick={() => setPendingDelete(image)}
-                        className={[
-                          'action-button gap-1 border px-2 py-1 text-xs transition-colors',
-                          usage > 0 || removing
-                            ? 'border-line text-fg-subtle disabled:cursor-not-allowed disabled:opacity-60'
-                            : 'border-line text-fg-muted hover:border-danger/50 hover:bg-danger/10 hover:text-danger',
-                        ].join(' ')}
-                      >
-                        <Trash2 aria-hidden size={13} />
-                        删除
-                      </Button>
-                    </td>
-                  </tr>
-                )
-              })}
-            </tbody>
-          </table>
-        </div>
+      <section>
+        <DataTable rows={images} ariaLabel="镜像列表" selected={selected} onSelectionChange={setSelected} busy={busy}
+          getRowLabel={image => `${image.name}:${image.tag}`}
+          searchPlaceholder="搜索镜像"
+          columns={[
+            { key: 'name', header: '名称:标签', primary: true, width: 'minmax(240px,2fr)', accessor: image => `${image.name}:${image.tag}`, cell: image => <>
+              <div className="truncate"><ImageReferenceLabel name={image.name} tag={image.tag} />{image.otherTags?.length ? <span className="ml-2 text-xs text-fg-muted" title={image.otherTags.join('、')}>另有 {image.otherTags.length} 个标签</span> : null}</div>
+              <div className="truncate font-mono text-xs text-fg-subtle" title={image.digest}>{image.digest}</div>
+            </> },
+            { key: 'sizeMb', header: '大小', align: 'right', width: '110px', accessor: image => image.sizeMb, cell: image => <span className="tabular-nums">{image.sizeMb} MB</span> },
+            { key: 'pulledAt', header: '拉取时间', width: '130px', accessor: image => image.pulledAt ? new Date(image.pulledAt) : null, cell: image => <span className="tabular-nums text-fg-muted">{image.pulledAt ? image.pulledAt.slice(0, 10) : '—'}</span> },
+            { key: 'usage', header: '引用数', align: 'right', width: '120px', accessor: image => imageUsageCount(containers, image.id), cell: image => imageUsageCount(containers, image.id) > 0 ? <span className="inline-flex items-center gap-1 rounded-full border border-control-line bg-surface-raised px-2 py-0.5 text-xs text-fg" title={`${image.name}:${image.tag} 被 ${imageUsageCount(containers, image.id)} 个容器引用`}><span className="font-medium tabular-nums">{imageUsageCount(containers, image.id)}</span><span className="text-fg-muted">个容器</span></span> : <span className="text-xs text-fg-subtle">未使用</span> },
+            { key: 'actions', header: '操作', sortable: false, width: '110px', cell: image => {
+              const usage = imageUsageCount(containers, image.id), removing = removingImageIds.includes(image.id)
+              return <Button variant="destructive" type="button" disabled={usage > 0 || removing} title={usage > 0 ? `被 ${usage} 个容器引用，无法删除` : removing ? '删除中…' : `删除 ${image.name}:${image.tag}`} onClick={() => setPendingDelete(image)} className="gap-1 px-2 text-xs"><Trash2 aria-hidden size={13} />删除</Button>
+            } },
+          ]}
+          bulkActions={ids => <TableBatchActions selectedRows={images.filter(image => ids.includes(image.id))} getRowId={image => image.id}
+            getRowLabel={image => [`${image.name}:${image.tag}`, ...(image.otherTags ?? [])].join('、')}
+            onSucceeded={done => setSelected(current => current.filter(id => !done.includes(id)))} disabled={removingImageIds.length > 0}
+            actions={[{ key: 'remove', label: '删除', danger: true, description: '将删除所选镜像及其列出的全部标签。被容器引用的镜像会跳过。',
+              eligible: image => imageUsageCount(containers, image.id) > 0 ? '镜像仍被容器引用' : removingImageIds.includes(image.id) ? '正在删除' : undefined,
+              execute: async group => {
+                const image = group[0]!
+                if (imageUsageCount(useContainersStore.getState().containers, image.id) > 0) return { status: 'failed', error: '镜像仍被容器引用' }
+                return removeImage(gateway, image.id)
+              },
+            }]} />}
+        />
         {imagePullError ? (
           <div className="border-t border-line px-4 py-3">
             <div role="alert" className="flex items-start gap-3">

@@ -66,7 +66,7 @@ describe('平台登录日志面板', () => {
     await openLoginTab()
 
     const table = within(await screen.findByRole('region', { name: '登录日志表' })).getByRole('table')
-    expect(within(table).getAllByRole('columnheader').map((cell) => cell.textContent)).toEqual([
+    expect(within(table).getAllByRole('columnheader').slice(1).map((cell) => cell.textContent)).toEqual([
       'IP 地址',
       '归属地',
       '用户代理',
@@ -78,7 +78,7 @@ describe('平台登录日志面板', () => {
     expect(rows).toHaveLength(SEED_LOGIN_LOGS.length)
 
     const first = SEED_LOGIN_LOGS[0]!
-    const cells = within(rows[0] as HTMLElement).getAllByRole('cell')
+    const cells = within(rows[0] as HTMLElement).getAllByRole('cell').slice(1)
     expect(cells[0]).toHaveTextContent(first.ip)
     expect(cells[1]).toHaveTextContent(first.location)
     expect(cells[2]).toHaveTextContent('Chrome/152.0.0.0')
@@ -191,7 +191,7 @@ describe('平台登录日志面板', () => {
     renderApp('/logs')
     await openLoginTab()
     await screen.findByRole('region', { name: '登录日志表' })
-    expect(screen.getByRole('status')).toHaveTextContent('演示数据')
+    expect(screen.getByText('演示数据').closest('[role="status"]')).not.toBeNull()
   })
 
   it('筛选与搜索无匹配时给出表内空提示', async () => {
@@ -203,11 +203,13 @@ describe('平台登录日志面板', () => {
     await user.type(screen.getByLabelText('搜索登录日志'), '绝不存在的关键字')
     await waitFor(() =>
       expect(
-        within(screen.getByRole('region', { name: '登录日志表' })).getByText(
-          '没有匹配的登录记录，换个关键词或清空筛选',
-        ),
+        within(screen.getByRole('region', { name: '登录日志表' })).getByText('没有结果'),
       ).toBeInTheDocument(),
     )
+    const table = within(screen.getByRole('region', { name: '登录日志表' })).getByRole('table')
+    await waitFor(() => expect(loginRows(table)).toHaveLength(0))
+    expect(screen.getByRole('searchbox', { name: '搜索登录日志' })).toHaveValue('绝不存在的关键字')
+    expect(screen.getByRole('button', { name: '清除搜索' })).toBeInTheDocument()
   })
 
   it('页面未关闭时往返其他页面仍停在上次页签，重新打开面板回到第一个', async () => {

@@ -14,6 +14,7 @@ import type { ElysianGateway } from '../contracts/adapters'
 import { AgentHttpError } from '../adapters/http/agent/agentShared'
 import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
 import { useMessageStore } from './messageStore'
+import { tableBatchFailure as batchFailure, type TableBatchOutcome as BatchMutationResult } from '../utils/tableBatch'
 
 /*
  * 技能与 MCP 域界面状态。数据一律经 gateway.agentExtensions 的 adapter 取，
@@ -112,6 +113,8 @@ export type AgentExtensionsState = {
   loadSkillFile(gateway: ElysianGateway, skillId: string, revision: number, path: string): Promise<void>
   closeSkillDetail(): void
   setSkillEnabled(gateway: ElysianGateway, skillId: string, expectedRevision: number, enabled: boolean): Promise<void>
+  setSkillEnabledResult(gateway: ElysianGateway, skill: AgentSkill, enabled: boolean): Promise<BatchMutationResult>
+  deleteSkillResult(gateway: ElysianGateway, skill: AgentSkill): Promise<BatchMutationResult>
   requestDeleteSkill(target: DeleteSkillTarget): void
   cancelDeleteSkill(): void
   confirmDeleteSkill(gateway: ElysianGateway): Promise<void>
@@ -128,6 +131,7 @@ export type AgentExtensionsState = {
   loadMcpServers(gateway: ElysianGateway, options?: { silent?: boolean }): Promise<void>
   createMcpServer(gateway: ElysianGateway, input: AgentMCPServerInput): Promise<boolean>
   updateMcpServer(gateway: ElysianGateway, serverId: string, input: AgentUpdateMCPServerInput): Promise<boolean>
+  setMcpActive(gateway: ElysianGateway, server: AgentMCPServer, active: boolean): Promise<BatchMutationResult>
   clearMcpSaveError(): void
   probeMcpServer(gateway: ElysianGateway, serverId: string, revision: number): Promise<void>
   loadMcpCatalog(gateway: ElysianGateway, serverId: string, revision: number, digest?: string): Promise<void>
@@ -284,7 +288,7 @@ export const useAgentExtensionsStore = create<AgentExtensionsState>((set, get) =
       const generation = epoch
       const auth = captureAuthGeneration()
       const isCurrent = () => generation === epoch && auth === captureAuthGeneration()
-      if (get().togglingSkillIds.includes(skillId)) return
+      if (get().deletingSkill || get().togglingSkillIds.includes(skillId)) return
       set({ togglingSkillIds: [...get().togglingSkillIds, skillId] })
       try {
         const item = await gateway.agentExtensions.setSkillEnabled(skillId, expectedRevision, enabled)
@@ -301,6 +305,40 @@ export const useAgentExtensionsStore = create<AgentExtensionsState>((set, get) =
         notify('danger', messageOf(error))
       }
     },
+    async setSkillEnabledResult(gateway, skill, enabled) {
+      const current = get().skills.find(item => item.id === skill.id)
+      if (!current || current.revision !== skill.revision) return { status: 'failed', error: 'Skill 修订已变化，请重新选择后重试' }
+      if (get().deletingSkill || get().togglingSkillIds.includes(skill.id)) return { status: 'failed', error: 'Skill 正在修改，请稍后重试' }
+      const generation = epoch, auth = captureAuthGeneration()
+      const isCurrent = () => generation === epoch && auth === captureAuthGeneration()
+      set({ togglingSkillIds: [...get().togglingSkillIds, skill.id] })
+      try {
+        const item = await gateway.agentExtensions.setSkillEnabled(skill.id, skill.revision, enabled)
+        if (!isCurrent()) return { status: 'unknown', error: '登录状态已变化，请重新读取 Skill 核实结果' }
+        set({ skills: get().skills.map(entry => entry.id === item.id && entry.revision <= item.revision ? item : entry) })
+        return { status: 'succeeded' }
+      } catch (error) {
+        if (isCurrent() && error instanceof AgentHttpError && error.status === 409) void get().loadSkills(gateway, { silent: true })
+        return batchFailure(error)
+      } finally { if (isCurrent()) set({ togglingSkillIds: get().togglingSkillIds.filter(id => id !== skill.id) }) }
+    },
+    async deleteSkillResult(gateway, skill) {
+      const current = get().skills.find(item => item.id === skill.id)
+      if (!current || current.revision !== skill.revision) return { status: 'failed', error: 'Skill 修订已变化，请重新选择后重试' }
+      if (get().deletingSkill || get().togglingSkillIds.includes(skill.id)) return { status: 'failed', error: 'Skill 正在修改，请稍后重试' }
+      const generation = epoch, auth = captureAuthGeneration()
+      const isCurrent = () => generation === epoch && auth === captureAuthGeneration()
+      set({ deletingSkill: true })
+      try {
+        await gateway.agentExtensions.deleteSkill(skill.id, skill.revision)
+        if (!isCurrent()) return { status: 'unknown', error: '登录状态已变化，请重新读取 Skill 核实结果' }
+        set({ skills: get().skills.filter(item => item.id !== skill.id || item.revision > skill.revision) })
+        return { status: 'succeeded' }
+      } catch (error) {
+        if (isCurrent() && error instanceof AgentHttpError && error.status === 409) void get().loadSkills(gateway, { silent: true })
+        return batchFailure(error)
+      } finally { if (isCurrent()) set({ deletingSkill: false }) }
+    },
     requestDeleteSkill(target) {
       set({ deleteTarget: target })
     },
@@ -312,7 +350,7 @@ export const useAgentExtensionsStore = create<AgentExtensionsState>((set, get) =
       const auth = captureAuthGeneration()
       const isCurrent = () => generation === epoch && auth === captureAuthGeneration()
       const target = get().deleteTarget
-      if (target === null || get().deletingSkill) return
+      if (target === null || get().deletingSkill || get().togglingSkillIds.includes(target.skillId)) return
       set({ deletingSkill: true })
       try {
         await gateway.agentExtensions.deleteSkill(target.skillId, target.revision)
@@ -543,6 +581,36 @@ export const useAgentExtensionsStore = create<AgentExtensionsState>((set, get) =
         if (error instanceof AgentHttpError && error.status === 409) void get().loadMcpServers(gateway, { silent: true })
         return false
       }
+    },
+    async setMcpActive(gateway, server, active) {
+      const current = get().mcpServers.find(item => item.id === server.id)
+      if (!current || current.revision !== server.revision) return { status: 'failed', error: 'MCP 服务修订已变化，请重新选择后重试' }
+      if (current.revoked) return { status: 'failed', error: 'MCP 服务已永久撤销，不能启停' }
+      if (get().mcpSaving) return { status: 'failed', error: 'MCP 配置正在保存，请稍后重试' }
+      const input: AgentUpdateMCPServerInput = {
+        name: current.name, transport: current.transport, active, revoked: current.revoked, expectedRevision: current.revision,
+        ...(current.transport === 'streamable-http' ? { url: current.url } : { stdio: current.stdio && {
+          image: current.stdio.image, command: current.stdio.command,
+          ...(current.stdio.requestedAccess !== undefined ? { requestedAccess: current.stdio.requestedAccess } : {}),
+          ...(current.stdio.grantId !== undefined ? { grantId: current.stdio.grantId } : {}),
+          ...(current.stdio.grantRevision !== undefined ? { grantRevision: current.stdio.grantRevision } : {}),
+        } }),
+      }
+      const generation = epoch, auth = captureAuthGeneration()
+      const isCurrent = () => generation === epoch && auth === captureAuthGeneration()
+      set({ mcpSaving: true, mcpSaveError: null })
+      try {
+        const item = await gateway.agentExtensions.updateMcpServer(server.id, input)
+        if (!isCurrent()) return { status: 'unknown', error: '登录状态已变化，请重新读取 MCP 服务核实结果' }
+        set({ mcpServers: get().mcpServers.map(entry => entry.id === item.id && entry.revision <= item.revision ? item : entry) })
+        return { status: 'succeeded' }
+      } catch (error) {
+        if (isCurrent()) {
+          set({ mcpSaveError: messageOf(error) })
+          if (error instanceof AgentHttpError && error.status === 409) void get().loadMcpServers(gateway, { silent: true })
+        }
+        return batchFailure(error)
+      } finally { if (isCurrent()) set({ mcpSaving: false }) }
     },
     clearMcpSaveError() {
       set({ mcpSaveError: null })

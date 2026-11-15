@@ -336,8 +336,8 @@ describe('镜像视图', () => {
     // 信息密度：名称行补摘要，未引用的镜像明说「未使用」而不是干巴巴的 0。
     expect(table.textContent).toContain('sha256:5d2fa6b8c417')
     expect(within(table).getByText('未使用')).toBeInTheDocument()
-    // 表头与正文同尺寸（text-sm），只靠颜色与字重区分层级。
-    expect(within(table).getByText('名称:标签')).toHaveClass('text-sm')
+    // 官方表头提供三态排序，同时保留原列名称。
+    expect(within(table).getByRole('columnheader', { name: '名称:标签' })).toHaveAttribute('aria-sort', 'none')
 
     await user.click(screen.getByRole('button', { name: '容器' }))
     expect(screen.getByRole('list', { name: '容器列表' })).toBeInTheDocument()

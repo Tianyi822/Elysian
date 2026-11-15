@@ -1,11 +1,12 @@
-import { useEffect, useId, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { useNavigate, useParams } from 'react-router'
 import { FILE_KIND_LABELS } from '@elysian/contracts'
 import type { FileEntry, FileSearchResult } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { formatDateTime } from '../../components/format'
 import { ArrowUpFromLine, File, Folder, Loader2 } from '../../components/icons'
-import { SearchInput } from '../../components/SearchInput'
+import { DataTable, type DataTableColumn } from '../../components/DataTable'
+import { TableBatchActions } from '../../components/TableBatchActions'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
 import { RefreshButton } from '../../components/RefreshState'
 import { useFilesStore } from '../../stores/filesStore'
@@ -86,8 +87,6 @@ export function FilesPage() {
     if (searchKeyword.trim()) void search(gateway, searchKeyword)
   }
 
-  const isSearching = searchKeyword.trim().length > 0
-
   return (
     <section aria-label="文件管理">
       <div className={`${CTL_TOOLBAR} mb-4 flex flex-wrap items-center justify-between gap-3`}>
@@ -113,7 +112,6 @@ export function FilesPage() {
           ) : null}
           <RefreshButton onPress={() => void load(gateway, path)} busy={reloading} />
         </div>
-        {status === 'ready' ? <FilesSearchBox onSearch={(keyword) => void search(gateway, keyword)} /> : null}
       </div>
       <input
         ref={uploadInput}
@@ -129,59 +127,34 @@ export function FilesPage() {
       />
       {status === 'ready' && errorMessage ? <p role="alert" className="mb-3 text-xs text-danger">刷新失败：{errorMessage}。已保留上次读取结果。<Button variant="link" type="button" className="ml-2 underline" onClick={() => void load(gateway, path)}>重试</Button></p> : null}
       <FilesBackgroundMenu onUpload={() => chooseUpload(path)} disabled={status !== 'ready' || transferBusy}>
-        {isSearching ? (
-          searching ? (
-            <LoadingState label="正在搜索…" />
-          ) : searchResults.length === 0 ? (
-            <EmptyState
-              title="没有找到匹配的条目"
-              description={`可搜索的范围内没有名称或路径包含「${searchKeyword.trim()}」的条目，换个关键词试试。`}
-            />
-          ) : (
-            <SearchResultsTable
-              key={searchKeyword}
-              results={searchResults}
-              onOpen={go}
-              onRename={openRename}
-              onPermission={openPermission}
-              onDownload={onDownload}
-              onUpload={onUpload}
-              transferBusy={transferBusy}
-            />
-          )
+        {status === 'loading' || status === 'idle' ? (
+          <LoadingState label="正在读取目录内容…" />
+        ) : status === 'error' ? (
+          <ErrorState
+            title="目录读取失败"
+            description={errorMessage}
+            action={
+              <Button variant="primary" type="button" onClick={() => go('/')} className={TOOLBAR_ACTION_CLASS}>
+                返回根目录
+              </Button>
+            }
+          />
         ) : (
-          <>
-            {status === 'loading' || status === 'idle' ? (
-              <LoadingState label="正在读取目录内容…" />
-            ) : status === 'error' ? (
-              <ErrorState
-                title="目录读取失败"
-                description={errorMessage}
-                action={
-                  <Button variant="primary" type="button" onClick={() => go('/')} className={TOOLBAR_ACTION_CLASS}>
-                    返回根目录
-                  </Button>
-                }
-              />
-            ) : entries.length === 0 ? (
-              <EmptyState title="此目录为空" description="这个目录下没有任何文件或子目录。" />
-            ) : (
-              /* 换目录即换表：选中态随目录清空，不把上一个目录的选中行带进新目录。 */
-              <div className="relative rounded-xl" aria-busy={reloading}>
-                <FileTable
-                  key={path}
-                  entries={entries}
-                  path={path}
-                  onOpen={go}
-                  onRename={openRename}
-                  onPermission={openPermission}
-                  onDownload={onDownload}
-                  onUpload={onUpload}
-                  transferBusy={transferBusy}
-                />
-              </div>
-            )}
-          </>
+          <FileTable
+            entries={entries}
+            results={searchResults}
+            path={path}
+            keyword={searchKeyword}
+            searching={searching}
+            reloading={reloading}
+            onSearch={(keyword) => void search(gateway, keyword)}
+            onOpen={go}
+            onRename={openRename}
+            onPermission={openPermission}
+            onDownload={onDownload}
+            onUpload={onUpload}
+            transferBusy={transferBusy}
+          />
         )}
       </FilesBackgroundMenu>
       <FileDownloadDialog />
@@ -204,35 +177,17 @@ export function FilesPage() {
   )
 }
 
-/** 搜索框：占原计数位置；输入即全树检索，清空即回到目录列表。 */
-function FilesSearchBox({ onSearch }: { onSearch(keyword: string): void }) {
-  const keyword = useFilesStore((s) => s.searchKeyword)
-  const resultCount = useFilesStore((s) => s.searchResults.length)
-  const searching = useFilesStore((s) => s.searching)
-  const inputId = useId()
-
-  return (
-    <div className="flex items-center gap-3">
-      {keyword.trim() && !searching ? (
-        <p className="text-xs tabular-nums text-fg-muted">{resultCount} 个匹配</p>
-      ) : null}
-      <div className="relative w-full sm:w-64">
-        <SearchInput
-          id={inputId}
-          label="搜索文件或目录"
-          value={keyword}
-          onChange={onSearch}
-          placeholder="搜索文件或目录"
-          className="w-full"
-        />
-      </div>
-    </div>
-  )
-}
+/** 目录与全树搜索共用常驻外壳；输入与表头不会因搜索结果更新而卸载。 */
+type FileTableRow = FileEntry | FileSearchResult
 
 function FileTable({
   entries,
+  results,
   path,
+  keyword,
+  searching,
+  reloading,
+  onSearch,
   onOpen,
   onRename,
   onPermission,
@@ -241,153 +196,12 @@ function FileTable({
   transferBusy,
 }: {
   entries: readonly FileEntry[]
-  path: string
-  onOpen(path: string): void
-  onRename(entry: FileEntry, entryPath: string): void
-  onPermission(entry: FileEntry, entryPath: string): void
-  onDownload(entry: FileEntry, entryPath: string): void
-  onUpload(entry: FileEntry, entryPath: string): void
-  transferBusy: boolean
-}) {
-  const ordered = useMemo(() => orderFileEntries(entries), [entries])
-  const [selectedName, setSelectedName] = useState<string | null>(null)
-  const rowRefs = useRef(new Map<string, HTMLTableRowElement>())
-
-  const moveSelection = (fromName: string, delta: number) => {
-    const index = ordered.findIndex((entry) => entry.name === fromName)
-    const next = ordered[index + delta]
-    if (!next) return
-    setSelectedName(next.name)
-    rowRefs.current.get(next.name)?.focus()
-  }
-
-  return (
-    <div
-      role="region"
-      aria-label="文件列表"
-      className="overflow-x-auto panel-surface"
-    >
-      {/* 46rem 是五列都不挤的下限：低于它整表横向滚动，名称列钉在左边陪滚。 */}
-      <table className="w-full min-w-[46rem] table-fixed border-separate border-spacing-0 text-left text-sm">
-        <colgroup>
-          <col className="w-[32%]" />
-          <col className="w-[22%]" />
-          <col className="w-[12%]" />
-          <col className="w-[20%]" />
-          <col className="w-[14%]" />
-        </colgroup>
-        <thead>
-          <tr>
-            {['名称', '修改时间', '类型', '权限/所有者', '大小'].map((label, index) => (
-              <th
-                key={label}
-                scope="col"
-                className={`border-b border-line bg-surface px-3 py-2.5 text-xs font-medium text-fg-muted ${
-                  index === 0 ? 'sticky left-0 z-20 border-r' : ''
-                }`}
-              >
-                {label}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {ordered.map((entry, index) => {
-            const selected = selectedName === entry.name
-            const openable = entry.kind === 'directory'
-            const entryPath = joinFilesPath(path, entry.name)
-            return (
-              <FileRowMenu
-                key={entry.name}
-                entry={entry}
-                entryPath={entryPath}
-                onRename={onRename}
-                onPermission={onPermission}
-                onDownload={onDownload}
-                onUpload={onUpload}
-                transferBusy={transferBusy}
-              >
-                <tr
-                  ref={(element) => {
-                    if (element) rowRefs.current.set(entry.name, element)
-                    else rowRefs.current.delete(entry.name)
-                  }}
-                  tabIndex={selected || (selectedName === null && index === 0) ? 0 : -1}
-                  aria-selected={selected}
-                  onClick={() => setSelectedName(entry.name)}
-                  onDoubleClick={() => openable && onOpen(entryPath)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'ArrowDown') {
-                      event.preventDefault()
-                      moveSelection(entry.name, 1)
-                    } else if (event.key === 'ArrowUp') {
-                      event.preventDefault()
-                      moveSelection(entry.name, -1)
-                    } else if (event.key === 'Enter' && openable) {
-                      onOpen(entryPath)
-                    }
-                  }}
-                  title={openable ? '双击打开目录' : undefined}
-                  className={`group whitespace-nowrap transition-colors hover:bg-surface-raised ${
-                    selected ? 'bg-surface-raised' : ''
-                  } ${openable ? 'cursor-pointer' : ''}`}
-                >
-                  <td
-                    className={`sticky left-0 z-10 border-b border-r border-line px-3 py-2.5 font-medium group-hover:bg-surface-raised ${
-                      selected ? 'bg-surface-raised' : 'bg-surface'
-                    }`}
-                  >
-                    <span className="flex min-w-0 items-center gap-2">
-                      {openable ? (
-                        <Folder aria-hidden size={15} className="shrink-0 text-fg-subtle" />
-                      ) : (
-                        <File aria-hidden size={15} className="shrink-0 text-fg-subtle" />
-                      )}
-                      <span className="truncate font-medium text-fg" title={entry.name}>
-                        {entry.name}
-                      </span>
-                    </span>
-                  </td>
-                  <td className="border-b border-line px-3 py-2.5 tabular-nums text-fg-muted">
-                    <time dateTime={entry.modifiedAt}>{formatDateTime(entry.modifiedAt)}</time>
-                  </td>
-                  <td className="border-b border-line px-3 py-2.5 text-fg-muted">
-                    {FILE_KIND_LABELS[entry.kind]}
-                  </td>
-                  <td className="border-b border-line px-3 py-2.5 tabular-nums text-fg-muted">
-                    {entry.mode}/{entry.owner}
-                  </td>
-                  <td className="border-b border-line px-3 py-2.5 tabular-nums text-fg-muted">
-                    {entry.kind === 'file' && entry.sizeBytes !== undefined ? (
-                      formatEntrySize(entry.sizeBytes)
-                    ) : (
-                      <DirectorySizeCell dirPath={entryPath} name={entry.name} />
-                    )}
-                  </td>
-                </tr>
-              </FileRowMenu>
-            )
-          })}
-        </tbody>
-      </table>
-    </div>
-  )
-}
-
-/**
- * 搜索结果表：全树匹配，结果可能来自任何目录，因此「所在位置」取代修改时间与权限列。
- * 双击目录进入该目录，双击文件跳到其父目录；右键菜单携带真实路径，操作照常可用。
- */
-function SearchResultsTable({
-  results,
-  onOpen,
-  onRename,
-  onPermission,
-  onDownload,
-  onUpload,
-  transferBusy,
-}: {
   results: readonly FileSearchResult[]
+  path: string
+  keyword: string
+  searching: boolean
+  reloading: boolean
+  onSearch(keyword: string): void
   onOpen(path: string): void
   onRename(entry: FileEntry, entryPath: string): void
   onPermission(entry: FileEntry, entryPath: string): void
@@ -395,104 +209,153 @@ function SearchResultsTable({
   onUpload(entry: FileEntry, entryPath: string): void
   transferBusy: boolean
 }) {
-  const [selectedPath, setSelectedPath] = useState<string | null>(null)
+  const gateway = useGateway()
+  const isSearching = keyword.trim().length > 0
+  const [focusedPath, setFocusedPath] = useState<string | null>(null)
+  const [selected, setSelected] = useState<(string | number)[]>([])
+  const sizes = useFilesStore((state) => state.sizes)
+  const computingPaths = useFilesStore((state) => state.computingPaths)
+  const rows = useMemo<readonly FileTableRow[]>(
+    () => isSearching ? (searching ? [] : results) : orderFileEntries(entries),
+    [entries, results, isSearching, searching],
+  )
+  const rowPath = (entry: FileTableRow) => 'path' in entry ? entry.path : joinFilesPath(path, entry.name)
+  const selectionKey = `${path}\0${keyword}`
 
-  const open = (result: FileSearchResult) =>
-    onOpen(result.kind === 'directory' ? result.path : parentFilesPath(result.path))
+  useEffect(() => {
+    setSelected([])
+    setFocusedPath(null)
+  }, [selectionKey])
+
+  useEffect(() => {
+    if (searching) return
+    const ids = new Set(rows.map((entry) => 'path' in entry ? entry.path : joinFilesPath(path, entry.name)))
+    setSelected((previous) => previous.every((id) => ids.has(String(id)))
+      ? previous
+      : previous.filter((id) => ids.has(String(id))))
+    setFocusedPath((previous) => previous && ids.has(previous) ? previous : null)
+  }, [rows, path, searching])
+
+  const open = (entry: FileTableRow) => {
+    const entryPath = rowPath(entry)
+    if (isSearching) onOpen(entry.kind === 'directory' ? entryPath : parentFilesPath(entryPath))
+    else if (entry.kind === 'directory') onOpen(entryPath)
+  }
+  const selectedRows = rows.filter((entry) => selected.includes(rowPath(entry)))
+  const columns: DataTableColumn<FileTableRow>[] = [
+    {
+      key: 'name',
+      header: '名称',
+      primary: true,
+      width: isSearching ? 'minmax(0,1.5fr)' : 'minmax(0,1.8fr)',
+      accessor: (entry) => entry.name,
+      cell: (entry) => (
+        <span className="flex min-w-0 items-center gap-2">
+          {entry.kind === 'directory'
+            ? <Folder aria-hidden size={15} className="shrink-0 text-fg-subtle" />
+            : <File aria-hidden size={15} className="shrink-0 text-fg-subtle" />}
+          <span className="truncate font-medium text-fg" title={entry.name}>{entry.name}</span>
+        </span>
+      ),
+    },
+    ...(isSearching ? [{
+      key: 'location',
+      header: '所在位置',
+      width: 'minmax(0,2.1fr)',
+      accessor: (entry: FileTableRow) => parentFilesPath(rowPath(entry)),
+      cell: (entry: FileTableRow) => <span className="block truncate font-mono text-xs text-fg-muted" title={rowPath(entry)}>{parentFilesPath(rowPath(entry))}</span>,
+    }] : [{
+      key: 'modifiedAt',
+      header: '修改时间',
+      width: 'minmax(0,1.4fr)',
+      accessor: (entry: FileTableRow) => new Date(entry.modifiedAt),
+      cell: (entry: FileTableRow) => <time className="tabular-nums text-fg-muted" dateTime={entry.modifiedAt}>{formatDateTime(entry.modifiedAt)}</time>,
+    }]),
+    {
+      key: 'kind',
+      header: '类型',
+      width: 'minmax(0,.7fr)',
+      accessor: (entry) => FILE_KIND_LABELS[entry.kind],
+      cell: (entry) => <span className="text-fg-muted">{FILE_KIND_LABELS[entry.kind]}</span>,
+    },
+    ...(!isSearching ? [{
+      key: 'permission',
+      header: '权限/所有者',
+      width: 'minmax(0,1.2fr)',
+      accessor: (entry: FileTableRow) => `${entry.mode}/${entry.owner}`,
+      cell: (entry: FileTableRow) => <span className="tabular-nums text-fg-muted">{entry.mode}/{entry.owner}</span>,
+    }] : []),
+    {
+      key: 'sizeBytes',
+      header: '大小',
+      width: 'minmax(0,.9fr)',
+      accessor: (entry) => entry.sizeBytes ?? sizes[rowPath(entry)],
+      cell: (entry) => entry.kind === 'file' && entry.sizeBytes !== undefined
+        ? <span className="tabular-nums text-fg-muted">{formatEntrySize(entry.sizeBytes)}</span>
+        : <DirectorySizeCell dirPath={rowPath(entry)} name={entry.name} />,
+    },
+  ]
 
   return (
-    <div
-      role="region"
-      aria-label="搜索结果"
-      className="overflow-x-auto panel-surface"
-    >
-      <table className="w-full min-w-[42rem] table-fixed border-separate border-spacing-0 text-left text-sm">
-        <colgroup>
-          <col className="w-[30%]" />
-          <col className="w-[42%]" />
-          <col className="w-[12%]" />
-          <col className="w-[16%]" />
-        </colgroup>
-        <thead>
-          <tr>
-            {['名称', '所在位置', '类型', '大小'].map((label, index) => (
-              <th
-                key={label}
-                scope="col"
-                className={`border-b border-line bg-surface px-3 py-2.5 text-xs font-medium text-fg-muted ${
-                  index === 0 ? 'sticky left-0 z-20 border-r' : ''
-                }`}
-              >
-                {label}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {results.map((result) => {
-            const selected = selectedPath === result.path
-            return (
-              <FileRowMenu
-                key={result.path}
-                entry={result}
-                entryPath={result.path}
-                onRename={onRename}
-                onPermission={onPermission}
-                onDownload={onDownload}
-                onUpload={onUpload}
-                transferBusy={transferBusy}
-              >
-                <tr
-                  tabIndex={0}
-                  aria-selected={selected}
-                  onClick={() => setSelectedPath(result.path)}
-                  onDoubleClick={() => open(result)}
-                  onKeyDown={(event) => {
-                    if (event.key === 'Enter') open(result)
-                  }}
-                  title={result.kind === 'directory' ? '双击进入目录' : '双击转到所在目录'}
-                  className={`group cursor-pointer whitespace-nowrap transition-colors hover:bg-surface-raised ${
-                    selected ? 'bg-surface-raised' : ''
-                  }`}
-                >
-                  <td
-                    className={`sticky left-0 z-10 border-b border-r border-line px-3 py-2.5 font-medium group-hover:bg-surface-raised ${
-                      selected ? 'bg-surface-raised' : 'bg-surface'
-                    }`}
-                  >
-                    <span className="flex min-w-0 items-center gap-2">
-                      {result.kind === 'directory' ? (
-                        <Folder aria-hidden size={15} className="shrink-0 text-fg-subtle" />
-                      ) : (
-                        <File aria-hidden size={15} className="shrink-0 text-fg-subtle" />
-                      )}
-                      <span className="truncate font-medium text-fg" title={result.name}>
-                        {result.name}
-                      </span>
-                    </span>
-                  </td>
-                  <td className="border-b border-line px-3 py-2.5">
-                    <span className="block truncate font-mono text-xs text-fg-muted" title={result.path}>
-                      {parentFilesPath(result.path)}
-                    </span>
-                  </td>
-                  <td className="border-b border-line px-3 py-2.5 text-fg-muted">
-                    {FILE_KIND_LABELS[result.kind]}
-                  </td>
-                  <td className="border-b border-line px-3 py-2.5 tabular-nums text-fg-muted">
-                    {result.kind === 'file' && result.sizeBytes !== undefined ? (
-                      formatEntrySize(result.sizeBytes)
-                    ) : (
-                      <DirectorySizeCell dirPath={result.path} name={result.name} />
-                    )}
-                  </td>
-                </tr>
-              </FileRowMenu>
-            )
-          })}
-        </tbody>
-      </table>
-    </div>
+    <DataTable
+      rows={rows}
+      columns={columns}
+      getRowId={rowPath}
+      getRowLabel={(entry) => isSearching ? `${entry.name}（${rowPath(entry)}）` : entry.name}
+      ariaLabel={isSearching ? '搜索结果' : '文件列表'}
+      query={keyword}
+      onQueryChange={onSearch}
+      filterMode="external"
+      searchPlaceholder="搜索文件或目录"
+      selected={selected}
+      onSelectionChange={setSelected}
+      selectionKey={selectionKey}
+      busy={reloading || searching}
+      bulkActions={() => (
+        <TableBatchActions
+          selectedRows={selectedRows}
+          getRowId={rowPath}
+          getRowLabel={(entry) => isSearching ? `${entry.name}（${rowPath(entry)}）` : entry.name}
+          onSucceeded={(ids) => setSelected((previous) => previous.filter((id) => !ids.includes(id)))}
+          disabled={transferBusy || searching || reloading}
+          actions={[{
+            key: 'compute-size',
+            label: '计算目录大小',
+            description: '逐项统计所选目录的大小，已计算的目录和文件会跳过。',
+            eligible: (entry) => entry.kind !== 'directory' ? '文件无需计算目录大小'
+              : computingPaths.includes(rowPath(entry)) ? '目录正在计算大小'
+                : sizes[rowPath(entry)] !== undefined ? '目录大小已计算' : undefined,
+            execute: async (items) => useFilesStore.getState().computeSize(gateway, rowPath(items[0]!)),
+          }]}
+        />
+      )}
+      emptyState={searching
+        ? <LoadingState label="正在搜索…" />
+        : isSearching
+          ? <EmptyState title="没有找到匹配的条目" description={`可搜索的范围内没有名称或路径包含「${keyword.trim()}」的条目，换个关键词试试。`} />
+          : <EmptyState title="此目录为空" description="这个目录下没有任何文件或子目录。" />}
+      onRowClick={(entry) => setFocusedPath(rowPath(entry))}
+      onRowFocus={(entry) => setFocusedPath(rowPath(entry))}
+      onRowDoubleClick={open}
+      onRowActivate={open}
+      rowKeyboardNav
+      highlighted={(entry) => focusedPath === rowPath(entry)}
+      rowTitle={(entry) => isSearching
+        ? entry.kind === 'directory' ? '双击进入目录' : '双击转到所在目录'
+        : entry.kind === 'directory' ? '双击打开目录' : ''}
+      rowWrapper={(entry, children) => (
+        <FileRowMenu
+          key={rowPath(entry)}
+          entry={entry}
+          entryPath={rowPath(entry)}
+          onRename={onRename}
+          onPermission={onPermission}
+          onDownload={onDownload}
+          onUpload={onUpload}
+          transferBusy={transferBusy}
+        >{children}</FileRowMenu>
+      )}
+    />
   )
 }
 

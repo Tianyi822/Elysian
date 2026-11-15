@@ -1,165 +1,67 @@
-import { SshRefreshButton, SshRefreshError } from './SshRefresh'
-import { useId, useMemo } from 'react'
+import { useMemo, useState } from 'react'
 import type { SshLoginKey } from '@elysian/contracts'
+import { useGateway } from '../../adapters/GatewayProvider'
+import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
+import { DataTable } from '../../components/DataTable'
+import { TableBatchActions } from '../../components/TableBatchActions'
 import { IconButton } from '../../components/IconButton'
 import { formatDateTime } from '../../components/format'
 import { KeyRound, Trash2 } from '../../components/icons'
-import { SearchInput } from '../../components/SearchInput'
-import { Pagination } from '../../components/Pagination'
-import { SSH_PAGE_SIZE, useSshStore } from '../../stores/sshStore'
-import { ACTION_CLASS, Section, TABLE_CELL_CLASS, TABLE_CONTAINER_CLASS, TABLE_HEADER_CLASS } from './sshCardParts'
+import { useSshStore } from '../../stores/sshStore'
+import { ACTION_CLASS } from './sshCardParts'
 import { filterSshKeys } from './sshKeySearch'
+import { SshRefreshButton, SshRefreshError } from './SshRefresh'
 import { Button } from '../../components/Button'
 
-/**
- * SSH 密钥卡：搜索、创建入口与密钥表格。
- * 搜索按名称、指纹与归属账号匹配（判据见 sshKeySearch.ts）；私钥不在列表数据里，
- * 因此也不参与匹配——它只在创建后的一次性弹窗里出现过。
- * 表格只列名称、归属账号、创建时间与操作，公钥全文在行内的「查看密钥」弹窗里给。
- */
-export function SshKeyCard() {
-  const keys = useSshStore((s) => s.keys)
-  const keyAccounts = useSshStore((s) => s.keyAccounts)
-  const search = useSshStore((s) => s.keySearch)
-  const page = useSshStore((s) => s.keyPage)
-  const setKeySearch = useSshStore((s) => s.setKeySearch)
-  const setKeyPage = useSshStore((s) => s.setKeyPage)
-  const openCreateKey = useSshStore((s) => s.openCreateKey)
-  const searchInputId = useId()
-
-  // 归属账号名按 userId 现取：keyAccounts 是账号清单的家（mock 为账号数据集、Docker 为 getent），
-  // 与创建弹窗的下拉同源，这里不存冗余字段。
+/** 搜索仍按原名称、账号与指纹判据；私钥不进入列表。 */
+export function SshKeyCard({ active }: { active: boolean }) {
+  const gateway = useGateway()
+  const keys = useSshStore(s => s.keys)
+  const keyAccounts = useSshStore(s => s.keyAccounts)
+  const search = useSshStore(s => s.keySearch)
+  const setKeySearch = useSshStore(s => s.setKeySearch)
+  const openCreateKey = useSshStore(s => s.openCreateKey)
+  const removeKey = useSshStore(s => s.removeKey)
+  const removingKeyIds = useSshStore(s => s.removingKeyIds)
+  const [selected, setSelected] = useState<(string | number)[]>([])
   const ownerNameOf = useMemo(() => {
-    const names = new Map(keyAccounts.map((account) => [account.id, account.name]))
+    const names = new Map(keyAccounts.map(account => [account.id, account.name]))
     return (userId: string) => names.get(userId) ?? '账号已删除'
   }, [keyAccounts])
-
-  const filtered = useMemo(
-    () => filterSshKeys(search, keys, ownerNameOf),
-    [search, keys, ownerNameOf],
-  )
-
-  // 删到最后一页空了就把页码收回有效范围，不额外写一份状态。
-  const pageCount = Math.max(1, Math.ceil(filtered.length / SSH_PAGE_SIZE))
-  const safePage = Math.min(page, pageCount)
-  const pageRows = filtered.slice((safePage - 1) * SSH_PAGE_SIZE, safePage * SSH_PAGE_SIZE)
-
-  return (
-    <Section title="SSH 密钥" aside={<SshRefreshButton section="keys" />}>
-      <SshRefreshError section="keys" />
-      <div className="flex flex-wrap items-center gap-2">
-        <div className="relative min-w-0 flex-1">
-          <SearchInput
-            id={searchInputId}
-            label="搜索密钥"
-            value={search}
-            onChange={setKeySearch}
-            placeholder="搜索名称、账号或指纹"
-            className="w-full"
-          />
-        </div>
-        <Button variant="primary" type="button" onClick={() => openCreateKey()} className={ACTION_CLASS}>
-          创建 SSH 密钥
-        </Button>
-      </div>
-      <div role="region" aria-label="SSH 密钥表" className={TABLE_CONTAINER_CLASS}>
-        <table className="w-full min-w-[28rem] table-fixed border-separate border-spacing-0 text-left text-sm">
-          {/* 归属账号是这张表的分组线索（谁手里有哪把钥匙），因此紧跟在名称之后。
-              操作列定宽，只占两枚按钮的宽度；名称列钉住，窄屏下它始终在视线里。 */}
-          <colgroup>
-            <col className="w-[30%]" />
-            <col className="w-[22%]" />
-            <col className="w-[30%]" />
-            <col className="w-20" />
-          </colgroup>
-          <thead>
-            <tr>
-              {['名称', '归属账号', '创建时间', '操作'].map((label, index) => (
-                <th
-                  key={label}
-                  scope="col"
-                  className={`${TABLE_HEADER_CLASS} ${
-                    index === 0 ? 'sticky left-0 z-20 border-r' : ''
-                  }`}
-                >
-                  {label}
-                </th>
-              ))}
-            </tr>
-          </thead>
-          <tbody>
-            {filtered.length === 0 ? (
-              <tr>
-                <td colSpan={4} className="px-3 py-8 text-center text-sm text-fg-muted">
-                  {keys.length === 0
-                    ? '还没有密钥，点右上角「创建 SSH 密钥」新建一把'
-                    : '没有匹配的密钥，换个关键词试试'}
-                </td>
-              </tr>
-            ) : (
-              pageRows.map((key) => (
-                <KeyRow key={key.id} sshKey={key} ownerName={ownerNameOf(key.userId)} />
-              ))
-            )}
-          </tbody>
-        </table>
-      </div>
-      <Pagination
-        label="密钥分页"
-        summary={
-          search.trim() ? `匹配 ${filtered.length} 把 · 共 ${keys.length} 把` : `共 ${keys.length} 把密钥`
-        }
-        page={safePage}
-        pageCount={pageCount}
-        pageSize={SSH_PAGE_SIZE}
-        onPageChange={setKeyPage}
-      />
-    </Section>
-  )
+  const rows = useMemo(() => filterSshKeys(search, keys, ownerNameOf), [search, keys, ownerNameOf])
+  return <section aria-label="SSH 密钥" className="min-w-0">
+    <SshRefreshError section="keys" />
+    <DataTable rows={rows} ariaLabel="SSH 密钥表" active={active} query={search} onQueryChange={setKeySearch}
+      toolbar={<div className="flex max-w-full flex-wrap items-center gap-2">
+        <Button variant="primary" type="button" onClick={() => openCreateKey()} className={ACTION_CLASS}>创建 SSH 密钥</Button>
+        <SshRefreshButton section="keys" />
+      </div>}
+      filterMode="external" searchLabel="搜索密钥" searchPlaceholder="搜索名称、账号或指纹" getRowId={key => key.id} getRowLabel={key => key.name}
+      selected={selected} onSelectionChange={setSelected}
+      columns={[
+        { key: 'name', header: '名称', primary: true, accessor: key => key.name, width: '30%' },
+        { key: 'owner', header: '归属账号', accessor: key => ownerNameOf(key.userId), width: '22%' },
+        { key: 'createdAt', header: '创建时间', accessor: key => key.createdAt, cell: key => formatDateTime(key.createdAt), width: '30%' },
+        { key: 'actions', header: '操作', sortable: false, width: '18%', cell: key => <KeyActions sshKey={key} /> },
+      ]}
+      bulkActions={ids => <TableBatchActions selectedRows={keys.filter(key => ids.includes(key.id))}
+        getRowId={key => key.id} getRowLabel={key => key.name}
+        onSucceeded={ids => setSelected(current => current.filter(id => !ids.includes(id)))}
+        actions={[{ key: 'remove', label: '删除', danger: true,
+          description: isDockerRuntime() ? '删除后本机授权文件中的公钥一并移除，客户端不能再用这些私钥免密登录。' : '从演示数据集移除所选密钥，不触碰真实授权文件。',
+          eligible: key => removingKeyIds.includes(key.id) ? '密钥正在删除' : undefined,
+          execute: rows => removeKey(gateway, rows[0]!.id),
+        }]} />}
+    />
+  </section>
 }
 
-function KeyRow({ sshKey, ownerName }: { sshKey: SshLoginKey; ownerName: string }) {
-  const openKeyView = useSshStore((s) => s.openKeyView)
-  const openRemoveKey = useSshStore((s) => s.openRemoveKey)
-
-  return (
-    <tr className="group transition-none hover:bg-surface-raised">
-      {/* 名称超长截断显示：完整名称在悬停提示里，密钥全文在「查看密钥」弹窗里。
-          名称列钉在左边并带不透明底，窄屏横向滚动时后面的列不会从它下面透出来。 */}
-      <td className={`${TABLE_CELL_CLASS} sticky left-0 z-10 whitespace-nowrap border-r bg-surface group-hover:bg-surface-raised`}>
-        <span className="block truncate text-fg" title={sshKey.name}>
-          {sshKey.name}
-        </span>
-      </td>
-      <td className={`${TABLE_CELL_CLASS} text-fg-muted`}>
-        <span className="block truncate" title={ownerName}>
-          {ownerName}
-        </span>
-      </td>
-      <td className={`${TABLE_CELL_CLASS} whitespace-nowrap tabular-nums text-fg-muted`}>
-        {formatDateTime(sshKey.createdAt)}
-      </td>
-      <td className={TABLE_CELL_CLASS}>
-        {/* 按钮左对齐：与「操作」表头共用同一条左边界，列宽就是两枚按钮的宽度。 */}
-        <div className="flex items-center justify-start gap-1">
-          {/* 按钮名带上密钥名：一列多行时读屏与查询都能分辨是哪一把。 */}
-          <IconButton
-            label={`查看密钥 ${sshKey.name}`}
-            variant="ghost"
-            onPress={() => openKeyView(`查看密钥 · ${sshKey.name}`, sshKey)}
-          >
-            <KeyRound aria-hidden size={14} />
-          </IconButton>
-          <IconButton
-            label={`删除 ${sshKey.name}`}
-            variant="ghost"
-            tone="danger-hover"
-            onPress={() => openRemoveKey(sshKey)}
-          >
-            <Trash2 aria-hidden size={14} />
-          </IconButton>
-        </div>
-      </td>
-    </tr>
-  )
+function KeyActions({ sshKey }: { sshKey: SshLoginKey }) {
+  const openKeyView = useSshStore(s => s.openKeyView)
+  const openRemoveKey = useSshStore(s => s.openRemoveKey)
+  const removing = useSshStore(s => s.removingKeyIds.includes(sshKey.id))
+  return <div className="flex items-center gap-1">
+    <IconButton label={`查看密钥 ${sshKey.name}`} variant="ghost" onPress={() => openKeyView(`查看密钥 · ${sshKey.name}`, sshKey)}><KeyRound aria-hidden size={14} /></IconButton>
+    <IconButton label={`删除 ${sshKey.name}`} variant="ghost" tone="danger-hover" disabled={removing} onPress={() => openRemoveKey(sshKey)}><Trash2 aria-hidden size={14} /></IconButton>
+  </div>
 }

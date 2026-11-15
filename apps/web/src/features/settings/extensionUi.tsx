@@ -8,7 +8,6 @@ import { ScrollArea } from '../../components/ScrollArea'
 import { Button } from '../../components/Button'
 
 export const extensionIconButton = 'inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-fg-muted hover:bg-surface-raised hover:text-fg focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-40 disabled:cursor-not-allowed'
-export const extensionCell = 'border-b border-line px-3 py-3'
 
 export function ExtensionDialog({ title, open, onClose, children, footer, wide = false }: { title: string; open: boolean; onClose(): void; children: ReactNode; footer?: ReactNode; wide?: boolean }) {
   return <Dialog.Root open={open} onOpenChange={next => { if (!next) onClose() }}>
@@ -32,10 +31,6 @@ export function ExtensionToggle({ label, checked, onChange, disabled = false }: 
 
 export function ExtensionMenu({ label, items }: { label: string; items: { label: string; action(): void; danger?: boolean; disabled?: boolean }[] }) {
   return <DropdownMenu.Root><Tooltip.Root><Tooltip.Trigger asChild><DropdownMenu.Trigger asChild><Button variant="ghost" size="icon" aria-label={label} className={extensionIconButton}><MoreHorizontal aria-hidden size={16} /></Button></DropdownMenu.Trigger></Tooltip.Trigger><Tooltip.Portal><Tooltip.Content sideOffset={6} className="z-[80] rounded-md border border-line bg-surface-raised px-2 py-1 text-xs">{label}</Tooltip.Content></Tooltip.Portal></Tooltip.Root><DropdownMenu.Portal><DropdownMenu.Content sideOffset={5} align="end" className="select-menu z-[70] min-w-36 p-1">{items.map(item => <DropdownMenu.Item key={item.label} disabled={item.disabled} onSelect={item.action} className={`cursor-pointer rounded-md px-3 py-2 text-xs outline-none data-[highlighted]:bg-surface-raised data-[disabled]:opacity-40 ${item.danger ? 'text-danger' : 'text-fg'}`}>{item.label}</DropdownMenu.Item>)}</DropdownMenu.Content></DropdownMenu.Portal></DropdownMenu.Root>
-}
-
-export function ExtensionTable({ label, columns, children }: { label: string; columns: readonly { label: string; width: string }[]; children: ReactNode }) {
-  return <div role="region" aria-label={label} tabIndex={0} className="table-scrollbar min-w-0 overflow-x-auto panel-surface"><table className="w-full min-w-[48rem] table-fixed border-separate border-spacing-0 text-left text-sm"><colgroup>{columns.map(column => <col key={column.label} style={{ width: column.width }} />)}</colgroup><thead><tr>{columns.map(column => <th key={column.label} scope="col" className="border-b border-line bg-surface px-3 py-2.5 text-xs font-medium text-fg-muted">{column.label}</th>)}</tr></thead><tbody>{children}</tbody></table></div>
 }
 
 export function Field({ label, id, children }: { label: string; id: string; children: ReactNode }) {

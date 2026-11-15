@@ -5,6 +5,7 @@ import type {
 } from '@elysian/contracts'
 import type { ElysianGateway } from '../contracts/adapters'
 import { ModelSettingsMockAdapter } from '../adapters/mock/agent/modelSettingsMockAdapter'
+import { AgentHttpError } from '../adapters/http/agent/agentShared'
 import {
   mockCreateModelProfile,
   mockUpdateModelProfile,
@@ -107,6 +108,71 @@ describe('模型设置保存与冲突回读', () => {
     expect(create).not.toHaveBeenCalled()
     expect(() => mockCreateModelProfile({ ...MODEL_INPUT, provider: 'zhipu', capabilities: { ...MODEL_INPUT.capabilities, reasoningLevels: ['low', 'disabled'] } })).toThrow('智谱模型的思考无法关闭')
     expect(() => mockCreateModelProfile({ ...MODEL_INPUT, provider: 'zhipu', apiFormat: 'anthropic-messages' })).toThrow('智谱服务当前仅支持 Chat Completions 格式')
+  })
+})
+
+describe('模型表格批量启停', () => {
+  it('刷新先读取到更高修订时，迟到的批量写回执不能让模型服务倒退', async () => {
+    const { gateway, adapter } = makeGateway()
+    await useModelSettingsStore.getState().load(gateway)
+    const services = useModelSettingsStore.getState().services
+    const service = services.find(item => item.active)!
+    const receipt = { ...service, revision: service.revision + 1 }
+    const newer = { ...service, revision: service.revision + 2, name: '其他窗口的后续修订' }
+    let resolve!: (value: typeof service) => void
+    const write = vi.spyOn(adapter, 'updateModelService').mockImplementationOnce(() => new Promise(done => { resolve = done }))
+    const pending = useModelSettingsStore.getState().setModelsEnabled(gateway, service, [service.models[0]!.id], false)
+    vi.spyOn(adapter, 'listModelServices').mockResolvedValueOnce(services.map(item => item.id === service.id ? newer : item))
+    await useModelSettingsStore.getState().refresh(gateway)
+    resolve(receipt)
+    expect((await pending).status).toBe('succeeded')
+    expect(write).toHaveBeenCalledTimes(1)
+    expect(useModelSettingsStore.getState().services.find(item => item.id === service.id)).toEqual(newer)
+    expect(useModelSettingsStore.getState().models).toEqual(useModelSettingsStore.getState().services.flatMap(item => item.models))
+  })
+
+  it('同服务的多个所选模型一次 CAS，保留未选模型、服务状态和全部声明且不发送凭据', async () => {
+    const { gateway, adapter } = makeGateway()
+    await useModelSettingsStore.getState().saveService(gateway, {
+      name: '批量服务', provider: 'openai-compatible', apiFormat: 'responses', baseUrl: MODEL_INPUT.baseUrl, active: true, credential: 'keep-secret',
+      models: ['selected-a', 'selected-b', 'unselected'].map(model => ({ model, contextTokens: 32000, outputTokens: 4096, capabilities: { ...MODEL_INPUT.capabilities, reasoningLevels: ['low', 'high'], defaultReasoningLevel: 'high' }, enabled: true })),
+    })
+    const snapshot = useModelSettingsStore.getState().services.find(service => service.name === '批量服务')!
+    const update = vi.spyOn(adapter, 'updateModelService')
+    const result = await useModelSettingsStore.getState().setModelsEnabled(gateway, snapshot, snapshot.models.slice(0, 2).map(model => model.id), false)
+    expect(result.status).toBe('succeeded')
+    expect(update).toHaveBeenCalledTimes(1)
+    const payload = update.mock.calls[0]![1]
+    expect(payload).not.toHaveProperty('credential')
+    expect(payload.expectedRevision).toBe(snapshot.revision)
+    expect(payload.active).toBe(snapshot.active)
+    expect(payload.models.map(model => model.enabled)).toEqual([false, false, true])
+    expect(payload.models.map(model => model.capabilities)).toEqual(snapshot.models.map(model => model.capabilities))
+    expect(useModelSettingsStore.getState().services.find(service => service.id === snapshot.id)?.revision).toBe(snapshot.revision + 1)
+  })
+
+  it('停用服务内不能批量启用模型；陈旧确认不派发', async () => {
+    const { gateway, adapter } = makeGateway()
+    await useModelSettingsStore.getState().load(gateway)
+    const disabled = useModelSettingsStore.getState().services.find(service => !service.active)!
+    const update = vi.spyOn(adapter, 'updateModelService')
+    expect((await useModelSettingsStore.getState().setModelsEnabled(gateway, disabled, [disabled.models[0]!.id], true)).status).toBe('failed')
+    const service = useModelSettingsStore.getState().services[0]!
+    expect((await useModelSettingsStore.getState().setModelsEnabled(gateway, { ...service, revision: service.revision - 1 }, [service.models[0]!.id], false)).status).toBe('failed')
+    expect(update).not.toHaveBeenCalled()
+  })
+
+  it('可信拒绝与网络未知分别返回，未知不更新本地状态或自动重投', async () => {
+    const { gateway, adapter } = makeGateway()
+    await useModelSettingsStore.getState().load(gateway)
+    const service = useModelSettingsStore.getState().services.find(item => item.active)!
+    const update = vi.spyOn(adapter, 'updateModelService').mockRejectedValueOnce(new AgentHttpError('修订变化', 'revision-conflict', 409)).mockRejectedValueOnce(new Error('网络断开'))
+    expect((await useModelSettingsStore.getState().setModelsEnabled(gateway, service, [service.models[0]!.id], false)).status).toBe('failed')
+    const snapshot = useModelSettingsStore.getState().services
+    expect((await useModelSettingsStore.getState().setModelsEnabled(gateway, service, [service.models[0]!.id], false)).status).toBe('unknown')
+    expect(update).toHaveBeenCalledTimes(2)
+    expect(useModelSettingsStore.getState().services).toBe(snapshot)
+    expect(useModelSettingsStore.getState().saving).toBe(false)
   })
 })
 

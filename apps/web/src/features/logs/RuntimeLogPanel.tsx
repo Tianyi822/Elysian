@@ -4,10 +4,9 @@ import type { PlatformLogLevel, RuntimeLogEntry } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { formatLoginTime } from '../../components/format'
-import { SearchInput } from '../../components/SearchInput'
 import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
-import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
+import { ErrorState, LoadingState } from '../../components/states/StateViews'
 import { RefreshButton } from '../../components/RefreshState'
 import { CTL_PRIMARY, CTL_TOOLBAR } from '../../components/formControl'
 import { useRuntimeLogStore } from '../../stores/runtimeLogStore'
@@ -45,57 +44,15 @@ export function matchesRuntimeSearch(entry: RuntimeLogEntry, keyword: string): b
   )
 }
 
-/**
- * 表格最小宽度类：值由 LogTable 的列宽算式算得（176 + 96 + 560 = 832），
- * Tailwind 只认字面类名，算式与字面量的一致性由测试锁住。
- */
-const TABLE_MIN_WIDTH_CLASS = 'min-w-[832px]'
-
-/** 三列：前两列固定宽度，日志信息列吃掉剩余（并有 560px 的最小宽度兜底）。 */
 const RUNTIME_LOG_COLUMNS: readonly LogColumn<RuntimeLogEntry>[] = [
-  {
-    label: '日期时间',
-    widthClass: 'w-44',
-    cell: (entry) => (
-      // 固定 19 字符 + 等宽字体 + tabular-nums：字符宽度统一，时间列因此不会随内容抖动。
-      <td className="border-b border-line px-3 py-2.5 font-mono text-xs tabular-nums text-fg-muted">
-        {formatLoginTime(entry.at)}
-      </td>
-    ),
-  },
-  {
-    label: '等级',
-    widthClass: 'w-24',
-    cell: (entry) => (
-      <td className="border-b border-line px-3 py-2.5">
-        <StatusTag label={entry.level} tone={levelTone(entry.level)} />
-      </td>
-    ),
-  },
-  {
-    label: '日志信息',
-    cell: (entry) => (
-      <LogMessageCell
-        text={entry.message}
-        details={
-          <dl className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-fg-muted">
-            <div className="flex gap-1.5">
-              <dt>时间</dt>
-              <dd className="font-mono tabular-nums">{formatLoginTime(entry.at)}</dd>
-            </div>
-            <div className="flex gap-1.5">
-              <dt>等级</dt>
-              <dd className="font-mono">{entry.level}</dd>
-            </div>
-            <div className="flex gap-1.5">
-              <dt>来源</dt>
-              <dd className="font-mono">{entry.source}</dd>
-            </div>
-          </dl>
-        }
-      />
-    ),
-  },
+  { key: 'at', header: '日期时间', width: '176px', accessor: entry => new Date(entry.at), cell: entry => <span className="font-mono text-xs tabular-nums text-fg-muted">{formatLoginTime(entry.at)}</span> },
+  { key: 'level', header: '等级', width: '96px', accessor: entry => entry.level, cell: entry => <StatusTag label={entry.level} tone={levelTone(entry.level)} /> },
+  { key: 'message', header: '日志信息', primary: true, width: 'minmax(240px,1fr)', accessor: entry => entry.message,
+    cell: entry => <LogMessageCell text={entry.message} details={<dl className="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-fg-muted">
+      <div className="flex gap-1.5"><dt>时间</dt><dd className="font-mono tabular-nums">{formatLoginTime(entry.at)}</dd></div>
+      <div className="flex gap-1.5"><dt>等级</dt><dd>{entry.level}</dd></div>
+      <div className="flex gap-1.5"><dt>来源</dt><dd>{entry.source}</dd></div>
+    </dl>} /> },
 ]
 
 export function RuntimeLogPanel() {
@@ -152,24 +109,9 @@ export function RuntimeLogPanel() {
       : '没有匹配的运行日志，换个关键词或清空搜索'
 
   const querying = refreshing && !loadingOlder
-  const showEmptyPage = total === 0 && trimmedSearch.length === 0
-
-  const table = showEmptyPage ? (
-    <EmptyState
-      title="还没有运行日志"
-      description="服务启动、请求失败与保留巡检都会写进这里，先跑起来再回来看。"
+  const table = <LogTable label="运行日志表" columns={RUNTIME_LOG_COLUMNS} rows={entries}
+    rowKey={entry => entry.id} emptyMessage={emptyMessage} busy={querying} query={search} onQueryChange={setSearch}
     />
-  ) : (
-    <LogTable
-      label="运行日志表"
-      minWidthClass={TABLE_MIN_WIDTH_CLASS}
-      columns={RUNTIME_LOG_COLUMNS}
-      rows={entries}
-      rowKey={(entry) => entry.id}
-      emptyMessage={emptyMessage}
-      busy={querying}
-    />
-  )
 
   return (
     <div className="flex h-full flex-col gap-3">
@@ -179,16 +121,6 @@ export function RuntimeLogPanel() {
         md 起回到一行三段、最后一块靠右——自由折行会把清空按钮孤零零甩到第二行。
       */}
       <div className={`${CTL_TOOLBAR} rect-toolbar flex flex-col gap-2 panel-surface px-4 py-3 md:flex-row md:items-center`}>
-        <div className="relative w-full md:w-64">
-          <SearchInput
-            id="runtime-log-search"
-            label="搜索日志关键字"
-            value={search}
-            onChange={setSearch}
-            placeholder="请输入搜索关键字"
-            className="w-full"
-          />
-        </div>
         <div role="group" aria-label="日志视图操作" className="flex flex-wrap items-center gap-2">
           <RefreshButton
             onPress={() => void load(gateway)}

@@ -1,3 +1,4 @@
+import { tableBatchFailure, type TableBatchOutcome } from '../utils/tableBatch'
 import { captureAuthGeneration } from '../adapters/http/unauthorized'
 import type { Container, ContainerAction, ContainerCreateInput, ContainerImage, ContainerSample, ContainerStatus, ImagePullProgress, Unsubscribe } from '@elysian/contracts'
 import { create } from 'zustand'
@@ -73,6 +74,7 @@ let detachLive: Unsubscribe | undefined
 let activeGateway: ElysianGateway | undefined
 let pendingLoad: { gateway: ElysianGateway; auth: number; snapshot: readonly Container[]; promise: Promise<void> } | undefined
 let imageRevision = 0
+let imageActionGeneration = captureAuthGeneration()
 let imageRefreshSequence = 0
 let pendingImages: { gateway: ElysianGateway; auth: number; revision: number; notify: boolean; promise: Promise<void> } | undefined
 let imagePullSequence = 0
@@ -198,7 +200,7 @@ export const useContainersStore = create<{
   openCreate: () => void
   closeCreate: () => void
   createContainer: (gateway: ElysianGateway, input: ContainerCreateInput) => Promise<void>
-  removeImage: (gateway: ElysianGateway, imageId: string) => Promise<void>
+  removeImage: (gateway: ElysianGateway, imageId: string) => Promise<TableBatchOutcome>
   pullImage: (gateway: ElysianGateway, input: { name: string; tag: string; registry?: string }) => Promise<void>
   cancelImagePull: () => void
   dismissImagePullError: () => void
@@ -234,6 +236,7 @@ export const useContainersStore = create<{
     activeGateway = gateway
     attachLiveEvents()
     const auth = captureAuthGeneration()
+    if (imageActionGeneration !== auth) { imageActionGeneration = auth; set({ removingImageIds: [] }) }
     if (pendingLoad?.gateway === gateway && pendingLoad.auth === auth && pendingLoad.snapshot === get().containers) return pendingLoad.promise
     const revision = imageRevision
     const operation = { gateway, auth, snapshot: get().containers, promise: Promise.resolve() }
@@ -343,12 +346,15 @@ export const useContainersStore = create<{
   },
 
   async removeImage(gateway, imageId) {
-    if (get().removingImageIds.includes(imageId)) return
+    const auth = captureAuthGeneration()
+    if (imageActionGeneration !== auth) { imageActionGeneration = auth; set({ removingImageIds: [] }) }
+    if (get().removingImageIds.includes(imageId)) return { status: 'failed', error: '镜像正在删除' }
     imageRevision += 1
     const image = get().images.find((i) => i.id === imageId)
     set((state) => ({ removingImageIds: [...state.removingImageIds, imageId] }))
     try {
       await gateway.containers.removeImage(imageId)
+      if (auth !== captureAuthGeneration()) return { status: 'unknown', error: '登录状态已变化，结果未确认' }
       imageRevision += 1
       set((state) => ({
         images: state.images.filter((candidate) => candidate.id !== imageId),
@@ -361,17 +367,20 @@ export const useContainersStore = create<{
           ? `镜像 ${label} 已删除`
           : `镜像 ${label} 已删除（mock，待接入真实执行）`,
       })
+      return { status: 'succeeded' }
     } catch (error) {
+      if (auth !== captureAuthGeneration()) return { status: 'unknown', error: '登录状态已变化，结果未确认' }
       const detail = error instanceof Error ? error.message : '未知错误'
       set((state) => ({ removingImageIds: state.removingImageIds.filter((id) => id !== imageId) }))
       useMessageStore.getState().notify({ tone: 'danger', message: `删除镜像失败：${detail}` })
       try {
         const revision = imageRevision
         const images = await gateway.containers.listImages()
-        if (revision === imageRevision) { imageRevision += 1; set({ images }) }
+        if (auth === captureAuthGeneration() && revision === imageRevision) { imageRevision += 1; set({ images }) }
       } catch {
         // 刷新失败时保留当前列表。
       }
+      return tableBatchFailure(error)
     }
   },
 

@@ -1,7 +1,7 @@
 import { messageHistoryText } from '../../test/messageHistory'
-import { fireEvent, screen, within } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import { resetFilesData } from '../../adapters/mock/filesData'
 import { MockFilesAdapter } from '../../adapters/mock/mockAdapters'
@@ -29,7 +29,13 @@ beforeEach(() => {
 })
 
 function rowOf(region: HTMLElement, name: string) {
-  return within(region).getByRole('row', { name: new RegExp(name) })
+  const pattern = new RegExp(name.trim())
+  const row = within(region).getAllByRole('row').find((candidate) => {
+    const cells = within(candidate).queryAllByRole('cell')
+    return cells.length > 1 && pattern.test(cells[1]?.textContent ?? '')
+  })
+  if (!row) throw new Error(`没有找到文件行：${name}`)
+  return row
 }
 
 describe('文件管理页', () => {
@@ -37,7 +43,7 @@ describe('文件管理页', () => {
     renderApp('/files')
     const region = await screen.findByRole('region', { name: '文件列表' })
     const rows = within(region).getAllByRole('row')
-    const names = rows.slice(1).map((row) => within(row).getAllByRole('cell')[0]?.textContent)
+    const names = rows.slice(1).map((row) => within(row).getAllByRole('cell')[1]?.textContent)
     expect(names.slice(0, 5)).toEqual(['bin', 'boot', 'etc', 'home', 'opt'])
     expect(names[names.length - 1]).toBe('var')
 
@@ -50,11 +56,9 @@ describe('文件管理页', () => {
     ).toBeInTheDocument()
     expect(etcRow.lastElementChild).not.toHaveClass('text-right')
 
-    // 名称列钉在左边陪滚，其余列横向滚动；列宽从 38% 缩到 32%。
-    const headerRow = within(region).getAllByRole('row')[0]
-    expect(headerRow?.children[0]).toHaveClass('sticky', 'left-0')
-    expect(region.querySelector('colgroup')?.children[0]).toHaveClass('w-[32%]')
-    expect(etcRow.children[0]).toHaveClass('sticky', 'left-0')
+    expect(within(region).getByRole('columnheader', { name: /名称/ })).toBeInTheDocument()
+    expect(within(region).getByRole('checkbox', { name: /全选/ })).toBeInTheDocument()
+    expect(within(etcRow).getByRole('checkbox')).toHaveAttribute('aria-checked', 'false')
   })
 
   it('权限/所有者列按条目呈现真实主机惯例的取值', async () => {
@@ -103,14 +107,15 @@ describe('文件管理页', () => {
     expect(await screen.findByRole('heading', { level: 1, name: '/' })).toBeInTheDocument()
   })
 
-  it('单击选中行，Enter 打开目录：键盘与双击等价', async () => {
+  it('单击聚焦行，Enter 打开目录，保持与批选状态独立', async () => {
     const user = userEvent.setup()
     renderApp('/files')
     const region = await screen.findByRole('region', { name: '文件列表' })
 
     const etcRow = rowOf(region, 'etc')
     await user.click(etcRow)
-    expect(etcRow).toHaveAttribute('aria-selected', 'true')
+    expect(etcRow).toHaveFocus()
+    expect(within(etcRow).getByRole('checkbox')).toHaveAttribute('aria-checked', 'false')
 
     await user.keyboard('{Enter}')
     expect(await screen.findByRole('heading', { level: 1, name: '/etc' })).toBeInTheDocument()
@@ -119,7 +124,8 @@ describe('文件管理页', () => {
   it('空目录显示空状态', async () => {
     renderApp('/files/tmp')
     expect(await screen.findByText('此目录为空')).toBeInTheDocument()
-    expect(screen.queryByRole('region', { name: '文件列表' })).not.toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '文件列表' })).toBeInTheDocument()
+    expect(screen.getByRole('searchbox', { name: '搜索文件或目录' })).toBeInTheDocument()
   })
 
   it('不存在的目录显示错误与返回根目录动作', async () => {
@@ -346,7 +352,7 @@ describe('文件管理页', () => {
 
     const reloaded = await screen.findByRole('region', { name: '文件列表' })
     expect(within(reloaded).getByRole('cell', { name: 'storage' })).toBeInTheDocument()
-    expect(within(reloaded).queryByRole('cell', { name: 'srv' })).not.toBeInTheDocument()
+    await waitFor(() => expect(within(reloaded).queryByRole('cell', { name: 'srv' })).not.toBeInTheDocument())
   })
 
   it('重命名输入框：确认回车派发于组合结束之后时不重命名，随后的人工提交才重命名', async () => {
@@ -372,7 +378,7 @@ describe('文件管理页', () => {
     await user.click(screen.getByRole('button', { name: '确认重命名' }))
     const reloaded = await screen.findByRole('region', { name: '文件列表' })
     expect(within(reloaded).getByRole('cell', { name: 'storage' })).toBeInTheDocument()
-    expect(within(reloaded).queryByRole('cell', { name: 'srv' })).not.toBeInTheDocument()
+    await waitFor(() => expect(within(reloaded).queryByRole('cell', { name: 'srv' })).not.toBeInTheDocument())
     expect(messageHistoryText()).toContain('已重命名为 storage')
   })
 
@@ -477,7 +483,7 @@ describe('文件管理页', () => {
       within(region).getAllByRole('cell', { name: '/var/log/nginx' }).length,
     ).toBeGreaterThanOrEqual(2)
     expect(within(region).getByRole('row', { name: /access\.log/ })).toBeInTheDocument()
-    expect(screen.getByText(/个匹配/)).toBeInTheDocument()
+    expect(screen.getByText(`${useFilesStore.getState().searchResults.length} 行`)).toBeInTheDocument()
   })
 
   it('双击搜索结果里的目录进入该目录，并清空搜索回到目录列表', async () => {
@@ -488,7 +494,7 @@ describe('文件管理页', () => {
     const region = await screen.findByRole('region', { name: '搜索结果' })
 
     // 行名以目录名锚定：子文件 grub.cfg 的路径也含关键词，但行名以 grub.cfg 开头不会撞
-    await user.dblClick(within(region).getByRole('row', { name: /^grub / }))
+    await user.dblClick(rowOf(region, '^grub '))
 
     expect(await screen.findByRole('heading', { level: 1, name: '/boot/grub' })).toBeInTheDocument()
     expect(screen.getByRole('searchbox', { name: '搜索文件或目录' })).toHaveValue('')
@@ -515,6 +521,114 @@ describe('文件管理页', () => {
     await user.type(input, 'zzz')
 
     expect(await screen.findByText('没有找到匹配的条目')).toBeInTheDocument()
-    expect(screen.queryByRole('region', { name: '搜索结果' })).not.toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '搜索结果' })).toBeInTheDocument()
+    expect(input).toHaveFocus()
+  })
+
+  it('全树搜索切换列与结果时保留同一个输入框和焦点', async () => {
+    const user = userEvent.setup()
+    const gateway = createMockGateway({ eventStream: 'memory', eventIntervalMs: 60_000 })
+    const search = vi.spyOn(gateway.files, 'search')
+    renderApp('/files', { gateway })
+    const input = await screen.findByRole('searchbox', { name: '搜索文件或目录' })
+
+    await user.type(input, 'nginx')
+
+    const region = await screen.findByRole('region', { name: '搜索结果' })
+    expect(input).toBe(screen.getByRole('searchbox', { name: '搜索文件或目录' }))
+    expect(input).toHaveFocus()
+    expect(input).toHaveValue('nginx')
+    expect(search).toHaveBeenLastCalledWith('nginx')
+    expect(within(region).getByRole('columnheader', { name: /所在位置/ })).toBeInTheDocument()
+    expect(within(region).getByRole('row', { name: /access\.log/ })).toBeInTheDocument()
+  })
+
+  it('勾选文件行只开启批选工具栏，不改变原文件剪贴板', async () => {
+    const user = userEvent.setup()
+    const { router } = renderApp('/files')
+    const region = await screen.findByRole('region', { name: '文件列表' })
+    await user.click(within(rowOf(region, '^etc')).getByRole('checkbox'))
+    await user.click(within(rowOf(region, '^var')).getByRole('checkbox'))
+
+    expect(await within(region).findByText('已选 2 项')).toBeInTheDocument()
+    expect(within(region).queryByRole('button', { name: /复制/ })).not.toBeInTheDocument()
+    expect(router.state.location.pathname).toBe('/files')
+    expect(useFilesStore.getState().clipboard).toBeUndefined()
+  })
+
+  it('相同名称的全树结果按完整路径独立选择', async () => {
+    const user = userEvent.setup()
+    renderApp('/files')
+    const input = await screen.findByRole('searchbox', { name: '搜索文件或目录' })
+    await user.type(input, 'nginx')
+    const region = await screen.findByRole('region', { name: '搜索结果' })
+    const nginxRows = within(region).getAllByRole('row').filter((row) =>
+      within(row).queryByRole('cell', { name: 'nginx' }))
+    expect(nginxRows).toHaveLength(2)
+    const first = within(nginxRows[0]!).getByRole('checkbox')
+    const second = within(nginxRows[1]!).getByRole('checkbox')
+    await user.click(first)
+    await user.click(second)
+    expect(await within(region).findByText('已选 2 项')).toBeInTheDocument()
+    await user.click(first)
+    expect(first).toHaveAttribute('aria-checked', 'false')
+    expect(second).toHaveAttribute('aria-checked', 'true')
+  })
+
+  it('排序之后方向键按显示顺序移动，Enter 保持打开目录', async () => {
+    const user = userEvent.setup()
+    const { router } = renderApp('/files')
+    const region = await screen.findByRole('region', { name: '文件列表' })
+    const sort = within(region).getByRole('button', { name: /名称/ })
+    await user.click(sort)
+    await user.click(sort)
+    const varRow = rowOf(region, '^var')
+    await user.click(varRow)
+    await user.keyboard('{ArrowDown}')
+    const usrRow = rowOf(region, '^usr')
+    expect(usrRow).toHaveFocus()
+    await user.keyboard('{Enter}')
+    await waitFor(() => expect(router.state.location.pathname).toBe('/files/usr'))
+  })
+
+  it('静默刷新保留仍存在的勾选，导航后清除旧目录勾选', async () => {
+    const user = userEvent.setup()
+    const gateway = createMockGateway({ eventStream: 'memory', eventIntervalMs: 60_000 })
+    renderApp('/files', { gateway })
+    const region = await screen.findByRole('region', { name: '文件列表' })
+    await user.click(within(rowOf(region, '^etc')).getByRole('checkbox'))
+
+    await act(async () => { await useFilesStore.getState().load(gateway, '/', { silent: true }) })
+    expect(within(rowOf(region, '^etc')).getByRole('checkbox')).toHaveAttribute('aria-checked', 'true')
+
+    await user.dblClick(rowOf(region, '^var'))
+    expect(await screen.findByRole('heading', { level: 1, name: '/var' })).toBeInTheDocument()
+    await waitFor(() => expect(screen.getByRole('searchbox', { name: '搜索文件或目录' })).toBeInTheDocument())
+    expect(screen.queryByText('已选 1 项')).not.toBeInTheDocument()
+  })
+
+  it('批量计算目录大小在首次失败后停止，成功项清除勾选并保留其余目标', async () => {
+    const user = userEvent.setup()
+    const gateway = createMockGateway({ eventStream: 'memory', eventIntervalMs: 60_000 })
+    const size = vi.spyOn(gateway.files, 'size')
+      .mockResolvedValueOnce(1024)
+      .mockRejectedValueOnce(new Error('没有读取权限'))
+    renderApp('/files', { gateway })
+    const region = await screen.findByRole('region', { name: '文件列表' })
+    for (const name of ['^etc', '^home', '^var']) {
+      await user.click(within(rowOf(region, name)).getByRole('checkbox'))
+    }
+    await user.click(await screen.findByRole('button', { name: '计算目录大小' }))
+    await user.click(await screen.findByRole('button', { name: '确认计算目录大小' }))
+
+    const report = await screen.findByRole('dialog', { name: '计算目录大小结果' })
+    await waitFor(() => expect(within(report).getByText(/home/).parentElement).toHaveTextContent('失败 · 没有读取权限'))
+    expect(size.mock.calls.map((call) => call[0])).toEqual(['/etc', '/home'])
+    expect(useFilesStore.getState().sizes['/etc']).toBe(1024)
+    expect(within(report).getByText(/var/).parentElement).toHaveTextContent('未执行')
+    await user.click(within(report).getByRole('button', { name: '关闭' }))
+    expect(within(rowOf(region, '^etc')).getByRole('checkbox')).toHaveAttribute('aria-checked', 'false')
+    expect(within(rowOf(region, '^home')).getByRole('checkbox')).toHaveAttribute('aria-checked', 'true')
+    expect(within(rowOf(region, '^var')).getByRole('checkbox')).toHaveAttribute('aria-checked', 'true')
   })
 })

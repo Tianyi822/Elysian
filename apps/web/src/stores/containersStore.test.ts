@@ -12,6 +12,7 @@ import {
   containerStopConfirmDescription,
 } from '../features/container/containerCopy'
 import { useContainersStore } from './containersStore'
+import { advanceAuthGeneration } from '../adapters/http/unauthorized'
 import { CONTAINERS, CONTAINER_IMAGES } from '../adapters/mock/containersData'
 
 function gatewayWith(overrides: Partial<ElysianGateway['containers']> = {}): ElysianGateway {
@@ -419,6 +420,27 @@ describe('创建容器', () => {
 
 describe('删除镜像', () => {
   // 成功路径由 ContainerPage.test 的删除流程端到端覆盖，这里只测失败分支。
+  it('未知写结果返回显式回执且不自动重投', async () => {
+    const removeImage = vi.fn(async () => { throw new Error('网络中断') })
+    await useContainersStore.getState().load(gatewayWith())
+    const result = await useContainersStore.getState().removeImage(gatewayWith({ removeImage }), 'img-nginx')
+    expect(result).toEqual({ status: 'unknown', error: '网络中断' })
+    expect(removeImage).toHaveBeenCalledTimes(1)
+  })
+
+  it('旧登录代次回执不删除新快照，新会话清理旧忙碌标记', async () => {
+    let finish: () => void = () => {}
+    await useContainersStore.getState().load(gatewayWith())
+    const pending = useContainersStore.getState().removeImage(gatewayWith({ removeImage: () => new Promise<void>(resolve => { finish = resolve }) }), 'img-nginx')
+    expect(useContainersStore.getState().removingImageIds).toContain('img-nginx')
+    advanceAuthGeneration()
+    await useContainersStore.getState().load(gatewayWith())
+    expect(useContainersStore.getState().removingImageIds).toEqual([])
+    finish()
+    expect(await pending).toMatchObject({ status: 'unknown' })
+    expect(useContainersStore.getState().images.some(image => image.id === 'img-nginx')).toBe(true)
+  })
+
   it('removeImage 失败：镜像保留、危险通知、忙碌复位', async () => {
     await useContainersStore.getState().load(gatewayWith())
     await useContainersStore.getState().removeImage(

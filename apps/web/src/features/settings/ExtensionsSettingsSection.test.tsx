@@ -17,17 +17,51 @@ beforeEach(() => {
   useSessionStore.setState({ phase: 'unknown', mode: undefined, devAccount: false, notice: null })
 })
 
+describe('设置表格切换页签', () => {
+  it.each([
+    { tab: 'models', label: 'gpt-5' },
+    { tab: 'mcp', label: '演示检索（HTTP）' },
+    { tab: 'skills', label: 'incident-triage' },
+  ])('$tab 离开时关闭批量确认，再回来清除选择且不派发旧目标', async ({ tab, label }) => {
+    const gateway = makeGateway()
+    const writes = [vi.spyOn(gateway.modelSettings, 'updateModelService'), vi.spyOn(gateway.agentExtensions, 'updateMcpServer'), vi.spyOn(gateway.agentExtensions, 'setSkillEnabled')]
+    const { router } = renderApp(`/settings?tab=${tab}`, { gateway })
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('checkbox', { name: `选择 ${label}` }))
+    await user.click(screen.getByRole('button', { name: '批量停用' }))
+    expect(screen.getByRole('dialog', { name: '确认批量停用？' })).toBeInTheDocument()
+    await act(async () => { await router.navigate('/settings?tab=account') })
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '确认批量停用？' })).not.toBeInTheDocument())
+    await act(async () => { await router.navigate(`/settings?tab=${tab}`) })
+    expect(await screen.findByRole('checkbox', { name: `选择 ${label}` })).toHaveAttribute('aria-checked', 'false')
+    writes.forEach(write => expect(write).not.toHaveBeenCalled())
+  })
+})
+
 describe('设置中的 MCP 配置', () => {
+  it('批量启用列明永久撤销的跳过原因，未确认不提交', async () => {
+    const gateway = makeGateway()
+    const update = vi.spyOn(gateway.agentExtensions, 'updateMcpServer')
+    renderApp('/settings?tab=mcp', { gateway })
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('checkbox', { name: '选择 演示已撤销服务' }))
+    await user.click(screen.getByRole('button', { name: '批量启用' }))
+    const dialog = screen.getByRole('dialog', { name: '确认批量启用？' })
+    expect(dialog).toHaveTextContent('已永久撤销，不能启停')
+    expect(within(dialog).getByRole('button', { name: '确认批量启用' })).toBeDisabled()
+    expect(update).not.toHaveBeenCalled()
+  })
+
   it('加载服务、搜索结果，并提供 HTTP 添加表单', async () => {
     renderApp('/settings?tab=mcp')
-    expect(await screen.findByRole('region', { name: 'MCP 服务列表' })).toBeInTheDocument()
+    expect(await screen.findByRole('table', { name: 'MCP 服务列表' })).toBeInTheDocument()
     expect(screen.getByText('演示检索（HTTP）')).toBeInTheDocument()
     expect(screen.getByText('已配置 Bearer Token')).toBeInTheDocument()
 
     const user = userEvent.setup()
     await user.type(screen.getByRole('searchbox', { name: '搜索服务名称、地址或镜像' }), 'stdio')
     expect(screen.getByText('演示文件系统（stdio）')).toBeInTheDocument()
-    expect(screen.queryByText('演示检索（HTTP）')).not.toBeInTheDocument()
+    await waitFor(() => expect(screen.queryByText('演示检索（HTTP）')).not.toBeInTheDocument())
     await user.clear(screen.getByRole('searchbox', { name: '搜索服务名称、地址或镜像' }))
     await user.click(screen.getByRole('button', { name: '新建 MCP 服务' }))
     expect(await screen.findByRole('dialog', { name: '新建 MCP 服务' })).toBeInTheDocument()
@@ -38,7 +72,7 @@ describe('设置中的 MCP 配置', () => {
 
   it('探测显示本次结果并呈现工具、资源和提示词目录', async () => {
     renderApp('/settings?tab=mcp')
-    const row = (await screen.findByText('演示检索（HTTP）')).closest('tr') as HTMLElement
+    const row = (await screen.findByText('演示检索（HTTP）')).closest<HTMLElement>('[role="row"]') as HTMLElement
     await userEvent.setup().click(within(row).getByRole('button', { name: '探测' }))
     expect(await screen.findByRole('dialog', { name: 'MCP 探测结果' })).toBeInTheDocument()
     expect(await screen.findByText('本次探测成功')).toBeInTheDocument()
@@ -68,11 +102,29 @@ describe('设置中的 MCP 配置', () => {
 })
 
 describe('设置中的 Skill 配置', () => {
+  it('多选删除保留确认与逐项结果，不移除共享包或导入记录', async () => {
+    const gateway = makeGateway()
+    const remove = vi.spyOn(gateway.agentExtensions, 'deleteSkill')
+    renderApp('/settings?tab=skills', { gateway })
+    const user = userEvent.setup()
+    await user.click(await screen.findByRole('checkbox', { name: '选择 incident-triage' }))
+    await user.click(screen.getByRole('button', { name: '批量删除' }))
+    const dialog = screen.getByRole('dialog', { name: '确认批量删除？' })
+    expect(dialog).toHaveTextContent('磁盘共享包文件与导入记录保留')
+    expect(remove).not.toHaveBeenCalled()
+    const skill = useAgentExtensionsStore.getState().skills.find(item => item.manifest.name === 'incident-triage')!
+    await user.click(within(dialog).getByRole('button', { name: '确认批量删除' }))
+    const result = await screen.findByRole('dialog', { name: '批量删除结果' })
+    expect(result).toHaveTextContent('incident-triage：成功')
+    expect(remove).toHaveBeenCalledExactlyOnceWith(skill.id, skill.revision)
+    expect(useAgentExtensionsStore.getState().skills.some(item => item.id === skill.id)).toBe(false)
+  })
+
   it('打开详情时自动预览 SKILL.md，列出来源修订并支持文件选择', async () => {
     renderApp('/settings?tab=skills')
-    expect(await screen.findByRole('region', { name: 'Skill 配置列表' })).toBeInTheDocument()
+    expect(await screen.findByRole('table', { name: 'Skill 配置列表' })).toBeInTheDocument()
     expect(screen.getByText('incident-triage')).toBeInTheDocument()
-    const row = screen.getByText('incident-triage').closest('tr') as HTMLElement
+    const row = screen.getByText('incident-triage').closest<HTMLElement>('[role="row"]') as HTMLElement
     await userEvent.setup().click(within(row).getByRole('button', { name: '查看' }))
     expect(await screen.findByRole('dialog', { name: 'Skill 详情' })).toBeInTheDocument()
     expect(await screen.findByText('SKILL.md', { selector: 'p' })).toBeInTheDocument()
@@ -83,7 +135,7 @@ describe('设置中的 Skill 配置', () => {
 
   it('Git 来源导入成功后打开记录弹窗，不把配置自动加进会话', async () => {
     renderApp('/settings?tab=skills')
-    expect(await screen.findByRole('region', { name: 'Skill 配置列表' })).toBeInTheDocument()
+    expect(await screen.findByRole('table', { name: 'Skill 配置列表' })).toBeInTheDocument()
     const user = userEvent.setup()
     await user.click(screen.getByRole('button', { name: '导入 Skill' }))
     expect(await screen.findByRole('dialog', { name: '导入 Skill' })).toBeInTheDocument()
@@ -123,7 +175,7 @@ describe('设置中的 Skill 配置', () => {
     await user.type(screen.getByLabelText('服务名称'), '临时本地 MCP 草稿')
     await act(async () => { await router.navigate('/settings?tab=skills') })
     expect(screen.queryByRole('dialog', { name: '新建 MCP 服务' })).not.toBeInTheDocument()
-    expect(await screen.findByRole('region', { name: 'Skill 配置列表' })).toBeInTheDocument()
+    expect(await screen.findByRole('table', { name: 'Skill 配置列表' })).toBeInTheDocument()
     await act(async () => { await router.navigate('/settings?tab=mcp') })
     expect(await screen.findByRole('dialog', { name: '新建 MCP 服务' })).toBeInTheDocument()
     expect(screen.getByLabelText('服务名称')).toHaveValue('临时本地 MCP 草稿')
@@ -201,19 +253,19 @@ describe('配置边界与请求恢复', () => {
     const catalog = vi.spyOn(gateway.agentExtensions, 'getMcpCatalog')
     const { router } = renderApp('/settings?tab=mcp', { gateway })
     const user = userEvent.setup()
-    const httpRow = (await screen.findByText('演示检索（HTTP）')).closest('tr')!
+    const httpRow = (await screen.findByText('演示检索（HTTP）')).closest<HTMLElement>('[role="row"]')!
     await user.click(within(httpRow).getByRole('button', { name: '详情' }))
     await waitFor(() => expect(catalog).toHaveBeenCalled())
     expect(probe).not.toHaveBeenCalled()
     await user.click(screen.getByRole('button', { name: '关闭MCP 详情 · 演示检索（HTTP）' }))
     const busy = useAgentExtensionsStore.getState().mcpServers.find(item => item.id === 'mcp-demo-busy')!
-    const row = screen.getByText(busy.name).closest('tr')!
+    const row = screen.getByText(busy.name).closest<HTMLElement>('[role="row"]')!
     await user.click(within(row).getByRole('button', { name: '探测' }))
     expect(await screen.findByText(/存在冲突执行或未核实的执行结果/)).toBeInTheDocument()
     expect(probe).toHaveBeenCalledTimes(1)
     expect(router.state.location.pathname).toBe('/settings')
     const revoked = useAgentExtensionsStore.getState().mcpServers.find(item => item.revoked)!
-    expect(within(screen.getByText(revoked.name).closest('tr')!).getByRole('button', { name: '探测', hidden: true })).toBeDisabled()
+    expect(within(screen.getByText(revoked.name).closest<HTMLElement>('[role="row"]')!).getByRole('button', { name: '探测', hidden: true })).toBeDisabled()
   })
 
   it.each([true, false])('导入响应丢失（已受理=%s）时核对原请求，保留原输入和文件', async accepted => {
@@ -264,7 +316,7 @@ describe('配置边界与请求恢复', () => {
     const gateway = makeGateway()
     vi.spyOn(gateway.agentExtensions, 'getSkillFile').mockResolvedValue({ skillId: 'skill-demo-incident', revision: 2, path: 'SKILL.md', previewable: false, reason })
     renderApp('/settings?tab=skills', { gateway })
-    const row = (await screen.findByText('incident-triage')).closest('tr')!
+    const row = (await screen.findByText('incident-triage')).closest<HTMLElement>('[role="row"]')!
     await userEvent.setup().click(within(row).getByRole('button', { name: '查看' }))
     expect(await screen.findByText(reason === 'binary' ? '二进制文件不能预览' : '文件超过 256 KiB，无法预览')).toBeInTheDocument()
   })
@@ -275,7 +327,7 @@ describe('配置边界与请求恢复', () => {
     const { router, unmount } = renderApp('/settings?tab=mcp', { gateway })
     expect(await screen.findByText('MCP 配置读取失败')).toBeInTheDocument()
     await act(async () => { await router.navigate('/settings?tab=skills') })
-    expect(await screen.findByRole('region', { name: 'Skill 配置列表' })).toBeInTheDocument()
+    expect(await screen.findByRole('table', { name: 'Skill 配置列表' })).toBeInTheDocument()
     unmount()
     list.mockClear()
     vi.spyOn(gateway.session, 'canView').mockImplementation(async area => area !== 'agent')
@@ -311,7 +363,7 @@ describe('MCP 容器运行时权限', () => {
     const oldProbe = vi.spyOn(gateway.agentExtensions, 'probeMcpServer')
     const user = userEvent.setup()
     renderApp('/settings?tab=mcp', { gateway })
-    const row = (await screen.findByText('演示文件系统（stdio）')).closest('tr')!
+    const row = (await screen.findByText('演示文件系统（stdio）')).closest<HTMLElement>('[role="row"]')!
     await user.click(within(row).getByRole('button', { name: '探测' }))
     expect(await screen.findByRole('dialog', { name: 'MCP 探测权限' })).toBeInTheDocument()
     // 会话授权已退役：申请不再提供允许范围单选，确认即本次允许。

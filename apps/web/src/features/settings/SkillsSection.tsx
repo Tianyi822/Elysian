@@ -1,4 +1,5 @@
-import { SearchInput } from '../../components/SearchInput'
+import { DataTable, type DataTableColumn } from '../../components/DataTable'
+import { TableBatchActions } from '../../components/TableBatchActions'
 import { useEffect, useRef, useState } from 'react'
 import { useMessageStore } from '../../stores/messageStore'
 import { randomId } from '../../utils/randomId'
@@ -18,7 +19,7 @@ import { CopyButton } from '../../components/CopyButton'
 import { formatDateTime } from '../../components/format'
 import { useFeedbackMessage } from '../../components/useFeedbackMessage'
 import { useImeEnterGuard } from '../../components/useImeEnterGuard'
-import { ExtensionDialog, ExtensionTable, ExtensionToggle, ExtensionMenu, Field, extensionCell as cell } from './extensionUi'
+import { ExtensionDialog, ExtensionToggle, ExtensionMenu, Field } from './extensionUi'
 import { RevisionConflictNotice } from './RevisionConflictNotice'
 import { useSilentPolling } from './useSilentPolling'
 import { useInFlightSubmit } from './useInFlightSubmit'
@@ -36,6 +37,7 @@ export function SkillsSection({ active }: { active: boolean }) {
   const state = useAgentExtensionsStore()
   const importsActive = selectImportsActive(state)
   const [search, setSearch] = useState('')
+  const [selected, setSelected] = useState<(string | number)[]>([])
   const [importTarget, setImportTarget] = useState<AgentSkill | 'new'>()
   const [importOpen, setImportOpen] = useState(false)
   const [pendingImport, setPendingImport] = useState(false)
@@ -47,12 +49,29 @@ export function SkillsSection({ active }: { active: boolean }) {
   const startImport = (target: AgentSkill | 'new') => { if (!pendingImport && (target !== 'new' || importTarget !== 'new')) setImportTarget(target); setImportOpen(true) }
   const rows = state.skills.filter(skill => [skill.manifest.name, skill.manifest.description, sourceText(skill.source)].some(value => value.toLowerCase().includes(search.trim().toLowerCase())))
   const running = state.imports.filter(task => !terminal(task)).length
+  const columns: DataTableColumn<AgentSkill>[] = [
+    { key: 'name', header: '名称与描述', primary: true, width: 'minmax(0,3.2fr)', accessor: skill => skill.manifest.name, cell: skill => <><p className="truncate font-mono text-xs font-medium" title={skill.manifest.name}>{skill.manifest.name}</p><p className="truncate text-xs text-fg-subtle" title={skill.manifest.description}>{skill.manifest.description}</p></> },
+    { key: 'source', header: '来源', width: 'minmax(0,2.8fr)', accessor: skill => sourceText(skill.source), cell: skill => <><p className="text-xs">{sourceLabels[skill.source.kind]}</p><p className="truncate text-xs text-fg-subtle" title={sourceText(skill.source)}>{skill.source.kind === 'zip' ? '上传的技能包' : sourceText(skill.source)}</p></> },
+    { key: 'files', header: '文件 / 大小', width: 'minmax(0,1.6fr)', accessor: skill => skill.bytes, cell: skill => <><span className="text-xs tabular-nums text-fg-muted">{skill.files.length} 个文件</span><p className="text-xs text-fg-subtle">{formatLogBytes(skill.bytes)}</p></> },
+    { key: 'status', header: '状态', width: 'minmax(0,1.2fr)', accessor: skill => skill.enabled, cell: skill => <StatusTag label={skill.enabled ? '已启用' : '已停用'} tone={skill.enabled ? 'success' : 'neutral'} /> },
+    { key: 'actions', header: '操作', width: 'minmax(0,1.2fr)', sortable: false, fullWidthOnMobile: true, cell: skill => <div className="flex items-center gap-1"><Button variant="outline" type="button" className="rounded-md px-1.5 py-1 text-xs text-fg-muted hover:bg-surface-raised" onClick={() => void state.loadSkillDetail(gateway, skill.id, skill.revision)}>查看</Button><ExtensionMenu label={`更多操作 ${skill.manifest.name}`} items={[{ label: '更新 Skill', disabled: pendingImport || state.deletingSkill || state.togglingSkillIds.includes(skill.id), action: () => startImport(skill) }, { label: skill.enabled ? '停用' : '启用', disabled: state.deletingSkill || state.togglingSkillIds.includes(skill.id), action: () => void state.setSkillEnabled(gateway, skill.id, skill.revision, !skill.enabled) }, { label: '删除 Skill', danger: true, disabled: state.deletingSkill || state.togglingSkillIds.includes(skill.id), action: () => state.requestDeleteSkill({ skillId: skill.id, name: skill.manifest.name, revision: skill.revision }) }]} /></div> },
+  ]
   return <div className="flex flex-col gap-3">
-    <div className="flex flex-wrap items-center gap-2"><Button variant="primary" type="button" className={CTL_PRIMARY} onClick={() => startImport('new')}><Plus aria-hidden size={14} />{pendingImport ? '核对上次导入' : '导入 Skill'}</Button><SearchInput className="flex-1 sm:max-w-72" label="搜索 Skill 名称、描述或来源" value={search} onChange={setSearch} /><Button variant="outline" type="button" className={CTL_SECONDARY} onClick={() => setRecordsOpen(true)}><History aria-hidden size={14} />导入记录{running > 0 ? `（${running} 进行中）` : ''}</Button><RefreshButton label="刷新 Skill 配置" busy={state.skillsRefreshing} onPress={() => void state.loadSkills(gateway)} /></div>
+    <div className="flex flex-wrap items-center gap-2"><Button variant="primary" type="button" className={CTL_PRIMARY} onClick={() => startImport('new')}><Plus aria-hidden size={14} />{pendingImport ? '核对上次导入' : '导入 Skill'}</Button><Button variant="outline" type="button" className={CTL_SECONDARY} onClick={() => setRecordsOpen(true)}><History aria-hidden size={14} />导入记录{running > 0 ? `（${running} 进行中）` : ''}</Button><RefreshButton label="刷新 Skill 配置" busy={state.skillsRefreshing} onPress={() => void state.loadSkills(gateway)} /></div>
     <div className="relative rounded-xl" aria-busy={state.skillsRefreshing}>
       {state.skillsStatus === 'ready' && state.skillsErrorMessage ? <p role="alert" className="mb-2 text-xs text-danger">刷新失败：{state.skillsErrorMessage}；当前保留的是上次读取结果。</p> : null}
-      {state.skillsStatus === 'idle' || state.skillsStatus === 'loading' ? <LoadingState label="正在读取 Skill 配置…" /> : state.skillsStatus === 'error' ? <ErrorState title="Skill 配置读取失败" description={state.skillsErrorMessage} onRetry={() => void state.loadSkills(gateway)} /> : rows.length === 0 ? <EmptyState title={search ? '没有匹配的 Skill' : '还没有导入的 Skill'} description={search ? '换个关键词，或清空搜索查看全部 Skill。' : '从 ZIP、HTTPS Git 或服务器目录导入包含 SKILL.md 的技能包。'} /> :
-        <><ExtensionTable label="Skill 配置列表" columns={[{ label: '名称与描述', width: '32%' }, { label: '来源', width: '28%' }, { label: '文件 / 大小', width: '16%' }, { label: '状态', width: '12%' }, { label: '操作', width: '12%' }]}>{rows.map(skill => <tr key={skill.id} className="hover:bg-surface-raised"><td className={cell}><p className="truncate font-mono text-xs font-medium" title={skill.manifest.name}>{skill.manifest.name}</p><p className="truncate text-xs text-fg-subtle" title={skill.manifest.description}>{skill.manifest.description}</p></td><td className={cell}><p className="text-xs">{sourceLabels[skill.source.kind]}</p><p className="truncate text-xs text-fg-subtle" title={sourceText(skill.source)}>{skill.source.kind === 'zip' ? '上传的技能包' : sourceText(skill.source)}</p></td><td className={cell}><span className="text-xs tabular-nums text-fg-muted">{skill.files.length} 个文件</span><p className="text-xs text-fg-subtle">{formatLogBytes(skill.bytes)}</p></td><td className={cell}><StatusTag label={skill.enabled ? '已启用' : '已停用'} tone={skill.enabled ? 'success' : 'neutral'} /></td><td className={cell}><div className="flex items-center gap-1"><Button variant="outline" type="button" className="rounded-md px-1.5 py-1 text-xs text-fg-muted hover:bg-surface-raised" onClick={() => void state.loadSkillDetail(gateway, skill.id, skill.revision)}>查看</Button><ExtensionMenu label={`更多操作 ${skill.manifest.name}`} items={[{ label: '更新 Skill', disabled: pendingImport, action: () => startImport(skill) }, { label: skill.enabled ? '停用' : '启用', disabled: state.togglingSkillIds.includes(skill.id), action: () => void state.setSkillEnabled(gateway, skill.id, skill.revision, !skill.enabled) }, { label: '删除 Skill', danger: true, action: () => state.requestDeleteSkill({ skillId: skill.id, name: skill.manifest.name, revision: skill.revision }) }]} /></div></td></tr>)}</ExtensionTable></>}
+      {state.skillsStatus === 'idle' || state.skillsStatus === 'loading' ? <LoadingState label="正在读取 Skill 配置…" /> : state.skillsStatus === 'error' ? <ErrorState title="Skill 配置读取失败" description={state.skillsErrorMessage} onRetry={() => void state.loadSkills(gateway)} /> :
+        <DataTable active={active} rows={rows} columns={columns} ariaLabel="Skill 配置列表" getRowLabel={skill => skill.manifest.name}
+          query={search} onQueryChange={setSearch} filterMode="external" searchPlaceholder="搜索 Skill 名称、描述或来源"
+          selected={selected} onSelectionChange={setSelected} selectionKey="settings-skills" busy={state.deletingSkill || state.togglingSkillIds.length > 0}
+          bulkActions={() => <TableBatchActions selectedRows={state.skills.filter(skill => selected.includes(skill.id))} getRowId={skill => skill.id} getRowLabel={skill => skill.manifest.name}
+            disabled={state.deletingSkill || state.togglingSkillIds.length > 0} onSucceeded={ids => setSelected(current => current.filter(id => !ids.includes(id)))}
+            actions={[...[true, false].map(enabled => ({ key: enabled ? 'enable' : 'disable', label: enabled ? '批量启用' : '批量停用',
+              eligible: (skill: AgentSkill) => skill.enabled === enabled ? `Skill 已${enabled ? '启用' : '停用'}` : undefined,
+              execute: (items: readonly AgentSkill[]) => state.setSkillEnabledResult(gateway, items[0]!, enabled),
+            })), { key: 'delete', label: '批量删除', danger: true, description: <p>删除所选 Skill 的全部修订登记；引用它们的会话将无法继续读取。磁盘共享包文件与导入记录保留，此操作不可撤回。</p>,
+              execute: (items: readonly AgentSkill[]) => state.deleteSkillResult(gateway, items[0]!),
+            }]} />} />}
     </div>
     {importTarget !== undefined && <SkillImportDialog key={importTarget === 'new' ? 'new' : `${importTarget.id}@${importTarget.revision}`} target={importTarget === 'new' ? undefined : importTarget} open={active && importOpen} onClose={() => setImportOpen(false)} onPending={setPendingImport} onAccepted={() => { setImportOpen(false); setImportTarget(undefined); setPendingImport(false); setRecordsOpen(true) }} />}
     <ImportRecords open={active && recordsOpen} onClose={() => setRecordsOpen(false)} />

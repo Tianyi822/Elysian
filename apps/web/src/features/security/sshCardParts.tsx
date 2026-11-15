@@ -5,7 +5,7 @@ import { CTL_FIELD, CTL_PRIMARY, CTL_SECONDARY, FORM_CONTROL_HEIGHT_CLASS } from
 
 /*
  * SSH 管理页的共用卡片部件：卡的形状、卡内区域的形状，以及卡内输入类控件与推进动作的类名。
- * 三张设置卡与密钥表共用它们，样式只在这里维护一份。
+ * SSH 服务与 Root 设置共用它们，样式只在这里维护一份。
  */
 
 /** 卡内控件高度，与表单控件同一套，见 `components/formControl.ts`。 */
@@ -19,11 +19,6 @@ export const ACTION_CLASS = `${CTL_PRIMARY} shrink-0`
 
 /** 次要动作：与推进动作同高同形，只去掉底色并把文字降一档色阶。 */
 export const SECONDARY_ACTION_CLASS = `${CTL_SECONDARY} shrink-0`
-
-/** 卡内表格沿用全站的圆角描边、表头内距与数据行密度，不重复叠加玻璃面板。 */
-export const TABLE_CONTAINER_CLASS = 'hover-scrollbar min-w-0 overflow-x-auto rounded-xl border border-line'
-export const TABLE_HEADER_CLASS = 'border-b border-line bg-surface px-3 py-2.5 text-xs font-medium text-fg-muted'
-export const TABLE_CELL_CLASS = 'border-b border-line px-3 py-2.5'
 
 /** 卡：标题加内容，卡内区域由这里统一排布间距。 */
 export function Section({ title, children, aside }: { title: string; children: ReactNode; aside?: ReactNode }) {

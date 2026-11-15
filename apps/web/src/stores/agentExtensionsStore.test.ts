@@ -4,6 +4,7 @@ import { createMockGateway } from '../adapters/mock/gateway'
 import { resetAgentExtensionsData } from '../adapters/mock/agent/agentExtensionsMockAdapter'
 import { useMessageStore } from './messageStore'
 import { useAgentExtensionsStore, selectImportsActive } from './agentExtensionsStore'
+import { AgentHttpError } from '../adapters/http/agent/agentShared'
 
 /*
  * 技能与 MCP 域 store 测试：走 mock 网关（演示状态机），覆盖六态切换、
@@ -134,6 +135,89 @@ describe('导入任务', () => {
 })
 
 describe('MCP 服务', () => {
+  it('批量启停的迟到回执不会覆盖刷新已读到的后续 MCP 和 Skill 修订', async () => {
+    await Promise.all([useAgentExtensionsStore.getState().loadMcpServers(gateway), useAgentExtensionsStore.getState().loadSkills(gateway)])
+    const servers = useAgentExtensionsStore.getState().mcpServers
+    const skills = useAgentExtensionsStore.getState().skills
+    const server = servers.find(item => item.id === 'mcp-demo-http')!
+    const skill = skills[0]!
+    const newerServer = { ...server, revision: server.revision + 2, name: '后续 MCP 修订' }
+    const newerSkill = { ...skill, revision: skill.revision + 2, manifest: { ...skill.manifest, name: '后续 Skill 修订' } }
+    let resolveServer!: (value: typeof server) => void
+    let resolveSkill!: (value: typeof skill) => void
+    vi.spyOn(gateway.agentExtensions, 'updateMcpServer').mockImplementationOnce(() => new Promise(done => { resolveServer = done }))
+    vi.spyOn(gateway.agentExtensions, 'setSkillEnabled').mockImplementationOnce(() => new Promise(done => { resolveSkill = done }))
+    const mcpWrite = useAgentExtensionsStore.getState().setMcpActive(gateway, server, false)
+    const skillWrite = useAgentExtensionsStore.getState().setSkillEnabledResult(gateway, skill, !skill.enabled)
+    vi.spyOn(gateway.agentExtensions, 'listMcpServers').mockResolvedValueOnce(servers.map(item => item.id === server.id ? newerServer : item))
+    vi.spyOn(gateway.agentExtensions, 'listSkills').mockResolvedValueOnce(skills.map(item => item.id === skill.id ? newerSkill : item))
+    await Promise.all([useAgentExtensionsStore.getState().loadMcpServers(gateway), useAgentExtensionsStore.getState().loadSkills(gateway)])
+    resolveServer({ ...server, revision: server.revision + 1, active: false })
+    resolveSkill({ ...skill, revision: skill.revision + 1, enabled: !skill.enabled })
+    expect((await mcpWrite).status).toBe('succeeded')
+    expect((await skillWrite).status).toBe('succeeded')
+    expect(useAgentExtensionsStore.getState().mcpServers.find(item => item.id === server.id)).toEqual(newerServer)
+    expect(useAgentExtensionsStore.getState().skills.find(item => item.id === skill.id)).toEqual(newerSkill)
+  })
+
+  it('删除回执迟到时不移除随后读到的同 ID 更新修订', async () => {
+    await useAgentExtensionsStore.getState().loadSkills(gateway)
+    const skills = useAgentExtensionsStore.getState().skills
+    const skill = skills[0]!
+    const newer = { ...skill, revision: skill.revision + 1 }
+    let resolve!: () => void
+    vi.spyOn(gateway.agentExtensions, 'deleteSkill').mockImplementationOnce(() => new Promise(done => { resolve = done }))
+    const pending = useAgentExtensionsStore.getState().deleteSkillResult(gateway, skill)
+    vi.spyOn(gateway.agentExtensions, 'listSkills').mockResolvedValueOnce(skills.map(item => item.id === skill.id ? newer : item))
+    await useAgentExtensionsStore.getState().loadSkills(gateway)
+    resolve()
+    expect((await pending).status).toBe('succeeded')
+    expect(useAgentExtensionsStore.getState().skills.find(item => item.id === skill.id)).toEqual(newer)
+  })
+
+  it('批量启停保留 HTTP 凭据与 stdio 历史授权、环境变量，不提交秘密', async () => {
+    await useAgentExtensionsStore.getState().loadMcpServers(gateway)
+    const update = vi.spyOn(gateway.agentExtensions, 'updateMcpServer')
+    const http = useAgentExtensionsStore.getState().mcpServers.find(item => item.id === 'mcp-demo-http')!
+    const stdio = useAgentExtensionsStore.getState().mcpServers.find(item => item.id === 'mcp-demo-stdio')!
+    expect((await useAgentExtensionsStore.getState().setMcpActive(gateway, http, false)).status).toBe('succeeded')
+    expect((await useAgentExtensionsStore.getState().setMcpActive(gateway, stdio, false)).status).toBe('succeeded')
+    expect(update.mock.calls[0]![1]).not.toHaveProperty('credential')
+    expect(update.mock.calls[1]![1].stdio).toEqual({ image: stdio.stdio!.image, command: stdio.stdio!.command, grantId: stdio.stdio!.grantId, grantRevision: stdio.stdio!.grantRevision })
+    expect(update.mock.calls[1]![1].stdio).not.toHaveProperty('environment')
+    expect(useAgentExtensionsStore.getState().mcpServers.find(item => item.id === http.id)?.hasCredential).toBe(true)
+    expect(useAgentExtensionsStore.getState().mcpServers.find(item => item.id === stdio.id)?.stdio?.hasEnvironment).toBe(true)
+  })
+
+  it('运行需求原样保留；永久撤销与陈旧修订均在派发前拒绝', async () => {
+    await useAgentExtensionsStore.getState().loadMcpServers(gateway)
+    const stdio = useAgentExtensionsStore.getState().mcpServers.find(item => item.id === 'mcp-demo-stdio')!
+    const configured = { ...stdio, stdio: { image: stdio.stdio!.image, command: stdio.stdio!.command, hasEnvironment: true, requestedAccess: { directories: [{ path: '/srv/data', access: 'ro' as const }], network: [{ scheme: 'https' as const, host: 'api.example.com', port: 443 }], privateCidrs: [] } } }
+    useAgentExtensionsStore.setState(state => ({ mcpServers: state.mcpServers.map(item => item.id === stdio.id ? configured : item) }))
+    const update = vi.spyOn(gateway.agentExtensions, 'updateMcpServer').mockResolvedValueOnce({ ...configured, active: false, revision: configured.revision + 1 })
+    expect((await useAgentExtensionsStore.getState().setMcpActive(gateway, configured, false)).status).toBe('succeeded')
+    expect(update.mock.calls[0]![1].stdio?.requestedAccess).toEqual(configured.stdio.requestedAccess)
+    expect((await useAgentExtensionsStore.getState().setMcpActive(gateway, configured, true)).status).toBe('failed')
+    const revoked = useAgentExtensionsStore.getState().mcpServers.find(item => item.revoked)!
+    expect((await useAgentExtensionsStore.getState().setMcpActive(gateway, revoked, true)).status).toBe('failed')
+    expect(update).toHaveBeenCalledTimes(1)
+  })
+
+  it('Skill 批量写入使用确认时修订，未知结果不改目录也不重投', async () => {
+    await useAgentExtensionsStore.getState().loadSkills(gateway)
+    const skill = useAgentExtensionsStore.getState().skills[0]!
+    const toggle = vi.spyOn(gateway.agentExtensions, 'setSkillEnabled').mockRejectedValueOnce(new Error('网络断开'))
+    const remove = vi.spyOn(gateway.agentExtensions, 'deleteSkill').mockRejectedValueOnce(new AgentHttpError('修订已变化', 'revision-conflict', 409))
+    expect((await useAgentExtensionsStore.getState().setSkillEnabledResult(gateway, skill, !skill.enabled)).status).toBe('unknown')
+    expect(toggle).toHaveBeenCalledExactlyOnceWith(skill.id, skill.revision, !skill.enabled)
+    expect(useAgentExtensionsStore.getState().skills[0]).toEqual(skill)
+    expect((await useAgentExtensionsStore.getState().deleteSkillResult(gateway, skill)).status).toBe('failed')
+    expect(remove).toHaveBeenCalledExactlyOnceWith(skill.id, skill.revision)
+    expect(useAgentExtensionsStore.getState().skills.some(item => item.id === skill.id)).toBe(true)
+    expect(useAgentExtensionsStore.getState().togglingSkillIds).toEqual([])
+    expect(useAgentExtensionsStore.getState().deletingSkill).toBe(false)
+  })
+
   it('同修订探测在关闭后重开仍单飞，旧请求不会把已关闭弹窗重新打开', async () => {
     const catalog = await gateway.agentExtensions.probeMcpServer('mcp-demo-http', 2)
     let resolveProbe!: (value: AgentMCPCatalogProjection) => void

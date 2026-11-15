@@ -15,11 +15,11 @@ const TEXT = '证书 demo.elysian.local 距到期还有 21 天：自动续期已
 function renderCell(ui: ReactElement) {
   return render(
     <Tooltip.Provider delayDuration={0}>
-      <table>
-        <tbody>
-          <tr>{ui}</tr>
-        </tbody>
-      </table>
+      <div role="table">
+        <div role="row">
+          <div role="cell">{ui}</div>
+        </div>
+      </div>
     </Tooltip.Provider>,
   )
 }

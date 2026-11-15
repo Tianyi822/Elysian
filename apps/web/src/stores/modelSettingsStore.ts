@@ -5,6 +5,7 @@ import { create } from 'zustand'
 import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
 import type { ElysianGateway } from '../contracts/adapters'
 import { useMessageStore } from './messageStore'
+import { tableBatchFailure as batchFailure, type TableBatchOutcome as BatchMutationResult } from '../utils/tableBatch'
 
 /** 模型配置的修订冲突保留表单草稿，由用户确认最新修订后提交。 */
 export function isRevisionConflict(error: unknown): boolean {
@@ -45,6 +46,7 @@ type ModelSettingsState = {
   refresh(gateway: ElysianGateway): Promise<void>
   saveService(gateway: ElysianGateway, input: AgentModelServiceInput, editing?: { id: string; revision: number }): Promise<boolean>
   saveModel(gateway: ElysianGateway, input: AgentModelProfileInput, editing?: { id: string; revision: number }): Promise<boolean>
+  setModelsEnabled(gateway: ElysianGateway, service: AgentModelService, modelIds: readonly string[], enabled: boolean): Promise<BatchMutationResult>
   reset(): void
 }
 
@@ -54,6 +56,7 @@ const initial = { status: 'idle' as const, models: [], services: [], reloading: 
 
 export const useModelSettingsStore = create<ModelSettingsState>((set, get) => {
   let sequence = 0
+  let writeEpoch = 0
   let pendingRead: { gateway: ElysianGateway; auth: number; models: readonly AgentModelProfile[]; services: readonly AgentModelService[]; promise: Promise<void> } | undefined
   const read = (gateway: ElysianGateway, refresh: boolean): Promise<void> => {
     const auth = captureAuthGeneration()
@@ -82,6 +85,36 @@ export const useModelSettingsStore = create<ModelSettingsState>((set, get) => {
     setSearch: (search) => set({ search }),
     load(gateway) { return read(gateway, false) },
     async refresh(gateway) { await read(gateway, true) },
+    async setModelsEnabled(gateway, snapshot, modelIds, enabled) {
+      const current = get().services.find(service => service.id === snapshot.id)
+      if (get().saving) return { status: 'failed', error: '模型配置正在保存，请稍后重试' }
+      if (!current || current.revision !== snapshot.revision) return { status: 'failed', error: '模型服务修订已变化，请重新选择后重试' }
+      if (enabled && !current.active) return { status: 'failed', error: '所属服务已停用，请先编辑并启用服务' }
+      const ids = new Set(modelIds)
+      if (!ids.size || modelIds.some(id => !current.models.some(model => model.id === id))) return { status: 'failed', error: '所选模型已变化，请重新选择后重试' }
+      const input: AgentModelServiceInput = {
+        name: current.name, provider: current.provider, apiFormat: current.apiFormat, baseUrl: current.baseUrl, active: current.active,
+        models: current.models.map(model => ({ id: model.id, model: model.model, contextTokens: model.contextTokens,
+          outputTokens: model.outputTokens, capabilities: model.capabilities, enabled: ids.has(model.id) ? enabled : model.enabled })),
+      }
+      const generation = writeEpoch, auth = captureAuthGeneration()
+      const isCurrent = () => generation === writeEpoch && auth === captureAuthGeneration()
+      sequence += 1; pendingRead = undefined
+      set({ saving: true, reloading: false, errorMessage: undefined })
+      try {
+        const service = await gateway.modelSettings.updateModelService(current.id, { ...input, expectedRevision: current.revision })
+        if (!isCurrent()) return { status: 'unknown', error: '登录状态已变化，请重新读取模型配置核实结果' }
+        set(state => { const services = state.services.map(item => item.id === service.id && item.revision <= service.revision ? service : item); return { services, models: services.flatMap(item => item.models) } })
+        return { status: 'succeeded' }
+      } catch (error) {
+        const result = batchFailure(error)
+        if (isCurrent()) {
+          set({ errorMessage: result.error })
+          if (isRevisionConflict(error)) await read(gateway, false)
+        }
+        return result
+      } finally { if (isCurrent()) set({ saving: false }) }
+    },
     async saveService(gateway, input, editing) {
       const current = get().services.find(service => service.id === editing?.id)
       if (!input.name.trim() || input.models.length < 1 || input.models.length > 64) { set({ errorMessage: '请填写服务名称，并配置 1 至 64 个模型' }); return false }
@@ -135,6 +168,6 @@ export const useModelSettingsStore = create<ModelSettingsState>((set, get) => {
         return false
       } finally { set({ saving: false }) }
     },
-    reset() { sequence += 1; pendingRead = undefined; set(initial) },
+    reset() { sequence += 1; writeEpoch += 1; pendingRead = undefined; set(initial) },
   }
 })

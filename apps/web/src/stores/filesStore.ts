@@ -63,7 +63,7 @@ export type FilesState = {
   /** 同一目录的重新列举在途：旧列表留在屏上，只由它驱动刷新按钮。 */
   reloading: boolean
   load(gateway: ElysianGateway, path: string, options?: { silent?: boolean }): Promise<void>
-  computeSize(gateway: ElysianGateway, path: string): Promise<void>
+  computeSize(gateway: ElysianGateway, path: string): Promise<{ status: 'succeeded' | 'failed'; error?: string }>
   copyToClipboard(path: string): void
   moveToClipboard(path: string): void
   clearClipboard(): void
@@ -150,19 +150,24 @@ export const useFilesStore = create<FilesState>((set, get) => {
     async computeSize(gateway, path) {
       const generation = sizeGeneration
       const { computingPaths, sizes } = get()
-      if (computingPaths.includes(path) || sizes[path] !== undefined) return
+      if (sizes[path] !== undefined) return { status: 'succeeded' }
+      if (computingPaths.includes(path)) return { status: 'failed', error: '目录正在计算大小，请等待完成。' }
       set({ computingPaths: [...computingPaths, path] })
       try {
         const total = await gateway.files.size(path)
-        if (generation !== sizeGeneration) return
+        if (generation !== sizeGeneration) return { status: 'failed', error: '文件已发生变化，请重新计算目录大小。' }
         set((state) => ({ sizes: { ...state.sizes, [path]: total } }))
+        return { status: 'succeeded' }
       } catch (error) {
-        notify(`统计目录大小失败：${error instanceof Error ? error.message : '未知错误'}`, 'danger')
+        const message = error instanceof Error ? error.message : '未知错误'
+        notify(`统计目录大小失败：${message}`, 'danger')
+        return { status: 'failed', error: message }
       } finally {
-        if (generation !== sizeGeneration) return
-        set((state) => ({
-          computingPaths: state.computingPaths.filter((item) => item !== path),
-        }))
+        if (generation === sizeGeneration) {
+          set((state) => ({
+            computingPaths: state.computingPaths.filter((item) => item !== path),
+          }))
+        }
       }
     },
     copyToClipboard(path) {

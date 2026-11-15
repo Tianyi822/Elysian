@@ -1,3 +1,4 @@
+import { securityActionFailure, securitySessionChanged, type SecurityActionResult } from './securityActionResult'
 import { captureAuthGeneration } from '../adapters/http/unauthorized'
 import { hasUncertainOutcome } from '../adapters/http/requestDeadline'
 import type { HostUser, HostUserInput } from '@elysian/contracts'
@@ -33,7 +34,7 @@ type UsersState = {
   saveUser: (gateway: ElysianGateway, input: HostUserInput & { name?: string }) => Promise<boolean>
   openRemove: (user: HostUser) => void
   closeRemove: () => void
-  removeUser: (gateway: ElysianGateway, userId: string) => Promise<void>
+  removeUser: (gateway: ElysianGateway, userId: string) => Promise<SecurityActionResult>
 }
 
 function notify(message: string, tone: 'success' | 'danger' = 'success'): void {
@@ -48,11 +49,18 @@ const MOCK_NOTE = isDockerRuntime() ? '' : 'mock，待接入真实执行'
 const MOCK_SUFFIX = MOCK_NOTE ? `（${MOCK_NOTE}）` : ''
 
 export const useUsersStore = create<UsersState>((set, get) => {
+  let deletionAuth = captureAuthGeneration()
+  const syncDeletionGeneration = () => {
+    const auth = captureAuthGeneration()
+    if (auth !== deletionAuth) { deletionAuth = auth; set({ removingUserIds: [] }) }
+    return auth
+  }
   let pendingLoad: { gateway: ElysianGateway; auth: number; snapshot: readonly HostUser[]; promise: Promise<void> } | undefined
   const recordFailure = async (error: unknown, gateway: ElysianGateway) => {
+    const auth = captureAuthGeneration()
     const message = error instanceof Error ? error.message : '操作失败，请重试'
     if (hasUncertainOutcome(error)) await get().load(gateway)
-    set({ operationError: message })
+    if (auth === captureAuthGeneration()) set({ operationError: message })
   }
   return ({
   status: 'idle',
@@ -67,7 +75,7 @@ export const useUsersStore = create<UsersState>((set, get) => {
   removingUserIds: [],
 
   load(gateway) {
-    const auth = captureAuthGeneration()
+    const auth = syncDeletionGeneration()
     if (pendingLoad?.gateway === gateway && pendingLoad.auth === auth && pendingLoad.snapshot === get().users) return pendingLoad.promise
     const hadData = get().status === 'ready'
     const operation = { gateway, auth, snapshot: get().users, promise: Promise.resolve() }
@@ -167,22 +175,27 @@ export const useUsersStore = create<UsersState>((set, get) => {
   },
 
   async removeUser(gateway, userId) {
+    const auth = syncDeletionGeneration()
     const target = get().users.find((user) => user.id === userId)
-    if (!target || get().removingUserIds.includes(userId)) return
+    if (!target || get().removingUserIds.includes(userId)) return { status: 'failed', error: '账号不存在或正在删除，请重新读取状态' }
     set((state) => ({ removingUserIds: [...state.removingUserIds, userId] }))
     try {
       await gateway.users.remove(userId)
+      if (auth !== captureAuthGeneration()) return securitySessionChanged()
       set((state) => ({
         users: state.users.filter((user) => user.id !== userId),
         removingUserIds: state.removingUserIds.filter((id) => id !== userId),
       }))
       notify(`账号 ${target.name} 已删除${MOCK_SUFFIX}`)
+      return { status: 'succeeded' }
     } catch (error) {
+      if (auth !== captureAuthGeneration()) return securitySessionChanged()
       set((state) => ({
         removingUserIds: state.removingUserIds.filter((id) => id !== userId),
       }))
       notify(error instanceof Error ? `删除失败：${error.message}` : '删除失败', 'danger')
       await recordFailure(error, gateway)
+      return securityActionFailure(error, '删除失败')
     }
   },
 })

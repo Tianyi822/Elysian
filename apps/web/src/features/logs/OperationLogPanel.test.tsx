@@ -17,10 +17,7 @@ import type { ElysianGateway } from '../../contracts/adapters'
 import { useLogsStore } from '../../stores/logsStore'
 import { useOperationLogStore } from '../../stores/operationLogStore'
 import { renderApp } from '../../test/renderApp'
-import {
-  OPERATION_LOG_TABLE_MIN_PX,
-  OPERATION_LOG_TABLE_MIN_WIDTH_CLASS,
-} from './OperationLogPanel'
+import { formatLoginTime } from '../../components/format'
 
 /**
  * 操作日志面板：五列固定宽表格、分类/结果/搜索三重筛选、三态与两种空状态、
@@ -182,14 +179,19 @@ describe('平台操作日志面板', () => {
     expect(retention.parentElement).not.toBe(screen.getByText(/条操作记录/).parentElement)
   })
 
-  it('列宽固定且表格最小宽度等于五列之和（窄屏整表横向滚动，不压缩列）', async () => {
+  it('保留五个业务列并支持按时间排序，排序不改变原日志内容', async () => {
+    const user = userEvent.setup()
     renderApp('/logs', { gateway: gatewayWithLogs({}) })
 
     const region = await screen.findByRole('region', { name: '操作日志表' })
-    expect(within(region).getAllByRole('columnheader')).toHaveLength(5)
-    expect(within(region).getByRole('table')).toHaveClass(OPERATION_LOG_TABLE_MIN_WIDTH_CLASS)
-    // 类名与算式同一处口径：改列宽时两处必须一起改，写死数字或漏改都会被这条拦下。
-    expect(OPERATION_LOG_TABLE_MIN_WIDTH_CLASS).toContain(`[${OPERATION_LOG_TABLE_MIN_PX}px]`)
+    expect(within(region).getAllByRole('columnheader')).toHaveLength(6)
+    const timestamp = within(region).getByRole('columnheader', { name: '日期时间' })
+    await user.click(within(timestamp).getByRole('button', { name: '日期时间' }))
+    expect(timestamp).toHaveAttribute('aria-sort', 'ascending')
+    const earliest = SEED_OPERATION_LOGS.at(-1)!
+    expect(dataRows()[0]).toHaveTextContent(formatLoginTime(earliest.at))
+    expect(dataRows()[0]).toHaveTextContent(earliest.action)
+    expect(dataRows()).toHaveLength(SEED_OPERATION_LOGS.length)
   })
 
   it('按分类筛选：下拉选某一类时其余类别消失，选回「全部」恢复', async () => {
@@ -272,7 +274,9 @@ describe('平台操作日志面板', () => {
     expect(
       screen.getByText('通过面板按钮改动系统或数据库的动作都会记录在这里。'),
     ).toBeInTheDocument()
-    expect(screen.queryByRole('region', { name: '操作日志表' })).not.toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '操作日志表' })).toBeInTheDocument()
+    expect(screen.getByRole('searchbox', { name: '搜索操作日志' })).toBeInTheDocument()
+    expect(dataRows()).toHaveLength(0)
   })
 
   it('筛选「数据库」没有命中时解释这个空槽位', async () => {
@@ -450,12 +454,13 @@ describe('平台操作日志面板', () => {
     expect(calls).toBe(2)
   })
 
-  it('无筛选且 total 为 0 时整页空状态', async () => {
+  it('无筛选且 total 为 0 时保留官方表格与搜索入口', async () => {
     renderApp('/logs', {
       gateway: gatewayWithLogs({ operationLogs: async () => reportWith([], { total: 0 }) }),
     })
     expect(await screen.findByText('还没有操作日志')).toBeInTheDocument()
-    expect(screen.queryByRole('region', { name: '操作日志表' })).not.toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '操作日志表' })).toBeInTheDocument()
+    expect(dataRows()).toHaveLength(0)
   })
 
   it('数据库分类且 total 为 0 时保留工具栏并解释空槽', async () => {

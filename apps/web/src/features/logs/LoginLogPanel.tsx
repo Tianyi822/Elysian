@@ -4,12 +4,12 @@ import type { LoginLogEntry } from '@elysian/contracts'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { formatLoginTime } from '../../components/format'
-import { SearchInput } from '../../components/SearchInput'
+import { DataTable } from '../../components/DataTable'
 import { CTL_TOOLBAR } from '../../components/formControl'
 import { ChipGroup } from '../../components/ChipGroup'
 import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
-import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
+import { ErrorState, LoadingState } from '../../components/states/StateViews'
 import { useLoginLogStore } from '../../stores/loginLogStore'
 import type { LoginLogStatusFilter } from '../../stores/loginLogStore'
 import { useLogReportNotifications } from './useLogReportNotifications'
@@ -38,7 +38,6 @@ export function LoginLogPanel() {
   const status = useLoginLogStore((s) => s.status)
   const errorMessage = useLoginLogStore((s) => s.errorMessage)
   const entries = useLoginLogStore((s) => s.entries)
-  const total = useLoginLogStore((s) => s.total)
   const truncated = useLoginLogStore((s) => s.truncated)
   const skippedLines = useLoginLogStore((s) => s.skippedLines)
   const skippedFiles = useLoginLogStore((s) => s.skippedFiles)
@@ -74,10 +73,6 @@ export function LoginLogPanel() {
     return <ErrorState title="登录日志加载失败" description={errorMessage} onRetry={() => void load(gateway)} />
   }
 
-  const filtersClear = statusFilter === 'all' && trimmedSearch.length === 0
-  if (total === 0 && filtersClear) {
-    return <EmptyState title="还没有登录日志" description="登录成功或失败后，记录会出现在这里。" />
-  }
 
   const notices: string[] = []
   if (truncated) notices.push(`仅显示最近 ${LOG_ENTRY_FETCH_LIMIT} 条`)
@@ -96,16 +91,7 @@ export function LoginLogPanel() {
           </span>
         )}
         <ChipGroup ariaLabel="登录状态筛选" items={STATUS_FILTERS} value={statusFilter} onSelect={setStatusFilter} />
-        <div className="relative ml-auto w-64 max-w-full">
-          <SearchInput
-            id="login-log-search"
-            label="搜索登录日志"
-            value={search}
-            onChange={setSearch}
-            placeholder="请输入搜索关键字"
-            className="w-full"
-          />
-        </div>
+
       </div>
       {notices.length > 0 ? (
         <p role="status" className="mb-3 text-xs text-fg-muted">
@@ -113,58 +99,16 @@ export function LoginLogPanel() {
         </p>
       ) : null}
 
-      <div className="relative rounded-xl" aria-busy={querying}>
-        <div role="region" aria-label="登录日志表" className="overflow-x-auto panel-surface">
-          <table className="w-full min-w-[960px] table-fixed border-separate border-spacing-0 text-left text-sm">
-            <colgroup>
-              <col className="w-40" />
-              <col className="w-56" />
-              <col />
-              <col className="w-24" />
-              <col className="w-44" />
-            </colgroup>
-            <thead>
-              <tr>
-                {['IP 地址', '归属地', '用户代理', '登录状态', '时间'].map((label) => (
-                  <th
-                    key={label}
-                    scope="col"
-                    className="border-b border-line bg-surface px-3 py-2.5 text-xs font-medium text-fg-muted"
-                  >
-                    {label}
-                  </th>
-                ))}
-              </tr>
-            </thead>
-            <tbody>
-              {entries.map((entry) => (
-                <tr key={entry.id} className="transition-colors hover:bg-surface-raised">
-                  <td className="border-b border-line px-3 py-2.5 font-medium tabular-nums">{entry.ip}</td>
-                  <td className="border-b border-line px-3 py-2.5 text-fg-muted">{entry.location}</td>
-                  <td className="border-b border-line px-3 py-2.5 text-fg-muted">
-                    <span className="block truncate" title={entry.userAgent}>
-                      {entry.userAgent}
-                    </span>
-                  </td>
-                  <td className="border-b border-line px-3 py-2.5">
-                    <StatusTag label={LOGIN_LOG_STATUS_LABELS[entry.status]} tone={STATUS_TONES[entry.status]} />
-                  </td>
-                  <td className="border-b border-line px-3 py-2.5 tabular-nums text-fg-muted">
-                    {formatLoginTime(entry.time)}
-                  </td>
-                </tr>
-              ))}
-              {entries.length === 0 ? (
-                <tr>
-                  <td colSpan={5} className="border-b border-line px-3 py-8 text-center text-sm text-fg-muted">
-                    没有匹配的登录记录，换个关键词或清空筛选
-                  </td>
-                </tr>
-              ) : null}
-            </tbody>
-          </table>
-        </div>
-      </div>
+      <DataTable ariaLabel="登录日志表" rows={entries} query={search} onQueryChange={setSearch}
+        filterMode="external" emptyState={entries.length === 0 && !search.trim() && statusFilter === 'all' ? <><p className="font-medium">还没有登录日志</p><p className="text-sm text-fg-muted">登录成功或失败后，记录会出现在这里。</p></> : undefined} searchPlaceholder="搜索登录日志" selectionKey={statusFilter} busy={querying}
+        columns={[
+          { key: 'ip', header: 'IP 地址', primary: true, width: '160px', accessor: entry => entry.ip, cell: entry => <span className="tabular-nums">{entry.ip}</span> },
+          { key: 'location', header: '归属地', width: 'minmax(140px,1fr)', accessor: entry => entry.location },
+          { key: 'userAgent', header: '用户代理', width: 'minmax(180px,2fr)', accessor: entry => entry.userAgent, cell: entry => <span className="block truncate" title={entry.userAgent}>{entry.userAgent}</span> },
+          { key: 'status', header: '登录状态', width: '110px', accessor: entry => LOGIN_LOG_STATUS_LABELS[entry.status], cell: entry => <StatusTag label={LOGIN_LOG_STATUS_LABELS[entry.status]} tone={STATUS_TONES[entry.status]} /> },
+          { key: 'time', header: '时间', width: '176px', accessor: entry => new Date(entry.time), cell: entry => <span className="tabular-nums text-fg-muted">{formatLoginTime(entry.time)}</span> },
+        ]} />
+
       {truncated ? (
         <div className="mt-3 flex flex-col items-start gap-2">
           <p className="text-xs text-fg-muted">还有更早的记录</p>

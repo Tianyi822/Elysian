@@ -20,7 +20,13 @@ function gateway() {
 }
 
 function row(region: HTMLElement, name: RegExp) {
-  return within(region).getByRole('row', { name })
+  const pattern = new RegExp(name.source.replace(/ $/, ''))
+  const result = within(region).getAllByRole('row').find((candidate) => {
+    const cells = within(candidate).queryAllByRole('cell')
+    return cells.length > 1 && pattern.test(cells[1]?.textContent ?? '')
+  })
+  if (!result) throw new Error(`没有找到文件行：${name}`)
+  return result
 }
 
 const uploaded = (name: string): FileEntry => ({ name, kind: 'file', sizeBytes: 3, mode: '644', owner: 'root', modifiedAt: '2026-10-11T00:00:00Z' })

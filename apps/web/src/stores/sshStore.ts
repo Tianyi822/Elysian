@@ -1,3 +1,4 @@
+import { securityActionFailure, securitySessionChanged, type SecurityActionResult } from './securityActionResult'
 import { captureAuthGeneration } from '../adapters/http/unauthorized'
 import { hasUncertainOutcome } from '../adapters/http/requestDeadline'
 import type {
@@ -109,7 +110,7 @@ type SshState = {
   createKey: (gateway: ElysianGateway, input: { name: string; userId: string }) => Promise<boolean>
   openRemoveKey: (key: SshLoginKey) => void
   closeRemoveKey: () => void
-  removeKey: (gateway: ElysianGateway, keyId: string) => Promise<void>
+  removeKey: (gateway: ElysianGateway, keyId: string) => Promise<SecurityActionResult>
   openKeyView: (title: string, material: SshKeyMaterial) => void
   closeKeyView: () => void
   closeRevealKey: () => void
@@ -156,10 +157,11 @@ export const useSshStore = create<SshState>((set, get) => {
     return applySettings(settings)
   }
   const recordFailure = async (error: unknown, gateway: ElysianGateway) => {
+    const auth = captureAuthGeneration()
     const generation = sshGeneration
     const message = error instanceof Error ? error.message : '操作失败，请重试'
     if (hasUncertainOutcome(error)) await get().load(gateway)
-    if (generation === sshGeneration) set({ operationError: message })
+    if (generation === sshGeneration && auth === captureAuthGeneration()) set({ operationError: message })
   }
   return ({
   status: 'idle',
@@ -531,27 +533,30 @@ export const useSshStore = create<SshState>((set, get) => {
   },
 
   async removeKey(gateway, keyId) {
-    if (isBusy(get())) return
+    if (isBusy(get())) return { status: 'failed', error: 'SSH 设置正在变更，请等待完成' }
+    const auth = captureAuthGeneration()
     const generation = sshGeneration
     const target = get().keys.find((key) => key.id === keyId)
-    if (!target || get().removingKeyIds.includes(keyId)) return
+    if (!target || get().removingKeyIds.includes(keyId)) return { status: 'failed', error: '密钥不存在或正在删除，请重新读取状态' }
     set((state) => ({ removingKeyIds: [...state.removingKeyIds, keyId] }))
     sshRevision += 1
     try {
       await gateway.ssh.removeKey(keyId)
-      if (generation !== sshGeneration) return
+      if (generation !== sshGeneration || auth !== captureAuthGeneration()) return securitySessionChanged()
       set((state) => ({
         keys: state.keys.filter((key) => key.id !== keyId),
         removingKeyIds: state.removingKeyIds.filter((id) => id !== keyId),
       }))
       notify(`SSH 密钥「${target.name}」已删除${MOCK_SUFFIX}`)
+      return { status: 'succeeded' }
     } catch (error) {
-      if (generation !== sshGeneration) return
+      if (generation !== sshGeneration || auth !== captureAuthGeneration()) return securitySessionChanged()
       set((state) => ({
         removingKeyIds: state.removingKeyIds.filter((id) => id !== keyId),
       }))
       notify(error instanceof Error ? `删除失败：${error.message}` : '删除失败', 'danger')
       await recordFailure(error, gateway)
+      return securityActionFailure(error, '删除失败')
     }
   },
 })

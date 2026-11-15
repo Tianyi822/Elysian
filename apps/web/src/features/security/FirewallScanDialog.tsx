@@ -8,7 +8,8 @@ import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
 import { formatDateTime } from '../../components/format'
 import { X } from '../../components/icons'
-import { SearchInput } from '../../components/SearchInput'
+import { DataTable } from '../../components/DataTable'
+import { TableBatchActions } from '../../components/TableBatchActions'
 import { useFirewallStore } from '../../stores/firewallStore'
 import { FIREWALL_INPUT_CLASS } from './firewallFormParts'
 import { Button } from '../../components/Button'
@@ -56,7 +57,9 @@ export function FirewallScanDialog() {
   const toggleScanProtection = useFirewallStore((s) => s.toggleScanProtection)
   const setScanConfig = useFirewallStore((s) => s.setScanConfig)
   const unblockIp = useFirewallStore((s) => s.unblockIp)
+  const unblockingIps = useFirewallStore(s => s.unblockingIps)
   const [ipSearch, setIpSearch] = useState('')
+  const [selected, setSelected] = useState<(string | number)[]>([])
   const [draft, setDraft] = useState<ConfigDraft>(() => draftFromConfig(scan.config))
   const [configError, setConfigError] = useState<string | undefined>(undefined)
 
@@ -254,62 +257,22 @@ export function FirewallScanDialog() {
                   ))}
                 </div>
 
-                {/* 表格区域高度恒定：空态与有数据不再互相撑跳；行多时表体内滚动、表头钉住。 */}
-                <div className="hover-scrollbar h-72 overflow-y-auto overflow-x-hidden rounded-lg border border-line">
-                  <table className="w-full table-fixed border-separate border-spacing-0 text-left text-sm">
-                    <thead>
-                      <tr>
-                        <th scope="col" className="sticky top-0 z-10 border-b border-line bg-surface px-3 py-2 text-xs font-medium text-fg-muted">
-                          <div className="flex items-center gap-2">
-                            IP
-                            <SearchInput id="scan-ip-search" label="搜索 IP" value={ipSearch}
-                              onChange={onIpSearchChange} expandOnFocus={false} className="w-32 font-normal" />
-                          </div>
-                        </th>
-                        <th scope="col" className="sticky top-0 z-10 border-b border-line bg-surface px-3 py-2 text-xs font-medium text-fg-muted">
-                          封锁时间
-                        </th>
-                        <th scope="col" className="sticky top-0 z-10 w-24 border-b border-line bg-surface px-3 py-2 text-xs font-medium text-fg-muted">
-                          操作
-                        </th>
-                      </tr>
-                    </thead>
-                    <tbody>
-                      {scan.blocked.length === 0 ? (
-                        <tr>
-                          {/* 空态行撑满固定表体，文本垂直居中，与有数据时高度一致。 */}
-                          <td colSpan={3} className="h-[15rem] text-center text-sm text-fg-muted">
-                            暂无数据
-                          </td>
-                        </tr>
-                      ) : visibleBlocked.length === 0 ? (
-                        <tr>
-                          <td colSpan={3} className="h-[15rem] text-center text-sm text-fg-muted">
-                            没有匹配的 IP，换个关键字试试
-                          </td>
-                        </tr>
-                      ) : (
-                        visibleBlocked.map((entry) => (
-                          <tr key={entry.ip}>
-                            <td className="border-b border-line px-3 py-2 tabular-nums">{entry.ip}</td>
-                            <td className="border-b border-line px-3 py-2 tabular-nums text-fg-muted">
-                              {formatDateTime(entry.blockedAt)}
-                            </td>
-                            <td className="border-b border-line px-3 py-2">
-                              <Button variant="primary"
-                                type="button"
-                                onClick={() => void unblockIp(gateway, entry.ip)}
-                                className="rounded px-1.5 py-0.5 text-xs text-accent-fg transition-colors hover:bg-accent/10"
-                              >
-                                解封
-                              </Button>
-                            </td>
-                          </tr>
-                        ))
-                      )}
-                    </tbody>
-                  </table>
-                </div>
+                <DataTable rows={visibleBlocked} ariaLabel="封锁 IP 列表" query={ipSearch} onQueryChange={onIpSearchChange}
+                  filterMode="external" searchPlaceholder="搜索 IP" maxHeight={288}
+                  getRowId={entry => entry.ip} getRowLabel={entry => entry.ip} selected={selected} onSelectionChange={setSelected}
+                  columns={[
+                    { key: 'ip', header: 'IP', primary: true, accessor: entry => entry.ip },
+                    { key: 'blockedAt', header: '封锁时间', accessor: entry => entry.blockedAt, cell: entry => formatDateTime(entry.blockedAt) },
+                    { key: 'actions', header: '操作', sortable: false, width: '20%', cell: entry => <Button type="button" variant="ghost" disabled={unblockingIps.includes(entry.ip)} onClick={() => void unblockIp(gateway, entry.ip)}>解封</Button> },
+                  ]}
+                  bulkActions={ids => <TableBatchActions selectedRows={scan.blocked.filter(entry => ids.includes(entry.ip))}
+                    getRowId={entry => entry.ip} getRowLabel={entry => entry.ip}
+                    onSucceeded={ids => setSelected(current => current.filter(id => !ids.includes(id)))}
+                    actions={[{ key: 'unblock', label: '解封', description: '解除所选 IP 当前的防扫描封锁；后续达到规则阈值时仍可能再次封锁。',
+                      eligible: entry => unblockingIps.includes(entry.ip) ? 'IP 正在解封' : undefined,
+                      execute: entries => unblockIp(gateway, entries[0]!.ip),
+                    }]} />}
+                />
               </>
             )}
           </div>

@@ -2,6 +2,7 @@ import { messageHistoryText } from '../../test/messageHistory'
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { PANEL_PORT } from '@elysian/contracts'
 import type { ElysianGateway } from '../../contracts/adapters'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import { SEED_FORWARDS, SEED_IP_RULES, SEED_RULES } from '../../adapters/mock/firewallData'
@@ -80,6 +81,7 @@ beforeEach(() => {
     saving: false,
     toggling: false,
     removingRuleIds: [],
+    unblockingIps: [],
   })
 })
 
@@ -103,24 +105,15 @@ describe('防火墙面板', () => {
     ]))
   })
 
-  it('官方数字分页切换两页，不显示前后页按钮', async () => {
+  it('先展示 20 条，显示更多追加剩余行并保留前面数据', async () => {
     const user = userEvent.setup()
     await openFirewallPage()
-
-    expect(screen.getByText(new RegExp(`共 ${SEED_RULE_COUNT} 条`))).toBeInTheDocument()
     const table = screen.getByRole('region', { name: '端口规则表' })
-    expect(within(table).getAllByRole('row')).toHaveLength(FIREWALL_PAGE_SIZE + 1) // 表头 + 20 行
-    const pagination = screen.getByRole('navigation', { name: '分页' })
-    expect(within(pagination).queryByRole('button', { name: '下一页' })).not.toBeInTheDocument()
-    expect(within(pagination).queryByRole('button', { name: '上一页' })).not.toBeInTheDocument()
-
-    await user.click(within(pagination).getByRole('button', { name: '2' }))
-    // 表头 + 剩余行数
-    expect(within(table).getAllByRole('row')).toHaveLength(SEED_RULE_COUNT - FIREWALL_PAGE_SIZE + 1)
-    // 页码与当前位置：第二页标记 aria-current。
-    expect(screen.getByRole('button', { name: '2' })).toHaveAttribute('aria-current', 'page')
-    await user.click(within(pagination).getByRole('button', { name: '1' }))
     expect(within(table).getAllByRole('row')).toHaveLength(FIREWALL_PAGE_SIZE + 1)
+    expect(screen.queryByRole('navigation', { name: '分页' })).not.toBeInTheDocument()
+    await user.click(within(table).getByRole('button', { name: /显示更多/ }))
+    expect(within(table).getAllByRole('row')).toHaveLength(SEED_RULE_COUNT + 1)
+    expect(within(table).queryByRole('button', { name: /显示更多/ })).not.toBeInTheDocument()
   })
 
   it('搜索按端口与备注过滤，无结果给空行提示', async () => {
@@ -128,16 +121,15 @@ describe('防火墙面板', () => {
     await openFirewallPage()
 
     await user.type(screen.getByLabelText('搜索端口、来源或备注'), '2234')
-    expect(screen.getByText(/共 2 条/)).toBeInTheDocument()
     const table = screen.getByRole('region', { name: '端口规则表' })
-    expect(within(table).getAllByRole('row')).toHaveLength(3) // 表头 + v4/v6 两行
+    await waitFor(() => expect(within(table).getAllByRole('row')).toHaveLength(3)) // 表头 + v4/v6 两行
 
-    await user.click(screen.getByRole('button', { name: '清空搜索' }))
+    await user.clear(screen.getByLabelText('搜索端口、来源或备注'))
     expect(screen.getByLabelText('搜索端口、来源或备注')).toHaveValue('')
     expect(screen.getByLabelText('搜索端口、来源或备注')).toHaveFocus()
-    expect(within(table).getAllByRole('row')).toHaveLength(FIREWALL_PAGE_SIZE + 1)
+    await waitFor(() => expect(within(table).getAllByRole('row')).toHaveLength(FIREWALL_PAGE_SIZE + 1))
     await user.type(screen.getByLabelText('搜索端口、来源或备注'), '不存在的规则')
-    expect(await screen.findByText('没有匹配的端口规则，换个关键词或清空搜索')).toBeInTheDocument()
+    expect(await screen.findByText('没有结果')).toBeInTheDocument()
   })
 
   it('开关切换即改状态并发 mock 通知', async () => {
@@ -207,7 +199,7 @@ describe('防火墙面板', () => {
 
     expect(screen.queryByRole('dialog', { name: '添加端口规则' })).not.toBeInTheDocument()
     await user.type(screen.getByLabelText('搜索端口、来源或备注'), '8443')
-    expect(await screen.findByText(/共 1 条/)).toBeInTheDocument()
+    await waitFor(() => expect(within(screen.getByRole('table', { name: '端口规则表' })).getAllByRole('row')).toHaveLength(2))
     expect(messageHistoryText('status')).toContain(
       '端口规则 tcp 8443 已添加（mock，待接入真实执行）',
     )
@@ -254,13 +246,57 @@ describe('防火墙面板', () => {
     )
   })
 
-  it('工具按钮与视图切换不参与收缩：换行只发生在按钮之间，不在标签内部', async () => {
+  it('多选一次确认后逐项删除演示双栈行，面板保底规则在派发前跳过', async () => {
+    const user = userEvent.setup()
+    let rules = [
+      { ...SEED_RULES[0]!, id: 'batch-v4' },
+      { ...SEED_RULES[1]!, id: 'batch-v6' },
+      { ...SEED_RULES[0]!, id: 'protected-panel', port: PANEL_PORT },
+    ]
+    const remove = vi.fn(async (id: string) => { rules = rules.filter(rule => rule.id !== id) })
+    await openFirewallPage(sessionGateway({ list: async () => rules, remove }))
+    const region = screen.getByRole('region', { name: '端口规则表' })
+    await user.click(within(region).getByRole('checkbox', { name: '全选已加载的匹配行' }))
+    expect(await within(region).findByText('已选 3 项')).toBeInTheDocument()
+    await user.click(within(region).getAllByRole('button', { name: '删除' })[0]!)
+    const confirm = await screen.findByRole('dialog', { name: '确认删除？' })
+    expect(confirm).toHaveTextContent('将处理 2 项，跳过 1 项')
+    expect(confirm).toHaveTextContent('面板入口保底规则不允许删除')
+    expect(remove).not.toHaveBeenCalled()
+    await user.click(within(confirm).getByRole('button', { name: '确认删除' }))
+    const result = await screen.findByRole('dialog', { name: '删除结果' })
+    await waitFor(() => expect(within(result).getByRole('button', { name: '关闭' })).toBeEnabled())
+    expect(remove.mock.calls.map(call => call[0])).toEqual(['batch-v4', 'batch-v6'])
+    expect(rules.map(rule => rule.id)).toEqual(['protected-panel'])
+    expect(result).toHaveTextContent('跳过')
+  })
+
+  it('规则工具合入表格搜索栏，保持控件尺寸和连续方向键切换', async () => {
+    const user = userEvent.setup()
     await openFirewallPage()
 
-    const add = screen.getByRole('button', { name: '添加端口规则' })
+    const table = screen.getByRole('region', { name: '端口规则表' })
+    const controls = within(table).getByRole('group', { name: '规则操作' })
+    const tabs = within(controls).getByRole('group', { name: '规则类型' })
+    const add = within(controls).getByRole('button', { name: '添加端口规则' })
     // EasyUI 工具按钮沿用原来的不收缩、不拆标签约束。
     expect(add).toHaveClass('shrink-0', 'whitespace-nowrap')
-    expect(screen.getByRole('group', { name: '规则类型' }).className).toContain('shrink-0')
+    expect(add).toHaveTextContent(/^添加规则$/)
+    expect(within(controls).getByRole('group', { name: '规则类型' })).toHaveClass('shrink-0')
+    expect(within(controls).getByRole('button', { name: '端口防扫描' })).toBeEnabled()
+    expect(within(controls).getByRole('button', { name: '同步规则' })).toBeEnabled()
+    expect(within(table).queryByText(/^\d+ 行$/)).not.toBeInTheDocument()
+
+    await user.click(within(controls).getByRole('button', { name: '端口规则' }))
+    await user.keyboard('{ArrowRight}')
+    expect(screen.getByRole('button', { name: 'IP 规则' })).toHaveFocus()
+    expect(screen.getByRole('group', { name: '规则操作' })).toBe(controls)
+    expect(screen.getByRole('group', { name: '规则类型' })).toBe(tabs)
+    expect(screen.getByRole('button', { name: '添加 IP 规则' })).toHaveTextContent(/^添加规则$/)
+    await user.keyboard('{ArrowRight}')
+    expect(screen.getByRole('button', { name: '端口转发' })).toHaveFocus()
+    expect(screen.getByRole('group', { name: '规则类型' })).toBe(tabs)
+    expect(screen.getByRole('button', { name: '添加端口转发' })).toHaveTextContent(/^添加规则$/)
   })
 
   it('移除导入导出入口，防扫描与同步仍可用', async () => {
@@ -287,7 +323,7 @@ describe('防火墙面板', () => {
     expect(within(dialog).getByText('当前封锁IP数').parentElement).toHaveTextContent('0')
     expect(within(dialog).getByText('当前连接失败次数').parentElement).toHaveTextContent('0')
     // 列表为空，与参照样例一致
-    expect(within(dialog).getByText('暂无数据')).toBeInTheDocument()
+    expect(within(dialog).getByText('没有结果')).toBeInTheDocument()
     // 关掉开关留 mock 通知。弹窗开着时通知区被 Radix 标记 aria-hidden，role 查询要带 hidden。
     await user.click(within(dialog).getByRole('switch', { name: '防扫描开关' }))
     expect(
@@ -317,22 +353,22 @@ describe('防火墙面板', () => {
 
     await user.click(screen.getByRole('button', { name: '端口防扫描' }))
     const dialog = await screen.findByRole('dialog', { name: '端口防扫描' })
-    expect(within(dialog).getAllByText('解封')).toHaveLength(2)
+    expect(within(dialog).getAllByRole('button', { name: '解封' })).toHaveLength(2)
 
     const input = within(dialog).getByLabelText('搜索 IP')
     // 非法字符被剥掉，只留数字与点号；按子串模糊过滤
     await user.type(input, 'abc22.0x')
     expect(input).toHaveValue('22.0')
     expect(within(dialog).getByText('172.22.0.3')).toBeInTheDocument()
-    expect(within(dialog).queryByText('198.51.100.7')).not.toBeInTheDocument()
+    await waitFor(() => expect(within(dialog).queryByText('198.51.100.7')).not.toBeInTheDocument())
 
     // 清空搜索回到全量
     await user.clear(input)
-    expect(within(dialog).getAllByText('解封')).toHaveLength(2)
+    expect(within(dialog).getAllByRole('button', { name: '解封' })).toHaveLength(2)
 
     // 无匹配给中文空态
     await user.type(input, '99.')
-    expect(within(dialog).getByText('没有匹配的 IP，换个关键字试试')).toBeInTheDocument()
+    expect(within(dialog).getByText('没有结果')).toBeInTheDocument()
   })
 
   it('同步规则：忙碌一拍后报从操作系统同步的 mock 通知', async () => {
@@ -360,53 +396,20 @@ describe('防火墙面板', () => {
     }
   })
 
-  it('端口列钉在第一列：表头与数据行都有 sticky 定位且带右描边', async () => {
+  it('提供官方列排序与选择控件，原有备注完整值仍可读取', async () => {
+    const user = userEvent.setup()
     await openFirewallPage()
-
-    const table = screen.getByRole('region', { name: '端口规则表' })
-    const headers = within(table).getAllByRole('columnheader')
-    expect(headers[0]).toHaveTextContent('端口')
-    expect(headers[0]).toHaveClass('sticky', 'left-0', 'border-r')
-    const firstRow = within(table).getAllByRole('row')[1]!
-    expect(firstRow.firstElementChild).toHaveClass('sticky', 'left-0', 'border-r')
-  })
-
-  /**
-   * 横向滚动容器里不能出现 sr-only（或任何绝对定位元素）：它的包含块是容器之外的定位祖先，
-   * 于是把表格远端的静态坐标泄漏给文档滚动区，整个页面（含侧边栏）都能被横向拖走。
-   * 表头要名字就直接写可见文本，不要拿 sr-only 文本充数。
-   */
-  it('滚动容器内不出现 sr-only 元素，操作列表头是可见文字', async () => {
-    await openFirewallPage()
-
     const region = screen.getByRole('region', { name: '端口规则表' })
-    expect(region.querySelectorAll('.sr-only')).toHaveLength(0)
     const headers = within(region).getAllByRole('columnheader')
-    expect(headers[headers.length - 1]).toHaveTextContent('操作')
-  })
-
-  /**
-   * 每列都必须在 colgroup 里给显式宽度：没有指定宽度的那一列会独吞宽屏多出来的空间。
-   * 端口列还要禁止换行——地址族后缀折行会把行高从 43px 撑到 61px。
-   */
-  it('每列都有显式宽度，端口列禁止换行，备注长文本截断并保留完整提示', async () => {
-    await openFirewallPage()
-
-    const region = screen.getByRole('region', { name: '端口规则表' })
-    const cols = region.querySelectorAll('colgroup col')
-    expect(cols).toHaveLength(9)
-    for (const col of cols) expect(col.className).toMatch(/\bw-(?:\d+|\[)/)
-
-    const headers = within(region).getAllByRole('columnheader')
-    expect(headers[0]).toHaveTextContent('端口')
-    const portCell = within(region).getAllByRole('row')[1]!.firstElementChild
-    expect(portCell).toHaveClass('whitespace-nowrap')
-
-    // 备注列：有备注的行截断显示且带完整内容提示；没有备注的行仍是「—」。
-    const noteCell = within(region).getAllByRole('row')[1]!.children[6] as HTMLElement
-    const noteText = noteCell.querySelector('.truncate')
-    expect(noteText).not.toBeNull()
-    expect(noteText).toHaveAttribute('title', noteText?.textContent)
+    expect(headers.map(header => header.textContent)).toEqual(['', '端口', '协议', '使用状态', '策略', '方向', '来源', '备注', '时间', '操作'])
+    expect(within(region).getAllByRole('checkbox')).toHaveLength(FIREWALL_PAGE_SIZE + 1)
+    const notes = region.querySelectorAll('[title]')
+    expect(Array.from(notes).some(note => note.getAttribute('title') === note.textContent)).toBe(true)
+    const portHeader = headers[1]!
+    await user.click(within(portHeader).getByRole('button'))
+    expect(portHeader).toHaveAttribute('aria-sort', 'ascending')
+    await user.click(within(portHeader).getByRole('button'))
+    expect(portHeader).toHaveAttribute('aria-sort', 'descending')
   })
 
   it('加载失败给错误态与重试，数据集为空给空态', async () => {
@@ -424,7 +427,7 @@ describe('防火墙面板', () => {
 
     fail = false
     await user.click(screen.getByRole('button', { name: '重试' }))
-    expect(await screen.findByText('还没有端口规则')).toBeInTheDocument()
+    expect(await screen.findByText('没有结果')).toBeInTheDocument()
   })
 
   it('IP 规则视图：统计与表格呈现种子数据，可新增一条', async () => {

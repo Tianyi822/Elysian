@@ -10,6 +10,7 @@ import { useLogsStore } from '../../stores/logsStore'
 import { useMessageStore } from '../../stores/messageStore'
 import { useRuntimeLogStore } from '../../stores/runtimeLogStore'
 import { renderApp } from '../../test/renderApp'
+import { formatLoginTime } from '../../components/format'
 import { TIMESTAMP_CHARS } from './LogTable'
 import { levelTone, matchesRuntimeSearch } from './RuntimeLogPanel'
 
@@ -82,25 +83,26 @@ function bodyRows(): HTMLElement[] {
   return within(table).getAllByRole('row').slice(1)
 }
 
-/** 等表格渲染出种子条目（首屏异步加载完成）。 */
+/** 官方首窗展示 20 条；剩余已加载记录由「显示更多」追加。 */
 async function waitForTable(): Promise<void> {
-  await waitFor(() => expect(bodyRows()).toHaveLength(SEED_RUNTIME_LOGS.length))
+  await waitFor(() => expect(bodyRows()).toHaveLength(Math.min(20, SEED_RUNTIME_LOGS.length)))
 }
 
 describe('运行日志表格', () => {
-  it('渲染三列表格：日期时间｜等级｜日志信息，行数与条目一致', async () => {
+  it('首窗展示原日志的日期时间、等级与正文，并提供独立选择列', async () => {
     renderApp('/logs', { gateway: gatewayWithLogs() })
     await waitForTable()
 
     const table = within(region()).getByRole('table')
-    expect(within(table).getAllByRole('columnheader').map((th) => th.textContent)).toEqual([
+    expect(within(table).getAllByRole('columnheader').slice(1).map((th) => th.textContent)).toEqual([
       '日期时间',
       '等级',
       '日志信息',
     ])
 
     for (const row of bodyRows()) {
-      expect(within(row).getAllByRole('cell')).toHaveLength(3)
+      expect(within(row).getAllByRole('cell')).toHaveLength(4)
+      expect(within(row).getByRole('checkbox')).toHaveAttribute('aria-checked', 'false')
     }
 
     // 等级列是「文字 + 颜色」，等级值原样显示英文，不做中文翻译。
@@ -108,22 +110,19 @@ describe('运行日志表格', () => {
     expect(within(region()).getAllByText('info').length).toBeGreaterThan(0)
   })
 
-  it('两列固定宽度、日志信息列省略：时间列 19 个等宽数字字符', async () => {
+  it('保留日期时间与等级原值，正文只在视觉上省略', async () => {
     renderApp('/logs', { gateway: gatewayWithLogs() })
     await waitForTable()
 
     const table = within(region()).getByRole('table')
-    const cols = table.querySelectorAll('col')
-    expect(cols[0]).toHaveClass('w-44')
-    expect(cols[1]).toHaveClass('w-24')
-    expect(cols[2]?.getAttribute('class')).toBeFalsy()
-    expect(table).toHaveClass('min-w-[832px]')
+    expect(table).toHaveAttribute('aria-colcount', '4')
+    expect(table).toHaveAttribute('aria-rowcount', String(SEED_RUNTIME_LOGS.length + 1))
 
     const firstRow = bodyRows()[0]!
-    const [timeCell, levelCell, messageCell] = within(firstRow).getAllByRole('cell')
+    const [timeCell, levelCell, messageCell] = within(firstRow).getAllByRole('cell').slice(1)
 
     // 等宽字体 + tabular-nums 是「字符宽度确定 → 列宽可算」的前提。
-    expect(timeCell).toHaveClass('font-mono', 'tabular-nums')
+    expect(within(timeCell!).getByText(formatLoginTime(SEED_RUNTIME_LOGS[0]!.at))).toHaveClass('font-mono', 'tabular-nums')
     expect(timeCell?.textContent).toHaveLength(TIMESTAMP_CHARS)
 
     const firstEntry = SEED_RUNTIME_LOGS[0]!
@@ -140,17 +139,47 @@ describe('运行日志表格', () => {
     await waitForTable()
 
     const firstEntry = SEED_RUNTIME_LOGS[0]!
-    const messageCell = within(bodyRows()[0]!).getAllByRole('cell')[2]!
+    const messageCell = within(bodyRows()[0]!).getAllByRole('cell')[3]!
     const trigger = within(messageCell).getByRole('button', { name: '查看完整内容' })
     // 图标用 opacity-0 而不是隐藏 DOM：靠 group-hover 显形，但始终可聚焦、可被读屏发现。
     expect(trigger).toHaveClass('opacity-0', 'group-hover/cell:opacity-100', 'focus-visible:opacity-100')
-    expect(messageCell).toHaveClass('group/cell')
+    expect(trigger.closest('.group\\/cell')).toBeInTheDocument()
 
     await user.click(trigger)
     const popover = await screen.findByLabelText('完整日志内容')
     expect(trigger).toHaveAttribute('aria-expanded', 'true')
     expect(popover).toHaveTextContent(firstEntry.message)
     expect(popover).toHaveTextContent(firstEntry.source)
+  })
+
+  it('显示更多只追加已加载条目，不再次查询服务端且原始顺序保持', async () => {
+    const user = userEvent.setup({ delay: null })
+    const gateway = gatewayWithLogs()
+    const request = vi.spyOn(gateway.logs, 'runtimeLog')
+    renderApp('/logs', { gateway })
+    await waitForTable()
+    const requests = request.mock.calls.length
+
+    await user.click(within(region()).getByRole('button', { name: '显示更多 20 条' }))
+
+    await waitFor(() => expect(bodyRows()).toHaveLength(40))
+    expect(request).toHaveBeenCalledTimes(requests)
+    expect(within(bodyRows()[20]!).getAllByRole('cell')[1]).toHaveTextContent(formatLoginTime(SEED_RUNTIME_LOGS[20]!.at))
+  })
+
+  it('多选工具栏不提供复制，清除选择不触发清空日志', async () => {
+    const user = userEvent.setup({ delay: null })
+    const gateway = gatewayWithLogs()
+    const clear = vi.spyOn(gateway.logs, 'clearLogs')
+    renderApp('/logs', { gateway })
+    await waitForTable()
+    await user.click(within(bodyRows()[0]!).getByRole('checkbox'))
+    expect(await within(region()).findByText('已选 1 项')).toBeInTheDocument()
+    expect(within(region()).queryByRole('button', { name: /复制/ })).not.toBeInTheDocument()
+    await user.click(within(region()).getByRole('button', { name: '清除' }))
+    await waitFor(() => expect(within(region()).getByRole('searchbox')).toHaveFocus())
+    expect(clear).not.toHaveBeenCalled()
+    expect(bodyRows()).toHaveLength(20)
   })
 })
 
@@ -180,12 +209,12 @@ describe('搜索与刷新', () => {
     renderApp('/logs', { gateway: gatewayWithLogs() })
     await waitForTable()
 
-    const keywordInput = screen.getByLabelText('搜索日志关键字')
+    const keywordInput = screen.getByLabelText('搜索运行日志')
 
     await user.type(keywordInput, '慢查询')
     await waitFor(() =>
       expect(bodyRows()).toHaveLength(
-        SEED_RUNTIME_LOGS.filter((entry) => entry.message.includes('慢查询')).length,
+        Math.min(20, SEED_RUNTIME_LOGS.filter((entry) => entry.message.includes('慢查询')).length),
       ),
     )
 
@@ -193,7 +222,7 @@ describe('搜索与刷新', () => {
     await user.type(keywordInput, 'system.smtp')
     await waitFor(() =>
       expect(bodyRows()).toHaveLength(
-        SEED_RUNTIME_LOGS.filter((entry) => entry.source.includes('system.smtp')).length,
+        Math.min(20, SEED_RUNTIME_LOGS.filter((entry) => entry.source.includes('system.smtp')).length),
       ),
     )
 
@@ -201,7 +230,7 @@ describe('搜索与刷新', () => {
     await user.clear(keywordInput)
     await user.type(keywordInput, '2026-09-16')
     expect(await screen.findByText('没有匹配的运行日志，换个关键词或清空搜索')).toBeInTheDocument()
-    expect(within(region()).queryByRole('button', { name: '查看完整内容' })).not.toBeInTheDocument()
+    await waitFor(() => expect(within(region()).queryAllByRole('button', { name: '查看完整内容' })).toHaveLength(0))
   })
 
   it('刷新日志重新装载条目，忙碌期间按钮置灰', async () => {
@@ -243,7 +272,7 @@ describe('清空日志与其余能力', () => {
     await user.click(within(dialog).getByRole('button', { name: '取消' }))
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     expect(clearLogs).not.toHaveBeenCalled()
-    expect(bodyRows()).toHaveLength(SEED_RUNTIME_LOGS.length)
+    expect(bodyRows()).toHaveLength(Math.min(20, SEED_RUNTIME_LOGS.length))
   })
 
   it('确认清空后删除并刷新：列表只剩一条「已清空」留痕，通知里是响应的事实', async () => {
@@ -294,13 +323,15 @@ describe('清空日志与其余能力', () => {
     expect(useMessageStore.getState().messages).toEqual(expect.arrayContaining([expect.objectContaining({ tone: 'danger', message: expect.stringContaining('2 条日志未能写入磁盘') })]))
   })
 
-  it('没有任何记录时给空状态，而不是一张空表', async () => {
+  it('没有任何记录时在常驻表格内给空状态，并保留搜索入口', async () => {
     renderApp('/logs', {
       gateway: gatewayWithLogs({ runtimeLog: async () => reportWith({ entries: [], total: 0 }) }),
     })
 
     expect(await screen.findByText('还没有运行日志')).toBeInTheDocument()
-    expect(screen.queryByRole('region', { name: '运行日志表' })).not.toBeInTheDocument()
+    expect(screen.getByRole('region', { name: '运行日志表' })).toBeInTheDocument()
+    expect(screen.getByRole('searchbox', { name: '搜索运行日志' })).toBeInTheDocument()
+    expect(bodyRows()).toHaveLength(0)
   })
 
   it('加载失败时给出错误态，重试成功后表格出现', async () => {

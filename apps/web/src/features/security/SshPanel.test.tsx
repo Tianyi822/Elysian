@@ -11,7 +11,7 @@ import { INITIAL_SSH_STATE, openSshTab, resetSshPanel, securityTab, sshSessions 
 import { sshPortConfirmConsequences } from './SshPanel'
 
 /**
- * SSH 管理页签的端到端行为：四张分区卡、四状态、开关与保存、弱密码检测、密钥弹窗。
+ * SSH 管理页签的端到端行为：设置卡与数据页签、四状态、开关与保存、弱密码检测、密钥弹窗。
  * 数据走默认 mock 数据集（种子端口 73、密码登录关闭、密钥登录开启），不另造假数据。
  * 密钥表的用例在 SshKeyCard.test.tsx 一处覆盖，不在这里重复。
  */
@@ -22,10 +22,20 @@ beforeEach(async () => {
   resetFirewallData()
 })
 
+function dataTab(name: string) {
+  return within(screen.getByRole('group', { name: 'SSH 数据视图' })).getByRole('button', { name })
+}
+
+async function openSshRecords(gateway?: Parameters<typeof openSshTab>[0]) {
+  const user = await openSshTab(gateway)
+  await user.click(dataTab('SSH 登录记录'))
+  return user
+}
+
 describe('SSH 管理页签', () => {
   it('服务刷新只转自己的按钮，保留卡片节点和端口草稿且不显示遮罩', async () => {
     const { gateway } = sshSessions()
-    const user = await openSshTab(gateway)
+    const user = await openSshRecords(gateway)
     const service = screen.getByRole('region', { name: 'SSH 服务' })
     const records = screen.getByRole('region', { name: 'SSH 登录记录' })
     const port = within(service).getByLabelText('监听端口')
@@ -50,8 +60,8 @@ describe('SSH 管理页签', () => {
     expect(port).toHaveValue('23456')
   })
 
-  it('切到页签后渲染四张分区卡：两列瀑布，卡片随内容取高度', async () => {
-    await openSshTab()
+  it('设置与数据分两列，密钥和登录记录通过同一组页签切换', async () => {
+    const user = await openSshTab()
 
     // 测试跑在宿主机演示态（非 Docker）：工具栏明示「演示数据」，与防火墙面板同一标识。
     const demoBadge = screen.getByText('演示数据')
@@ -60,18 +70,27 @@ describe('SSH 管理页签', () => {
     const service = screen.getByRole('region', { name: 'SSH 服务' })
     const root = screen.getByRole('region', { name: 'Root 设置' })
     const keys = screen.getByRole('region', { name: 'SSH 密钥' })
-    const records = screen.getByRole('region', { name: 'SSH 登录记录' })
-    for (const card of [service, root, keys, records]) {
+    const data = screen.getByRole('region', { name: 'SSH 数据' })
+    for (const card of [service, root, keys, data]) {
       expect(card).toBeInTheDocument()
     }
+    expect(screen.queryByRole('region', { name: 'SSH 登录记录' })).not.toBeInTheDocument()
+    const tabs = screen.getByRole('group', { name: 'SSH 数据视图' })
+    await user.click(dataTab('SSH 登录记录'))
+    const records = screen.getByRole('region', { name: 'SSH 登录记录' })
+    expect(keys).not.toBeVisible()
+    expect(screen.getByRole('group', { name: 'SSH 数据视图' })).toBe(tabs)
+    await user.click(dataTab('SSH 密钥'))
+    expect(keys).toBeVisible()
+    expect(records).not.toBeVisible()
 
-    // 两列瀑布：左列设置（服务→Root）、右列数据（密钥→登录记录）；列独立堆叠，矮卡不被邻列拉高。
-    // 窄屏单列时 DOM 顺序即视觉顺序：服务 → Root → 密钥 → 记录。
+    // 左列设置独立堆叠，右列只显示当前数据表；窄屏按服务、Root、数据的顺序排列。
     const masonry = service.parentElement?.parentElement
     expect(masonry).toHaveClass('@min-[44rem]:grid-cols-2', 'items-start')
     expect(service.parentElement).toContainElement(root)
-    expect(keys.parentElement).toContainElement(records)
-    expect(service.parentElement).not.toBe(keys.parentElement)
+    expect(data).toContainElement(keys)
+    expect(data).toContainElement(records)
+    expect(service.parentElement).not.toBe(data)
 
     // 卡内按区域划分：服务启停与登录方式合在「服务状态」，不再单开登录方式区。
     for (const name of ['服务状态', '登录统计', '监听端口']) {
@@ -115,54 +134,65 @@ describe('SSH 管理页签', () => {
     expect(within(root).queryByText('Root 密码')).not.toBeInTheDocument()
   })
 
-  it('登录记录卡按时间倒序列出来源、端口、结果与账号，每页 20 条', async () => {
-    const user = await openSshTab()
+  it('两表保留各自查询、排序与原始数据，切换清除选择且不串用密钥动作', async () => {
+    const { gateway } = sshSessions()
+    const user = await openSshTab(gateway)
+    const originalKeys = useSshStore.getState().keys
+    const originalRecords = useSshStore.getState().loginRecords
+    const remove = vi.spyOn(gateway.ssh, 'removeKey')
+    const keys = screen.getByRole('region', { name: 'SSH 密钥' })
+    const keyTable = within(keys).getByRole('table')
+    const keyQuery = within(keys).getByRole('searchbox', { name: '搜索密钥' })
+    await user.type(keyQuery, '发布')
+    await user.click(within(keyTable).getByRole('button', { name: '名称' }))
+    await user.click(within(keyTable).getByRole('checkbox', { name: '选择 CI 发布' }))
+    expect(await within(keys).findByText('已选 1 项')).toBeInTheDocument()
 
+    dataTab('SSH 密钥').focus()
+    await user.keyboard('{ArrowRight}')
+    expect(dataTab('SSH 登录记录')).toHaveFocus()
+    expect(dataTab('SSH 登录记录')).toHaveAttribute('aria-pressed', 'true')
+    const records = screen.getByRole('region', { name: 'SSH 登录记录' })
+    const recordTable = within(records).getByRole('table')
+    const recordQuery = within(records).getByRole('searchbox')
+    expect(recordQuery).toHaveValue('')
+    expect(within(records).queryByRole('button', { name: /删除|创建|查看密钥/ })).not.toBeInTheDocument()
+    await user.type(recordQuery, '1.204.32.143')
+    await user.click(within(recordTable).getByRole('button', { name: 'IP 地址' }))
+    await user.click(within(recordTable).getByRole('checkbox', { name: '全选已加载的匹配行' }))
+
+    await user.click(dataTab('SSH 密钥'))
+    expect(within(keys).getByRole('table')).toBe(keyTable)
+    expect(keyQuery).toHaveValue('发布')
+    expect(within(keyTable).getByRole('columnheader', { name: '名称' })).toHaveAttribute('aria-sort', 'ascending')
+    expect(within(keys).queryByText(/已选/)).not.toBeInTheDocument()
+    expect(within(keys).getByRole('button', { name: '创建 SSH 密钥' })).toBeInTheDocument()
+    await user.click(dataTab('SSH 登录记录'))
+    expect(within(records).getByRole('table')).toBe(recordTable)
+    expect(recordQuery).toHaveValue('1.204.32.143')
+    expect(within(recordTable).getByRole('columnheader', { name: 'IP 地址' })).toHaveAttribute('aria-sort', 'ascending')
+    expect(within(records).queryByText(/已选/)).not.toBeInTheDocument()
+    expect(remove).not.toHaveBeenCalled()
+    expect(useSshStore.getState().keys).toBe(originalKeys)
+    expect(useSshStore.getState().loginRecords).toBe(originalRecords)
+  })
+
+  it('登录记录保留原时间顺序和所有展示字段，显示更多按官方方式追加', async () => {
+    const user = await openSshRecords()
     const records = screen.getByRole('region', { name: 'SSH 登录记录' })
     const table = within(records).getByRole('table')
-    expect(within(table).getAllByRole('columnheader').map((cell) => cell.textContent)).toEqual([
-      'IP 地址',
-      '登录时间',
-      '端口',
-      '状态',
-      '用户',
-    ])
-
+    expect(within(table).getAllByRole('columnheader').map(cell => cell.textContent).filter(Boolean)).toEqual(['IP 地址', '登录时间', '端口', '状态', '用户'])
     const rows = within(table).getAllByRole('row').slice(1)
     expect(rows).toHaveLength(SSH_PAGE_SIZE)
-    // 最新一条在最前：时间精确到秒，来源地址、客户端端口与账号都在同一行
     expect(rows[0]?.textContent).toContain('1.204.32.143')
     expect(rows[0]?.textContent).toContain('2026-09-07 14:10:53')
     expect(rows[0]?.textContent).toContain('16999')
     expect(rows[0]?.textContent).toContain('成功')
     expect(rows[0]?.textContent).toContain('root')
-    // 失败记录用危险色调，状态不靠颜色单独表达
-    const failed = rows.filter((row) => row.textContent?.includes('失败'))
-    expect(failed.length).toBeGreaterThan(0)
-    expect(within(failed[0] as HTMLElement).getByText('失败')).toHaveClass('text-danger')
-    expect(
-      within(records).getByText(
-        `共 ${SEED_LOGIN_RECORDS.length} 条登录记录 · 每页 ${SSH_PAGE_SIZE} 条`,
-      ),
-    ).toBeInTheDocument()
-
-    // 首列钉住、其余列横向滚动：窄屏下靠它把来源地址留在视线里
-    expect(rows[0]?.children[0]).toHaveClass('sticky', 'left-0')
-    expect(rows[0]).toHaveClass('group')
-    expect(within(records).getByRole('region', { name: 'SSH 登录记录表' })).toHaveAttribute(
-      'tabindex',
-      '0',
-    )
-
-    // 翻页：第二页是剩下的记录
-    await user.click(within(records).getByRole('button', { name: '下一页' }))
-    expect(within(table).getAllByRole('row').slice(1)).toHaveLength(
-      SEED_LOGIN_RECORDS.length - SSH_PAGE_SIZE,
-    )
-    expect(within(records).getByRole('button', { name: '2' })).toHaveAttribute(
-      'aria-current',
-      'page',
-    )
+    expect(within(rows.find(row => row.textContent?.includes('失败'))!).getByText('失败')).toHaveClass('text-danger')
+    await user.click(within(records).getByRole('button', { name: /显示更多/ }))
+    await waitFor(() => expect(within(table).getAllByRole('row').slice(1)).toHaveLength(SEED_LOGIN_RECORDS.length))
+    expect(within(records).queryByRole('navigation')).not.toBeInTheDocument()
   })
 
   it('回环来源显示为本机，悬停提示保留原始地址', async () => {
@@ -173,7 +203,7 @@ describe('SSH 管理页签', () => {
         { id: 'login-remote', ip: '203.0.113.9', port: 40003, at: '2026-09-21T02:00:00.000Z', user: 'root', result: 'succeeded' },
       ],
     })
-    await openSshTab(gateway)
+    await openSshRecords(gateway)
 
     const table = within(screen.getByRole('region', { name: 'SSH 登录记录' })).getByRole('table')
     const loopCells = within(table).getAllByText('本机')
@@ -184,22 +214,13 @@ describe('SSH 管理页签', () => {
     expect(within(table).getByText('203.0.113.9')).not.toHaveAttribute('title')
   })
 
-  it('没有登录记录时给空态，而不是一张空表', async () => {
+  it('没有登录记录时提供官方空态并保留搜索栏', async () => {
     const { gateway } = sshSessions({ listLoginRecords: async () => [] })
-    await openSshTab(gateway)
-
+    await openSshRecords(gateway)
     const records = screen.getByRole('region', { name: 'SSH 登录记录' })
-    expect(within(records).getByText('还没有登录记录')).toBeInTheDocument()
-    expect(
-      within(records).getByText(`共 0 条登录记录 · 每页 ${SSH_PAGE_SIZE} 条`),
-    ).toBeInTheDocument()
-    // 只剩表头与承载空态的那一行，没有数据行；翻页按钮也都不可用
-    const table = within(records).getByRole('table')
-    const rows = within(table).getAllByRole('row')
-    expect(rows).toHaveLength(2)
-    expect(rows[1]?.textContent).toContain('还没有登录记录')
-    expect(within(records).getByRole('button', { name: '上一页' })).toBeDisabled()
-    expect(within(records).getByRole('button', { name: '下一页' })).toBeDisabled()
+    expect(within(records).getByText('没有结果')).toBeInTheDocument()
+    expect(within(records).getByRole('searchbox')).toBeInTheDocument()
+    expect(within(records).queryByRole('button', { name: /显示更多/ })).not.toBeInTheDocument()
   })
 
   it('登录统计：三个窗口的成功与失败计数上屏，数据与 overview.stats 一致', async () => {
@@ -211,7 +232,7 @@ describe('SSH 管理页签', () => {
 
     const table = within(stats as HTMLElement).getByRole('table')
     // 表头三列：窗口、成功、失败（列名取契约标签表）
-    expect(within(table).getAllByRole('columnheader').map((cell) => cell.textContent)).toEqual([
+    expect(within(table).getAllByRole('columnheader').map((cell) => cell.textContent).filter(Boolean)).toEqual([
       '时间窗口',
       '成功',
       '失败',
@@ -228,21 +249,11 @@ describe('SSH 管理页签', () => {
     expect(rows[2]).toHaveTextContent('近 7 天')
     expect(rows[2]).toHaveTextContent(`${SEED_SSH_STATS.last7Days.succeeded}`)
     expect(rows[2]).toHaveTextContent(`${SEED_SSH_STATS.last7Days.failed}`)
-    // 表头与单元格全部居中：时间窗口、成功、失败三列扫视对齐，不偏左。
-    expect(table).toHaveClass('text-center')
-    for (const header of within(table).getAllByRole('columnheader')) {
-      expect(header).toHaveClass('text-center')
-    }
     const today = rows[0] as HTMLElement
-    expect(within(today).getByRole('rowheader')).toHaveClass('text-center')
-    const todayCells = within(today).getAllByRole('cell')
-    expect(todayCells).toHaveLength(2)
-    for (const cell of todayCells) {
-      expect(cell).toHaveClass('text-center')
-    }
-    // 失败计数带危险色，成功计数不带：文字与颜色一起区分两种结果
-    expect(todayCells[1]).toHaveClass('text-danger')
-    expect(todayCells[0]).not.toHaveClass('text-danger')
+    expect(within(today).getByText(`${SEED_SSH_STATS.today.failed}`)).toHaveClass('text-danger')
+    expect(within(stats as HTMLElement).queryByRole('checkbox')).not.toBeInTheDocument()
+    expect(within(stats as HTMLElement).queryByRole('searchbox')).not.toBeInTheDocument()
+    expect(within(stats as HTMLElement).queryByRole('button')).not.toBeInTheDocument()
   })
 
   it('服务停用保留统计与记录，收起设置和密钥管理', async () => {
@@ -255,6 +266,7 @@ describe('SSH 管理页签', () => {
     expect(within(service).queryByRole('switch', { name: '密码登录' })).not.toBeInTheDocument()
     expect(screen.queryByRole('region', { name: 'Root 设置' })).not.toBeInTheDocument()
     expect(screen.queryByRole('region', { name: 'SSH 密钥' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: 'SSH 密钥' })).not.toBeInTheDocument()
     expect(within(service).getByText('登录统计')).toBeInTheDocument()
     expect(within(service).getByRole('table')).toBeInTheDocument()
     expect(screen.getByRole('region', { name: 'SSH 登录记录' })).toBeInTheDocument()
@@ -477,7 +489,7 @@ describe('SSH 管理页签', () => {
   it('日志不可用显示原因，不展示零值统计', async () => {
     const session = sshSessions()
     const overview = await session.ssh.overview()
-    await openSshTab({ ...session.gateway, ssh: { ...session.gateway.ssh, listLoginRecords: async () => [], overview: async () => ({ ...overview, runtimeMode: 'bare-metal', logInfo: { status: 'unavailable', warning: '系统日志权限不足' } }) } })
+    await openSshRecords({ ...session.gateway, ssh: { ...session.gateway.ssh, listLoginRecords: async () => [], overview: async () => ({ ...overview, runtimeMode: 'bare-metal', logInfo: { status: 'unavailable', warning: '系统日志权限不足' } }) } })
     const service = screen.getByRole('region', { name: 'SSH 服务' })
     expect(within(service).queryByRole('table')).not.toBeInTheDocument()
     expect(within(service).getByText('系统日志权限不足')).toBeInTheDocument()
