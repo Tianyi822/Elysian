@@ -1,0 +1,27 @@
+/* Official preview geometry is local: the workbench redefines Tailwind radii. */
+.easyui-data-table { container-type: inline-size; }
+.easyui-data-table .rounded-2xl { border-radius: 25.2px; }
+.easyui-data-table .rounded-xl { border-radius: 19.6px; }
+.easyui-data-table .rounded-lg { border-radius: 14px; }
+.easyui-data-table [data-highlighted] { background: var(--color-surface-raised); box-shadow: inset 3px 0 var(--color-focus); }
+.easyui-data-table [data-table-row] > [role=cell] { min-width: 0; }
+.easyui-data-table [data-table-row] > [role=cell] > div { width: 100%; }
+.easyui-data-table .dt-bulk-slot { position: absolute; right: 68px; top: 4px; height: 36px; display: flex; align-items: center; gap: 6px; max-width: calc(100% - 175px); }
+.easyui-data-table .dt-bulk-slot[hidden] { display: none; }
+.dt-action { display: inline-flex; align-items: center; justify-content: center; gap: 6px; height: 36px; padding: 0 14px; border-radius: 19.6px; flex-shrink: 0; font-size: 12.5px; font-weight: 500; color: var(--color-fg); background: var(--color-surface-raised); }
+.dt-action:hover { background: var(--color-line); }
+.dt-action:disabled { opacity: .45; cursor: not-allowed; }
+.dt-action:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
+.dt-action-primary { background: var(--color-fg); color: var(--color-surface); }
+.dt-action-primary:hover { background: var(--color-fg); opacity: .9; }
+.dt-action-danger { color: var(--color-danger); }
+.dt-batch-actions { display: flex; align-items: center; gap: 6px; }
+.dt-batch-more { display: none; }
+@container (max-width: 620px) {
+  .dt-batch-wide { display: none; }
+  .dt-batch-more { display: inline-flex; }
+}
+@container (max-width: 440px) {
+  .easyui-data-table .dt-bulk-slot { right: 60px; max-width: calc(100% - 140px); }
+  .dt-action { padding-inline: 10px; }
+}

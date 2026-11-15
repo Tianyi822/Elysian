@@ -11,6 +11,7 @@ Source components copied and adapted under src/components/easyui/:
 - NotificationBell.tsx (extracted bell trigger, arrival shake and unread dot)
 - LiquidToggle.tsx (controlled SVG blob switch and spring deformation)
 - SlidePagination.tsx (shared numbered pagination, upstream rounded geometry and sliding indicator)
+- DataTable.tsx (sorting, search, selection, animated bulk toolbar, Show more and responsive cards)
 - Supporting chart primitives, monotone path utility, motion tokens and cn utility
 
 Upstream paths, revision and adaptation boundaries are recorded in
