@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { Check, Copy } from './icons'
 import { useMessageStore } from '../stores/messageStore'
 import { writeClipboardText } from '../utils/clipboardText'
+import { Button } from './Button'
 
 /** 复制成功后的反馈时长（毫秒）。 */
 const FEEDBACK_MS = 1_500
@@ -62,7 +63,7 @@ export function CopyButton({
   const { copied, copy } = useClipboardCopy()
 
   return (
-    <button
+    <Button variant="outline"
       type="button"
       onClick={() => void copy(value, label)}
       title={tooltip}
@@ -70,6 +71,6 @@ export function CopyButton({
     >
       {copied ? <Check aria-hidden size={13} /> : (icon ?? <Copy aria-hidden size={13} />)}
       {copied ? '已复制' : label}
-    </button>
+    </Button>
   )
 }

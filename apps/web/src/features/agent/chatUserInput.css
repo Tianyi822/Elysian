@@ -16,8 +16,6 @@
 .chat-question-custom textarea { display: block; width: 100%; resize: vertical; max-height: 160px; padding: 10px 12px; border: 1px solid var(--t-panel-line); border-radius: 8px; background: transparent; color: var(--t-fg); font-size: 13px; }
 .chat-question-actions { margin-top: 14px; }
 .chat-question-actions > div { display: flex; gap: 8px; }
-.chat-question-actions button { border: 1px solid var(--t-panel-line); border-radius: 8px; padding: 6px 12px; font-size: 12px; }
-.chat-question-actions .chat-question-cancel { border-color: transparent; color: var(--t-fg-muted); }
 .chat-user-input button:disabled { opacity: .5; cursor: not-allowed; }
 .chat-user-input button:focus-visible, .chat-question-custom textarea:focus-visible { outline: 2px solid var(--t-fg-muted); outline-offset: 2px; }
 .chat-question-summary { margin: 8px 0; color: var(--t-fg-muted); font-size: 12px; }

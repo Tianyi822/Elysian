@@ -11,6 +11,7 @@ import { motion, AnimatePresence, useReducedMotion, type HTMLMotionProps } from 
 import { ChevronDown } from 'lucide-react';
 import { cn } from './utils';
 import { motionTransitions } from './motion-tokens';
+import { Button } from '../Button'
 
 export interface PillSubItem {
   id: string;
@@ -162,7 +163,7 @@ export const PillNavigation: React.FC<PillNavigationProps> = ({
           const itemHasChildren = Boolean(item.children && item.children.length > 0);
 
           return (
-            <motion.button
+            <Button unstyled
               key={item.id}
               type="button"
               data-pill-main
@@ -202,7 +203,7 @@ export const PillNavigation: React.FC<PillNavigationProps> = ({
                   )}
                 />
               )}
-            </motion.button>
+            </Button>
           );
         })}
       </div>
@@ -225,7 +226,7 @@ export const PillNavigation: React.FC<PillNavigationProps> = ({
               const isSubActive = subItem.id === activeSubId;
 
               return (
-                <motion.button
+                <Button unstyled
                   key={subItem.id}
                   type="button"
                   role="menuitemradio"
@@ -250,7 +251,7 @@ export const PillNavigation: React.FC<PillNavigationProps> = ({
                   )}
 
                   <span className="relative z-10">{subItem.label}</span>
-                </motion.button>
+                </Button>
               );
             })}
           </motion.div>

@@ -11,6 +11,7 @@ import { DEFAULT_IMAGE_REGISTRY, registryHost, validateRegistryUrl } from '../co
 import { PasswordVisibilityButton } from '../security/passwordFieldParts'
 import { generateDatabasePassword } from './databaseCreateForm'
 import { useFeedbackMessage } from '../../components/useFeedbackMessage'
+import { Button } from '../../components/Button'
 
 type Engine = Exclude<DatabaseEngine, 'SQLite'>
 type Candidate = { id: string; name: string; accessScope: string; managed: boolean; versionTag: string }
@@ -196,7 +197,7 @@ export function RealDatabaseCreateDialog({ engine }: { engine: Engine }) {
         className="fixed left-1/2 top-1/2 z-[55] flex max-h-[min(44rem,calc(100vh-2rem))] w-[min(42rem,calc(100vw-1.5rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden panel-surface shadow-2xl">
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-line px-5 py-3">
           <Dialog.Title className="truncate text-base font-semibold text-fg">添加 {engine} 数据库</Dialog.Title>
-          <button type="button" disabled={busy} onClick={close} aria-label="关闭弹窗" className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-fg-muted hover:bg-surface-raised disabled:opacity-50"><X aria-hidden size={16} /></button>
+          <Button variant="ghost" size="icon" type="button" disabled={busy} onClick={close} aria-label="关闭弹窗" className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-fg-muted hover:bg-surface-raised disabled:opacity-50"><X aria-hidden size={16} /></Button>
         </div>
 
         <div className="min-h-0 flex-1 space-y-5 overflow-y-auto px-5 py-5">
@@ -213,7 +214,7 @@ export function RealDatabaseCreateDialog({ engine }: { engine: Engine }) {
               {selectedContainer ? <p className="mt-2 text-xs text-fg-muted">版本 {selectedContainer.versionTag} · {ACCESS_SCOPE_ITEMS.find((item) => item.value === selectedContainer.accessScope)?.label ?? selectedContainer.accessScope} · {selectedContainer.managed ? '创建新逻辑库' : '验证并接管已有库'}</p> : null}
               {!loading && !discoverError && candidates.length === 0 ? <div className="mt-3 rounded-lg border border-control-line bg-surface-raised p-3 text-xs text-fg-muted">
                 <p>没有可用的 {engine} 容器。</p>
-                <button type="button" onClick={() => setTargetKind('new')} className={BUTTON + ' mt-2 bg-surface'}>拉取镜像并新建容器</button>
+                <Button variant="outline" type="button" onClick={() => setTargetKind('new')} className={BUTTON + ' mt-2 bg-surface'}>拉取镜像并新建容器</Button>
               </div> : null}
               {selectedContainer && !selectedContainer.managed ? <p className="mt-2 text-xs text-fg-muted">外部容器需已有数据库和普通账号；接管不修改端口或网络范围。</p> : null}
             </div> : <div className="mt-4 space-y-4">
@@ -241,7 +242,7 @@ export function RealDatabaseCreateDialog({ engine }: { engine: Engine }) {
               {validVersion && !loading && !discoverError ? image ? <p role="status" className="text-xs text-success">本地镜像已就绪：{repo}:{versionTag}</p> : <div className="rounded-lg border border-line bg-surface p-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <p className="text-xs text-fg-muted">本地尚无 {repo}:{versionTag} 镜像</p>
-                  <button type="button" disabled={busy || Boolean(registryError)} onClick={() => void pull()} className={BUTTON}>{pulling ? '拉取中…' : '拉取镜像'}</button>
+                  <Button variant="outline" type="button" disabled={busy || Boolean(registryError)} onClick={() => void pull()} className={BUTTON}>{pulling ? '拉取中…' : '拉取镜像'}</Button>
                 </div>
                 {pulling ? <div className="mt-3" role="status" aria-live="polite">
                   <div className="flex flex-wrap justify-between gap-1 text-xs text-fg-muted">
@@ -288,7 +289,7 @@ export function RealDatabaseCreateDialog({ engine }: { engine: Engine }) {
                     <input id="real-db-password" type={passwordVisible ? 'text' : 'password'} className={FIELD + ' pr-9'} disabled={busy} value={password} onChange={(event) => setPassword(event.target.value)} autoComplete="new-password" />
                     <PasswordVisibilityButton visible={passwordVisible} onToggle={setPasswordVisible} />
                   </div>
-                  <button type="button" disabled={busy} onClick={() => setPassword(generateDatabasePassword(24))} className={BUTTON + ' min-w-16 shrink-0 whitespace-nowrap'}>生成</button>
+                  <Button variant="outline" type="button" disabled={busy} onClick={() => setPassword(generateDatabasePassword(24))} className={BUTTON + ' min-w-16 shrink-0 whitespace-nowrap'}>生成</Button>
                 </div>
               </div>
             </div>
@@ -304,18 +305,18 @@ export function RealDatabaseCreateDialog({ engine }: { engine: Engine }) {
             </div> : null}
           </section>
 
-          {discoverError ? <div role="alert" className="rounded-lg border border-danger/40 p-3 text-xs text-danger">{discoverError}<button type="button" className={BUTTON + ' ml-2'} onClick={() => void discover()}>重试</button></div> : null}
+          {discoverError ? <div role="alert" className="rounded-lg border border-danger/40 p-3 text-xs text-danger">{discoverError}<Button variant="outline" type="button" className={BUTTON + ' ml-2'} onClick={() => void discover()}>重试</Button></div> : null}
           {createError ? <p role="alert" className="text-xs text-danger">{createError}</p> : null}
         </div>
 
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-line px-5 py-3">
           <p className="text-xs text-fg-subtle">{hint}</p>
           <div className="ml-auto flex gap-2">
-            <button type="button" disabled={busy} onClick={close} className={BUTTON}>取消</button>
-            <button type="button" disabled={!canSubmit} onClick={submit} className={BUTTON + ' bg-surface-raised'}>
+            <Button variant="outline" type="button" disabled={busy} onClick={close} className={BUTTON}>取消</Button>
+            <Button variant="outline" type="button" disabled={!canSubmit} onClick={submit} className={BUTTON + ' bg-surface-raised'}>
               {creating ? <Loader2 aria-hidden size={13} className="mr-1.5 animate-spin" /> : null}
               {creating ? '处理中…' : targetKind === 'new' ? '创建并启动' : selectedContainer?.managed ? '创建逻辑库' : '验证并接管'}
-            </button>
+            </Button>
           </div>
         </div>
       </Dialog.Content>

@@ -1,6 +1,7 @@
 import * as Dialog from '@radix-ui/react-dialog'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { useWebsitesStore } from '../../stores/websitesStore'
+import { Button } from '../../components/Button'
 
 /**
  * 删除项目确认弹窗：删除是危险动作，确认文案明示会连站点目录一起删除；
@@ -36,21 +37,21 @@ export function WebsitesRemoveDialog() {
             </p>
           </div>
           <div className="flex items-center justify-end gap-2 border-t border-line px-4 py-2.5">
-            <button
+            <Button variant="outline"
               type="button"
               onClick={() => closeRemove()}
               className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted transition-colors hover:text-fg"
             >
               取消
-            </button>
-            <button
+            </Button>
+            <Button variant="destructive"
               type="button"
               disabled={removing}
               onClick={() => void removeProject(gateway, removeTarget)}
               className="rounded-lg border border-danger/50 bg-danger/10 px-3 py-1.5 text-xs font-medium text-danger transition-colors hover:bg-danger/20 disabled:opacity-50"
             >
               {removing ? '删除中…' : '确认删除'}
-            </button>
+            </Button>
           </div>
         </Dialog.Content>
       </Dialog.Portal>

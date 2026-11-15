@@ -15,7 +15,7 @@ export const CTL_SECONDARY = 'ctl ctl-quiet'
 /** 破坏性动作：危险色底与描边。 */
 export const CTL_DANGER = 'ctl ctl-danger'
 /** 卡内行动作：同一形状矮一档。 */
-export const CTL_CARD_ACTION = 'ctl ctl-sm ctl-quiet'
+export const CTL_CARD_ACTION = 'ctl ctl-sm ctl-quiet px-2.5 text-xs'
 /** 文本输入框与下拉触发器。 */
 export const CTL_FIELD = 'ctl-field'
 /** 下拉触发器：与输入框同档形状，内部两端排布。 */

@@ -12,6 +12,7 @@ import {
   TERMINAL_FONT_SIZE_STEP,
 } from '../../components/terminal/terminalFontSize'
 import { hostTerminalBanner, tabLabel, type HostTerminalSession } from '../../stores/terminalsStore'
+import { Button } from '../../components/Button'
 
 const STATUS_TEXT: Record<HostTerminalSession['status'], string | undefined> = {
   connecting: '连接中',
@@ -183,9 +184,9 @@ export function TerminalTabBar({
             <ZoomIn aria-hidden size={15} />
           </IconButton>
         </div>
-        <button type="button" onClick={onCreate} disabled={opening} className={CTL_PRIMARY}>
+        <Button variant="primary" type="button" onClick={onCreate} disabled={opening} className={CTL_PRIMARY}>
           新建终端
-        </button>
+        </Button>
       </div>
     </div>
   )
@@ -216,7 +217,7 @@ function TabItems({
           selected ? 'bg-nav-selected' : 'hover:bg-nav-hover',
         ].join(' ')}
       >
-        <button
+        <Button unstyled
           type="button"
           role="tab"
           aria-selected={selected}
@@ -238,7 +239,7 @@ function TabItems({
               {` ${status}`}
             </span>
           ) : null}
-        </button>
+        </Button>
         <IconButton
           label={`关闭 ${label}`}
           variant="ghost"

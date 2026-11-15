@@ -31,8 +31,10 @@
   --easyui-toggle-label: #30303b;
 }
 
-/* 与 EasyUI tokens.css 一致；局部定义保留上游分页组件的原始类名与形状。 */
+/* 沿用 EasyUI 原始配色；圆角独立于工作台令牌，匹配官网实际预览。 */
 [data-easyui="slide-pagination"] {
+  /* 官网预览的 rounded-md = 14px × 0.8；隔离工作台同名 6px 令牌。 */
+  --easyui-pagination-radius: 0.7rem;
   --bg: #111113;
   --border: #29292c;
   --border-hover: #343438;
@@ -49,4 +51,10 @@
   --text-primary: #0a0a0a;
   --text-secondary: #52525b;
   --text-muted: #71717a;
+}
+
+/* 窄容器内分页可横向滚动，键盘焦点环画在按钮内部，避免被滚动边界裁掉。 */
+[data-easyui="slide-pagination"] button:focus-visible {
+  outline: 2px solid var(--t-focus);
+  outline-offset: -2px;
 }

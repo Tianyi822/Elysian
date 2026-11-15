@@ -6,6 +6,7 @@ import { captureAuthGeneration } from '../../adapters/http/unauthorized'
 import { IconButton } from '../../components/IconButton'
 import { BookOpen, X } from '../../components/icons'
 import { ChatMarkdown } from './ChatMarkdown'
+import { Button } from '../../components/Button'
 
 const failure = (cause: unknown) => cause instanceof Error ? cause.message : '读取长期记忆失败'
 
@@ -34,7 +35,7 @@ export function ChatMemorySources({ sources, api }: { sources: readonly AgentWik
   }, [api, selected, attempt])
   return <>
     <div className="-mt-3 mb-5 flex flex-wrap items-center gap-2 text-xs text-fg-muted" aria-label="回答引用的记忆">
-      <BookOpen size={13} aria-hidden /><span>记忆引用</span>{sources.map((ref, index) => <button key={`${ref.pageId}:${ref.revision}`} className="rounded border border-line px-2 py-1 hover:bg-surface-hover" onClick={() => setSelected(ref)}>来源 {index + 1} · v{ref.revision}</button>)}
+      <BookOpen size={13} aria-hidden /><span>记忆引用</span>{sources.map((ref, index) => <Button variant="outline" type="submit" key={`${ref.pageId}:${ref.revision}`} className="rounded border border-line px-2 py-1 hover:bg-surface-hover" onClick={() => setSelected(ref)}>来源 {index + 1} · v{ref.revision}</Button>)}
     </div>
     <Dialog.Root open={!!selected} onOpenChange={open => { if (!open) setSelected(undefined) }}><Dialog.Portal>
       <Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" />
@@ -42,7 +43,7 @@ export function ChatMemorySources({ sources, api }: { sources: readonly AgentWik
         <div className="flex items-center justify-between gap-4 px-5 pt-4"><Dialog.Title className="min-w-0 truncate text-sm font-semibold">{page?.title ?? '记忆引用'} · v{selected?.revision}</Dialog.Title><IconButton label="关闭记忆引用" variant="ghost" onPress={() => setSelected(undefined)}><X size={16} aria-hidden /></IconButton></div>
         <Dialog.Description className="px-5 pt-1 text-xs text-fg-muted">回答当时使用的固定修订</Dialog.Description>
         <div className="hover-scrollbar min-h-0 overflow-y-auto px-5 py-4">
-          {error ? <p role="alert" className="text-xs text-danger">{error} <button className="underline" onClick={() => setAttempt(value => value + 1)}>重试读取引用</button></p> : page ? <>
+          {error ? <p role="alert" className="text-xs text-danger">{error} <Button variant="link" type="submit" className="underline" onClick={() => setAttempt(value => value + 1)}>重试读取引用</Button></p> : page ? <>
             {(currentStatus === 'withdrawn' || page.status === 'withdrawn') && <p className="mb-3 text-xs text-danger">此来源已撤回，历史内容仅供核对。</p>}
             {statusError && <p className="mb-3 text-xs text-fg-muted">暂时无法核实来源当前状态，以下为回答当时使用的内容。</p>}
             <ChatMarkdown text={page.markdown} />

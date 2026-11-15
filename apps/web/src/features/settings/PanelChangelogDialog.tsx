@@ -7,6 +7,7 @@ import { X } from '../../components/icons'
 import { ScrollArea } from '../../components/ScrollArea'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
 import { useMessageStore } from '../../stores/messageStore'
+import { Button } from '../../components/Button'
 
 /**
  * 更新日志窗口：列所选来源最近的提交标题，从新到旧。
@@ -68,9 +69,9 @@ export function PanelChangelogDialog({
           <div className="flex shrink-0 items-center justify-between gap-3 px-5 pt-5">
             <Dialog.Title className="text-sm font-semibold text-fg">更新日志</Dialog.Title>
             <Dialog.Close asChild>
-              <button type="button" aria-label="关闭更新日志" className="rounded-lg p-1.5 text-fg-muted hover:bg-surface-raised hover:text-fg">
+              <Button variant="outline" type="button" aria-label="关闭更新日志" className="rounded-lg p-1.5 text-fg-muted hover:bg-surface-raised hover:text-fg">
                 <X aria-hidden size={16} />
-              </button>
+              </Button>
             </Dialog.Close>
           </div>
           <Dialog.Description className="shrink-0 px-5 pt-1 text-xs leading-5 text-fg-muted">

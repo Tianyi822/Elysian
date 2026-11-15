@@ -7,6 +7,7 @@ import { useAgentRuntimeStore } from '../../stores/agentRuntimeStore'
 import { useModelSettingsStore } from '../../stores/modelSettingsStore'
 import { ModelProfilesPanel } from './ModelProfilesPanel'
 import { useFeedbackMessage } from '../../components/useFeedbackMessage'
+import { Button } from '../../components/Button'
 
 /** 仅模型设置依赖 Agent 内核；其他设置页签不受内核不可用影响。 */
 export function ModelSettingsSection({ active }: { active: boolean }) {
@@ -27,8 +28,8 @@ export function ModelSettingsSection({ active }: { active: boolean }) {
   return <div className="flex flex-col gap-3">
     <div className="relative rounded-xl" aria-busy={settings.reloading}>
       {settings.status === 'idle' || settings.status === 'loading' ? <LoadingState label="正在读取模型配置…" /> : null}
-      {runtime.errorMessage ? <p role="alert" className="mb-3 text-xs text-danger">{runtime.errorMessage}<button type="button" className="ml-2 underline" onClick={() => void runtime.load(gateway)}>重试</button></p> : null}
-      {settings.status === 'ready' && settings.errorMessage ? <p role="alert" className="mb-3 text-xs text-danger">{settings.errorMessage}<button type="button" className="ml-2 underline" onClick={() => void settings.refresh(gateway)}>重试</button></p> : null}
+      {runtime.errorMessage ? <p role="alert" className="mb-3 text-xs text-danger">{runtime.errorMessage}<Button variant="link" type="button" className="ml-2 underline" onClick={() => void runtime.load(gateway)}>重试</Button></p> : null}
+      {settings.status === 'ready' && settings.errorMessage ? <p role="alert" className="mb-3 text-xs text-danger">{settings.errorMessage}<Button variant="link" type="button" className="ml-2 underline" onClick={() => void settings.refresh(gateway)}>重试</Button></p> : null}
       {settings.status === 'error' ? <ErrorState title="模型配置读取失败" description={settings.errorMessage} onRetry={() => void settings.refresh(gateway)} /> : null}
       {settings.status === 'ready' ? <ModelProfilesPanel active={active} refreshing={settings.reloading} onRefresh={() => void settings.refresh(gateway)} /> : null}
     </div>

@@ -1,8 +1,8 @@
 import { useEffect, useId, useLayoutEffect, useState } from 'react'
 import { RUNTIME_RUN_STATUS_LABELS, type AgentChatTimelineEntry, type AgentChatTimelineSnapshot, type AgentChatToolStatus, type AgentMessage, type RuntimeCall } from '@elysian/contracts'
 import type { AgentConversationAdapter } from '../../contracts/agentChat'
-import { Check, ChevronRight, Loader2, RefreshCw, Terminal, X } from '../../components/icons'
-import { IconButton } from '../../components/IconButton'
+import { Check, ChevronRight, Loader2, Terminal, X } from '../../components/icons'
+import { RefreshButton } from '../../components/RefreshState'
 import { useAgentChatStore } from '../../stores/agentChatStore'
 import { ChatMarkdown } from './ChatMarkdown'
 import { ChatMessageCopy } from './ChatMessageCopy'
@@ -13,6 +13,7 @@ import { ChatUserInputSummary } from './ChatUserInput'
 import { ChatRuntimeResult } from './ChatRuntimeResult'
 import { ChatToolProgress } from './ChatToolProgress'
 import { ChatRecovery } from './ChatRecovery'
+import { Button } from '../../components/Button'
 
 type ToolEntry = Extract<AgentChatTimelineEntry, { kind: 'tool' }>
 const toolLabels: Record<AgentChatToolStatus, string> = {
@@ -54,12 +55,12 @@ function ChatTool({ entry, runId, api, onProgress }: { entry: ToolEntry; runId: 
   const evidence = result?.evidence ?? (result?.error ?? entry.error)?.evidence
   const Icon = status === 'succeeded' ? Check : failed(status) ? X : pending(status) ? Loader2 : Terminal
   return <div className="chat-tool" data-status={status}>
-    <button type="button" className="chat-tool-toggle" aria-expanded={expanded} aria-controls={regionId}
+    <Button unstyled type="button" className="chat-tool-toggle" aria-expanded={expanded} aria-controls={regionId}
       aria-label={`${expanded ? '收起' : '展开'}工具 ${entry.tool} 详情`} onClick={() => setExpanded(value => !value)}>
       <ChevronRight size={14} aria-hidden className={expanded ? 'rotate-90' : undefined} />
       <Icon size={14} aria-hidden className={`chat-tool-status-icon${status === 'running' || status === 'waiting-task' ? ' animate-spin motion-reduce:animate-none' : ''}`} />
       <span className="chat-tool-name">{entry.tool}</span><span className="chat-tool-status">{toolLabels[status]}</span>
-    </button>
+    </Button>
     {entry.resourceWait && <div className="text-xs text-fg-muted" role="status">
       <p>{entry.resourceWait.message} · 已等待 {entry.resourceWait.elapsedSeconds} 秒</p>
       <p>{entry.resourceWait.resource}{entry.resourceWait.runId && ` · 运行 ${entry.resourceWait.runId}`}{entry.resourceWait.operationId && ` · 操作 ${entry.resourceWait.operationId}`}</p>
@@ -69,7 +70,7 @@ function ChatTool({ entry, runId, api, onProgress }: { entry: ToolEntry; runId: 
       <p className="text-xs text-fg-muted">参数</p>
       <pre className="chat-tool-data hover-scrollbar" tabIndex={0}>{entry.argumentsJson}</pre>
       {loading && <Loader2 size={14} className="animate-spin motion-reduce:animate-none" role="status" aria-label="读取工具结果" />}
-      {error && <IconButton label="重试读取工具详情" onPress={() => setRetry(value => value + 1)}><RefreshCw size={14} aria-hidden /></IconButton>}
+      {error && <RefreshButton label="重试读取工具详情" onPress={() => setRetry(value => value + 1)} busy={loading} />}
       {result?.result !== undefined && <><p className="text-xs text-fg-muted">结果</p><pre className="chat-tool-data hover-scrollbar" tabIndex={0}>{typeof result.result === 'string' ? result.result : JSON.stringify(result.result, null, 2)}</pre></>}
       {(entry.truncated || result?.truncated) && <p className="text-xs text-fg-muted">结果已截断</p>}
       {(result?.error ?? entry.error) && <p className="text-xs text-danger">{(result?.error ?? entry.error)?.message}</p>}

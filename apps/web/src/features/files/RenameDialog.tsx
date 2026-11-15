@@ -6,6 +6,7 @@ import type { FileEntry } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { useFilesStore } from '../../stores/filesStore'
 import { useImeEnterGuard } from '../../components/useImeEnterGuard'
+import { Button } from '../../components/Button'
 
 /**
  * 重命名对话框：预填现名，名称判据在前端先挡一道（非空、不含斜杠），
@@ -85,20 +86,20 @@ export function RenameDialog({
               </p>
             ) : null}
             <div className="mt-4 flex justify-end gap-2">
-              <button
+              <Button variant="outline"
                 type="button"
                 onClick={onClose}
                 className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted transition-colors hover:text-fg"
               >
                 取消
-              </button>
-              <button
+              </Button>
+              <Button variant="primary"
                 type="submit"
                 disabled={submitting}
                 className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50"
               >
                 确认重命名
-              </button>
+              </Button>
             </div>
           </form>
         </Dialog.Content>

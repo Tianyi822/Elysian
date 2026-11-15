@@ -7,6 +7,7 @@ import { RuntimeAccessCard } from '../agent/RuntimeAccessCard'
 import { ExtensionDialog } from './extensionUi'
 import { CTL_SECONDARY } from '../../components/formControl'
 import { McpCatalog } from './McpSection'
+import { Button } from '../../components/Button'
 
 type Pointer = { requestId: string; id?: string; decision?: AgentMCPProbeDecision; cancelRequestId?: string }
 const storageKey = (server: AgentMCPServer) => `elysian:mcp-probe:v1:${server.id}:${server.revision}`
@@ -70,13 +71,13 @@ export function McpProbeDialog({ server, visible, onClose }: { server: AgentMCPS
   const restart = () => { createPromise.current = undefined; setRequest(undefined); savePointer({ requestId: randomId() }); setAttempt(value => value + 1) }
   return <ExtensionDialog title="MCP 探测权限" open={visible} onClose={onClose} wide>
     {!request && reading && <p role="status" className="text-xs text-fg-muted">正在准备权限申请…</p>}
-    {error && <div className="space-y-2"><p role="alert" className="text-xs text-danger">{error}</p><button type="button" className={CTL_SECONDARY} disabled={busy || reading} onClick={() => { if (!pointer.id) createPromise.current = undefined; setAttempt(value => value + 1) }}>{pointer.id ? '重新读取探测状态' : '按原请求重试读取申请'}</button></div>}
+    {error && <div className="space-y-2"><p role="alert" className="text-xs text-danger">{error}</p><Button variant="outline" type="button" className={CTL_SECONDARY} disabled={busy || reading} onClick={() => { if (!pointer.id) createPromise.current = undefined; setAttempt(value => value + 1) }}>{pointer.id ? '重新读取探测状态' : '按原请求重试读取申请'}</Button></div>}
     {request?.state === 'waiting' && <RuntimeAccessCard title={`探测 ${request.serverName}`} access={request.access} profile={request.environment?.profile} busy={busy || reading || !!error}
       pending={pointer.decision ? { requestId: pointer.decision.requestId, expectedRevision: pointer.decision.expectedVersion, expectedDigest: pointer.decision.expectedDigest, decision: pointer.decision.decision === 'deny' ? 'denied' : 'once' } : undefined}
       onDecision={decision => void decide(decision)} onCancel={() => void cancel()}><pre aria-label="探测启动命令" className="hover-scrollbar max-h-32 overflow-auto whitespace-pre-wrap break-all rounded bg-surface-raised p-2 font-mono text-xs">{request.command.join('\n')}</pre><p className="text-xs text-fg-muted">只允许本次探测，不授予聊天会话权限。</p></RuntimeAccessCard>}
-    {request && ['preparing', 'running'].includes(request.state) && <div className="space-y-3"><p role="status" className="text-xs">{request.state === 'preparing' ? '正在准备探测环境…' : '正在连接服务并读取目录…'}</p>{request.progress?.state === 'pulling' && <progress aria-label="探测镜像下载进度" className="w-full" max={request.progress.total || undefined} value={request.progress.total ? request.progress.current ?? 0 : undefined} />}<button className={CTL_SECONDARY} disabled={busy} onClick={() => void cancel()}>停止探测</button></div>}
+    {request && ['preparing', 'running'].includes(request.state) && <div className="space-y-3"><p role="status" className="text-xs">{request.state === 'preparing' ? '正在准备探测环境…' : '正在连接服务并读取目录…'}</p>{request.progress?.state === 'pulling' && <progress aria-label="探测镜像下载进度" className="w-full" max={request.progress.total || undefined} value={request.progress.total ? request.progress.current ?? 0 : undefined} />}<Button variant="outline" type="submit" className={CTL_SECONDARY} disabled={busy} onClick={() => void cancel()}>停止探测</Button></div>}
     {request?.state === 'completed' && <><p role="status" className="text-xs text-success">本次探测成功</p>{request.catalog && <McpCatalog catalog={request.catalog} />}</>}
     {request && ['denied', 'failed', 'unknown', 'cancelled'].includes(request.state) && <p role="status" className={`text-xs ${request.state === 'failed' || request.state === 'unknown' ? 'text-danger' : 'text-fg-muted'}`}>{request.error ?? ({ denied: '已拒绝本次探测。', cancelled: '探测已停止。', unknown: '探测结果尚未确认，需要核实执行状态后才能继续。', failed: '探测失败。' } as Record<string, string>)[request.state]}</p>}
-    {request && ['completed', 'denied', 'failed', 'cancelled'].includes(request.state) && <button className={CTL_SECONDARY} disabled={busy || reading || !!error} onClick={restart}>重新申请探测</button>}
+    {request && ['completed', 'denied', 'failed', 'cancelled'].includes(request.state) && <Button variant="outline" type="submit" className={CTL_SECONDARY} disabled={busy || reading || !!error} onClick={restart}>重新申请探测</Button>}
   </ExtensionDialog>
 }

@@ -4,7 +4,7 @@ import { RESTART_POLICIES, RESTART_POLICY_LABELS } from '@elysian/contracts'
 import { FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { ChevronDown, Plus, Trash2, X } from '../../components/icons'
-import { Button } from '../../components/easyui/Button'
+import { Button } from '../../components/Button'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { useContainersStore } from '../../stores/containersStore'
@@ -100,14 +100,14 @@ export function ContainerCreateDialog() {
               )}
               <span className="text-sm font-medium text-fg">创建容器</span>
             </div>
-            <button
+            <Button variant="ghost" size="icon"
               type="button"
               onClick={closeCreate}
               aria-label="关闭弹窗"
               className="inline-flex size-7 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg"
             >
               <X aria-hidden size={15} />
-            </button>
+            </Button>
           </div>
 
           <div className="flex-1 overflow-y-auto px-4 py-3">
@@ -154,7 +154,7 @@ export function ContainerCreateDialog() {
               </div>
             </div>
 
-            <button
+            <Button variant="outline"
               type="button"
               aria-expanded={optionalOpen}
               aria-controls="create-optional"
@@ -167,14 +167,14 @@ export function ContainerCreateDialog() {
                 className={`transition-transform ${optionalOpen ? 'rotate-180' : ''}`}
               />
               可选设置（端口、环境变量、卷、命令、重启策略）
-            </button>
+            </Button>
 
             {optionalOpen ? (
               <div id="create-optional" className="mt-3 space-y-4">
                 <section aria-label="端口映射" className="rounded-lg bg-surface p-3">
                   <div className="flex items-center justify-between gap-2">
                     <h3 className="text-xs font-medium text-fg">端口映射</h3>
-                    <button
+                    <Button variant="outline"
                       type="button"
                       onClick={() =>
                         patch({
@@ -188,7 +188,7 @@ export function ContainerCreateDialog() {
                     >
                       <Plus aria-hidden size={13} />
                       添加端口映射
-                    </button>
+                    </Button>
                   </div>
                   {draft.ports.length ? (
                     <div className="mt-2 space-y-2">
@@ -249,14 +249,14 @@ export function ContainerCreateDialog() {
                               <p className="mt-1 text-xs text-warning">该端口不受防火墙规则约束</p>
                             ) : null}
                           </div>
-                          <button
+                          <Button variant="destructive"
                             type="button"
                             onClick={() => patch({ ports: draft.ports.filter((_, i) => i !== index) })}
                             className={ROW_DELETE_BUTTON}
                           >
                             <Trash2 aria-hidden size={13} />
                             删除
-                          </button>
+                          </Button>
                           {showErrors && errors.ports[index] ? (
                             <p className={`${FIELD_ERROR_CLASS} w-full`}>
                               {[errors.ports[index]!.containerPort, errors.ports[index]!.hostPort]
@@ -277,14 +277,14 @@ export function ContainerCreateDialog() {
                 <section aria-label="环境变量" className="rounded-lg bg-surface p-3">
                   <div className="flex items-center justify-between gap-2">
                     <h3 className="text-xs font-medium text-fg">环境变量</h3>
-                    <button
+                    <Button variant="outline"
                       type="button"
                       onClick={() => patch({ env: [...draft.env, { key: '', value: '' }] })}
                       className={ROW_ADD_BUTTON}
                     >
                       <Plus aria-hidden size={13} />
                       添加环境变量
-                    </button>
+                    </Button>
                   </div>
                   {draft.env.length ? (
                     <div className="mt-2 space-y-2">
@@ -318,14 +318,14 @@ export function ContainerCreateDialog() {
                               className={INPUT_CLASS}
                             />
                           </div>
-                          <button
+                          <Button variant="destructive"
                             type="button"
                             onClick={() => patch({ env: draft.env.filter((_, i) => i !== index) })}
                             className={ROW_DELETE_BUTTON}
                           >
                             <Trash2 aria-hidden size={13} />
                             删除
-                          </button>
+                          </Button>
                           {showErrors && errors.env[index]?.key ? (
                             <p className={`${FIELD_ERROR_CLASS} w-full`}>{errors.env[index]!.key}</p>
                           ) : null}
@@ -340,14 +340,14 @@ export function ContainerCreateDialog() {
                 <section aria-label="卷挂载" className="rounded-lg bg-surface p-3">
                   <div className="flex items-center justify-between gap-2">
                     <h3 className="text-xs font-medium text-fg">卷挂载</h3>
-                    <button
+                    <Button variant="outline"
                       type="button"
                       onClick={() => patch({ volumes: [...draft.volumes, { hostPath: '', containerPath: '' }] })}
                       className={ROW_ADD_BUTTON}
                     >
                       <Plus aria-hidden size={13} />
                       添加卷挂载
-                    </button>
+                    </Button>
                   </div>
                   {draft.volumes.length ? (
                     <div className="mt-2 space-y-2">
@@ -391,14 +391,14 @@ export function ContainerCreateDialog() {
                               className={INPUT_CLASS}
                             />
                           </div>
-                          <button
+                          <Button variant="destructive"
                             type="button"
                             onClick={() => patch({ volumes: draft.volumes.filter((_, i) => i !== index) })}
                             className={ROW_DELETE_BUTTON}
                           >
                             <Trash2 aria-hidden size={13} />
                             删除
-                          </button>
+                          </Button>
                           {showErrors && errors.volumes[index] ? (
                             <p className={`${FIELD_ERROR_CLASS} w-full`}>
                               {[errors.volumes[index]!.hostPath, errors.volumes[index]!.containerPath]

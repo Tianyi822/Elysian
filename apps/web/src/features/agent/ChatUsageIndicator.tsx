@@ -2,6 +2,7 @@ import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import * as Popover from '@radix-ui/react-popover'
 import type { AgentChatTimelineSnapshot } from '@elysian/contracts'
 import './chatUsageIndicator.css'
+import { Button } from '../../components/Button'
 
 const tokenNumber = new Intl.NumberFormat('en-US')
 const contextPercent = new Intl.NumberFormat('en-US', { minimumFractionDigits: 1, maximumFractionDigits: 1 })
@@ -53,14 +54,14 @@ export function ChatUsageIndicator({ timeline }: { timeline?: AgentChatTimelineS
 
   return <Popover.Root open={open} onOpenChange={setOpen}>
     <Popover.Trigger asChild>
-      <button ref={trigger} type="button" aria-label="上下文用量" className="chat-usage-trigger"
+      <Button unstyled ref={trigger} type="button" aria-label="上下文用量" className="chat-usage-trigger"
         onPointerEnter={event => { if (event.pointerType !== 'touch') pointerEnter() }}
         onPointerLeave={event => { if (event.pointerType !== 'touch') pointerLeave() }}
         onPointerDown={event => { touch.current = event.pointerType === 'touch' }}
         onFocus={() => { if (!touch.current) reveal() }} onBlur={closeSoon}
         onClick={event => { event.preventDefault(); cancelClose(); setOpen(value => !value); touch.current = false }}>
         <span aria-hidden className="chat-usage-ring" data-known={ratio !== undefined || undefined} style={style} />
-      </button>
+      </Button>
     </Popover.Trigger>
     <Popover.Portal>
       <Popover.Content ref={panel} aria-label="上下文用量明细" side="top" align="end" sideOffset={8} collisionPadding={12}

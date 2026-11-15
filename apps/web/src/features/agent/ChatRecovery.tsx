@@ -2,6 +2,7 @@ import { useId, useState } from 'react'
 import type { AgentChatTimelineSnapshot } from '@elysian/contracts'
 import type { AgentConversationAdapter } from '../../contracts/agentChat'
 import { useAgentChatStore } from '../../stores/agentChatStore'
+import { Button } from '../../components/Button'
 
 export function ChatRecovery({ timeline, api }: { timeline: AgentChatTimelineSnapshot; api: AgentConversationAdapter }) {
   const [busy, setBusy] = useState(false)
@@ -23,7 +24,7 @@ export function ChatRecovery({ timeline, api }: { timeline: AgentChatTimelineSna
     {recovery && <p role="status">{recovery.status === 'correcting' ? '正在修正' : recovery.status === 'verifying' ? '正在核实' : recovery.status === 'recovered' ? '恢复完成' : recovery.status === 'exhausted' ? '本轮修正已结束' : '核实尚未完成'} · {recovery.tool}：{recovery.message}</p>}
     {unknown && <>
       {!recovery && <p>操作结果尚未确认，需要核实任务回执和实际状态。</p>}
-      {api.verifyRecovery && <button type="button" className="chat-recovery-action" disabled={busy} onClick={() => void verify()}>{busy ? '正在核实实际状态…' : '核实实际状态'}</button>}
+      {api.verifyRecovery && <Button variant="outline" type="button" className="chat-recovery-action" disabled={busy} onClick={() => void verify()}>{busy ? '正在核实实际状态…' : '核实实际状态'}</Button>}
       {timeline.done && api.reconcileRecovery && <details className="mt-2">
         <summary>登记人工核实结论</summary>
         <form className="mt-2 grid gap-2" onSubmit={event => {
@@ -40,7 +41,7 @@ export function ChatRecovery({ timeline, api }: { timeline: AgentChatTimelineSna
           </select>
           <label htmlFor={fieldId}>核实证据</label>
           <textarea id={fieldId} className="chat-recovery-input" value={evidence} onChange={event => setEvidence(event.target.value)} maxLength={8192} required rows={3} />
-          <button type="submit" className="chat-recovery-action" disabled={busy || !decision || !evidence.trim()}>保存核实结论并解除阻塞</button>
+          <Button variant="primary" type="submit" className="chat-recovery-action" disabled={busy || !decision || !evidence.trim()}>保存核实结论并解除阻塞</Button>
         </form>
       </details>}
     </>}

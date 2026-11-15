@@ -3,6 +3,7 @@ import { TerminalShell } from '../../components/terminal/TerminalShell'
 import { CommandTerminal } from '../../components/terminal/CommandTerminal'
 import { SESSION_BANNER, useDatabaseStore } from '../../stores/databaseStore'
 import { ENGINE_STATEMENTS } from './engineStatements'
+import { Button } from '../../components/Button'
 
 export function SqlSessionWindow() {
   const gateway = useGateway()
@@ -18,7 +19,7 @@ export function SqlSessionWindow() {
     onClose={closeSession} interactive={session.status === 'connected'}
     labels={{ close: '关闭会话', confirmTitle: '确认关闭会话？', confirmDescription: '未执行的语句将丢失。', confirmCancel: '继续使用', confirmAccept: '确认关闭' }}>
     {session.status === 'connecting' && <p role="status" className="px-3 pt-3 text-xs text-fg-muted">正在连接数据库…</p>}
-    {session.errorMessage && <p role="alert" className="px-3 pt-3 text-xs text-danger">{session.errorMessage}<button type="button" className="ml-2 underline" onClick={() => void useDatabaseStore.getState().interruptSession(gateway)}>重新连接</button></p>}
+    {session.errorMessage && <p role="alert" className="px-3 pt-3 text-xs text-danger">{session.errorMessage}<Button variant="link" type="button" className="ml-2 underline" onClick={() => void useDatabaseStore.getState().interruptSession(gateway)}>重新连接</Button></p>}
     <CommandTerminal sessionKey={session.id} prompt={`${database.name}> `} inputLabel="SQL 输入"
       interactive={session.status === 'connected'} completions={ENGINE_STATEMENTS[database.engine]}
       execute={(statement) => useDatabaseStore.getState().submitStatement(gateway, statement)}

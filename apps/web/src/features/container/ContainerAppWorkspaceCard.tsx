@@ -41,6 +41,7 @@ import { ContainerBuildDialog } from './ContainerBuildDialog'
 import { ContainerBuildLogsSheet } from './ContainerBuildLogsSheet'
 import { formatWorkspaceSize } from './formatWorkspaceSize'
 import { useFeedbackMessage } from '../../components/useFeedbackMessage'
+import { Button } from '../../components/Button'
 
 /** 待确认的删除目标：工作区连目录一起删，单文件只删自己。 */
 type Pending = { kind: 'app' } | { kind: 'file'; path: string } | null
@@ -48,7 +49,7 @@ type Pending = { kind: 'app' } | { kind: 'file'; path: string } | null
 function CopyPathButton({ value, label }: { value: string; label: string }) {
   const { copied, copy } = useClipboardCopy()
   return (
-    <button
+    <Button variant="ghost" size="icon"
       type="button"
       onClick={() => void copy(value, label)}
       title={`复制${label}`}
@@ -56,7 +57,7 @@ function CopyPathButton({ value, label }: { value: string; label: string }) {
       className="icon-button inline-flex size-6 shrink-0 items-center justify-center text-fg-subtle transition-colors hover:bg-surface-raised hover:text-fg"
     >
       {copied ? <Check aria-hidden size={13} className="text-success" /> : <Copy aria-hidden size={13} />}
-    </button>
+    </Button>
   )
 }
 
@@ -225,10 +226,10 @@ export function ContainerAppWorkspaceCard({
                 <Folder aria-hidden size={13} />
                 上传目录
               </label>
-              <button type="button" onClick={() => setBuildDialogOpen(true)} className={CTL_CARD_ACTION}>
+              <Button variant="outline" type="button" onClick={() => setBuildDialogOpen(true)} className={CTL_CARD_ACTION}>
                 <Hammer aria-hidden size={13} />
                 构建镜像
-              </button>
+              </Button>
               <IconButton
                 label="删除工作区"
                 variant="ghost"
@@ -328,7 +329,7 @@ export function ContainerAppWorkspaceCard({
           {/* 构建任务区：折叠入口常驻，刷新只更新本区任务。 */}
           <section aria-label={`${app.displayName} 的构建任务`} className="rounded-lg border border-line bg-surface px-2.5 py-2">
             <div className="flex items-center justify-between gap-2">
-              <button
+              <Button variant="outline"
                 type="button"
                 onClick={() => setBuildsOpen((open) => !open)}
                 aria-expanded={buildsOpen}
@@ -336,13 +337,12 @@ export function ContainerAppWorkspaceCard({
               >
                 {buildsOpen ? <ChevronDown aria-hidden size={13} /> : <ChevronRight aria-hidden size={13} />}
                 构建任务{builds.length > 0 ? `（${builds.length}）` : ''}
-              </button>
+              </Button>
               {buildsOpen ? (
                 <RefreshButton
                   onPress={() => void refreshBuilds(gateway, app.slug)}
                   busy={buildsRefreshing}
                   label="刷新构建任务"
-                  variant="ghost"
                 />
               ) : null}
             </div>
@@ -352,13 +352,13 @@ export function ContainerAppWorkspaceCard({
                   <div role="alert" className="flex flex-wrap items-center gap-2 py-2 text-xs text-danger">
                     <TriangleAlert aria-hidden size={13} className="shrink-0" />
                     <span className="min-w-0 flex-1">{buildsError}</span>
-                    <button
+                    <Button variant="outline"
                       type="button"
                       onClick={() => void refreshBuilds(gateway, app.slug)}
                       className={`${CTL_SECONDARY} px-2`}
                     >
                       重试
-                    </button>
+                    </Button>
                   </div>
                 ) : buildsLoading && builds.length === 0 ? (
                   <p role="status" className="flex items-center justify-center gap-2 py-4 text-xs text-fg-muted">
@@ -395,22 +395,22 @@ export function ContainerAppWorkspaceCard({
                                 <ScrollText aria-hidden size={13} />
                               </IconButton>
                               {active ? (
-                                <button
+                                <Button variant="destructive"
                                   type="button"
                                   onClick={() => setCancelTarget(task)}
                                   className={`${CTL_DANGER} px-2 text-xs`}
                                 >
                                   取消
-                                </button>
+                                </Button>
                               ) : (
-                                <button
+                                <Button variant="outline"
                                   type="button"
                                   onClick={() => rebuild(task)}
                                   className={`${CTL_SECONDARY} gap-1 px-2 text-xs`}
                                 >
                                   <RotateCw aria-hidden size={12} />
                                   重新构建
-                                </button>
+                                </Button>
                               )}
                             </div>
                           </div>
@@ -479,10 +479,10 @@ export function ContainerAppWorkspaceCard({
                   : app.directory}
               </code>
               <div className="mt-4 flex justify-end gap-2">
-                <button type="button" onClick={() => setPending(null)} className={`${CTL_SECONDARY} px-3`}>
+                <Button variant="outline" type="button" onClick={() => setPending(null)} className={`${CTL_SECONDARY} px-3`}>
                   取消
-                </button>
-                <button
+                </Button>
+                <Button variant="destructive"
                   type="button"
                   onClick={() => {
                     const target = pending
@@ -493,7 +493,7 @@ export function ContainerAppWorkspaceCard({
                   className={`${CTL_DANGER} px-3`}
                 >
                   确认删除
-                </button>
+                </Button>
               </div>
             </Dialog.Content>
           </Dialog.Portal>
@@ -515,10 +515,10 @@ export function ContainerAppWorkspaceCard({
                 已完成的镜像会保留。取消后如需再次构建，用「重新构建」发起一个新任务。
               </p>
               <div className="mt-4 flex justify-end gap-2">
-                <button type="button" onClick={() => setCancelTarget(null)} className={`${CTL_SECONDARY} px-3`}>
+                <Button variant="outline" type="button" onClick={() => setCancelTarget(null)} className={`${CTL_SECONDARY} px-3`}>
                   继续构建
-                </button>
-                <button
+                </Button>
+                <Button variant="destructive"
                   type="button"
                   onClick={() => {
                     const target = cancelTarget
@@ -528,7 +528,7 @@ export function ContainerAppWorkspaceCard({
                   className={`${CTL_DANGER} px-3`}
                 >
                   确认取消
-                </button>
+                </Button>
               </div>
             </Dialog.Content>
           </Dialog.Portal>

@@ -7,6 +7,7 @@ import { SelectDropdown } from '../../components/SelectDropdown'
 import { X } from '../../components/icons'
 import { useSshStore } from '../../stores/sshStore'
 import { ACTION_CLASS, SECONDARY_ACTION_CLASS } from './sshCardParts'
+import { Button } from '../../components/Button'
 
 /**
  * 创建 SSH 密钥弹窗：选归属账号、起一个名称，密钥对由 adapter 生成。
@@ -75,13 +76,13 @@ export function SshKeyCreateDialog() {
               <span className="text-sm font-medium text-fg">创建 SSH 密钥</span>
             </div>
             <Dialog.Close asChild>
-              <button
+              <Button variant="ghost" size="icon"
                 type="button"
                 aria-label="关闭弹窗"
                 className="inline-flex size-7 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg"
               >
                 <X aria-hidden size={15} />
-              </button>
+              </Button>
             </Dialog.Close>
           </div>
 
@@ -149,16 +150,16 @@ export function SshKeyCreateDialog() {
             {/* ml-auto 保证按钮组恒靠右：演示态左侧有说明文字、真实态没有，布局都不变。 */}
             {!isDockerRuntime() ? <p className="text-xs text-fg-subtle">只改演示数据集。</p> : null}
             <div className="ml-auto flex gap-2">
-              <button
+              <Button variant="outline"
                 type="button"
                 onClick={() => closeCreateKey()}
                 className={SECONDARY_ACTION_CLASS}
               >
                 取消
-              </button>
-              <button type="button" onClick={submit} disabled={creating} className={ACTION_CLASS}>
+              </Button>
+              <Button variant="primary" type="button" onClick={submit} disabled={creating} className={ACTION_CLASS}>
                 创建密钥
-              </button>
+              </Button>
             </div>
           </div>
         </Dialog.Content>

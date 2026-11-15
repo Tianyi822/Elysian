@@ -2,6 +2,7 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { useUsersStore } from '../../stores/usersStore'
+import { Button } from '../../components/Button'
 
 /** 删除主机账号的确认弹窗：取消不删，确认后按运行时从演示数据集或系统账号移除。 */
 export function HostUserRemoveDialog() {
@@ -32,14 +33,14 @@ export function HostUserRemoveDialog() {
           </Dialog.Title>
           <p className="mt-1.5 text-xs text-fg-muted">{description}</p>
           <div className="mt-4 flex justify-end gap-2">
-            <button
+            <Button variant="outline"
               type="button"
               onClick={() => closeRemove()}
               className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted transition-colors hover:text-fg"
             >
               取消
-            </button>
-            <button
+            </Button>
+            <Button variant="destructive"
               type="button"
               disabled={removingUserIds.includes(removeTarget.id)}
               onClick={() => {
@@ -50,7 +51,7 @@ export function HostUserRemoveDialog() {
               className="rounded-lg border border-danger/50 bg-danger/10 px-3 py-1.5 text-xs font-medium text-danger transition-colors hover:bg-danger/20 disabled:opacity-50"
             >
               确认删除
-            </button>
+            </Button>
           </div>
         </Dialog.Content>
       </Dialog.Portal>

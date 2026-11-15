@@ -9,6 +9,7 @@ import { useFeedbackMessage } from '../../components/useFeedbackMessage'
 import { useMessageStore } from '../../stores/messageStore'
 import { captureAuthGeneration } from '../../adapters/http/unauthorized'
 import { RuntimeAccessCard } from './RuntimeAccessCard'
+import { Button } from '../../components/Button'
 
 const BUTTON = 'inline-flex min-h-8 items-center justify-center gap-1.5 rounded-md border border-control-line px-3 text-xs hover:bg-surface-hover disabled:opacity-50'
 
@@ -69,7 +70,7 @@ export function ChatApprovals({ api, runId, onChanged, onCancel }: { api?: Agent
   return <section aria-label="待审批操作" className="mb-3 max-h-[50dvh] overflow-y-auto border-y border-line py-3 text-xs">
     <div className="mb-2 flex items-center gap-2 font-medium"><ShieldAlert size={15} aria-hidden />待审批操作</div>
     {loading && <p role="status" className="text-fg-muted">正在读取审批…</p>}
-    {error && <button className="mb-2 underline" disabled={acting} onClick={() => setAttempt(value => value + 1)}>重新读取审批</button>}
+    {error && <Button variant="link" type="submit" className="mb-2 underline" disabled={acting} onClick={() => setAttempt(value => value + 1)}>重新读取审批</Button>}
     {!loading && !error && !approvals.length && <p className="text-fg-muted">暂无待审批操作。</p>}
     {approvals.map(approval => {
       if (approval.kind === 'workflow-gate') return null
@@ -96,7 +97,7 @@ export function ChatApprovals({ api, runId, onChanged, onCancel }: { api?: Agent
         {grant?.directories.map((directory, index) => <code key={directory.path} className="mt-1 block break-all">{directory.path} → /grants/{index} · {directory.access}</code>)}
         {grant?.network.map(endpoint => <code key={`${endpoint.host}:${endpoint.port}`} className="mt-1 block break-all">{endpoint.scheme}://{endpoint.host}:{endpoint.port}</code>)}
         {(!operation.capability.readOnly && (operation.capability.source === 'builtin' || grant?.directories.some(d => d.access === 'rw'))) && <p className="mt-2 text-danger">可能产生不可回滚的外部修改或删除。</p>}
-        <div className="mt-3 flex flex-wrap gap-2"><button className={BUTTON} disabled={acting || approval.status !== 'pending'} onClick={() => void decide(approval.id, 'approved')}><Check size={14} aria-hidden />{approval.status === 'approved' ? '已批准，等待执行' : '批准'}</button><button className={`${BUTTON} text-danger`} disabled={acting || approval.status !== 'pending'} onClick={() => void decide(approval.id, 'denied')}><X size={14} aria-hidden />拒绝</button><button className={BUTTON} disabled={acting} onClick={onCancel}><Square size={12} aria-hidden />取消本轮</button></div>
+        <div className="mt-3 flex flex-wrap gap-2"><Button variant="outline" type="submit" className={BUTTON} disabled={acting || approval.status !== 'pending'} onClick={() => void decide(approval.id, 'approved')}><Check size={14} aria-hidden />{approval.status === 'approved' ? '已批准，等待执行' : '批准'}</Button><Button variant="destructive" type="submit" className={`${BUTTON} text-danger`} disabled={acting || approval.status !== 'pending'} onClick={() => void decide(approval.id, 'denied')}><X size={14} aria-hidden />拒绝</Button><Button variant="outline" type="submit" className={BUTTON} disabled={acting} onClick={onCancel}><Square size={12} aria-hidden />取消本轮</Button></div>
       </div>
     })}
   </section>

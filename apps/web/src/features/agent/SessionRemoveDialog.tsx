@@ -3,6 +3,7 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { captureAuthGeneration } from '../../adapters/http/unauthorized'
 import { useAgentChatStore } from '../../stores/agentChatStore'
+import { Button } from '../../components/Button'
 
 /**
  * 删除会话确认弹窗：标题点名会话，说明聊天记录与运行历史一并清除且不可恢复；
@@ -63,22 +64,22 @@ export function SessionRemoveDialog({ target, onClose }: {
           <p className="mt-1.5 text-xs text-fg-muted">删除将立即终止该会话的运行和待执行任务，清除聊天记录与运行历史，且不可恢复。已发生的外部变更不会回滚。</p>
           {error && <p role="alert" className="mt-2 text-xs text-danger">{error}</p>}
           <div className="mt-4 flex justify-end gap-2">
-            <button
+            <Button variant="outline"
               type="button"
               onClick={onClose}
               disabled={removing}
               className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted transition-colors hover:text-fg disabled:opacity-50"
             >
               取消
-            </button>
-            <button
+            </Button>
+            <Button variant="destructive"
               type="button"
               disabled={removing}
               onClick={() => { void submit() }}
               className="rounded-lg border border-danger/50 bg-danger/10 px-3 py-1.5 text-xs font-medium text-danger transition-colors hover:bg-danger/20 disabled:cursor-not-allowed disabled:opacity-50"
             >
               {removing ? '删除中…' : '确认删除'}
-            </button>
+            </Button>
           </div>
         </Dialog.Content>
       </Dialog.Portal>

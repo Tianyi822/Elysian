@@ -26,6 +26,7 @@ export {
   Cable,
   Check,
   ChevronDown,
+  ChevronLeft,
   ChevronRight,
   CircleCheck,
   CircleHelp,

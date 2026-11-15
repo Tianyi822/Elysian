@@ -1,11 +1,12 @@
 import { useCallback, useEffect, useId, useRef, useState, type FocusEvent, type ReactNode } from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
-import { CTL_SELECT, FORM_CONTROL_HEIGHT_CLASS } from './formControl'
-import { IconButton } from './IconButton'
-import { Check, ChevronDown, Search, X } from './icons'
+import { CTL_SELECT } from './formControl'
+import { SearchInput } from './SearchInput'
+import { Check, ChevronDown } from './icons'
 import { DROPDOWN_OPTION_CLASS, DROPDOWN_SURFACE_CLASS } from './dropdownStyles'
 import { bindMenuScroll, revealMenuItem } from './dropdownScroll'
 import { useImeEnterGuard } from './useImeEnterGuard'
+import { Button } from './Button'
 
 /**
  * 自定义单选下拉：Radix 触发器 + 候选项，不使用原生 select，因此不会呼出操作系统的下拉控件。
@@ -168,7 +169,7 @@ export function SelectDropdown<T extends string>({
       focusAfterFilter.current = null
     }}>
       <DropdownMenu.Trigger asChild disabled={disabled}>
-        <button
+        <Button unstyled
           id={id}
           type="button"
           disabled={disabled}
@@ -185,7 +186,7 @@ export function SelectDropdown<T extends string>({
           ) : null}
           <span className={valueClass}>{valueLabel}</span>
           <ChevronDown aria-hidden size={13} className="shrink-0" />
-        </button>
+        </Button>
       </DropdownMenu.Trigger>
       <DropdownMenu.Portal>
         <DropdownMenu.Content
@@ -206,19 +207,23 @@ export function SelectDropdown<T extends string>({
           } ${contentClassName ?? ''}`}
         >
           {search ? <div className="border-b border-line p-2">
-            <div className="relative">
-              <Search aria-hidden size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-subtle" />
-              <input
-                ref={searchInput}
-                {...guardProps}
-                aria-label={search.ariaLabel}
-                autoComplete="off"
-                placeholder={search.placeholder}
-                value={searchText}
-                onChange={(event) => setSearchText(event.target.value)}
-                onCompositionStart={() => setComposing(true)}
-                onCompositionEnd={(event) => { setSearchText(event.currentTarget.value); setComposing(false) }}
-                onKeyDown={(event) => {
+            <SearchInput
+              ref={searchInput}
+              label={search.ariaLabel}
+              placeholder={search.placeholder}
+              value={searchText}
+              onChange={setSearchText}
+              onClear={clearSearch}
+              onClearKeyDown={(event) => { if (event.key !== 'Escape') event.stopPropagation() }}
+              className="w-full"
+              expandOnFocus={false}
+              inputProps={{
+                ...guardProps,
+                type: 'text',
+                autoComplete: 'off',
+                onCompositionStart: () => setComposing(true),
+                onCompositionEnd: (event) => { setSearchText(event.currentTarget.value); setComposing(false) },
+                onKeyDown: (event) => {
                   // 保留 Escape 交给 Radix；文字输入不能触发菜单 typeahead 或空格选项。
                   if (event.key === 'Escape' && !isImeKey(event)) return
                   event.stopPropagation()
@@ -233,17 +238,9 @@ export function SelectDropdown<T extends string>({
                       setCommittedSearch(query)
                     } else focusOption(direction)
                   }
-                }}
-                className={`${FORM_CONTROL_HEIGHT_CLASS} w-full rounded-lg border border-control-line bg-surface-raised pl-8 pr-9 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle`}
-              />
-              {searchText ? <IconButton
-                label="清空搜索"
-                variant="ghost"
-                onPress={clearSearch}
-                onKeyDown={(event) => { if (event.key !== 'Escape') event.stopPropagation() }}
-                className="absolute right-1 top-1/2 -translate-y-1/2"
-              ><X aria-hidden size={13} /></IconButton> : null}
-            </div>
+                },
+              }}
+            />
           </div> : null}
           <div
             ref={attachScroll}

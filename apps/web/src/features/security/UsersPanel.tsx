@@ -7,12 +7,14 @@ import { IconButton } from '../../components/IconButton'
 import { StatusTag } from '../../components/StatusTag'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
 import { RefreshButton } from '../../components/RefreshState'
-import { Pencil, Search, Trash2 } from '../../components/icons'
+import { Pencil, Trash2 } from '../../components/icons'
+import { SearchInput } from '../../components/SearchInput'
 import { useUsersStore } from '../../stores/usersStore'
 import { ACTION_CLASS } from './sshCardParts'
 import { HostUserDialog } from './HostUserDialog'
 import { HostUserRemoveDialog } from './HostUserRemoveDialog'
 import { filterHostUsers } from './hostUserSearch'
+import { Button } from '../../components/Button'
 
 /**
  * 用户管理面板：工具栏加主机账号表格，没有卡片标题——工具行第一眼就说明这一页是干什么的。
@@ -57,8 +59,8 @@ export function UsersPanel() {
 
   return (
     <div>
-      {errorMessage ? <p role="alert" className="mb-3 text-xs text-danger">刷新失败：{errorMessage}。已保留上次读取结果。<button type="button" className="ml-2 underline" onClick={() => void load(gateway)}>重试</button></p> : null}
-      {operationError ? <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-danger/40 p-3 text-xs text-danger"><p className="min-w-0 flex-1">{operationError}</p><button type="button" className="rounded border border-line px-3 py-1.5 text-fg" onClick={() => void load(gateway)}>重新读取状态</button></div> : null}
+      {errorMessage ? <p role="alert" className="mb-3 text-xs text-danger">刷新失败：{errorMessage}。已保留上次读取结果。<Button variant="link" type="button" className="ml-2 underline" onClick={() => void load(gateway)}>重试</Button></p> : null}
+      {operationError ? <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-danger/40 p-3 text-xs text-danger"><p className="min-w-0 flex-1">{operationError}</p><Button variant="outline" type="button" className="rounded border border-line px-3 py-1.5 text-fg" onClick={() => void load(gateway)}>重新读取状态</Button></div> : null}
       <div className="mb-4 flex flex-wrap items-center gap-2 panel-surface px-4 py-3">
         {/* 用户动作只在容器内真实执行 useradd/usermod/userdel；宿主机本地开发是内存演示，明示出来。 */}
         {!isDockerRuntime() ? (
@@ -66,30 +68,23 @@ export function UsersPanel() {
             演示数据
           </span>
         ) : null}
-        <button type="button" onClick={() => openCreate()} className={ACTION_CLASS}>
+        <Button variant="primary" type="button" onClick={() => openCreate()} className={ACTION_CLASS}>
           创建用户
-        </button>
+        </Button>
         <div className="relative ml-auto w-full sm:w-64">
-          <Search
-            aria-hidden
-            className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-fg-subtle"
-          />
-          <label htmlFor={searchInputId} className="sr-only">
-            搜索用户名或备注
-          </label>
-          <input
+          <SearchInput
             id={searchInputId}
+            label="搜索用户名或备注"
             value={search}
-            onChange={(event) => setSearch(event.target.value)}
+            onChange={setSearch}
             placeholder="搜索用户名或备注"
-            className="h-9 w-full rounded-lg border border-control-line bg-surface-raised pl-8 pr-3 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle"
+            className="w-full"
           />
         </div>
         <RefreshButton
           onPress={() => void syncFromSystem(gateway)}
           busy={syncing}
           label={syncing ? '正在从系统同步账号' : '从系统同步账号'}
-          formControl
         />
       </div>
       {/* 表格坐在面板里：行悬停向上步进一级表面；首列钉住，窄屏下其余列横向滚动。 */}

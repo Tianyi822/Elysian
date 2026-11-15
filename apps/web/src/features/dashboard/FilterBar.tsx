@@ -1,4 +1,3 @@
-import * as Tooltip from '@radix-ui/react-tooltip'
 import {
   TIME_RANGE_LABELS,
   TIME_RANGES,
@@ -7,8 +6,7 @@ import type { TimeRange } from '../../adapters/mock/resourceMetrics'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { useNarrowViewport } from '../../app/layout/narrowViewport'
 import { PillNavigation } from '../../components/easyui/PillNavigation'
-import { Button } from '../../components/easyui/Button'
-import { RefreshCw } from '../../components/icons'
+import { RefreshButton } from '../../components/RefreshState'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { CTL_TOOLBAR } from '../../components/formControl'
 import './dashboard.css'
@@ -68,25 +66,7 @@ export function FilterBar({
         />
 
         {/* 刷新紧跟时间范围，不靠到行尾：它是这组读数的动作，不是整行的收尾。 */}
-        <Tooltip.Root>
-          <Tooltip.Trigger asChild>
-            <Button
-              aria-label="刷新"
-              aria-busy={refreshing || undefined}
-              size="icon"
-              variant="secondary"
-              disabled={refreshing}
-              onClick={onRefresh}
-              className="size-[var(--ctl-height,2.25rem)] rounded-full text-fg-muted hover:text-fg"
-              leftIcon={<RefreshCw aria-hidden size={14} className={refreshing ? 'animate-spin motion-reduce:animate-none' : undefined} />}
-            />
-          </Tooltip.Trigger>
-          <Tooltip.Portal>
-            <Tooltip.Content side="bottom" sideOffset={6} className="z-[80] rounded border border-control-line bg-surface-raised px-2 py-1 text-xs text-fg shadow-lg">
-              刷新<Tooltip.Arrow className="fill-surface-raised" />
-            </Tooltip.Content>
-          </Tooltip.Portal>
-        </Tooltip.Root>
+        <RefreshButton onPress={onRefresh} busy={refreshing} />
       </div>
     </section>
   )

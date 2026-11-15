@@ -6,6 +6,7 @@ import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
 import { SelectDropdown } from '../../components/SelectDropdown'
+import { SearchInput } from '../../components/SearchInput'
 import { useImeEnterGuard } from '../../components/useImeEnterGuard'
 import { useContainersStore } from '../../stores/containersStore'
 import type { RegistryProbeResult, ImageRegistryPreset } from '../../contracts/adapters'
@@ -18,6 +19,7 @@ import {
   registryHost,
   validateRegistryUrl,
 } from './imageReference'
+import { Button } from '../../components/Button'
 
 /**
  * 拉取镜像弹窗：镜像源预设下拉（含自定义地址兜底与逐项测速）+ 镜像引用两个输入，
@@ -304,14 +306,14 @@ export function ImagePullDialog({ onClose }: { onClose: () => void }) {
               ) : null}
               <span className="text-sm font-semibold text-fg">拉取镜像</span>
             </div>
-            <button
+            <Button variant="ghost" size="icon"
               type="button"
               onClick={onClose}
               aria-label="关闭弹窗"
               className="inline-flex size-7 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg"
             >
               <X aria-hidden size={15} />
-            </button>
+            </Button>
           </div>
 
           <div className="flex-1 overflow-y-auto px-5 py-4">
@@ -335,7 +337,7 @@ export function ImagePullDialog({ onClose }: { onClose: () => void }) {
             />
             {directoryLoading ? <p role="status" className="mt-1.5 text-xs text-fg-muted">正在读取镜像源…</p> : null}
             {!directoryLoading && !directoryError && presets.length === 0 ? <p className="mt-1.5 text-xs text-fg-muted">暂无预设，可填写自定义地址。</p> : null}
-            {directoryError ? <p role="alert" className="mt-1.5 text-xs text-danger">镜像源目录读取失败，当前地址仍可使用。<button type="button" className="ml-2 underline" onClick={() => setDirectoryVersion((value) => value + 1)}>重试目录</button></p> : null}
+            {directoryError ? <p role="alert" className="mt-1.5 text-xs text-danger">镜像源目录读取失败，当前地址仍可使用。<Button variant="link" type="button" className="ml-2 underline" onClick={() => setDirectoryVersion((value) => value + 1)}>重试目录</Button></p> : null}
             {probeNotice ? <p role="status" className="mt-1.5 text-xs text-fg-muted">{probeNotice}</p> : null}
             <p className="mt-1.5 text-xs text-fg-subtle">
               {docker
@@ -369,53 +371,60 @@ export function ImagePullDialog({ onClose }: { onClose: () => void }) {
               <label htmlFor="pull-reference" className={FIELD_LABEL_CLASS}>
                 镜像引用
               </label>
-              <input
+              <SearchInput
                 id="pull-reference"
+                label="镜像引用"
                 value={reference}
-                {...guardProps}
-                onChange={(event) => {
+                onChange={(value) => {
                   invalidateSuggestions()
-                  const next = parseImageReference(event.target.value)
+                  const next = parseImageReference(value)
                   if (!next.ok || next.reference.name !== tagRepository) invalidateTags()
-                  setReference(event.target.value)
+                  setReference(value)
                 }}
-                onKeyDown={(event) => {
-                  if (isImeKey(event)) return
-                  if (event.key === 'Escape' && suggestionsOpen) {
-                    event.preventDefault()
-                    event.stopPropagation()
-                    setSuggestionsOpen(false)
-                  } else if (suggestionsOpen && event.key === 'ArrowDown') {
-                    event.preventDefault()
-                    setActiveSuggestion((index) => (index + 1) % suggestions.length)
-                  } else if (suggestionsOpen && event.key === 'ArrowUp') {
-                    event.preventDefault()
-                    setActiveSuggestion((index) => (index - 1 + suggestions.length) % suggestions.length)
-                  } else if (suggestionsOpen && event.key === 'Enter') {
-                    event.preventDefault()
-                    chooseSuggestion(suggestions[activeSuggestion]!)
-                  }
-                }}
-                onFocus={() => { if (suggestions.length > 0) setSuggestionsOpen(true) }}
+                onClear={() => setSuggestionsOpen(false)}
                 placeholder="例如 redis:8-alpine，标签缺省为 latest"
-                autoComplete="off"
-                spellCheck={false}
-                role="combobox"
-                aria-autocomplete="list"
-                aria-expanded={suggestionsOpen}
-                aria-controls={listId}
-                aria-activedescendant={suggestionsOpen ? `${listId}-${activeSuggestion}` : undefined}
-                aria-describedby={showReferenceError ? 'pull-reference-error' : undefined}
-                className={`${INPUT_CLASS} font-mono`}
+                expandOnFocus={false}
+                className="w-full"
+                inputProps={{
+                  ...guardProps,
+                  type: 'text',
+                  autoComplete: 'off',
+                  spellCheck: false,
+                  role: 'combobox',
+                  'aria-autocomplete': 'list',
+                  'aria-expanded': suggestionsOpen,
+                  'aria-controls': listId,
+                  'aria-activedescendant': suggestionsOpen ? `${listId}-${activeSuggestion}` : undefined,
+                  'aria-describedby': showReferenceError ? 'pull-reference-error' : undefined,
+                  className: 'font-mono',
+                  onFocus: () => { if (suggestions.length > 0) setSuggestionsOpen(true) },
+                  onKeyDown: (event) => {
+                    if (isImeKey(event)) return
+                    if (event.key === 'Escape' && suggestionsOpen) {
+                      event.preventDefault()
+                      event.stopPropagation()
+                      setSuggestionsOpen(false)
+                    } else if (suggestionsOpen && event.key === 'ArrowDown') {
+                      event.preventDefault()
+                      setActiveSuggestion((index) => (index + 1) % suggestions.length)
+                    } else if (suggestionsOpen && event.key === 'ArrowUp') {
+                      event.preventDefault()
+                      setActiveSuggestion((index) => (index - 1 + suggestions.length) % suggestions.length)
+                    } else if (suggestionsOpen && event.key === 'Enter') {
+                      event.preventDefault()
+                      chooseSuggestion(suggestions[activeSuggestion]!)
+                    }
+                  },
+                }}
               />
               {suggestionsOpen ? (
                 <div id={listId} role="listbox" aria-label="镜像名称建议" className="mt-1 max-h-40 overflow-y-auto rounded-lg border border-control-line bg-surface-raised p-1 shadow-lg">
                   {suggestions.map((name, index) => (
-                    <button key={name} id={`${listId}-${index}`} type="button" role="option" aria-selected={activeSuggestion === index}
+                    <Button unstyled key={name} id={`${listId}-${index}`} type="button" role="option" aria-selected={activeSuggestion === index}
                       onMouseDown={(event) => event.preventDefault()} onClick={() => chooseSuggestion(name)}
                       className={`block w-full rounded px-2 py-1.5 text-left font-mono text-xs text-fg hover:bg-surface ${activeSuggestion === index ? 'bg-surface' : ''}`}>
                       {name}
-                    </button>
+                    </Button>
                   ))}
                 </div>
               ) : null}
@@ -464,21 +473,21 @@ export function ImagePullDialog({ onClose }: { onClose: () => void }) {
                 : '拉取由演示数据模拟，不访问真实镜像仓库。'}
             </p>
             <div className="flex shrink-0 gap-2">
-              <button
+              <Button variant="outline"
                 type="button"
                 onClick={onClose}
                 className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted transition-colors hover:text-fg"
               >
                 取消
-              </button>
-              <button
+              </Button>
+              <Button variant="primary"
                 type="button"
                 onClick={submit}
                 disabled={invalid || Boolean(pullingImage)}
                 className="rounded-lg border border-accent/50 bg-accent/10 px-3 py-1.5 text-xs font-medium text-accent-fg transition-colors hover:bg-accent/20 disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {pullingImage ? '拉取中…' : '拉取'}
-              </button>
+              </Button>
             </div>
           </div>
         </Dialog.Content>

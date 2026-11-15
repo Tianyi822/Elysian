@@ -2,6 +2,7 @@ import type { SshPasswordStrength } from '@elysian/contracts'
 import { SSH_PASSWORD_STRENGTH_LABELS } from '@elysian/contracts'
 import { FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
 import { Eye, EyeOff } from '../../components/icons'
+import { Button } from '../../components/Button'
 
 /*
  * 密码输入域的共享部件：三段红黄绿强度彩条、随强度变色的输入框描边（聚焦态同色接管）
@@ -77,7 +78,7 @@ export function PasswordVisibilityButton({
   onToggle: (next: boolean) => void
 }) {
   return (
-    <button
+    <Button unstyled
       type="button"
       onClick={() => onToggle(!visible)}
       aria-label={visible ? '隐藏密码' : '显示密码'}
@@ -85,6 +86,6 @@ export function PasswordVisibilityButton({
       className="absolute top-1/2 right-1.5 -translate-y-1/2 rounded-lg p-1.5 text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg"
     >
       {visible ? <Eye aria-hidden size={14} /> : <EyeOff aria-hidden size={14} />}
-    </button>
+    </Button>
   )
 }

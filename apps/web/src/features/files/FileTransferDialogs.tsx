@@ -5,6 +5,7 @@ import { formatEntrySize } from './filesListing'
 import { useFilesStore } from '../../stores/filesStore'
 import type { FileUploadItem } from '../../stores/filesStore'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
+import { Button } from '../../components/Button'
 
 const DIALOG_CLASS = 'fixed left-1/2 top-1/2 z-[61] w-[min(34rem,calc(100vw-2rem))] max-h-[calc(100dvh-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto panel-surface p-5 shadow-xl'
 
@@ -28,9 +29,9 @@ export function FileDownloadDialog() {
                 : download.status === 'cancelled' ? '已取消准备下载。' : download.errorMessage}
           </p>
           <div className="mt-5 flex justify-end">
-            <button type="button" onClick={preparing ? cancel : dismiss} className={CTL_PRIMARY}>
+            <Button variant="primary" type="button" onClick={preparing ? cancel : dismiss} className={CTL_PRIMARY}>
               {preparing ? '取消准备' : '关闭'}
-            </button>
+            </Button>
           </div>
         </Dialog.Content>
       </Dialog.Portal>
@@ -76,14 +77,14 @@ export function FileUploadDialog() {
             <div role="alert" className="mt-4 rounded-lg border border-line bg-surface-raised p-3">
               <p className="break-all text-sm">{conflict.replacing ? `「${conflict.name}」已存在，要覆盖吗？` : `「${conflict.name}」的目标已变化，要继续上传吗？`}</p>
               <div className="mt-3 flex justify-end gap-2">
-                <button type="button" onClick={() => decide(false)} className={CTL_PRIMARY}>跳过此文件</button>
-                <button type="button" onClick={() => decide(true)} className={CTL_PRIMARY}>{conflict.replacing ? '覆盖此文件' : '继续上传'}</button>
+                <Button variant="primary" type="button" onClick={() => decide(false)} className={CTL_PRIMARY}>跳过此文件</Button>
+                <Button variant="primary" type="button" onClick={() => decide(true)} className={CTL_PRIMARY}>{conflict.replacing ? '覆盖此文件' : '继续上传'}</Button>
               </div>
             </div>
           ) : null}
           <div className="mt-5 flex items-center justify-between gap-3">
             <p role="status" className="text-xs text-fg-muted">{upload.busy ? '文件依次上传' : `已上传 ${upload.items.filter((item) => item.status === 'complete').length} / ${upload.items.length} 个文件`}</p>
-            <button type="button" onClick={upload.busy ? cancel : dismiss} className={CTL_PRIMARY}>{upload.busy ? '取消上传' : '关闭'}</button>
+            <Button variant="primary" type="button" onClick={upload.busy ? cancel : dismiss} className={CTL_PRIMARY}>{upload.busy ? '取消上传' : '关闭'}</Button>
           </div>
         </Dialog.Content>
       </Dialog.Portal>

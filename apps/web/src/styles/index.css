@@ -413,7 +413,7 @@
    * 同一属性打平手、只能赌样式表里的先后。
    */
   .icon-button {
-    border-radius: var(--icon-button-radius, var(--radius-lg));
+    border-radius: var(--icon-button-radius, 10px);
   }
   /* 实体图标按钮的描边与底色走同一套自定义属性：默认档就是 control-line + surface-raised，
      悬停也落在同一档（等于不变），因此只有语境改了变量的地方才看得出差异。 */

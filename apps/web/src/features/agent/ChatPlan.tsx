@@ -2,6 +2,7 @@ import { useId, useLayoutEffect, useState } from 'react'
 import { RUNTIME_RUN_STATUS_LABELS, type AgentRunPlan, type RuntimeRunStatus } from '@elysian/contracts'
 import { Check, ChevronRight, ListTodo, Loader2, Minus } from '../../components/icons'
 import './chatPlan.css'
+import { Button } from '../../components/Button'
 
 const labels = { pending: '待执行', in_progress: '进行中', completed: '已完成' }
 
@@ -22,14 +23,14 @@ export function ChatPlan({ plan, status, budgetStopped = false, stopping = false
     : running ? current ? `正在${current.title}` : remaining ? '准备下一步' : '步骤已完成'
     : budgetStopped ? '本轮额度已用完，进度已保存' : RUNTIME_RUN_STATUS_LABELS[status]
   return <section className="chat-plan panel-surface" aria-label="任务进度" data-status={status}>
-    <button type="button" className="chat-plan-toggle" aria-expanded={expanded} aria-controls={id}
+    <Button unstyled type="button" className="chat-plan-toggle" aria-expanded={expanded} aria-controls={id}
       aria-label={`${expanded ? '收起' : '展开'}任务进度`} onClick={() => setExpanded(value => !value)}>
       <ListTodo size={16} aria-hidden />
       <span className="chat-plan-label">任务进度</span>
       <span className="chat-plan-count tabular-nums">{completed}/{plan.steps.length} 已完成</span>
       <span className="chat-plan-summary" role="status" title={summary}>{summary}</span>
       <ChevronRight size={14} aria-hidden className={expanded ? '-rotate-90' : undefined} />
-    </button>
+    </Button>
     {expanded && <div id={id} role="region" aria-label="任务步骤" className="chat-plan-details hover-scrollbar" tabIndex={0}>
       <ol>
         {plan.steps.map(step => {

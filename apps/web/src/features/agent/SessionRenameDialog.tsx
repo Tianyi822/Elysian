@@ -4,6 +4,7 @@ import { useGateway } from '../../adapters/GatewayProvider'
 import { captureAuthGeneration } from '../../adapters/http/unauthorized'
 import { useAgentChatStore } from '../../stores/agentChatStore'
 import { useImeEnterGuard } from '../../components/useImeEnterGuard'
+import { Button } from '../../components/Button'
 
 /**
  * 会话重命名弹窗：预填当前标题，空值与超长在前端先挡（均按 TrimSpace 后口径）；
@@ -93,21 +94,21 @@ export function SessionRenameDialog({ target, onClose }: {
             />
             {error && <p id="session-rename-error" role="alert" className="mt-2 text-xs text-danger">{error}</p>}
             <div className="mt-4 flex justify-end gap-2">
-              <button
+              <Button variant="outline"
                 type="button"
                 onClick={onClose}
                 disabled={submitting}
                 className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted transition-colors hover:text-fg disabled:opacity-50"
               >
                 取消
-              </button>
-              <button
+              </Button>
+              <Button variant="primary"
                 type="submit"
                 disabled={submitting}
                 className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50"
               >
                 确认重命名
-              </button>
+              </Button>
             </div>
           </form>
         </Dialog.Content>

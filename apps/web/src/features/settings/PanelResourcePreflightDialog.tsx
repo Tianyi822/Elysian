@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { PanelResourcePlan, PanelUpdatePreflight, PanelUpdateTarget } from '@elysian/contracts'
 import type { PanelAdapter } from '../../contracts/adapters'
 import { captureAuthGeneration } from '../../adapters/http/unauthorized'
+import { Button } from '../../components/Button'
 
 const BUTTON = 'h-9 rounded-lg border border-control-line bg-surface-raised px-4 text-sm font-medium text-fg disabled:cursor-not-allowed disabled:opacity-50'
 export function resourceSize(bytes: number): string { return `${(bytes / 1024 / 1024).toFixed(0)} MiB` }
@@ -64,9 +65,9 @@ export function PanelResourcePreflightDialog({ target, adapter, precompiled = fa
         </> : null}
       </div>
       <div className="flex shrink-0 flex-wrap justify-end gap-2 border-t border-line p-4">
-        <button className={BUTTON} onClick={onClose}>取消</button>
-        <button className={BUTTON} disabled={loading} onClick={() => setRevision(v => v + 1)}>重新检查资源</button>
-        <button className={BUTTON} disabled={loading || !report || !!report.blockedReason || expired} onClick={() => report && onConfirm({ preflightId: report.id, targets: report.needsRelease ? [...targets] : [], stopPanel: report.needsRelease && stopPanel })}>确认并更新</button>
+        <Button variant="outline" type="submit" className={BUTTON} onClick={onClose}>取消</Button>
+        <Button variant="outline" type="submit" className={BUTTON} disabled={loading} onClick={() => setRevision(v => v + 1)}>重新检查资源</Button>
+        <Button variant="primary" type="submit" className={BUTTON} disabled={loading || !report || !!report.blockedReason || expired} onClick={() => report && onConfirm({ preflightId: report.id, targets: report.needsRelease ? [...targets] : [], stopPanel: report.needsRelease && stopPanel })}>确认并更新</Button>
       </div>
     </Dialog.Content>
   </Dialog.Portal></Dialog.Root>

@@ -17,6 +17,7 @@ import { X } from '../../components/icons'
 import { useUsersStore } from '../../stores/usersStore'
 import { PasswordStrengthBar, PasswordVisibilityButton, passwordInputClass } from './passwordFieldParts'
 import { ACTION_CLASS, INPUT_CLASS, SECONDARY_ACTION_CLASS, SwitchToggle } from './sshCardParts'
+import { Button } from '../../components/Button'
 
 /** 登录方式是否包含密码路径：只有这两种才需要（才允许）设置密码。 */
 function methodIncludesPassword(method: HostUserLoginMethod): boolean {
@@ -138,13 +139,13 @@ export function HostUserDialog() {
               </span>
             </div>
             <Dialog.Close asChild>
-              <button
+              <Button variant="ghost" size="icon"
                 type="button"
                 aria-label="关闭弹窗"
                 className="inline-flex size-7 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg"
               >
                 <X aria-hidden size={15} />
-              </button>
+              </Button>
             </Dialog.Close>
           </div>
 
@@ -268,16 +269,16 @@ export function HostUserDialog() {
           <div className="flex items-center justify-between gap-2 border-t border-line px-4 py-2.5">
             <p className="text-xs text-fg-subtle">{footerNote}</p>
             <div className="flex gap-2">
-              <button
+              <Button variant="outline"
                 type="button"
                 onClick={() => closeDialog()}
                 className={SECONDARY_ACTION_CLASS}
               >
                 取消
-              </button>
-              <button type="button" onClick={submit} disabled={saving} className={ACTION_CLASS}>
+              </Button>
+              <Button variant="primary" type="button" onClick={submit} disabled={saving} className={ACTION_CLASS}>
                 {editing ? '保存修改' : '创建用户'}
-              </button>
+              </Button>
             </div>
           </div>
         </Dialog.Content>

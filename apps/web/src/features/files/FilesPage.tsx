@@ -4,7 +4,8 @@ import { FILE_KIND_LABELS } from '@elysian/contracts'
 import type { FileEntry, FileSearchResult } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { formatDateTime } from '../../components/format'
-import { ArrowUpFromLine, File, Folder, Loader2, Search } from '../../components/icons'
+import { ArrowUpFromLine, File, Folder, Loader2 } from '../../components/icons'
+import { SearchInput } from '../../components/SearchInput'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
 import { RefreshButton } from '../../components/RefreshState'
 import { useFilesStore } from '../../stores/filesStore'
@@ -15,7 +16,8 @@ import { FilesBackgroundMenu } from './FilesBackgroundMenu'
 import { FileDownloadDialog, FileUploadDialog } from './FileTransferDialogs'
 import { RenameDialog } from './RenameDialog'
 import { PermissionDialog } from './PermissionDialog'
-import { CTL_FIELD, CTL_PRIMARY, CTL_TOOLBAR } from '../../components/formControl'
+import { CTL_PRIMARY, CTL_TOOLBAR } from '../../components/formControl'
+import { Button } from '../../components/Button'
 
 /** 「上一级」等主要按钮：形状与色阶全部走控件层。 */
 const TOOLBAR_ACTION_CLASS = CTL_PRIMARY
@@ -90,7 +92,7 @@ export function FilesPage() {
     <section aria-label="文件管理">
       <div className={`${CTL_TOOLBAR} mb-4 flex flex-wrap items-center justify-between gap-3`}>
         <div className="flex items-center gap-2">
-          <button
+          <Button variant="primary"
             type="button"
             onClick={() => go(parentFilesPath(path))}
             disabled={path === '/'}
@@ -98,18 +100,18 @@ export function FilesPage() {
           >
             <ArrowUpFromLine aria-hidden size={13} />
             上一级
-          </button>
+          </Button>
           {clipboard ? (
-            <button
+            <Button variant="primary"
               type="button"
               onClick={() => void paste(gateway, path)}
               title={`粘贴 ${clipboard.path}${clipboard.intent === 'move' ? '（移动）' : ''}`}
               className={TOOLBAR_ACTION_CLASS}
             >
               粘贴
-            </button>
+            </Button>
           ) : null}
-          <RefreshButton onPress={() => void load(gateway, path)} busy={reloading} formControl />
+          <RefreshButton onPress={() => void load(gateway, path)} busy={reloading} />
         </div>
         {status === 'ready' ? <FilesSearchBox onSearch={(keyword) => void search(gateway, keyword)} /> : null}
       </div>
@@ -125,7 +127,7 @@ export function FilesPage() {
           if (files.length) void uploadFiles(gateway, uploadTarget.current, files)
         }}
       />
-      {status === 'ready' && errorMessage ? <p role="alert" className="mb-3 text-xs text-danger">刷新失败：{errorMessage}。已保留上次读取结果。<button type="button" className="ml-2 underline" onClick={() => void load(gateway, path)}>重试</button></p> : null}
+      {status === 'ready' && errorMessage ? <p role="alert" className="mb-3 text-xs text-danger">刷新失败：{errorMessage}。已保留上次读取结果。<Button variant="link" type="button" className="ml-2 underline" onClick={() => void load(gateway, path)}>重试</Button></p> : null}
       <FilesBackgroundMenu onUpload={() => chooseUpload(path)} disabled={status !== 'ready' || transferBusy}>
         {isSearching ? (
           searching ? (
@@ -156,9 +158,9 @@ export function FilesPage() {
                 title="目录读取失败"
                 description={errorMessage}
                 action={
-                  <button type="button" onClick={() => go('/')} className={TOOLBAR_ACTION_CLASS}>
+                  <Button variant="primary" type="button" onClick={() => go('/')} className={TOOLBAR_ACTION_CLASS}>
                     返回根目录
-                  </button>
+                  </Button>
                 }
               />
             ) : entries.length === 0 ? (
@@ -215,20 +217,13 @@ function FilesSearchBox({ onSearch }: { onSearch(keyword: string): void }) {
         <p className="text-xs tabular-nums text-fg-muted">{resultCount} 个匹配</p>
       ) : null}
       <div className="relative w-full sm:w-64">
-        <Search
-          aria-hidden
-          className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-fg-subtle"
-        />
-        <label htmlFor={inputId} className="sr-only">
-          搜索文件或目录
-        </label>
-        <input
+        <SearchInput
           id={inputId}
-          type="search"
+          label="搜索文件或目录"
           value={keyword}
-          onChange={(event) => onSearch(event.target.value)}
+          onChange={onSearch}
           placeholder="搜索文件或目录"
-          className={`${CTL_FIELD} pl-8`}
+          className="w-full"
         />
       </div>
     </div>
@@ -521,13 +516,13 @@ function DirectorySizeCell({ dirPath, name }: { dirPath: string; name: string })
   }
   if (size !== undefined) return <>{formatEntrySize(size)}</>
   return (
-    <button
+    <Button variant="link"
       type="button"
       onClick={() => void computeSize(gateway, dirPath)}
       aria-label={`计算 ${name} 的目录大小`}
       className="text-accent-fg underline-offset-2 transition-colors hover:underline"
     >
       计算
-    </button>
+    </Button>
   )
 }

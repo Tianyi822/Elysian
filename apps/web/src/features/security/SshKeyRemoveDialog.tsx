@@ -2,6 +2,7 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { useSshStore } from '../../stores/sshStore'
+import { Button } from '../../components/Button'
 
 /** 删除 SSH 密钥的确认弹窗：取消不删，确认后按运行时从演示数据集或本机授权文件移除。 */
 export function SshKeyRemoveDialog() {
@@ -30,14 +31,14 @@ export function SshKeyRemoveDialog() {
           </Dialog.Title>
           <p className="mt-1.5 text-xs text-fg-muted">{description}</p>
           <div className="mt-4 flex justify-end gap-2">
-            <button
+            <Button variant="outline"
               type="button"
               onClick={() => closeRemoveKey()}
               className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted transition-colors hover:text-fg"
             >
               取消
-            </button>
-            <button
+            </Button>
+            <Button variant="destructive"
               type="button"
               disabled={removingKeyIds.includes(removeKeyTarget.id)}
               onClick={() => {
@@ -48,7 +49,7 @@ export function SshKeyRemoveDialog() {
               className="rounded-lg border border-danger/50 bg-danger/10 px-3 py-1.5 text-xs font-medium text-danger transition-colors hover:bg-danger/20 disabled:opacity-50"
             >
               确认删除
-            </button>
+            </Button>
           </div>
         </Dialog.Content>
       </Dialog.Portal>

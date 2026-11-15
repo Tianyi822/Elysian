@@ -18,6 +18,7 @@ import { SelectDropdown } from '../../components/SelectDropdown'
 import { Check } from '../../components/icons'
 import { useFilesStore } from '../../stores/filesStore'
 import { useImeEnterGuard } from '../../components/useImeEnterGuard'
+import { Button } from '../../components/Button'
 
 /*
  * 权限对话框：三类人（所有者、用户组、公共）各三项动作（读取、写入、执行），
@@ -279,20 +280,20 @@ export function PermissionDialog({
               ) : null}
 
               <div className="ml-auto flex shrink-0 items-center gap-2">
-                <button
+                <Button variant="outline"
                   type="button"
                   onClick={onClose}
                   className="h-9 rounded-lg border border-line px-3 text-xs text-fg-muted transition-colors hover:text-fg"
                 >
                   取消
-                </button>
-                <button
+                </Button>
+                <Button variant="outline"
                   type="submit"
                   disabled={submitting}
                   className="h-9 rounded-lg border border-line bg-surface px-3 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50"
                 >
                   应用
-                </button>
+                </Button>
               </div>
             </div>
 

@@ -7,9 +7,11 @@ import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
 import { formatDateTime } from '../../components/format'
-import { Search, X } from '../../components/icons'
+import { X } from '../../components/icons'
+import { SearchInput } from '../../components/SearchInput'
 import { useFirewallStore } from '../../stores/firewallStore'
 import { FIREWALL_INPUT_CLASS } from './firewallFormParts'
+import { Button } from '../../components/Button'
 
 /** 弹窗打开期间的轮询节奏：新封锁的 IP 由此进入通知。 */
 const SCAN_POLL_MS = 5000
@@ -131,13 +133,13 @@ export function FirewallScanDialog() {
               <span className="text-sm font-medium text-fg">端口防扫描</span>
             </div>
             <Dialog.Close asChild>
-              <button
+              <Button variant="ghost" size="icon"
                 type="button"
                 aria-label="关闭弹窗"
                 className="inline-flex size-7 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg"
               >
                 <X aria-hidden size={15} />
-              </button>
+              </Button>
             </Dialog.Close>
           </div>
 
@@ -221,14 +223,14 @@ export function FirewallScanDialog() {
                 <p className="text-xs text-fg-subtle">
                   窗口内新连接超过阈值即封锁该 IP {Math.round((scan?.config.banSeconds ?? 0) / 60)} 分钟。
                 </p>
-                <button
+                <Button variant="primary"
                   type="button"
                   onClick={submitConfig}
                   disabled={!scan?.enabled}
                   className="shrink-0 rounded-lg border border-control-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:opacity-50"
                 >
                   保存配置
-                </button>
+                </Button>
               </div>
             </div>
 
@@ -260,21 +262,8 @@ export function FirewallScanDialog() {
                         <th scope="col" className="sticky top-0 z-10 border-b border-line bg-surface px-3 py-2 text-xs font-medium text-fg-muted">
                           <div className="flex items-center gap-2">
                             IP
-                            <label htmlFor="scan-ip-search" className="sr-only">
-                              搜索 IP
-                            </label>
-                            <span className="relative inline-flex w-32 items-center">
-                              <Search
-                                aria-hidden
-                                className="pointer-events-none absolute left-1.5 size-3 -translate-y-1/2 text-fg-subtle top-1/2"
-                              />
-                              <input
-                                id="scan-ip-search"
-                                value={ipSearch}
-                                onChange={(event) => onIpSearchChange(event.target.value)}
-                                className="w-full rounded border border-control-line bg-surface-raised py-0.5 pl-6 pr-1.5 text-xs font-normal text-fg transition-colors hover:border-fg-subtle"
-                              />
-                            </span>
+                            <SearchInput id="scan-ip-search" label="搜索 IP" value={ipSearch}
+                              onChange={onIpSearchChange} expandOnFocus={false} className="w-32 font-normal" />
                           </div>
                         </th>
                         <th scope="col" className="sticky top-0 z-10 border-b border-line bg-surface px-3 py-2 text-xs font-medium text-fg-muted">
@@ -307,13 +296,13 @@ export function FirewallScanDialog() {
                               {formatDateTime(entry.blockedAt)}
                             </td>
                             <td className="border-b border-line px-3 py-2">
-                              <button
+                              <Button variant="primary"
                                 type="button"
                                 onClick={() => void unblockIp(gateway, entry.ip)}
                                 className="rounded px-1.5 py-0.5 text-xs text-accent-fg transition-colors hover:bg-accent/10"
                               >
                                 解封
-                              </button>
+                              </Button>
                             </td>
                           </tr>
                         ))

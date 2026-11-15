@@ -2,6 +2,7 @@ import { Inbox, Loader2, Lock, TriangleAlert } from '../icons'
 import { CTL_SECONDARY } from '../formControl'
 import type { ReactNode } from 'react'
 import { useFeedbackMessage } from '../useFeedbackMessage'
+import { Button } from '../Button'
 
 /**
  * 四种页面级状态。每个页面都必须能展示这四种状态，所以它们统一在这里，
@@ -69,13 +70,13 @@ export function ErrorState({
         ? action
         : onRetry
           ? (
-              <button
+              <Button variant="outline"
                 type="button"
                 onClick={onRetry}
                 className={`${CTL_SECONDARY} mt-1 px-2`}
               >
                 重试
-              </button>
+              </Button>
             )
           : null}
     </div>

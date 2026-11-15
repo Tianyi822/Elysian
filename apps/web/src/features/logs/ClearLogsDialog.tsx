@@ -9,6 +9,7 @@ import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { formatLoginTime } from '../../components/format'
 import { useRuntimeLogStore } from '../../stores/runtimeLogStore'
+import { Button } from '../../components/Button'
 
 /**
  * 清空日志的二次确认：破坏性动作要用户再点一次，并逐字写明清空之后不可恢复。
@@ -74,21 +75,21 @@ export function ClearLogsDialog() {
             </div>
           </Dialog.Description>
           <div className="mt-4 flex justify-end gap-2">
-            <button
+            <Button variant="outline"
               type="button"
               onClick={() => closeClear()}
               className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted transition-colors hover:text-fg"
             >
               取消
-            </button>
-            <button
+            </Button>
+            <Button variant="destructive"
               type="button"
               disabled={clearing}
               onClick={() => void clear(gateway)}
               className="rounded-lg border border-danger/50 bg-danger/10 px-3 py-1.5 text-xs font-medium text-danger transition-colors hover:bg-danger/20 disabled:opacity-50"
             >
               {clearing ? '清空中…' : '确认清空'}
-            </button>
+            </Button>
           </div>
         </Dialog.Content>
       </Dialog.Portal>

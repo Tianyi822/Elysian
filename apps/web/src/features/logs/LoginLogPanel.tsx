@@ -4,7 +4,7 @@ import type { LoginLogEntry } from '@elysian/contracts'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { formatLoginTime } from '../../components/format'
-import { Search } from '../../components/icons'
+import { SearchInput } from '../../components/SearchInput'
 import { CTL_TOOLBAR } from '../../components/formControl'
 import { ChipGroup } from '../../components/ChipGroup'
 import { StatusTag } from '../../components/StatusTag'
@@ -13,6 +13,7 @@ import { EmptyState, ErrorState, LoadingState } from '../../components/states/St
 import { useLoginLogStore } from '../../stores/loginLogStore'
 import type { LoginLogStatusFilter } from '../../stores/loginLogStore'
 import { useLogReportNotifications } from './useLogReportNotifications'
+import { Button } from '../../components/Button'
 
 /** 登录状态 → 状态标签色调：成功绿、失败红，文字标签同时常驻。 */
 const STATUS_TONES: Record<LoginLogEntry['status'], StatusTone> = {
@@ -87,7 +88,7 @@ export function LoginLogPanel() {
 
   return (
     <div>
-      {errorMessage ? <p role="alert" className="text-xs text-danger">刷新失败：{errorMessage}。已保留上次读取结果。<button type="button" className="ml-2 underline" onClick={() => void load(gateway)}>重试</button></p> : null}
+      {errorMessage ? <p role="alert" className="text-xs text-danger">刷新失败：{errorMessage}。已保留上次读取结果。<Button variant="link" type="button" className="ml-2 underline" onClick={() => void load(gateway)}>重试</Button></p> : null}
       <div className={`${CTL_TOOLBAR} rect-toolbar mb-4 flex flex-wrap items-center gap-2 panel-surface px-4 py-3`}>
         {isDockerRuntime() ? null : (
           <span role="status" className="text-sm text-fg-muted">
@@ -96,19 +97,13 @@ export function LoginLogPanel() {
         )}
         <ChipGroup ariaLabel="登录状态筛选" items={STATUS_FILTERS} value={statusFilter} onSelect={setStatusFilter} />
         <div className="relative ml-auto w-64 max-w-full">
-          <label htmlFor="login-log-search" className="sr-only">
-            搜索登录日志
-          </label>
-          <input
+          <SearchInput
             id="login-log-search"
+            label="搜索登录日志"
             value={search}
-            onChange={(event) => setSearch(event.target.value)}
+            onChange={setSearch}
             placeholder="请输入搜索关键字"
-            className="w-full rounded-lg border border-control-line bg-surface-raised py-1.5 pl-3 pr-8 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle"
-          />
-          <Search
-            aria-hidden
-            className="pointer-events-none absolute right-2.5 top-1/2 size-4 -translate-y-1/2 text-fg-subtle"
+            className="w-full"
           />
         </div>
       </div>
@@ -173,14 +168,14 @@ export function LoginLogPanel() {
       {truncated ? (
         <div className="mt-3 flex flex-col items-start gap-2">
           <p className="text-xs text-fg-muted">还有更早的记录</p>
-          <button
+          <Button variant="outline"
             type="button"
             disabled={loadingOlder}
             onClick={() => void loadOlder(gateway)}
             className="rounded-lg border border-control-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:opacity-50"
           >
             {loadingOlder ? '加载中…' : '加载更早的记录'}
-          </button>
+          </Button>
           {olderError ? (
             <p role="status" className="text-xs text-danger">
               更早的记录加载失败

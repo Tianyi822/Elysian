@@ -227,7 +227,6 @@ export function WebsiteDetailSheet() {
               action={
                 <RefreshButton
                   label="刷新日志"
-                  variant="ghost"
                   busy={detailLogsLoading}
                   onPress={() => void reloadDetailLogs(gateway)}
                 />

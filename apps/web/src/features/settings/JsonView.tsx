@@ -1,6 +1,7 @@
 import { useState } from 'react'
 import { CopyButton } from '../../components/CopyButton'
 import { CTL_SECONDARY } from '../../components/formControl'
+import { Button } from '../../components/Button'
 
 /** 模型修订详情的只读 JSON；支持折叠与复制原文。 */
 
@@ -36,13 +37,13 @@ export function JsonView({
         ) : null}
       </pre>
       {collapsible ? (
-        <button
+        <Button variant="outline"
           type="button"
           onClick={() => setExpanded((value) => !value)}
           className={`${CTL_SECONDARY} self-start px-2`}
         >
           {expanded ? '收起' : '展开全部'}
-        </button>
+        </Button>
       ) : null}
     </div>
   )

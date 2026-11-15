@@ -5,12 +5,13 @@ import type { WebsiteCategory, WebsiteProject, WebsiteDeploymentTask } from '@el
 import { useState, useEffect } from 'react'
 import { WEBSITE_CATEGORIES, WEBSITE_CATEGORY_LABELS, websiteDeploymentIsActive } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
-import { RefreshCw, Search } from '../../components/icons'
+import { RefreshCw } from '../../components/icons'
+import { SearchInput } from '../../components/SearchInput'
 import { EmptyState } from '../../components/states/StateViews'
 import { RefreshButton } from '../../components/RefreshState'
 import { useWebsitesStore } from '../../stores/websitesStore'
 import { accessConfigEntryVisible, useDependencyProbeStore } from '../../stores/dependencyProbeStore'
-import { CTL_FIELD, CTL_PRIMARY, CTL_TOOLBAR } from '../../components/formControl'
+import { CTL_PRIMARY, CTL_TOOLBAR } from '../../components/formControl'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { WebsiteDetailSheet } from './WebsiteDetailSheet'
 import { WebsitesCard } from './WebsitesCard'
@@ -21,6 +22,7 @@ import { CaddyConfigDialog } from './CaddyConfigDialog'
 import { filterWebsiteProjects } from './websitesListing'
 import { useFeedbackMessage } from '../../components/useFeedbackMessage'
 import { useMessageStore } from '../../stores/messageStore'
+import { Button } from '../../components/Button'
 
 /**
  * 网站项目面板：工具栏（添加项目 + 分类/搜索/刷新）、代理通道横幅、Docker 区
@@ -64,7 +66,7 @@ function ProxyStatusBanner({
       className="mb-4 flex flex-wrap items-center gap-3 rounded-xl border border-warning/40 bg-warning/10 px-4 py-3 text-xs text-warning"
     >
       <p className="min-w-0 flex-1">反向代理配置未完全生效：{detail}。</p>
-      <button
+      <Button variant="warning"
         type="button"
         onClick={onReconcile}
         disabled={reconciling}
@@ -72,7 +74,7 @@ function ProxyStatusBanner({
       >
         <RefreshCw aria-hidden size={12} className={reconciling ? 'animate-spin' : undefined} />
         {reconciling ? '正在重新下发…' : '重新下发反向代理配置'}
-      </button>
+      </Button>
     </div>
   )
 }
@@ -123,16 +125,16 @@ export function WebsitesPanel() {
 
   return (
     <div>
-      {refreshError ? <p role="alert" className="mb-3 text-xs text-danger">刷新失败：{refreshError}。已保留上次读取结果。<button type="button" className="ml-2 underline" onClick={() => void refresh(gateway)}>重试</button></p> : null}
+      {refreshError ? <p role="alert" className="mb-3 text-xs text-danger">刷新失败：{refreshError}。已保留上次读取结果。<Button variant="link" type="button" className="ml-2 underline" onClick={() => void refresh(gateway)}>重试</Button></p> : null}
       <div className={`${CTL_TOOLBAR} rect-toolbar shell-first-row mb-4 flex flex-wrap items-center gap-2 panel-surface px-4 py-3`}>
-        <button type="button" onClick={openCreate} className={TOOL_BUTTON_CLASS}>
+        <Button variant="primary" type="button" onClick={openCreate} className={TOOL_BUTTON_CLASS}>
           添加项目
-        </button>
-        <button type="button" className={TOOL_BUTTON_CLASS} aria-expanded={taskListOpen} onClick={() => setTaskListOpen((value) => !value)}>部署任务{tasks.some((task) => websiteDeploymentIsActive(task.state) || task.state === 'awaiting-config') ? `（${tasks.filter((task) => websiteDeploymentIsActive(task.state) || task.state === 'awaiting-config').length}）` : ''}</button>
+        </Button>
+        <Button variant="primary" type="button" className={TOOL_BUTTON_CLASS} aria-expanded={taskListOpen} onClick={() => setTaskListOpen((value) => !value)}>部署任务{tasks.some((task) => websiteDeploymentIsActive(task.state) || task.state === 'awaiting-config') ? `（${tasks.filter((task) => websiteDeploymentIsActive(task.state) || task.state === 'awaiting-config').length}）` : ''}</Button>
         {accessConfigEntryVisible(dependencyReport, dependencyStatus) ? (
-          <button type="button" onClick={() => setCaddyConfigOpen(true)} className={TOOL_BUTTON_CLASS}>
+          <Button variant="primary" type="button" onClick={() => setCaddyConfigOpen(true)} className={TOOL_BUTTON_CLASS}>
             访问配置
-          </button>
+          </Button>
         ) : null}
 
         <div className="flex w-full flex-wrap items-center gap-2 lg:ml-auto lg:w-auto">
@@ -149,26 +151,20 @@ export function WebsitesPanel() {
             onSelect={setCategory}
           />
           <div className="relative min-w-0 flex-1 sm:w-56 sm:flex-none">
-            <Search
-              aria-hidden
-              className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-fg-subtle"
-            />
-            <label htmlFor="website-search" className="sr-only">
-              搜索项目名称或备注
-            </label>
-            <input
+            <SearchInput
               id="website-search"
+              label="搜索项目名称或备注"
               value={search}
-              onChange={(event) => setSearch(event.target.value)}
+              onChange={setSearch}
               placeholder="请输入项目名称或备注"
-              className={`${CTL_FIELD} pl-8`}
+              className="w-full"
             />
           </div>
-          <RefreshButton onPress={() => { void Promise.all([refresh(gateway), recheck(gateway)]) }} busy={refreshing || rechecking} formControl />
+          <RefreshButton onPress={() => { void Promise.all([refresh(gateway), recheck(gateway)]) }} busy={refreshing || rechecking} />
         </div>
       </div>
       {taskListOpen && <div className="mb-4 space-y-2 panel-surface p-4" aria-label="部署任务列表">
-        {taskError ? <p role="alert" className="text-xs text-danger">{taskError}</p> : tasks.length === 0 ? <p className="text-xs text-fg-muted">暂无部署任务</p> : tasks.map((task) => <button type="button" key={task.id} onClick={() => setSelectedTask(task)} className="flex w-full flex-wrap items-center justify-between gap-2 rounded-lg border border-line p-3 text-left text-xs hover:bg-surface-raised"><span className="min-w-0 break-all">{task.name}</span><span className="flex flex-col gap-1 text-right"><span>{deploymentTaskSummary(task)}</span>{!websiteDeploymentIsActive(task.state) && task.state !== 'awaiting-config' ? <time dateTime={task.updatedAt} className="text-fg-muted">完成于 {formatDateTime(task.updatedAt)}</time> : null}</span></button>)}
+        {taskError ? <p role="alert" className="text-xs text-danger">{taskError}</p> : tasks.length === 0 ? <p className="text-xs text-fg-muted">暂无部署任务</p> : tasks.map((task) => <Button unstyled type="button" key={task.id} onClick={() => setSelectedTask(task)} className="flex w-full flex-wrap items-center justify-between gap-2 rounded-lg border border-line p-3 text-left text-xs hover:bg-surface-raised"><span className="min-w-0 break-all">{task.name}</span><span className="flex flex-col gap-1 text-right"><span>{deploymentTaskSummary(task)}</span>{!websiteDeploymentIsActive(task.state) && task.state !== 'awaiting-config' ? <time dateTime={task.updatedAt} className="text-fg-muted">完成于 {formatDateTime(task.updatedAt)}</time> : null}</span></Button>)}
       </div>}
       {projects.some((project) => project.accessMode === 'domain') && (proxyStatus.state === 'unavailable' || proxyStatus.detail !== null) ? (
         <ProxyStatusBanner
@@ -185,9 +181,9 @@ export function WebsitesPanel() {
             title="您的列表为空"
             description="添加一个项目，从这里统一查看各运行时的网站与部署信息。"
             action={
-              <button type="button" onClick={openCreate} className={TOOL_BUTTON_CLASS}>
+              <Button variant="primary" type="button" onClick={openCreate} className={TOOL_BUTTON_CLASS}>
                 添加一个项目
-              </button>
+              </Button>
             }
           />
         ) : (

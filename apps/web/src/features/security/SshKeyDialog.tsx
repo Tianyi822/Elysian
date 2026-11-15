@@ -4,6 +4,7 @@ import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { CopyButton } from '../../components/CopyButton'
 import { X } from '../../components/icons'
 import { formatDateTime } from '../../components/format'
+import { Button } from '../../components/Button'
 
 /**
  * 查看密钥弹窗：展示指纹、算法、生成时间与公钥全文，可复制。
@@ -40,13 +41,13 @@ export function SshKeyDialog({
               <span className="text-sm font-medium text-fg">{title}</span>
             </div>
             <Dialog.Close asChild>
-              <button
+              <Button variant="ghost" size="icon"
                 type="button"
                 aria-label="关闭弹窗"
                 className="inline-flex size-7 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg"
               >
                 <X aria-hidden size={15} />
-              </button>
+              </Button>
             </Dialog.Close>
           </div>
 

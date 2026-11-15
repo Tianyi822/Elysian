@@ -5,7 +5,8 @@ import { AGENT_MODEL_API_FORMATS, getAgentModelPreset, type AgentDiscoveredModel
 import { useGateway } from '../../adapters/GatewayProvider'
 import { useInFlightSubmit } from './useInFlightSubmit'
 import { CTL_PRIMARY, CTL_SECONDARY, CTL_FIELD } from '../../components/formControl'
-import { Download, Eye, EyeOff, Loader2, Pencil, Plus, Search, Trash2, X } from '../../components/icons'
+import { Download, Eye, EyeOff, Loader2, Pencil, Plus, Trash2, X } from '../../components/icons'
+import { SearchInput } from '../../components/SearchInput'
 import { StatusTag } from '../../components/StatusTag'
 import { useModelSettingsStore, validateModelInput, isRevisionConflict } from '../../stores/modelSettingsStore'
 import { EmptyState } from '../../components/states/StateViews'
@@ -17,6 +18,7 @@ import { RefreshButton } from '../../components/RefreshState'
 import { useImeEnterGuard } from '../../components/useImeEnterGuard'
 import { ModelAdvancedFields } from './ModelAdvancedFields'
 import { blankModel, discoveredModelDraft, modelPresetDraft, savedModelDraft, type DraftModel } from './modelDraft'
+import { Button } from '../../components/Button'
 
 const formatTokens = (value: number) => value >= 1024 * 1024 ? `${Number((value / (1024 * 1024)).toFixed(2))}M` : value >= 1024 ? `${Math.round(value / 1024)}k` : String(value)
 const iconButton = 'inline-flex size-8 shrink-0 items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-40'
@@ -30,11 +32,10 @@ export function ModelProfilesPanel({ active = true, refreshing = false, onRefres
   const rows = useMemo(() => services.flatMap(service => service.models.map(model => ({ service, model }))).filter(({ service, model }) => [service.name, model.model, service.baseUrl].some(value => value.toLowerCase().includes(search.trim().toLowerCase()))), [services, search])
   return <div className="flex flex-col gap-3">
     <div className="flex flex-wrap items-center gap-2">
-      <button type="button" onClick={() => setEditing('new')} className={CTL_PRIMARY}><span className="inline-flex items-center gap-1.5"><Plus aria-hidden size={14} />新建模型配置</span></button>
+      <Button variant="primary" type="button" onClick={() => setEditing('new')} className={CTL_PRIMARY}><span className="inline-flex items-center gap-1.5"><Plus aria-hidden size={14} />新建模型配置</span></Button>
       <div className="relative min-w-0 flex-1 sm:max-w-72">
-        <label htmlFor="agent-models-search" className="sr-only">搜索模型 ID、服务或地址</label>
-        <Search aria-hidden size={14} className="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-fg-subtle" />
-        <input id="agent-models-search" type="search" value={search} onChange={event => setSearch(event.target.value)} placeholder="搜索模型 ID、服务或地址" className="ctl-field h-9 w-full pl-8" />
+        <SearchInput id="agent-models-search" label="搜索模型 ID、服务或地址" value={search}
+          onChange={setSearch} placeholder="搜索模型 ID、服务或地址" className="w-full" />
       </div>
       {onRefresh ? <RefreshButton label="刷新模型配置" busy={refreshing} onPress={onRefresh} /> : null}
     </div>
@@ -51,7 +52,7 @@ export function ModelProfilesPanel({ active = true, refreshing = false, onRefres
           <td className="border-b border-line px-3 py-3 tabular-nums text-fg-muted">{formatTokens(model.outputTokens)}</td>
           <td className="border-b border-line px-3 py-3"><StatusTag label={model.capabilities.image || model.capabilities.video ? '多模态' : '文本'} tone="info" /></td>
           <td className="border-b border-line px-3 py-3"><StatusTag label={model.active ? '已启用' : '已停用'} tone={model.active ? 'success' : 'neutral'} /></td>
-          <td className="border-b border-line px-3 py-3"><button type="button" onClick={() => setEditing(service)} aria-label={`编辑 ${model.model}`} className={iconButton}><Pencil aria-hidden size={14} /></button></td>
+          <td className="border-b border-line px-3 py-3"><Button variant="ghost" size="icon" type="button" onClick={() => setEditing(service)} aria-label={`编辑 ${model.model}`} className={iconButton}><Pencil aria-hidden size={14} /></Button></td>
         </tr>})}</tbody>
       </table>
     </div>}
@@ -175,7 +176,7 @@ function ModelServiceDialog({ service, visible, onClose }: { service?: AgentMode
   return <Dialog.Root open={visible} onOpenChange={next => !next && onClose()}>
     <Dialog.Portal><Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" />
       <Dialog.Content aria-describedby="model-service-description" className="fixed left-1/2 top-1/2 z-[61] flex max-h-[90dvh] w-[min(38rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col panel-surface shadow-xl">
-        <div className="flex items-center justify-between gap-3 border-b border-line px-5 py-3"><Dialog.Title className="text-sm font-semibold">{service ? '编辑模型配置' : '新建模型配置'}</Dialog.Title><Dialog.Close asChild><button type="button" aria-label="关闭模型配置表单" className={iconButton}><X aria-hidden size={16} /></button></Dialog.Close></div>
+        <div className="flex items-center justify-between gap-3 border-b border-line px-5 py-3"><Dialog.Title className="text-sm font-semibold">{service ? '编辑模型配置' : '新建模型配置'}</Dialog.Title><Dialog.Close asChild><Button variant="ghost" size="icon" type="button" aria-label="关闭模型配置表单" className={iconButton}><X aria-hidden size={16} /></Button></Dialog.Close></div>
         <form noValidate {...guardProps} onSubmit={event => { event.preventDefault(); if (!isImeKey()) void submit() }} className="flex min-h-0 flex-col">
           <ScrollArea label="模型配置表单"><fieldset disabled={submitting} className="flex min-w-0 flex-col gap-4 px-5 py-4">
             <Dialog.Description id="model-service-description" className="text-xs leading-relaxed text-fg-subtle">同一服务下的模型共用地址、API 格式与凭据，保存后统一生效。</Dialog.Description>
@@ -183,21 +184,22 @@ function ModelServiceDialog({ service, visible, onClose }: { service?: AgentMode
             {provider === 'openai-compatible' && <div><label htmlFor="agent-service-name" className="sr-only">名称</label><input id="agent-service-name" required maxLength={120} placeholder="服务名称" value={name} onChange={event => setName(event.target.value)} className={`${CTL_FIELD} h-9 w-full font-semibold`} /></div>}
             <Field label="Base URL" id="agent-model-baseurl"><input id="agent-model-baseurl" required value={baseUrl} onChange={event => setBaseUrl(event.target.value)} placeholder="https://api.example.com/v1" className={`${CTL_FIELD} h-9 w-full font-mono text-xs`} /></Field>
             <Field label="API 格式" id="agent-api-format"><SelectDropdown id="agent-api-format" ariaLabel="API 格式" value={apiFormat} onSelect={selectFormat} fullWidth disabled={submitting} items={AGENT_MODEL_API_FORMATS} /></Field>
-            <Field label="API Key" id="agent-model-credential"><div className="relative"><input id="agent-model-credential" type={showCredential ? 'text' : 'password'} value={credential} onChange={event => setCredential(event.target.value)} autoComplete="new-password" placeholder={service?.hasCredential ? '留空沿用现有 API Key' : '输入 API Key'} className={`${CTL_FIELD} h-9 w-full pr-10 font-mono text-xs`} /><button type="button" aria-label={showCredential ? '隐藏 API Key' : '显示输入的 API Key'} onClick={() => setShowCredential(value => !value)} className={`${iconButton} absolute right-1 top-0.5`}>{showCredential ? <EyeOff aria-hidden size={14} /> : <Eye aria-hidden size={14} />}</button></div>
+            <Field label="API Key" id="agent-model-credential"><div className="relative"><input id="agent-model-credential" type={showCredential ? 'text' : 'password'} value={credential} onChange={event => setCredential(event.target.value)} autoComplete="new-password" placeholder={service?.hasCredential ? '留空沿用现有 API Key' : '输入 API Key'} className={`${CTL_FIELD} h-9 w-full pr-10 font-mono text-xs`} /><Button variant="ghost" size="icon" type="button" aria-label={showCredential ? '隐藏 API Key' : '显示输入的 API Key'} onClick={() => setShowCredential(value => !value)} className={`${iconButton} absolute right-1 top-0.5`}>{showCredential ? <EyeOff aria-hidden size={14} /> : <Eye aria-hidden size={14} />}</Button></div>
               <div className="mt-1.5 text-xs text-fg-subtle">{service?.hasCredential ? '必填；留空沿用现有 API Key，输入新值则替换，已有凭据不回显。' : '必填；保存后只写入不回显。'}</div>
             </Field>
             <div className="flex flex-col gap-2">
-              <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs font-medium text-fg-muted">模型列表 <span className="text-fg-subtle">({models.length})</span></span><div className="flex flex-wrap items-center gap-2"><button type="button" disabled={fetchingModels} onClick={() => void discoverModels()} className={CTL_SECONDARY}><span className="inline-flex items-center gap-1">{fetchingModels ? <Loader2 aria-hidden size={13} className="animate-spin motion-reduce:animate-none" /> : <Download aria-hidden size={13} />}{fetchingModels ? '获取中…' : '获取模型'}</span></button><button type="button" disabled={models.length >= 64} onClick={() => appendDraftModels(() => [blankModel()], true)} className={CTL_SECONDARY}><span className="inline-flex items-center gap-1"><Plus aria-hidden size={13} />添加模型</span></button></div></div>
+              <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs font-medium text-fg-muted">模型列表 <span className="text-fg-subtle">({models.length})</span></span><div className="flex flex-wrap items-center gap-2"><Button variant="outline" type="button" disabled={fetchingModels} onClick={() => void discoverModels()} className={CTL_SECONDARY}><span className="inline-flex items-center gap-1">{fetchingModels ? <Loader2 aria-hidden size={13} className="animate-spin motion-reduce:animate-none" /> : <Download aria-hidden size={13} />}{fetchingModels ? '获取中…' : '获取模型'}</span></Button><Button variant="outline" type="button" disabled={models.length >= 64} onClick={() => appendDraftModels(() => [blankModel()], true)} className={CTL_SECONDARY}><span className="inline-flex items-center gap-1"><Plus aria-hidden size={13} />添加模型</span></Button></div></div>
               {fetchingModels && <p role="status" className="text-xs text-fg-subtle">正在读取服务提供的模型列表…</p>}
               {catalog !== undefined && <div role="region" aria-label="可选模型" className="flex flex-col gap-2 border-y border-line py-3">
-                <div className="flex items-center justify-between gap-2"><span className="text-xs text-fg-muted">可选模型（{catalog.length}）</span><button type="button" aria-label="收起可选模型" onClick={() => setCatalog(undefined)} className={iconButton}><X aria-hidden size={14} /></button></div>
+                <div className="flex items-center justify-between gap-2"><span className="text-xs text-fg-muted">可选模型（{catalog.length}）</span><Button variant="ghost" size="icon" type="button" aria-label="收起可选模型" onClick={() => setCatalog(undefined)} className={iconButton}><X aria-hidden size={14} /></Button></div>
                 {catalog.length > 0 && <>
-                  <label htmlFor="model-catalog-search" className="sr-only">搜索可选模型</label><input id="model-catalog-search" type="search" value={catalogSearch} onChange={event => setCatalogSearch(event.target.value)} placeholder="搜索模型名称或 ID" className={`${CTL_FIELD} h-9 w-full`} />
+                  <SearchInput id="model-catalog-search" label="搜索可选模型" value={catalogSearch}
+                    onChange={setCatalogSearch} placeholder="搜索模型名称或 ID" expandOnFocus={false} className="w-full" />
                   <ul aria-label="模型目录" className="table-scrollbar m-0 max-h-48 list-none space-y-1 overflow-y-auto p-0">{catalog.filter(row => [row.name, row.model].some(value => value.toLowerCase().includes(catalogSearch.trim().toLowerCase()))).map(row => {
                     const added = models.some(model => model.model.trim() === row.model)
                     const isSelected = selectedModels.includes(row.model)
                     return <li key={row.model}>
-                      <button
+                      <Button unstyled
                         type="button"
                         disabled={added}
                         aria-label={`选择 ${row.model}`}
@@ -208,22 +210,22 @@ function ModelServiceDialog({ service, visible, onClose }: { service?: AgentMode
                         <span className="min-w-0 flex-1"><span className="block truncate font-medium" title={row.name}>{row.name}</span><span className="block truncate font-mono text-fg-subtle" title={row.model}>{row.model}</span></span>
                         {row.contextTokens && <span className="shrink-0 tabular-nums text-fg-muted">{formatTokens(row.contextTokens)}</span>}
                         {added && <span className="shrink-0 text-fg-subtle">已添加</span>}
-                      </button>
+                      </Button>
                     </li>
                   })}{catalogSearch.trim() && !catalog.some(row => [row.name, row.model].some(value => value.toLowerCase().includes(catalogSearch.trim().toLowerCase()))) && <li className="py-2 text-xs text-fg-subtle">没有匹配的模型。</li>}</ul>
-                  <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs text-fg-subtle">{models.length + selected.length > 64 ? '每个服务最多配置 64 个模型。' : '选择后添加，参数仍可编辑。'}</span><button type="button" disabled={selected.length === 0 || models.length + selected.length > 64} onClick={addSelectedModels} className={CTL_SECONDARY}>添加选中模型{selected.length > 0 ? `（${selected.length}）` : ''}</button></div>
+                  <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs text-fg-subtle">{models.length + selected.length > 64 ? '每个服务最多配置 64 个模型。' : '选择后添加，参数仍可编辑。'}</span><Button variant="outline" type="button" disabled={selected.length === 0 || models.length + selected.length > 64} onClick={addSelectedModels} className={CTL_SECONDARY}>添加选中模型{selected.length > 0 ? `（${selected.length}）` : ''}</Button></div>
                 </>}
               </div>}
               {models.length === 0 && <p className="py-3 text-xs text-fg-subtle">尚未添加模型，可获取模型或手动添加。</p>}
               {models.map((row, index) => <div key={row.key} className="rounded-lg border border-line">
-                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2"><span className="min-w-0 basis-full truncate font-mono text-sm sm:flex-1 sm:basis-auto" title={row.model}>{row.model || `新模型 ${index + 1}`}</span><span className="rounded bg-surface-raised px-1.5 py-0.5 text-[11px] tabular-nums text-fg-muted">{formatTokens(Number(row.contextTokens))}</span><StatusTag label={row.image || row.video ? '多模态' : '文本'} tone="neutral" /><div className="ml-auto flex items-center gap-1"><button type="button" aria-label={`编辑模型 ${index + 1}`} aria-expanded={expanded === row.key} aria-controls={`model-fields-${row.key}`} onClick={() => setExpanded(value => value === row.key ? undefined : row.key)} className={iconButton}><Pencil aria-hidden size={13} /></button><button type="button" aria-label={`移除模型 ${index + 1}`} disabled={Boolean(service) && models.length === 1} onClick={() => setModels(rows => rows.filter(model => model.key !== row.key))} className={iconButton}><Trash2 aria-hidden size={13} /></button><Toggle label={`启用模型 ${index + 1}`} checked={row.enabled} onChange={value => patch(row.key, { enabled: value })} /></div></div>
+                <div className="flex flex-wrap items-center gap-x-2 gap-y-1 px-3 py-2"><span className="min-w-0 basis-full truncate font-mono text-sm sm:flex-1 sm:basis-auto" title={row.model}>{row.model || `新模型 ${index + 1}`}</span><span className="rounded bg-surface-raised px-1.5 py-0.5 text-[11px] tabular-nums text-fg-muted">{formatTokens(Number(row.contextTokens))}</span><StatusTag label={row.image || row.video ? '多模态' : '文本'} tone="neutral" /><div className="ml-auto flex items-center gap-1"><Button variant="ghost" size="icon" type="button" aria-label={`编辑模型 ${index + 1}`} aria-expanded={expanded === row.key} aria-controls={`model-fields-${row.key}`} onClick={() => setExpanded(value => value === row.key ? undefined : row.key)} className={iconButton}><Pencil aria-hidden size={13} /></Button><Button variant="ghost" size="icon" type="button" aria-label={`移除模型 ${index + 1}`} disabled={Boolean(service) && models.length === 1} onClick={() => setModels(rows => rows.filter(model => model.key !== row.key))} className={iconButton}><Trash2 aria-hidden size={13} /></Button><Toggle label={`启用模型 ${index + 1}`} checked={row.enabled} onChange={value => patch(row.key, { enabled: value })} /></div></div>
                 {expanded === row.key && <fieldset id={`model-fields-${row.key}`} className="grid grid-cols-1 gap-4 border-t border-line p-3 sm:grid-cols-2"><legend className="sr-only">模型 {index + 1} 参数</legend>
                   <div className="sm:col-span-2"><Field label="模型 ID" id={`model-id-${row.key}`}><SuggestionInput id={`model-id-${row.key}`} ariaLabel="模型 ID" items={catalog?.map(model => ({ value: model.model, label: model.name })) ?? []} required maxLength={200} disabled={submitting} value={row.model} onValueChange={model => patch(row.key, { model, ...modelPresetDraft(provider, model) })} className="h-9 w-full font-mono text-xs" /></Field></div>
                   <Field label="上下文上限（token）" id={`model-context-${row.key}`}><input id={`model-context-${row.key}`} type="number" required min={1} max={2000000} step={1} value={row.contextTokens} onChange={event => patch(row.key, { contextTokens: event.target.value })} className={`${CTL_FIELD} h-9 w-full tabular-nums`} /></Field>
                   <Field label="输出上限（token）" id={`model-output-${row.key}`}><input id={`model-output-${row.key}`} type="number" required min={1} max={Number(row.contextTokens) || 2000000} step={1} value={row.outputTokens} onChange={event => patch(row.key, { outputTokens: event.target.value })} className={`${CTL_FIELD} h-9 w-full tabular-nums`} /></Field>
                   {getAgentModelPreset(provider, row.model) && <div className="flex flex-wrap items-center justify-between gap-2 sm:col-span-2">
                     <a href={getAgentModelPreset(provider, row.model)!.documentationUrl} target="_blank" rel="noreferrer" className="text-xs text-accent underline underline-offset-4">查看官方参数</a>
-                    <button type="button" onClick={() => patch(row.key, modelPresetDraft(provider, row.model)!)} className={CTL_SECONDARY}>应用官方参数</button>
+                    <Button variant="outline" type="button" onClick={() => patch(row.key, modelPresetDraft(provider, row.model)!)} className={CTL_SECONDARY}>应用官方参数</Button>
                   </div>}
                   <ModelAdvancedFields row={row} onChange={values => patch(row.key, values)} />
                 </fieldset>}
@@ -235,7 +237,7 @@ function ModelServiceDialog({ service, visible, onClose }: { service?: AgentMode
             {error && <p role="alert" className="text-xs text-danger">{error}</p>}
             {service && <RevisionConflictNotice latest={latest} baseRevision={revision} onAccept={setRevision} />}
           </fieldset></ScrollArea>
-          <div className="flex shrink-0 justify-end gap-2 border-t border-line px-5 py-3"><button type="button" onClick={onClose} className={CTL_SECONDARY}>取消</button><button type="submit" disabled={submitting} className={CTL_PRIMARY}>{service ? '保存模型配置' : '创建模型配置'}</button></div>
+          <div className="flex shrink-0 justify-end gap-2 border-t border-line px-5 py-3"><Button variant="outline" type="button" onClick={onClose} className={CTL_SECONDARY}>取消</Button><Button variant="primary" type="submit" disabled={submitting} className={CTL_PRIMARY}>{service ? '保存模型配置' : '创建模型配置'}</Button></div>
         </form>
       </Dialog.Content>
     </Dialog.Portal>

@@ -21,6 +21,7 @@ import { useImeEnterGuard } from '../../components/useImeEnterGuard'
 import { useMessageStore } from '../../stores/messageStore'
 import { sendPanelPending } from './panelPending'
 import type { PanelPending } from './panelPending'
+import { Button } from '../../components/Button'
 
 const BUTTON = 'h-9 rounded-lg border border-control-line bg-surface-raised px-4 text-sm font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50'
 const INPUT = 'h-9 w-full rounded-lg border border-control-line bg-surface-raised px-3 text-sm tabular-nums text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50'
@@ -191,7 +192,7 @@ export function PanelMaintenanceSettings() {
     <section aria-label="面板端口" className="panel-surface p-5">
       <div className="flex items-center gap-1.5"><h2 className="text-sm font-medium text-fg">面板端口</h2><SectionHelp label="面板端口说明">前端端口用于打开面板，后端端口供面板内部使用。保存后会重启，页面会短暂断开。</SectionHelp></div>
       {!info && !loadError ? <p role="status" className="mt-3 text-xs text-fg-muted">正在读取面板配置…</p> : null}
-      {loadError ? <div className="mt-3"><p role="alert" className="text-xs text-danger">{loadError}</p><button className={`${BUTTON} mt-3`} onClick={() => void usePanelStore.getState().load(gateway)}>重新读取配置</button></div> : null}
+      {loadError ? <div className="mt-3"><p role="alert" className="text-xs text-danger">{loadError}</p><Button variant="outline" type="submit" className={`${BUTTON} mt-3`} onClick={() => void usePanelStore.getState().load(gateway)}>重新读取配置</Button></div> : null}
       {info && !info.available ? <p role="status" className="mt-3 text-xs leading-5 text-fg-muted">{info.reason}</p> : null}
       <form onSubmit={onPorts} {...portsGuardProps} className="mt-5 space-y-4">
         <div className="grid gap-4 sm:grid-cols-2">
@@ -199,7 +200,7 @@ export function PanelMaintenanceSettings() {
           <div><label htmlFor={backendId} className="mb-2 block text-xs font-medium text-fg">后端端口</label><input id={backendId} inputMode="numeric" value={backend} onChange={(e) => { setBackend(e.target.value); setPortsError(null) }} disabled={unavailable} className={INPUT} /></div>
         </div>
         {portsError ? <p role="alert" className="break-all text-xs leading-5 text-danger">{portsError}</p> : null}
-        <div className="flex flex-wrap gap-2"><button type="submit" disabled={unavailable} className={BUTTON}>{submitting ? '正在提交…' : '保存并重启'}</button><button type="button" disabled={unavailable} className={BUTTON} onClick={() => void submit('restart', { kind: 'restart', input: null })}>{submitting ? '正在提交…' : '重启面板'}</button></div>
+        <div className="flex flex-wrap gap-2"><Button variant="outline" type="submit" disabled={unavailable} className={BUTTON}>{submitting ? '正在提交…' : '保存并重启'}</Button><Button variant="outline" type="button" disabled={unavailable} className={BUTTON} onClick={() => void submit('restart', { kind: 'restart', input: null })}>{submitting ? '正在提交…' : '重启面板'}</Button></div>
       </form>
     </section>
     <section aria-label="面板更新" className="panel-surface p-5">
@@ -221,7 +222,7 @@ export function PanelMaintenanceSettings() {
         {update.targetCommit ? <p>目标提交：{update.targetCommit}</p> : null}
         {update.message && update.targetCommit ? <p className="text-fg-muted">{update.message}</p> : null}
       </div> : null}
-      <div className="mt-4 flex flex-wrap gap-2"><button className={BUTTON} disabled={unavailable || checking} onClick={() => void check()}>{checking ? '正在检查…' : '检查更新'}</button><button className={BUTTON} disabled={unavailable || checking || !update?.available || update.channel !== channel || update.source !== source} onClick={beginUpdate}>{submitting ? '正在提交…' : '更新并重启'}</button><button className={BUTTON} disabled={!info?.available} title={info && !info.available ? info.reason : undefined} onClick={() => setChangelogOpen(true)}>更新日志</button></div>
+      <div className="mt-4 flex flex-wrap gap-2"><Button variant="outline" type="submit" className={BUTTON} disabled={unavailable || checking} onClick={() => void check()}>{checking ? '正在检查…' : '检查更新'}</Button><Button variant="outline" type="submit" className={BUTTON} disabled={unavailable || checking || !update?.available || update.channel !== channel || update.source !== source} onClick={beginUpdate}>{submitting ? '正在提交…' : '更新并重启'}</Button><Button variant="outline" type="submit" className={BUTTON} disabled={!info?.available} title={info && !info.available ? info.reason : undefined} onClick={() => setChangelogOpen(true)}>更新日志</Button></div>
       {info?.available && !info.resourcePreflightVersion ? <p className="mt-2 text-xs leading-5 text-warning">当前服务器版本不支持更新资源预检。首次升级前请手动释放负载；不会自动停止其他业务。</p> : null}
       {updateError || verificationError ? <p role="alert" className="mt-3 break-all text-xs leading-5 text-danger">{updateError ?? verificationError}</p> : null}
     </section>
@@ -229,7 +230,7 @@ export function PanelMaintenanceSettings() {
       <p role="status" className="text-xs leading-5 text-warning">{submitting ? '正在提交维护请求…' : '提交结果未确认，正在按请求编号核对。'}</p>
       <p className="mt-2 break-all text-xs text-fg-muted">请求编号：{pending.requestId}</p>
       {progressError ? <p role="alert" className="mt-2 text-xs text-danger">{progressError}</p> : null}
-      <button className={`${BUTTON} mt-3`} disabled={submitting} onClick={() => void submit(pending.kind, { kind: pending.kind, input: pending.input }, pending)}>重试原维护请求</button>
+      <Button variant="outline" type="submit" className={`${BUTTON} mt-3`} disabled={submitting} onClick={() => void submit(pending.kind, { kind: pending.kind, input: pending.input }, pending)}>重试原维护请求</Button>
     </section> : null}
     {task && !updateCompleted ? <section aria-label="面板维护进度" className="panel-surface p-5">
       <h2 className="text-sm font-medium text-fg">面板维护进度</h2>
@@ -238,18 +239,18 @@ export function PanelMaintenanceSettings() {
       {panelTaskIsActive(task) && task.workerDead ? <p role="status" className="mt-2 break-all text-xs leading-5 text-warning">维护进程已退出但任务尚未判定结果，等待服务器自动收敛；若长时间无变化，请在服务器执行 journalctl -u elysian-maintenance-{task.id} 查看现场。</p> : null}
       {panelTaskIsActive(task) && (task.workerStatus === 'unknown' || (task.workerStatus === undefined && !task.workerDead)) ? <p className="mt-2 text-xs leading-5 text-fg-muted">维护进程状态尚未确认，继续等待任务结果。</p> : null}
       {task.state === 'succeeded' && task.cliRegistration?.status === 'pending' ? <p role="status" className="mt-2 text-xs text-warning">面板升级成功，正在完成 CLI 注册…</p> : null}
-      {task.state === 'succeeded' && task.cliRegistration?.status === 'failed' ? <div className="mt-3 space-y-2"><p role="alert" className="break-all text-xs text-danger">面板升级成功、CLI 注册失败：{task.cliRegistration.error}</p><button className={BUTTON} disabled={retryingCLI || active || submitting} onClick={() => void retryCLI()}>{retryingCLI ? '正在重试…' : '重试 CLI 注册'}</button></div> : null}
+      {task.state === 'succeeded' && task.cliRegistration?.status === 'failed' ? <div className="mt-3 space-y-2"><p role="alert" className="break-all text-xs text-danger">面板升级成功、CLI 注册失败：{task.cliRegistration.error}</p><Button variant="outline" type="submit" className={BUTTON} disabled={retryingCLI || active || submitting} onClick={() => void retryCLI()}>{retryingCLI ? '正在重试…' : '重试 CLI 注册'}</Button></div> : null}
       {task.cliRegistration?.status === 'succeeded' ? <p role="status" className="mt-2 text-xs text-success">CLI 命令 ely 已注册</p> : null}
       {task.error ? <p role="alert" className="mt-2 break-all text-xs leading-5 text-danger">{task.error}</p> : null}
       {progressError ? <p role="alert" className="mt-2 break-all text-xs leading-5 text-danger">{progressError}</p> : null}
       {connectionError ? <div className="mt-3 space-y-2">
         <p role="alert" className="break-all text-xs leading-5 text-warning">{connectionError}</p>
         <div className="flex flex-wrap gap-2">
-          <button className={BUTTON} onClick={() => { setConnectionError(null) }}>重新等待连接</button>
-          {task.kind !== 'ports' ? <button className={BUTTON} onClick={() => reloadPanelPage()}>重新加载面板</button> : null}
+          <Button variant="outline" type="submit" className={BUTTON} onClick={() => { setConnectionError(null) }}>重新等待连接</Button>
+          {task.kind !== 'ports' ? <Button variant="outline" type="submit" className={BUTTON} onClick={() => reloadPanelPage()}>重新加载面板</Button> : null}
         </div>
       </div> : null}
-      {task.kind !== 'ports' && needsManualReload ? <button className={`${BUTTON} mt-3`} onClick={() => reloadPanelPage()}>重新加载面板</button> : null}
+      {task.kind !== 'ports' && needsManualReload ? <Button variant="outline" type="submit" className={`${BUTTON} mt-3`} onClick={() => reloadPanelPage()}>重新加载面板</Button> : null}
       {task.kind === 'ports' ? <div className="mt-3 flex flex-col gap-2 break-all text-xs"><a className="text-fg underline underline-offset-4" href={panelAddress(task.newPorts.frontendPort)}>打开新地址：{panelAddress(task.newPorts.frontendPort)}</a><a className="text-fg-muted underline underline-offset-4" href={panelAddress(task.oldPorts.frontendPort)}>打开原地址：{panelAddress(task.oldPorts.frontendPort)}</a></div> : null}
       {logs ? <PanelMaintenanceLog logs={logs} viewportRef={logViewport} /> : null}
       {hasMore ? <p role="status" className="mt-3 text-xs text-fg-muted">正在读取最新日志…</p> : null}

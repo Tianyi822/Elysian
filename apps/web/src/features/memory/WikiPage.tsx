@@ -14,6 +14,7 @@ import { CTL_PRIMARY, CTL_SECONDARY, CTL_DANGER, CTL_FIELD, CTL_TOOLBAR } from '
 import { ChatMarkdown } from '../agent/ChatMarkdown'
 import { X } from '../../components/icons'
 import './memory.css'
+import { Button } from '../../components/Button'
 
 const bytes = (value: string) => new TextEncoder().encode(value).length
 const date = (value: string) => new Date(value).toLocaleString('zh-CN', { hour12: false })
@@ -96,23 +97,23 @@ export function WikiPage() {
     {state.loading && !state.spaces.length ? <LoadingState label="正在读取知识空间…" /> : <>
       <div className={`${CTL_TOOLBAR} rect-toolbar shell-first-row flex flex-wrap items-center gap-2 panel-surface px-4 py-3`}>
         <SelectDropdown ariaLabel="知识空间" items={spaceItems} value={state.spaceId || undefined} onSelect={id => { setFormError(undefined); void useAgentMemoryStore.getState().selectSpace(gateway, id) }} fallbackLabel="选择知识空间" emptyLabel="尚无知识空间" disabled={!state.spaces.length || state.loading} />
-        <RefreshButton onPress={() => void runRefresh()} busy={refreshing} formControl />
+        <RefreshButton onPress={() => void runRefresh()} busy={refreshing} />
       </div>
-      {state.error && openId === undefined && <div role="alert" className="memory-error">{state.error}<button type="button" className={CTL_SECONDARY} onClick={() => void runRefresh()}>重试</button></div>}
+      {state.error && openId === undefined && <div role="alert" className="memory-error">{state.error}<Button variant="outline" type="button" className={CTL_SECONDARY} onClick={() => void runRefresh()}>重试</Button></div>}
       <div className="panel-surface overflow-hidden">
         {state.loading ? <p role="status" className="memory-empty">正在读取空间…</p>
           : !state.spaces.length ? <EmptyState title="尚无知识空间" />
           : !state.pages.length ? <EmptyState title="当前空间还没有页面" />
           : <ul aria-label="Wiki 页面列表" className="divide-y divide-line">
             {state.pages.map(item => <li key={item.id}>
-              <button type="button" onClick={() => open(item)} className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 text-left transition-colors hover:bg-surface-raised">
+              <Button unstyled type="button" onClick={() => open(item)} className="flex w-full flex-wrap items-center gap-x-3 gap-y-1 px-4 py-3 text-left transition-colors hover:bg-surface-raised">
                 <span className="min-w-0 flex-1 truncate text-sm font-medium">{item.title}</span>
                 <span className="text-xs text-fg-muted">{AGENT_MEMORY_PAGE_KIND_LABELS[item.kind]}</span>
                 <span className="text-xs text-fg-subtle tabular-nums">r{item.revision}</span>
                 <span className="text-xs text-fg-subtle">{item.maintenance === 'automatic' ? '自动维护' : '人工维护'}</span>
                 <time dateTime={item.updatedAt} className="text-xs text-fg-subtle tabular-nums">{date(item.updatedAt)}</time>
                 {item.status === 'withdrawn' && <span className="text-xs text-danger">已撤回</span>}
-              </button>
+              </Button>
             </li>)}
           </ul>}
       </div>
@@ -122,24 +123,24 @@ export function WikiPage() {
       {/* 浏览页弹窗被锁定：点外部与 Escape 都不关闭，关闭只走右上角 X、取消或保存完成后的路径。 */}
       <Dialog.Content onPointerDownOutside={event => event.preventDefault()} onInteractOutside={event => event.preventDefault()} onEscapeKeyDown={event => event.preventDefault()} className="fixed left-1/2 top-1/2 z-[61] flex max-h-[90dvh] w-[min(44rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col panel-surface shadow-xl">
         <header className="flex items-start justify-between gap-3 border-b border-line p-4"><div className="min-w-0"><Dialog.Title className="break-words text-base font-medium">{page?.title ?? selected?.title}</Dialog.Title><Dialog.Description className="mt-1 text-xs text-fg-muted">{editing ? '保存会产生新修订，并切换为人工维护。冲突时保留当前草稿。' : page ? <span className="tabular-nums">{AGENT_MEMORY_PAGE_KIND_LABELS[page.kind]} · 修订 r{page.revision} · 更新于 {date(page.updatedAt)} · {page.maintenance === 'automatic' ? '自动维护' : '人工维护'}{page.status === 'withdrawn' ? ' · 已撤回' : ''}</span> : state.error ? '页面读取失败，可在下方重试。' : '正在读取页面…'}</Dialog.Description></div><IconButton label="关闭窗口" variant="ghost" onPress={requestClose}><X size={16} aria-hidden /></IconButton></header>
-        {discard && <div role="alert" className="flex flex-wrap items-center gap-2 border-b border-line bg-warning/10 p-3 text-xs"><span className="flex-1">有未保存的内容。</span><button type="button" className={CTL_SECONDARY} onClick={() => setDiscard(false)}>继续编辑</button><button type="button" className={CTL_DANGER} onClick={close}>放弃修改</button></div>}
+        {discard && <div role="alert" className="flex flex-wrap items-center gap-2 border-b border-line bg-warning/10 p-3 text-xs"><span className="flex-1">有未保存的内容。</span><Button variant="outline" type="button" className={CTL_SECONDARY} onClick={() => setDiscard(false)}>继续编辑</Button><Button variant="destructive" type="button" className={CTL_DANGER} onClick={close}>放弃修改</Button></div>}
         <div className="memory-dialog-body hover-scrollbar"><fieldset disabled={state.saving} className="min-w-0">
           {state.reading ? <p role="status" className="memory-empty">正在读取文档…</p>
             : editing ? <form {...guardProps} onSubmit={event => { event.preventDefault(); if (!isImeKey()) void submit() }}>
-              {error && <div role="alert" className="mb-4 text-sm text-danger">{error}<button type="button" className={`${CTL_SECONDARY} mt-2`} onClick={reread}>读取最新修订并保留草稿</button></div>}
+              {error && <div role="alert" className="mb-4 text-sm text-danger">{error}<Button variant="outline" type="button" className={`${CTL_SECONDARY} mt-2`} onClick={reread}>读取最新修订并保留草稿</Button></div>}
               <label className="memory-label">标题<input className={CTL_FIELD} value={draft.title} maxLength={200} onChange={event => setDraft({ ...draft, title: event.target.value })} autoFocus /></label>
               <label className="memory-label">页面类型<SelectDropdown ariaLabel="页面类型" items={KIND_OPTIONS} value={draft.kind} onSelect={kind => setDraft({ ...draft, kind })} fullWidth /></label>
               <label className="memory-label">Markdown 正文<textarea className="memory-editor" rows={12} value={draft.markdown} onChange={event => setDraft({ ...draft, markdown: event.target.value })} spellCheck={false} /></label>
               <p className={`mt-2 text-xs tabular-nums ${over ? 'text-danger' : 'text-fg-subtle'}`}>{bytes(draft.markdown)} / 16384 字节</p>
               {/* 旁注留在 label 之外，输入框的可访问名称只保留「页面标识」。 */}
               <div className="memory-label"><label htmlFor="wiki-page-slug">页面标识</label><input id="wiki-page-slug" className={`${CTL_FIELD} font-mono`} value={(page ?? selected)?.slug ?? ''} readOnly /><span className="text-xs text-fg-subtle">创建后不可修改</span></div>
-              <div className="mt-5 flex justify-end gap-2"><button type="button" className={CTL_SECONDARY} onClick={requestClose} disabled={state.saving}>取消</button><button className={CTL_PRIMARY} disabled={state.saving || over || !draft.title.trim()}>{state.saving ? '保存中…' : '保存页面'}</button></div>
+              <div className="mt-5 flex justify-end gap-2"><Button variant="outline" type="button" className={CTL_SECONDARY} onClick={requestClose} disabled={state.saving}>取消</Button><Button variant="primary" type="submit" className={CTL_PRIMARY} disabled={state.saving || over || !draft.title.trim()}>{state.saving ? '保存中…' : '保存页面'}</Button></div>
             </form>
             : page ? <div>
               <div className="memory-markdown"><ChatMarkdown text={page.markdown} /></div>
-              {page.status === 'active' && page.kind !== 'sources' && <div className="mt-6 flex justify-end gap-2 border-t border-line pt-4"><button type="button" className={CTL_SECONDARY} disabled={state.saving} onClick={startEdit}>编辑</button></div>}
+              {page.status === 'active' && page.kind !== 'sources' && <div className="mt-6 flex justify-end gap-2 border-t border-line pt-4"><Button variant="outline" type="button" className={CTL_SECONDARY} disabled={state.saving} onClick={startEdit}>编辑</Button></div>}
             </div>
-            : state.error ? <div className="memory-empty"><p role="alert" className="text-danger">{state.error}</p><button type="button" className={`${CTL_SECONDARY} mt-2`} disabled={state.saving} onClick={() => { if (selected) void useAgentMemoryStore.getState().openPage(gateway, selected.id) }}>重试</button></div>
+            : state.error ? <div className="memory-empty"><p role="alert" className="text-danger">{state.error}</p><Button variant="outline" type="button" className={`${CTL_SECONDARY} mt-2`} disabled={state.saving} onClick={() => { if (selected) void useAgentMemoryStore.getState().openPage(gateway, selected.id) }}>重试</Button></div>
             : <p className="memory-empty">页面尚未读取，请刷新后重试。</p>}
         </fieldset></div>
       </Dialog.Content>

@@ -5,6 +5,7 @@ import { CopyButton } from '../../components/CopyButton'
 import { X } from '../../components/icons'
 import { formatDateTime } from '../../components/format'
 import { buildKeyFilename, downloadPrivateKey } from './sshKeyIO'
+import { Button } from '../../components/Button'
 
 /**
  * 一次性私钥弹窗：创建登录密钥或生成 Root 密钥成功后打开，材料直接来自那一次响应。
@@ -52,13 +53,13 @@ export function SshKeyRevealDialog({
               <span className="text-sm font-medium text-fg">{title}</span>
             </div>
             <Dialog.Close asChild>
-              <button
+              <Button variant="ghost" size="icon"
                 type="button"
                 aria-label="关闭弹窗"
                 className="inline-flex size-7 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg"
               >
                 <X aria-hidden size={15} />
-              </button>
+              </Button>
             </Dialog.Close>
           </div>
 
@@ -100,13 +101,13 @@ export function SshKeyRevealDialog({
             </p>
             <div className="flex items-center gap-2">
               <CopyButton label="私钥" value={material.privateKey ?? ''} tooltip="复制私钥全文" />
-              <button
+              <Button variant="outline"
                 type="button"
                 onClick={() => downloadPrivateKey(filename, material)}
                 className="rounded-lg border border-control-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle"
               >
                 下载私钥
-              </button>
+              </Button>
             </div>
           </div>
         </Dialog.Content>

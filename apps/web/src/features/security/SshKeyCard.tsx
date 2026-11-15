@@ -3,11 +3,13 @@ import { useId, useMemo } from 'react'
 import type { SshLoginKey } from '@elysian/contracts'
 import { IconButton } from '../../components/IconButton'
 import { formatDateTime } from '../../components/format'
-import { KeyRound, Search, Trash2 } from '../../components/icons'
+import { KeyRound, Trash2 } from '../../components/icons'
+import { SearchInput } from '../../components/SearchInput'
+import { Pagination } from '../../components/Pagination'
 import { SSH_PAGE_SIZE, useSshStore } from '../../stores/sshStore'
-import { CTL_FIELD } from '../../components/formControl'
-import { ACTION_CLASS, Section, TABLE_CELL_CLASS, TABLE_CONTAINER_CLASS, TABLE_HEADER_CLASS, TablePager } from './sshCardParts'
+import { ACTION_CLASS, Section, TABLE_CELL_CLASS, TABLE_CONTAINER_CLASS, TABLE_HEADER_CLASS } from './sshCardParts'
 import { filterSshKeys } from './sshKeySearch'
+import { Button } from '../../components/Button'
 
 /**
  * SSH 密钥卡：搜索、创建入口与密钥表格。
@@ -47,24 +49,18 @@ export function SshKeyCard() {
       <SshRefreshError section="keys" />
       <div className="flex flex-wrap items-center gap-2">
         <div className="relative min-w-0 flex-1">
-          <Search
-            aria-hidden
-            className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-fg-subtle"
-          />
-          <label htmlFor={searchInputId} className="sr-only">
-            搜索密钥
-          </label>
-          <input
+          <SearchInput
             id={searchInputId}
+            label="搜索密钥"
             value={search}
-            onChange={(event) => setKeySearch(event.target.value)}
+            onChange={setKeySearch}
             placeholder="搜索名称、账号或指纹"
-            className={`${CTL_FIELD} pl-8`}
+            className="w-full"
           />
         </div>
-        <button type="button" onClick={() => openCreateKey()} className={ACTION_CLASS}>
+        <Button variant="primary" type="button" onClick={() => openCreateKey()} className={ACTION_CLASS}>
           创建 SSH 密钥
-        </button>
+        </Button>
       </div>
       <div role="region" aria-label="SSH 密钥表" className={TABLE_CONTAINER_CLASS}>
         <table className="w-full min-w-[28rem] table-fixed border-separate border-spacing-0 text-left text-sm">
@@ -108,7 +104,7 @@ export function SshKeyCard() {
           </tbody>
         </table>
       </div>
-      <TablePager
+      <Pagination
         label="密钥分页"
         summary={
           search.trim() ? `匹配 ${filtered.length} 把 · 共 ${keys.length} 把` : `共 ${keys.length} 把密钥`

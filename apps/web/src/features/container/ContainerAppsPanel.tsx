@@ -10,6 +10,7 @@ import { CTL_FIELD, CTL_PRIMARY, CTL_SECONDARY, CTL_TOOLBAR } from '../../compon
 import { useContainerAppsStore } from '../../stores/containerAppsStore'
 import { ContainerAppEditorSheet } from './ContainerAppEditorSheet'
 import { ContainerAppWorkspaceCard } from './ContainerAppWorkspaceCard'
+import { Button } from '../../components/Button'
 
 /**
  * 容器工作区视图：随容器一起上传的配置文件（compose.yml、.env、挂载用的配置目录）
@@ -65,15 +66,15 @@ export function ContainerAppsPanel() {
           </p>
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-2">
-          <RefreshButton onPress={() => void refresh(gateway)} busy={refreshing} label="刷新工作区" formControl />
-          <button type="button" onClick={() => setCreateOpen(true)} className={CTL_PRIMARY}>
+          <RefreshButton onPress={() => void refresh(gateway)} busy={refreshing} label="刷新工作区" />
+          <Button variant="primary" type="button" onClick={() => setCreateOpen(true)} className={CTL_PRIMARY}>
             <Plus aria-hidden size={14} />
             新建工作区
-          </button>
+          </Button>
         </div>
       </div>
       {/* 清单原位更新，工具栏与已有卡片始终保留。 */}
-      {errorMessage ? <p role="alert" className="mb-3 text-xs text-danger">刷新失败：{errorMessage}。已保留上次读取结果。<button type="button" className="ml-2 underline" onClick={() => void refresh(gateway)}>重试</button></p> : null}
+      {errorMessage ? <p role="alert" className="mb-3 text-xs text-danger">刷新失败：{errorMessage}。已保留上次读取结果。<Button variant="link" type="button" className="ml-2 underline" onClick={() => void refresh(gateway)}>重试</Button></p> : null}
       <div className="relative rounded-xl" aria-busy={refreshing}>
         {apps.length === 0 ? (
           <EmptyState
@@ -84,9 +85,9 @@ export function ContainerAppsPanel() {
                 : '演示模式下这里不落盘，创建工作区只在内存里存一份文件清单。'
             }
             action={
-              <button type="button" onClick={() => setCreateOpen(true)} className={`${CTL_SECONDARY} mt-1 px-2`}>
+              <Button variant="outline" type="button" onClick={() => setCreateOpen(true)} className={`${CTL_SECONDARY} mt-1 px-2`}>
                 新建工作区
-              </button>
+              </Button>
             }
           />
         ) : (
@@ -150,14 +151,14 @@ function CreateAppDialog({ onClose }: { onClose: () => void }) {
         >
           <div className="flex items-center justify-between gap-3">
             <Dialog.Title className="text-sm font-medium">新建工作区</Dialog.Title>
-            <button
+            <Button variant="ghost" size="icon"
               type="button"
               onClick={onClose}
               aria-label="关闭弹窗"
               className="inline-flex size-7 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg"
             >
               <X aria-hidden size={15} />
-            </button>
+            </Button>
           </div>
           <p id="create-app-description" className="mt-1.5 text-xs text-fg-muted">
             标识会直接作为目录名，只能用小写字母、数字、下划线和连字符；建好后不能改名。
@@ -209,13 +210,13 @@ function CreateAppDialog({ onClose }: { onClose: () => void }) {
             ) : null}
           </div>
           <div className="mt-4 flex justify-end gap-2">
-            <button type="button" onClick={onClose} className={`${CTL_SECONDARY} px-3`}>
+            <Button variant="outline" type="button" onClick={onClose} className={`${CTL_SECONDARY} px-3`}>
               取消
-            </button>
-            <button type="button" onClick={submit} disabled={creating} className={`${CTL_PRIMARY} gap-1.5 px-3`}>
+            </Button>
+            <Button variant="primary" type="button" onClick={submit} disabled={creating} className={`${CTL_PRIMARY} gap-1.5 px-3`}>
               {creating ? <Loader2 aria-hidden size={13} className="animate-spin" /> : null}
               {creating ? '创建中…' : '创建工作区'}
-            </button>
+            </Button>
           </div>
         </Dialog.Content>
       </Dialog.Portal>

@@ -6,6 +6,7 @@ import { RefreshButton } from '../../components/RefreshState'
 import { useClipboardCopy } from '../../components/CopyButton'
 import type { ComposeCheckState } from '../../stores/containerAppsStore'
 import { useFeedbackMessage } from '../../components/useFeedbackMessage'
+import { Button } from '../../components/Button'
 
 /**
  * compose 引用路径自检结果。
@@ -51,7 +52,7 @@ function ReferenceRow({ reference }: { reference: ComposeReference }) {
         <code className="min-w-0 flex-1 truncate font-mono text-xs text-fg-subtle" title={absolute}>
           {absolute}
         </code>
-        <button
+        <Button variant="ghost" size="icon"
           type="button"
           onClick={() => void copy(absolute, '引用真实路径')}
           title={copied ? '已复制该引用的真实绝对路径' : '复制该引用的真实绝对路径'}
@@ -59,7 +60,7 @@ function ReferenceRow({ reference }: { reference: ComposeReference }) {
           className="icon-button inline-flex size-6 shrink-0 items-center justify-center text-fg-subtle transition-colors hover:bg-surface-raised hover:text-fg"
         >
           {copied ? <Check aria-hidden size={13} className="text-success" /> : <Copy aria-hidden size={13} />}
-        </button>
+        </Button>
       </div>
     </li>
   )
@@ -89,10 +90,8 @@ export function ComposeCheckPanel({
         </h3>
         <RefreshButton
           label="重新自检"
-          variant="ghost"
           onPress={onRerun}
           busy={check.loading}
-          className="size-6"
         />
         <IconButton label="收起自检结果" variant="ghost" tone="neutral" onPress={onClose}>
           <X aria-hidden size={14} />

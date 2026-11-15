@@ -13,6 +13,7 @@ import {
   useTerminalsStore,
 } from '../../stores/terminalsStore'
 import { TerminalTabBar } from './TerminalTabBar'
+import { Button } from '../../components/Button'
 
 /**
  * 本机多标签终端：进页自动开一条会话，命令经终端适配层送出——mock 运行时在
@@ -54,13 +55,13 @@ export function TerminalPage() {
             title="还没有终端会话"
             description={hostTerminalEmptyDescription()}
             action={
-              <button
+              <Button variant="outline"
                 type="button"
                 onClick={() => void openSession(gateway)}
                 className="mt-1 rounded-lg border border-control-line bg-surface-raised px-2 py-1 text-xs text-fg"
               >
                 新建终端
-              </button>
+              </Button>
             }
           />
         </div>

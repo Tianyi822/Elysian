@@ -7,6 +7,7 @@ import { IconButton } from '../../components/IconButton'
 import { CTL_SECONDARY } from '../../components/formControl'
 import { useContainerAppsStore } from '../../stores/containerAppsStore'
 import { useFeedbackMessage } from '../../components/useFeedbackMessage'
+import { Button } from '../../components/Button'
 
 /**
  * 构建日志抽屉：打开即从 0 拉全量；任务仍活跃时每 2 秒按已读字节增量续读。
@@ -86,13 +87,13 @@ export function ContainerBuildLogsSheet({
               <div role="alert" className="flex flex-col items-center gap-2 py-10 text-center">
                 <TriangleAlert aria-hidden size={18} className="text-danger" />
                 <p className="text-sm text-fg">{logs.error}</p>
-                <button
+                <Button variant="outline"
                   type="button"
                   onClick={() => void openBuildLogs(gateway, slug, taskId)}
                   className={`${CTL_SECONDARY} px-2`}
                 >
                   重试
-                </button>
+                </Button>
               </div>
             ) : logs.lines.length === 0 ? (
               <p className="py-10 text-center text-sm text-fg-muted">还没有日志输出。</p>
@@ -114,9 +115,9 @@ export function ContainerBuildLogsSheet({
             <p className="text-xs text-fg-subtle tabular-nums">
               {logs ? `已读取 ${logs.next} / ${logs.total} 字节` : ''}
             </p>
-            <button type="button" onClick={requestClose} className={`${CTL_SECONDARY} px-3`}>
+            <Button variant="outline" type="button" onClick={requestClose} className={`${CTL_SECONDARY} px-3`}>
               关闭
-            </button>
+            </Button>
           </div>
         </Dialog.Content>
       </Dialog.Portal>

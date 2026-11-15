@@ -14,6 +14,7 @@ import {
   containerStopConfirmDescription,
 } from './containerCopy'
 import { useContainersStore } from '../../stores/containersStore'
+import { Button } from '../../components/Button'
 
 const STATUS_TONE: Record<Container['status'], StatusTone> = {
   running: 'success',
@@ -40,10 +41,6 @@ function confirmCopy(action: 'stop' | 'restart', name: string) {
         ? containerStopConfirmDescription(docker)
         : containerRestartConfirmDescription(docker),
     confirmLabel: action === 'stop' ? '确认停止' : '确认重启',
-    confirmClass:
-      action === 'stop'
-        ? 'border-danger/50 bg-danger/10 text-danger hover:bg-danger/20'
-        : 'border-warning/50 bg-warning/10 text-warning hover:bg-warning/20',
   }
 }
 
@@ -148,7 +145,7 @@ export function ContainerCard({ container }: { container: Container }) {
       </div>
 
       <div className="mt-auto flex flex-wrap items-center gap-2">
-        <button
+        <Button variant="outline"
           type="button"
           className={CTL_CARD_ACTION}
           disabled={container.status !== 'running'}
@@ -157,13 +154,13 @@ export function ContainerCard({ container }: { container: Container }) {
         >
           <TerminalIcon aria-hidden size={13} />
           终端
-        </button>
-        <button type="button" className={CTL_CARD_ACTION} onClick={() => openDetail(container.id)}>
+        </Button>
+        <Button variant="outline" type="button" className={CTL_CARD_ACTION} onClick={() => openDetail(container.id)}>
           <Info aria-hidden size={13} />
           详情
-        </button>
+        </Button>
         {container.status === 'stopped' ? (
-          <button
+          <Button variant="outline"
             type="button"
             className={CTL_CARD_ACTION}
             disabled={actionsDisabled}
@@ -172,9 +169,9 @@ export function ContainerCard({ container }: { container: Container }) {
           >
             <Play aria-hidden size={13} />
             启动
-          </button>
+          </Button>
         ) : (
-          <button
+          <Button variant="outline"
             type="button"
             className={CTL_CARD_ACTION}
             disabled={actionsDisabled}
@@ -183,9 +180,9 @@ export function ContainerCard({ container }: { container: Container }) {
           >
             <Square aria-hidden size={13} />
             停止
-          </button>
+          </Button>
         )}
-        <button
+        <Button variant="outline"
           type="button"
           className={CTL_CARD_ACTION}
           disabled={actionsDisabled || container.status === 'stopped'}
@@ -194,7 +191,7 @@ export function ContainerCard({ container }: { container: Container }) {
         >
           <RotateCw aria-hidden size={13} />
           重启
-        </button>
+        </Button>
       </div>
 
       {confirmAction ? (
@@ -217,24 +214,24 @@ export function ContainerCard({ container }: { container: Container }) {
                 {confirmCopy(confirmAction, container.name).description}
               </p>
               <div className="mt-4 flex justify-end gap-2">
-                <button
+                <Button variant="outline"
                   type="button"
                   onClick={() => setConfirmAction(null)}
                   className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted transition-colors hover:text-fg"
                 >
                   取消
-                </button>
-                <button
+                </Button>
+                <Button variant={confirmAction === 'stop' ? 'destructive' : 'warning'}
                   type="button"
                   onClick={() => {
                     const action = confirmAction
                     setConfirmAction(null)
                     void runAction(gateway, container.id, action)
                   }}
-                  className={`rounded-lg border px-3 py-1.5 text-xs font-medium transition-colors ${confirmCopy(confirmAction, container.name).confirmClass}`}
+                  className="px-3 text-xs"
                 >
                   {confirmCopy(confirmAction, container.name).confirmLabel}
-                </button>
+                </Button>
               </div>
             </Dialog.Content>
           </Dialog.Portal>

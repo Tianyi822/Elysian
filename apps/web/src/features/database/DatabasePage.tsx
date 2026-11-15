@@ -36,6 +36,7 @@ import { DatabaseCreateDialog } from './DatabaseCreateDialog'
 import { ContainerDetailSheet } from '../container/ContainerDetailSheet'
 import { useFeedbackMessage } from '../../components/useFeedbackMessage'
 import { useMessageStore } from '../../stores/messageStore'
+import { Button } from '../../components/Button'
 
 const STATUS_TONE: Record<DatabaseStatus, StatusTone> = {
   running: 'success',
@@ -117,14 +118,14 @@ export function DatabasePage() {
   return (
     <>
       <section aria-label="数据库实例" className="mb-6">
-        {errorMessage ? <p role="alert" className="mb-3 text-xs text-danger">刷新失败：{errorMessage}。已保留上次读取结果。<button type="button" className="ml-2 underline" onClick={() => void refresh(gateway, true)}>重试</button></p> : null}
+        {errorMessage ? <p role="alert" className="mb-3 text-xs text-danger">刷新失败：{errorMessage}。已保留上次读取结果。<Button variant="link" type="button" className="ml-2 underline" onClick={() => void refresh(gateway, true)}>重试</Button></p> : null}
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-base font-semibold">{engine} 实例</h2>
           <div className={`${CTL_TOOLBAR} flex flex-wrap items-center gap-2`}>
-            <RefreshButton onPress={() => void refresh(gateway, true)} busy={refreshing} formControl />
-            <button type="button" onClick={openCreate} className={CTL_PRIMARY}>
+            <RefreshButton onPress={() => void refresh(gateway, true)} busy={refreshing} />
+            <Button variant="primary" type="button" onClick={openCreate} className={CTL_PRIMARY}>
               添加数据库
-            </button>
+            </Button>
           </div>
         </div>
         {filtered.length === 0 ? (
@@ -236,7 +237,7 @@ function DatabaseCard({
       </div>
       {view.kind === 'file' ? (
         /* 文件型：来源是一个本地 .db 文件，没有容器详情可看；点击把路径复制走。 */
-        <button
+        <Button unstyled
           type="button"
           onClick={() => void copyFilePath(view.filePath, '文件路径')}
           title="点击复制文件路径"
@@ -255,9 +256,9 @@ function DatabaseCard({
           <span className="hidden shrink-0 tabular-nums text-fg-subtle @xs:inline">
             {formatFileSize(view.fileSizeMb)}
           </span>
-        </button>
+        </Button>
       ) : (
-        <button
+        <Button unstyled
           type="button"
           onClick={onJump}
           disabled={view.missingContainer}
@@ -278,7 +279,7 @@ function DatabaseCard({
               <ChevronRight aria-hidden size={14} className="shrink-0 text-fg-subtle" />
             </>
           )}
-        </button>
+        </Button>
       )}
 
       {/* 指标格随卡片实际宽度分栏：三列布局下卡片窄、指标竖排，宽卡才三格横排（容器查询而非视口断点）。 */}
@@ -311,7 +312,7 @@ function DatabaseCard({
         )}
       </div>
       {database.metricsError ? <p role="status" className="text-xs text-warning">{database.emptyContainer ? database.metricsError : `状态核对失败：${database.metricsError}`}</p> : null}
-      {database.needsAttention ? <div className="rounded-lg border border-warning/40 p-2 text-xs text-warning"><p>{database.engine === 'SQLite' ? 'SQLite 文件不可用或操作尚未完成。可重新核对；确认放弃时可清理登记及残留文件。' : '创建或接管尚未完成。修复容器和账号后可重新核对；不再接管时可移除待处理登记。'}</p><div className="mt-2 flex gap-2"><button type="button" onClick={() => void performAction(() => gateway.databases.reconcile?.(database.id), `数据库 ${database.name} 已重新核对`, 'refresh')} className="rounded border border-line px-2 py-1">重新核对</button>{database.source === 'adopted' || database.engine === 'SQLite' ? <button type="button" onClick={() => void performAction(() => gateway.databases.forget?.(database.id), `已清理数据库 ${database.name} 的待处理登记`, 'refresh')} className="rounded border border-line px-2 py-1">{database.engine === 'SQLite' ? '清理待处理文件' : '移除待处理登记'}</button> : null}</div></div> : null}
+      {database.needsAttention ? <div className="rounded-lg border border-warning/40 p-2 text-xs text-warning"><p>{database.engine === 'SQLite' ? 'SQLite 文件不可用或操作尚未完成。可重新核对；确认放弃时可清理登记及残留文件。' : '创建或接管尚未完成。修复容器和账号后可重新核对；不再接管时可移除待处理登记。'}</p><div className="mt-2 flex gap-2"><Button variant="outline" type="button" onClick={() => void performAction(() => gateway.databases.reconcile?.(database.id), `数据库 ${database.name} 已重新核对`, 'refresh')} className="rounded border border-line px-2 py-1">重新核对</Button>{database.source === 'adopted' || database.engine === 'SQLite' ? <Button variant="outline" type="button" onClick={() => void performAction(() => gateway.databases.forget?.(database.id), `已清理数据库 ${database.name} 的待处理登记`, 'refresh')} className="rounded border border-line px-2 py-1">{database.engine === 'SQLite' ? '清理待处理文件' : '移除待处理登记'}</Button> : null}</div></div> : null}
 
       {/* 动作行沉底：卡片因同列内容高度不齐被拉伸时，操作区贴住卡底。 */}
       <div className="mt-auto flex flex-wrap items-center gap-2 border-t border-line pt-3">
@@ -319,13 +320,13 @@ function DatabaseCard({
             服务型凭证只在用户点击复制时经 reveal 端点按需读取，列表响应没有明文渲染位。 */}
         {database.hasCredentials && gateway.databases.reveal ? (
           <>
-            <button type="button" onClick={() => void revealAndCopy('username')} title="从服务端读取并复制普通账号" className="rounded border border-line px-2 py-1 text-xs">复制用户名</button>
-            <button type="button" onClick={() => void revealAndCopy('password')} title="从服务端读取并复制普通账号密码" className="rounded border border-line px-2 py-1 text-xs">复制密码</button>
+            <Button variant="outline" type="button" onClick={() => void revealAndCopy('username')} title="从服务端读取并复制普通账号" className="rounded border border-line px-2 py-1 text-xs">复制用户名</Button>
+            <Button variant="outline" type="button" onClick={() => void revealAndCopy('password')} title="从服务端读取并复制普通账号密码" className="rounded border border-line px-2 py-1 text-xs">复制密码</Button>
           </>
         ) : null}
         <div className="ml-auto flex shrink-0 items-center gap-2">
-          {database.engine === 'SQLite' && database.source === 'managed' && database.status === 'running' && gateway.databases.downloadSqlite ? <button type="button" onClick={() => void performAction(() => gateway.databases.downloadSqlite?.(database.id), `已发起数据库 ${database.name} 的快照下载`)} title="下载一致性 SQLite 快照" className="action-button gap-1.5 border border-line px-3 py-1.5 text-xs"><Download aria-hidden size={13} />下载快照</button> : null}
-          {!database.emptyContainer ? <button
+          {database.engine === 'SQLite' && database.source === 'managed' && database.status === 'running' && gateway.databases.downloadSqlite ? <Button variant="outline" type="button" onClick={() => void performAction(() => gateway.databases.downloadSqlite?.(database.id), `已发起数据库 ${database.name} 的快照下载`)} title="下载一致性 SQLite 快照" className="action-button gap-1.5 border border-line px-3 py-1.5 text-xs"><Download aria-hidden size={13} />下载快照</Button> : null}
+          {!database.emptyContainer ? <Button variant="destructive"
             type="button"
             onClick={() => setConfirmRemove(true)}
             disabled={removing}
@@ -333,9 +334,9 @@ function DatabaseCard({
           >
             <Trash2 aria-hidden size={13} />
             {database.engine === 'Redis' ? '清空 DB 0' : '删除数据库'}
-          </button> : null}
-          {database.engine !== 'SQLite' && database.source === 'managed' && gateway.databases.removeContainer ? <button type="button" onClick={() => setConfirmRemoveContainer(true)} className="rounded-lg border border-danger/40 px-2 py-1.5 text-xs text-danger">删除容器及数据</button> : null}
-          {!database.emptyContainer ? <button
+          </Button> : null}
+          {database.engine !== 'SQLite' && database.source === 'managed' && gateway.databases.removeContainer ? <Button variant="destructive" type="button" onClick={() => setConfirmRemoveContainer(true)} className="rounded-lg border border-danger/40 px-2 py-1.5 text-xs text-danger">删除容器及数据</Button> : null}
+          {!database.emptyContainer ? <Button variant="outline"
             type="button"
             onClick={onConnect}
             disabled={removing || database.emptyContainer || database.status === 'stopped'}
@@ -343,7 +344,7 @@ function DatabaseCard({
           >
             <Cable aria-hidden size={13} />
             连接
-          </button> : null}
+          </Button> : null}
         </div>
       </div>
       {confirmRemove ? (
@@ -370,14 +371,14 @@ function DatabaseCard({
                     : '将删除目标逻辑库，容器和持久卷保留。此操作无法撤销。'}
               </p>
               <div className="mt-4 flex justify-end gap-2">
-                <button
+                <Button variant="outline"
                   type="button"
                   onClick={() => setConfirmRemove(false)}
                   className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted transition-colors hover:text-fg"
                 >
                   取消
-                </button>
-                <button
+                </Button>
+                <Button variant="destructive"
                   type="button"
                   onClick={() => {
                     setConfirmRemove(false)
@@ -386,13 +387,13 @@ function DatabaseCard({
                   className="rounded-lg border border-danger/50 bg-danger/10 px-3 py-1.5 text-xs font-medium text-danger transition-colors hover:bg-danger/20"
                 >
                   确认删除
-                </button>
+                </Button>
               </div>
             </Dialog.Content>
           </Dialog.Portal>
         </Dialog.Root>
       ) : null}
-      {confirmRemoveContainer ? <Dialog.Root open onOpenChange={(next) => { if (!next) setConfirmRemoveContainer(false) }}><Dialog.Portal><Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" /><Dialog.Content aria-describedby={undefined} className="fixed left-1/2 top-1/2 z-[61] w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 panel-surface p-4 shadow-xl"><Dialog.Title className="text-sm font-semibold">删除容器及全部数据？</Dialog.Title><p className="mt-2 text-xs text-danger">将删除面板创建的数据库容器及其专属持久卷，全部数据无法恢复。容器内有其他数据库时服务端会拒绝。</p><div className="mt-4 flex justify-end gap-2"><button type="button" onClick={() => setConfirmRemoveContainer(false)} className="rounded border border-line px-3 py-1.5 text-xs">取消</button><button type="button" onClick={() => { setConfirmRemoveContainer(false); void performAction(() => gateway.databases.removeContainer?.(database.id), `已删除数据库 ${database.name} 的容器及数据`, 'load') }} className="rounded border border-danger px-3 py-1.5 text-xs text-danger">确认删除容器及数据</button></div></Dialog.Content></Dialog.Portal></Dialog.Root> : null}
+      {confirmRemoveContainer ? <Dialog.Root open onOpenChange={(next) => { if (!next) setConfirmRemoveContainer(false) }}><Dialog.Portal><Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" /><Dialog.Content aria-describedby={undefined} className="fixed left-1/2 top-1/2 z-[61] w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 panel-surface p-4 shadow-xl"><Dialog.Title className="text-sm font-semibold">删除容器及全部数据？</Dialog.Title><p className="mt-2 text-xs text-danger">将删除面板创建的数据库容器及其专属持久卷，全部数据无法恢复。容器内有其他数据库时服务端会拒绝。</p><div className="mt-4 flex justify-end gap-2"><Button variant="outline" type="button" onClick={() => setConfirmRemoveContainer(false)} className="rounded border border-line px-3 py-1.5 text-xs">取消</Button><Button variant="destructive" type="button" onClick={() => { setConfirmRemoveContainer(false); void performAction(() => gateway.databases.removeContainer?.(database.id), `已删除数据库 ${database.name} 的容器及数据`, 'load') }} className="rounded border border-danger px-3 py-1.5 text-xs text-danger">确认删除容器及数据</Button></div></Dialog.Content></Dialog.Portal></Dialog.Root> : null}
     </article>
   )
 }

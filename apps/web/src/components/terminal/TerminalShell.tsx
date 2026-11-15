@@ -1,5 +1,6 @@
 import * as Dialog from '@radix-ui/react-dialog'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
+import { Button } from '../Button'
 
 /** 弹窗只管理布局和关闭确认；终端内容由第三方组件持有。 */
 export type TerminalShellProps = {
@@ -52,20 +53,20 @@ export function ConfirmCloseDialog({
           <Dialog.Title className="text-sm font-semibold">{title}</Dialog.Title>
           <p className="mt-1.5 text-xs text-fg-muted">{description}</p>
           <div className="mt-4 flex justify-end gap-2">
-            <button
+            <Button variant="outline"
               type="button"
               onClick={onCancel}
               className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted hover:text-fg"
             >
               {cancelLabel}
-            </button>
-            <button
+            </Button>
+            <Button variant="destructive"
               type="button"
               onClick={onConfirm}
               className="rounded-lg border border-danger/50 bg-danger/10 px-3 py-1.5 text-xs font-medium text-danger"
             >
               {acceptLabel}
-            </button>
+            </Button>
           </div>
         </Dialog.Content>
       </Dialog.Portal>
@@ -100,9 +101,9 @@ export function TerminalShell({ title, banner, subject, children, onClose, inter
               <span className="shrink-0 rounded bg-warning/15 px-1.5 py-0.5 font-medium text-warning">{banner}</span>
               <span className="truncate text-fg-muted">{subject}</span>
             </div>
-            <button ref={closeRef} type="button" onClick={() => setConfirmOpen(true)} className="rounded-lg border border-line px-2 py-1 text-xs text-fg-muted transition-colors hover:text-fg">
+            <Button variant="outline" ref={closeRef} type="button" onClick={() => setConfirmOpen(true)} className="rounded-lg border border-line px-2 py-1 text-xs text-fg-muted transition-colors hover:text-fg">
               {labels.close}
-            </button>
+            </Button>
           </div>
           {children}
         </Dialog.Content>

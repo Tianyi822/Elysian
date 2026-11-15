@@ -3,6 +3,7 @@ import * as Tooltip from '@radix-ui/react-tooltip'
 import type { ReactNode } from 'react'
 import { CopyButton } from '../../components/CopyButton'
 import { Maximize2 } from '../../components/icons'
+import { Button } from '../../components/Button'
 
 /**
  * 日志正文单元格：正文单行省略，鼠标悬停单元格或键盘聚焦时右侧浮现展开图标，
@@ -35,13 +36,13 @@ export function LogMessageCell({
           <Tooltip.Root>
             <Tooltip.Trigger asChild>
               <Popover.Trigger asChild>
-                <button
+                <Button variant="ghost" size="icon"
                   type="button"
                   aria-label={triggerLabel}
                   className="inline-flex size-6 shrink-0 items-center justify-center rounded text-fg-subtle opacity-0 transition-opacity hover:bg-surface-raised hover:text-fg focus-visible:opacity-100 group-hover/cell:opacity-100"
                 >
                   <Maximize2 aria-hidden size={14} />
-                </button>
+                </Button>
               </Popover.Trigger>
             </Tooltip.Trigger>
             <Tooltip.Portal>

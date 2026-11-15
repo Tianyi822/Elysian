@@ -7,6 +7,7 @@ import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { X } from '../../components/icons'
 import { useFirewallStore } from '../../stores/firewallStore'
 import { FIREWALL_INPUT_CLASS, SegmentedControl } from './firewallFormParts'
+import { Button } from '../../components/Button'
 
 /**
  * 添加/修改 IP 规则弹窗：策略用分段按钮，来源（IP 或网段）与备注用输入框。
@@ -75,13 +76,13 @@ export function FirewallIpRuleDialog() {
               </span>
             </div>
             <Dialog.Close asChild>
-              <button
+              <Button variant="ghost" size="icon"
                 type="button"
                 aria-label="关闭弹窗"
                 className="inline-flex size-7 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg"
               >
                 <X aria-hidden size={15} />
-              </button>
+              </Button>
             </Dialog.Close>
           </div>
 
@@ -130,21 +131,21 @@ export function FirewallIpRuleDialog() {
               <p className="text-xs text-fg-subtle">只改演示内存，不触碰真实防火墙。</p>
             ) : null}
             <div className="ml-auto flex shrink-0 gap-2 whitespace-nowrap">
-              <button
+              <Button variant="outline"
                 type="button"
                 onClick={() => closeDialog()}
                 className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted transition-colors hover:text-fg"
               >
                 取消
-              </button>
-              <button
+              </Button>
+              <Button variant="outline"
                 type="button"
                 onClick={submit}
                 disabled={saving}
                 className="rounded-lg border border-control-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:opacity-50"
               >
                 {isNew ? '添加规则' : '保存修改'}
-              </button>
+              </Button>
             </div>
           </div>
         </Dialog.Content>

@@ -1,13 +1,14 @@
 import { useEffect, useState } from 'react'
-import { Download, Search } from '../../components/icons'
+import { Download } from '../../components/icons'
+import { SearchInput } from '../../components/SearchInput'
 import type { ContainerStatus } from '@elysian/contracts'
 import { CONTAINER_STATUS_LABELS } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
 import { RefreshButton } from '../../components/RefreshState'
-import { CTL_FIELD, CTL_TOOLBAR } from '../../components/formControl'
-import { Button } from '../../components/easyui/Button'
+import { CTL_TOOLBAR } from '../../components/formControl'
+import { Button } from '../../components/Button'
 import { ChipGroup } from '../../components/ChipGroup'
 import { DockerDependencyEntry } from './DockerDependencyEntry'
 import { CONTAINER_LIVE_RECONNECT_MESSAGE } from './containerCopy'
@@ -91,7 +92,7 @@ export function ContainerPage() {
 
   return (
     <div className="mb-6">
-      {errorMessage ? <p role="alert" className="mb-3 text-xs text-danger">刷新失败：{errorMessage}。已保留上次读取结果。<button type="button" className="ml-2 underline" onClick={() => void load(gateway)}>重试</button></p> : null}
+      {errorMessage ? <p role="alert" className="mb-3 text-xs text-danger">刷新失败：{errorMessage}。已保留上次读取结果。<Button variant="link" type="button" className="ml-2 underline" onClick={() => void load(gateway)}>重试</Button></p> : null}
       {liveStatus === 'connecting' ? (
         <p
           role="status"
@@ -106,19 +107,13 @@ export function ContainerPage() {
             className="basis-full items-start lg:basis-auto" />
           {/* 窄屏两行：筛选 chip 一行，搜索框与创建容器一行（搜索撑开）；lg 起回到一行三段。 */}
           <div className="relative min-w-32 flex-1 lg:w-56 lg:flex-none">
-            <Search
-              aria-hidden="true"
-              className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-fg-subtle"
-            />
-            <label htmlFor="container-search" className="sr-only">
-              搜索容器名称
-            </label>
-            <input
+            <SearchInput
               id="container-search"
+              label="搜索容器名称"
               value={search}
-              onChange={(event) => setSearch(event.target.value)}
+              onChange={setSearch}
               placeholder="搜索容器名称"
-              className={`${CTL_FIELD} rounded-full pl-8`}
+              className="w-full"
             />
           </div>
           <Button
@@ -141,7 +136,6 @@ export function ContainerPage() {
                 onPress={() => void refreshImages(gateway)}
                 busy={imageRefreshStatus === 'loading'}
                 label="刷新镜像"
-                formControl
               />
               <Button type="button" onClick={() => setPullOpen(true)} className="h-9 text-xs" leftIcon={<Download aria-hidden size={14} />}>
                 拉取镜像

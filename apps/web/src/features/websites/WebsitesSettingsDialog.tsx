@@ -4,6 +4,7 @@ import { useGateway } from '../../adapters/GatewayProvider'
 import { X } from '../../components/icons'
 import { FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
 import { useWebsitesStore } from '../../stores/websitesStore'
+import { Button } from '../../components/Button'
 
 /**
  * 项目设置弹窗：只改备注与到期时间，名称与根目录不动。
@@ -50,13 +51,13 @@ export function WebsitesSettingsDialog() {
           <div className="flex items-center justify-between gap-3 border-b border-line px-4 py-2.5">
             <span className="text-sm font-medium text-fg">设置项目 {settingsTarget.name}</span>
             <Dialog.Close asChild>
-              <button
+              <Button variant="ghost" size="icon"
                 type="button"
                 aria-label="关闭弹窗"
                 className="inline-flex size-7 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg"
               >
                 <X aria-hidden size={15} />
-              </button>
+              </Button>
             </Dialog.Close>
           </div>
 
@@ -93,21 +94,21 @@ export function WebsitesSettingsDialog() {
           {error && <p role="alert" className="px-4 pb-3 text-xs text-danger">{error}</p>}
           <div className="flex items-center justify-end gap-2 border-t border-line px-4 py-2.5">
             <div className="flex gap-2">
-              <button
+              <Button variant="outline"
                 type="button"
                 onClick={() => closeSettings()}
                 className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted transition-colors hover:text-fg"
               >
                 取消
-              </button>
-              <button
+              </Button>
+              <Button variant="primary"
                 type="button"
                 onClick={submit}
                 disabled={saving}
                 className="rounded-lg border border-control-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:opacity-50"
               >
                 保存修改
-              </button>
+              </Button>
             </div>
           </div>
         </Dialog.Content>

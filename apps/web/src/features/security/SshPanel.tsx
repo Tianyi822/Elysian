@@ -12,12 +12,13 @@ import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { SshRefreshButton, SshRefreshError } from './SshRefresh'
 import { IconButton } from '../../components/IconButton'
+import { Pagination } from '../../components/Pagination'
 import { StatusTag } from '../../components/StatusTag'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
 import { formatDateTime, formatLoginIp, formatLoginTime } from '../../components/format'
 import { RefreshCw, TriangleAlert } from '../../components/icons'
 import { SSH_PAGE_SIZE, useSshStore } from '../../stores/sshStore'
-import { ACTION_CLASS, INPUT_CLASS, Region, SECONDARY_ACTION_CLASS, Section, SwitchToggle, TABLE_CELL_CLASS, TABLE_CONTAINER_CLASS, TABLE_HEADER_CLASS, TablePager } from './sshCardParts'
+import { ACTION_CLASS, INPUT_CLASS, Region, SECONDARY_ACTION_CLASS, Section, SwitchToggle, TABLE_CELL_CLASS, TABLE_CONTAINER_CLASS, TABLE_HEADER_CLASS } from './sshCardParts'
 import { SshKeyCard } from './SshKeyCard'
 import { SshKeyCreateDialog } from './SshKeyCreateDialog'
 import { SshKeyDialog } from './SshKeyDialog'
@@ -25,6 +26,7 @@ import { SshKeyRemoveDialog } from './SshKeyRemoveDialog'
 import { SshKeyRevealDialog } from './SshKeyRevealDialog'
 import { PasswordStrengthBar, PasswordVisibilityButton, passwordInputClass } from './passwordFieldParts'
 import { randomSshPort, randomStrongPassword } from './sshRandom'
+import { Button } from '../../components/Button'
 
 /**
  * SSH 管理面板：四张卡排成两列瀑布，高度随内容，不互相拉平。
@@ -119,7 +121,7 @@ export function SshPanel() {
 
   return (
     <>
-      {operationError ? <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-danger/40 p-3 text-xs text-danger"><p className="min-w-0 flex-1">{operationError}</p><button type="button" className="rounded border border-line px-3 py-1.5 text-fg" onClick={() => void load(gateway)}>重新读取状态</button></div> : null}
+      {operationError ? <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-danger/40 p-3 text-xs text-danger"><p className="min-w-0 flex-1">{operationError}</p><Button variant="outline" type="button" className="rounded border border-line px-3 py-1.5 text-fg" onClick={() => void load(gateway)}>重新读取状态</Button></div> : null}
       {/* 两列瀑布：左设置右数据，列各自按内容堆叠、矮卡不被邻列拉平；
           Root 卡的密码/密钥区收起时左列自然变矮，不把数据表拉出卡内空白。 */}
       <div className="@container flex flex-col gap-4">
@@ -254,7 +256,7 @@ function SshLoginRecordsCard() {
           </tbody>
         </table>
       </div>
-      <TablePager
+      <Pagination
         label="登录记录分页"
         summary={`${loginRecords.length >= 2000 ? '最近' : '共'} ${loginRecords.length} 条登录记录`}
         page={safePage}
@@ -352,14 +354,14 @@ function ServiceCard() {
           >
             <RefreshCw aria-hidden size={14} />
           </IconButton>
-          <button
+          <Button variant="primary"
             type="button"
             onClick={() => requestPortSave()}
             disabled={savingPort}
             className={ACTION_CLASS}
           >
             保存端口
-          </button>
+          </Button>
         </div>
         <p className={`mt-3 text-xs ${portError ? 'text-danger' : 'text-fg-subtle'}`}>
           {portError ?? '当前 SSH 协议所使用的端口，默认为 22。'}
@@ -452,21 +454,21 @@ function SshPortConfirmDialog() {
           </ul>
           {operationError ? <p role="alert" className="mt-3 text-xs text-danger">{operationError}</p> : null}
           <div className="mt-4 flex justify-end gap-2">
-            <button
+            <Button variant="outline"
               type="button"
               onClick={() => cancelPortSave()}
               className={SECONDARY_ACTION_CLASS}
             >
               取消
-            </button>
-            <button
+            </Button>
+            <Button variant="primary"
               type="button"
               disabled={savingPort}
               onClick={() => void confirmPortSave(gateway)}
               className={ACTION_CLASS}
             >
               确认保存
-            </button>
+            </Button>
           </div>
         </Dialog.Content>
       </Dialog.Portal>
@@ -609,14 +611,14 @@ function RootCard() {
         {/* 外部档 prohibit-password 且全局密码已开：重设只差一步，按钮直接到位，
             不再要求用户「先关再开」开关仪式。 */}
         {rootAuth.policy === 'prohibit-password' && settings.passwordAuthEnabled ? (
-          <button
+          <Button variant="outline"
             type="button"
             onClick={() => void setLoginPolicy(gateway, 'yes')}
             disabled={savingPolicy}
             className={`${SECONDARY_ACTION_CLASS} mt-3`}
           >
             按全局登录方式重设
-          </button>
+          </Button>
         ) : null}
       </Region>
       {passwordUsable ? (
@@ -652,14 +654,14 @@ function RootCard() {
             >
               <RefreshCw aria-hidden size={14} />
             </IconButton>
-            <button
+            <Button variant="primary"
               type="button"
               onClick={() => void resetPassword(gateway)}
               disabled={resetting}
               className={ACTION_CLASS}
             >
               重置密码
-            </button>
+            </Button>
           </div>
           {strength ? (
             /* 强度内联在输入框正下：三段彩条（红黄绿逐段点亮）+ 条旁等级字，不单独占一行说明。 */
@@ -678,22 +680,22 @@ function RootCard() {
         <div className="flex flex-wrap items-center justify-between gap-x-3 gap-y-2">
           <div className="flex items-center gap-2">
             {/* 生成/重新生成同一动作：已存在时按一次，新公钥替换旧公钥，私钥只在随后的弹窗里出现一次。 */}
-            <button
+            <Button variant="primary"
               type="button"
               onClick={() => void createRootKey(gateway)}
               disabled={generatingRootKey}
               className={ACTION_CLASS}
             >
               {rootKey ? '重新生成' : '生成密钥'}
-            </button>
+            </Button>
             {rootKey ? (
-              <button
+              <Button variant="outline"
                 type="button"
                 onClick={() => openKeyView('查看 Root 密钥', rootKey)}
                 className={SECONDARY_ACTION_CLASS}
               >
                 查看密钥
-              </button>
+              </Button>
             ) : null}
           </div>
           <p className="text-xs text-fg-subtle">
@@ -747,9 +749,9 @@ function PasswordResetNoticeDialog({ onClose }: { onClose: () => void }) {
           <Dialog.Title className="text-sm font-medium text-fg">Root 密码已重置</Dialog.Title>
           <p className="mt-2 text-xs text-fg-muted">下一次 SSH 登录需要使用新密码。</p>
           <div className="mt-4 flex justify-end">
-            <button type="button" onClick={onClose} className={ACTION_CLASS}>
+            <Button variant="primary" type="button" onClick={onClose} className={ACTION_CLASS}>
               知道了
-            </button>
+            </Button>
           </div>
         </Dialog.Content>
       </Dialog.Portal>

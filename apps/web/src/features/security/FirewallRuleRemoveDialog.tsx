@@ -1,6 +1,7 @@
 import * as Dialog from '@radix-ui/react-dialog'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { useFirewallStore } from '../../stores/firewallStore'
+import { Button } from '../../components/Button'
 
 /** 删除规则的确认弹窗：取消不删，确认后按运行时从演示数据集或系统防火墙移除（端口/IP/转发三类共用）。 */
 export function FirewallRuleRemoveDialog() {
@@ -23,14 +24,14 @@ export function FirewallRuleRemoveDialog() {
         >
           <Dialog.Title className="text-sm font-semibold">确认删除{kindLabel}「{removeTarget.label}」？</Dialog.Title>
           <div className="mt-4 flex justify-end gap-2">
-            <button
+            <Button variant="outline"
               type="button"
               onClick={() => closeRemove()}
               className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted transition-colors hover:text-fg"
             >
               取消
-            </button>
-            <button
+            </Button>
+            <Button variant="destructive"
               type="button"
               disabled={removingRuleIds.includes(removeTarget.id)}
               onClick={() => {
@@ -41,7 +42,7 @@ export function FirewallRuleRemoveDialog() {
               className="rounded-lg border border-danger/50 bg-danger/10 px-3 py-1.5 text-xs font-medium text-danger transition-colors hover:bg-danger/20 disabled:opacity-50"
             >
               确认删除
-            </button>
+            </Button>
           </div>
         </Dialog.Content>
       </Dialog.Portal>

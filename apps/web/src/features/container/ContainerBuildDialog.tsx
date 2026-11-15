@@ -12,6 +12,7 @@ import { newBuildRequestId, useContainerAppsStore } from '../../stores/container
 import { isComposeFile } from '../../stores/containerAppsStore'
 import { formatWorkspaceSize } from './formatWorkspaceSize'
 import { useFeedbackMessage } from '../../components/useFeedbackMessage'
+import { Button } from '../../components/Button'
 
 /** 上下文超限的判定句：与契约警告逐字同源，前端据此在确认前禁用开始按钮。 */
 const CONTEXT_LIMIT_WARNING = '构建上下文超过上限'
@@ -146,14 +147,14 @@ export function ContainerBuildDialog({ app, onClose }: { app: ContainerApp; onCl
                 先预览构建内容，再确认提交。产物镜像统一落在 elysian/ 命名空间，不覆盖已有镜像。
               </p>
             </div>
-            <button
+            <Button variant="ghost" size="icon"
               type="button"
               onClick={requestClose}
               aria-label="关闭构建弹窗"
               className="inline-flex size-7 shrink-0 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg"
             >
               <X aria-hidden size={15} />
-            </button>
+            </Button>
           </div>
 
           {!docker ? (
@@ -337,10 +338,10 @@ export function ContainerBuildDialog({ app, onClose }: { app: ContainerApp; onCl
               {overLimit ? '构建上下文超过上限,任务将在打包阶段失败,请先精简上下文。' : '预览只读不构建；提交前还会再确认一次。'}
             </p>
             <div className="flex shrink-0 gap-2">
-              <button type="button" onClick={requestClose} className={`${CTL_SECONDARY} px-3`}>
+              <Button variant="outline" type="button" onClick={requestClose} className={`${CTL_SECONDARY} px-3`}>
                 取消
-              </button>
-              <button
+              </Button>
+              <Button variant="primary"
                 type="button"
                 onClick={runPreview}
                 disabled={state?.loading === true || (mode === 'dockerfile' ? dockerfile.trim() === '' : compose === '')}
@@ -348,15 +349,15 @@ export function ContainerBuildDialog({ app, onClose }: { app: ContainerApp; onCl
               >
                 {state?.loading ? <Loader2 aria-hidden size={13} className="animate-spin" /> : null}
                 {state?.loading ? '预览中…' : '预览构建'}
-              </button>
-              <button
+              </Button>
+              <Button variant="primary"
                 type="button"
                 onClick={() => setConfirmOpen(true)}
                 disabled={!canStart || state?.submitting === true}
                 className={`${CTL_PRIMARY} px-3`}
               >
                 开始构建
-              </button>
+              </Button>
             </div>
           </div>
         </Dialog.Content>
@@ -450,10 +451,10 @@ function ConfirmBuildDialog({
             <p className="text-fg-subtle">构建为异步任务，提交后可在「构建任务」区查看进度与日志。</p>
           </div>
           <div className="mt-4 flex justify-end gap-2">
-            <button type="button" onClick={onCancel} className={`${CTL_SECONDARY} px-3`}>
+            <Button variant="outline" type="button" onClick={onCancel} className={`${CTL_SECONDARY} px-3`}>
               取消
-            </button>
-            <button
+            </Button>
+            <Button variant="primary"
               type="button"
               onClick={onConfirm}
               disabled={submitting}
@@ -461,7 +462,7 @@ function ConfirmBuildDialog({
             >
               {submitting ? <Loader2 aria-hidden size={13} className="animate-spin" /> : null}
               {submitting ? '提交中…' : '确认并开始构建'}
-            </button>
+            </Button>
           </div>
         </Dialog.Content>
       </Dialog.Portal>

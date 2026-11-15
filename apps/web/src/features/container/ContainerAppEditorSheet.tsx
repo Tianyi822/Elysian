@@ -10,6 +10,7 @@ import { CTL_DANGER, CTL_PRIMARY, CTL_SECONDARY } from '../../components/formCon
 import { useContainerAppsStore } from '../../stores/containerAppsStore'
 import { isComposeFile } from '../../stores/containerAppsStore'
 import { useFeedbackMessage } from '../../components/useFeedbackMessage'
+import { Button } from '../../components/Button'
 
 /** 编辑抽屉的读取状态；失败要在抽屉里说清楚并能重试，不能只留一个空框。 */
 type Loaded = { kind: 'loading' } | { kind: 'error'; message: string } | { kind: 'ready'; content: string }
@@ -134,10 +135,10 @@ export function ContainerAppEditorSheet({
             <div role="alert" className="flex items-center gap-2 border-b border-line bg-warning/10 px-4 py-2 text-xs text-warning">
               <TriangleAlert aria-hidden size={13} className="shrink-0" />
               <span className="min-w-0 flex-1">有未保存的修改，关闭后这部分改动会丢失。</span>
-              <button type="button" onClick={() => setDiscardOpen(false)} className={CTL_SECONDARY}>
+              <Button variant="outline" type="button" onClick={() => setDiscardOpen(false)} className={CTL_SECONDARY}>
                 继续编辑
-              </button>
-              <button
+              </Button>
+              <Button variant="destructive"
                 type="button"
                 onClick={() => {
                   setDiscardOpen(false)
@@ -146,7 +147,7 @@ export function ContainerAppEditorSheet({
                 className={CTL_DANGER}
               >
                 放弃修改
-              </button>
+              </Button>
             </div>
           ) : null}
 
@@ -160,9 +161,9 @@ export function ContainerAppEditorSheet({
               <div role="alert" className="flex flex-col items-center gap-2 py-10 text-center">
                 <TriangleAlert aria-hidden size={18} className="text-danger" />
                 <p className="text-sm text-fg">{loaded.message}</p>
-                <button type="button" onClick={() => setAttempt((n) => n + 1)} className={`${CTL_SECONDARY} px-2`}>
+                <Button variant="outline" type="button" onClick={() => setAttempt((n) => n + 1)} className={`${CTL_SECONDARY} px-2`}>
                   重试
-                </button>
+                </Button>
               </div>
             ) : (
               <>
@@ -185,10 +186,10 @@ export function ContainerAppEditorSheet({
               {dirty ? '有未保存的修改。' : '内容与磁盘一致。'}
             </p>
             <div className="flex shrink-0 gap-2">
-              <button type="button" onClick={requestClose} className={`${CTL_SECONDARY} px-3`}>
+              <Button variant="outline" type="button" onClick={requestClose} className={`${CTL_SECONDARY} px-3`}>
                 关闭
-              </button>
-              <button
+              </Button>
+              <Button variant="primary"
                 type="button"
                 disabled={!dirty || saving || loaded.kind !== 'ready'}
                 onClick={submit}
@@ -196,7 +197,7 @@ export function ContainerAppEditorSheet({
               >
                 {saving ? <Loader2 aria-hidden size={13} className="animate-spin" /> : <Check aria-hidden size={13} />}
                 {saving ? '保存中…' : '保存'}
-              </button>
+              </Button>
             </div>
           </div>
         </Dialog.Content>

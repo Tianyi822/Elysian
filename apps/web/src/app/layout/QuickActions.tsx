@@ -8,6 +8,7 @@ import { useGateway } from '../../adapters/GatewayProvider'
 import { IconButton } from '../../components/IconButton'
 import { useSessionStore } from '../../stores/sessionStore'
 import { useTheme } from '../theme/ThemeProvider'
+import { Button } from '../../components/Button'
 
 /** 展开态的一行动作：文字常驻，所以不再叠一层悬停提示。 */
 function ActionItem({
@@ -25,7 +26,7 @@ function ActionItem({
   return (
     /* 按钮外壳放在行容器上：主操作与行尾图标视觉上同属一枚控件，点击区域各自独立。 */
     <div className="flex min-h-10 w-full items-center gap-1 rounded-lg py-2 pl-3 pr-1.5 text-nav-muted transition-colors hover:bg-nav-hover hover:text-nav-fg">
-      <button
+      <Button unstyled
         type="button"
         onClick={onClick}
         className="flex min-w-0 flex-1 items-center gap-3 text-left"
@@ -34,7 +35,7 @@ function ActionItem({
           <Icon aria-hidden size={17} />
         </span>
         <span className="min-w-0 truncate text-sm font-medium">{label}</span>
-      </button>
+      </Button>
       {trailing}
     </div>
   )
@@ -81,13 +82,13 @@ function CollapsedTrigger({
 }) {
   const [open, setOpen] = useState(false)
   const trigger = (
-    <button
+    <Button unstyled
       type="button"
       aria-label={label}
       className="flex min-h-10 w-10 items-center justify-center rounded-lg text-nav-muted transition-colors hover:bg-nav-hover hover:text-nav-fg"
     >
       {children}
-    </button>
+    </Button>
   )
 
   if (actions.length === 0) {
@@ -122,7 +123,7 @@ function CollapsedTrigger({
         >
           <div className="flex flex-col gap-0.5">
             {actions.map((action) => (
-              <button
+              <Button unstyled
                 key={action.label}
                 type="button"
                 onClick={() => {
@@ -133,7 +134,7 @@ function CollapsedTrigger({
               >
                 <action.icon aria-hidden size={15} className="shrink-0" />
                 <span className="min-w-0 truncate">{action.label}</span>
-              </button>
+              </Button>
             ))}
           </div>
         </Popover.Content>

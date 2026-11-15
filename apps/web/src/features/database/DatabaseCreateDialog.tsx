@@ -17,6 +17,7 @@ import {
   validateDatabaseCreateDraft,
 } from './databaseCreateForm'
 import type { DatabaseCreateDraft, DatabaseCreateFormErrors, SqliteFileSource } from './databaseCreateForm'
+import { Button } from '../../components/Button'
 
 const FIELD = `${FORM_CONTROL_HEIGHT_CLASS} w-full min-w-0 rounded-lg border border-control-line bg-surface-raised px-3 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle`
 const LABEL = 'mb-2 block text-xs font-medium leading-5 text-fg-muted'
@@ -135,8 +136,8 @@ export function DatabaseCreateDialog() {
         className="fixed left-1/2 top-1/2 z-[55] flex max-h-[min(44rem,calc(100vh-2rem))] w-[min(42rem,calc(100vw-1.5rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden panel-surface shadow-2xl">
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-line px-5 py-3">
           <Dialog.Title className="truncate text-base font-semibold text-fg">添加 SQLite 数据库</Dialog.Title>
-          <button type="button" onClick={closeCreate} disabled={creating} aria-label="关闭弹窗"
-            className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-fg-muted hover:bg-surface-raised disabled:opacity-50"><X aria-hidden size={16} /></button>
+          <Button variant="ghost" size="icon" type="button" onClick={closeCreate} disabled={creating} aria-label="关闭弹窗"
+            className="inline-flex size-8 shrink-0 items-center justify-center rounded-lg text-fg-muted hover:bg-surface-raised disabled:opacity-50"><X aria-hidden size={16} /></Button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
           <section aria-labelledby="db-create-details-title">
@@ -155,12 +156,12 @@ export function DatabaseCreateDialog() {
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-line px-5 py-3">
           <p className="text-xs text-fg-subtle">{uploadPercent !== undefined ? '上传进度 ' + uploadPercent + '%' : '数据库文件保存在面板持久卷中。'}</p>
           <div className="ml-auto flex gap-2">
-            <button type="button" onClick={closeCreate} disabled={creating} className={BUTTON}>取消</button>
-            <button type="button" onClick={submit} disabled={disabled} className={BUTTON + ' bg-surface-raised'}>
+            <Button variant="outline" type="button" onClick={closeCreate} disabled={creating} className={BUTTON}>取消</Button>
+            <Button variant="outline" type="button" onClick={submit} disabled={disabled} className={BUTTON + ' bg-surface-raised'}>
               {creating ? <Loader2 aria-hidden size={13} className="mr-1.5 animate-spin" /> : null}
               {creating ? draft.fileSource === 'upload' ? '上传中…' : '创建中…'
                 : draft.fileSource === 'upload' ? '上传并创建' : '创建'}
-            </button>
+            </Button>
           </div>
         </div>
       </Dialog.Content>

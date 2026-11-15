@@ -16,6 +16,7 @@ import {
 } from 'framer-motion';
 import { cn } from './utils';
 import './original-controls.css';
+import { Button } from '../Button'
 
 /* =========================================================================
  * LiquidToggle
@@ -230,7 +231,7 @@ export const LiquidToggle: React.FC<LiquidToggleProps> = ({
   const stateLabel = isOn ? onLabel : offLabel;
 
   return (
-    <button
+    <Button unstyled
       type="button"
       role="switch"
       aria-checked={isOn}
@@ -301,7 +302,7 @@ export const LiquidToggle: React.FC<LiquidToggleProps> = ({
           />
         </svg>
       </span>
-    </button>
+    </Button>
   );
 };
 

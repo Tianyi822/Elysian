@@ -1,6 +1,7 @@
 import type { ReactNode } from 'react'
 import type { AgentAccessDecisionInput, AgentExecutionProfile, AgentOperation, AgentRuntimeAccess } from '@elysian/contracts'
 import { Check, Square, X } from '../../components/icons'
+import { Button } from '../../components/Button'
 
 const BUTTON = 'inline-flex min-h-9 items-center justify-center gap-1.5 rounded-md border border-control-line px-3 text-xs hover:bg-surface-hover disabled:opacity-50'
 
@@ -44,13 +45,13 @@ export function RuntimeAccessCard({ title, access, operation, profile, busy = fa
     {children}
     {confirmed ? <><p role="status" className="text-xs text-fg-muted">{operation?.preparation?.state === 'unknown' ? '镜像准备结果尚未确认，请先核实，当前操作不会重复派发。' : operation?.preparation?.state === 'failed' ? '镜像准备失败，请按提示重试。' : '已确认，正在准备并继续执行…'}</p>
       {operation?.preparation?.state === 'pulling' && <progress className="w-full accent-[var(--color-accent)]" aria-label="镜像下载进度" max={operation.preparation.total || undefined} value={operation.preparation.total ? operation.preparation.current ?? 0 : undefined} />}
-      <button type="button" className={BUTTON} disabled={busy} onClick={onCancel}><Square size={12} aria-hidden />停止任务</button>
+      <Button variant="outline" type="button" className={BUTTON} disabled={busy} onClick={onCancel}><Square size={12} aria-hidden />停止任务</Button>
     </> : <>
       {pending && <p role="status" className="text-xs text-warning">结果尚未确认。重新读取后，可按原选择重试。</p>}
       <div className="flex flex-wrap gap-2">
-        <button type="button" className={BUTTON} disabled={busy} onClick={() => onDecision(pending?.decision ?? 'once')}><Check size={14} aria-hidden />{pending ? '按原选择重试' : operation?.preparation?.state === 'unknown' ? '重新核实并继续' : operation?.preparation?.state === 'failed' ? '确认并重试准备' : '确认并继续'}</button>
-        <button type="button" className={`${BUTTON} text-danger`} disabled={busy || !!pending} onClick={() => onDecision('denied')}><X size={14} aria-hidden />拒绝</button>
-        <button type="button" className={BUTTON} disabled={busy} onClick={onCancel}><Square size={12} aria-hidden />停止任务</button>
+        <Button variant="outline" type="button" className={BUTTON} disabled={busy} onClick={() => onDecision(pending?.decision ?? 'once')}><Check size={14} aria-hidden />{pending ? '按原选择重试' : operation?.preparation?.state === 'unknown' ? '重新核实并继续' : operation?.preparation?.state === 'failed' ? '确认并重试准备' : '确认并继续'}</Button>
+        <Button variant="destructive" type="button" className={`${BUTTON} text-danger`} disabled={busy || !!pending} onClick={() => onDecision('denied')}><X size={14} aria-hidden />拒绝</Button>
+        <Button variant="outline" type="button" className={BUTTON} disabled={busy} onClick={onCancel}><Square size={12} aria-hidden />停止任务</Button>
       </div>
     </>}
   </section>

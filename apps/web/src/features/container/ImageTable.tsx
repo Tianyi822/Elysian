@@ -8,6 +8,7 @@ import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { useContainersStore } from '../../stores/containersStore'
 import { ImageReferenceLabel } from './ImageReferenceLabel'
 import './imageTable.css'
+import { Button } from '../../components/Button'
 
 const TH = 'whitespace-nowrap px-4 py-3 text-sm font-medium'
 const PULL_PHASE_TEXT = {
@@ -118,7 +119,7 @@ export function ImageTable({
                       )}
                     </td>
                     <td className="px-4 py-3">
-                      <button
+                      <Button variant="destructive"
                         type="button"
                         disabled={usage > 0 || removing}
                         title={deleteTitle}
@@ -132,7 +133,7 @@ export function ImageTable({
                       >
                         <Trash2 aria-hidden size={13} />
                         删除
-                      </button>
+                      </Button>
                     </td>
                   </tr>
                 )
@@ -150,10 +151,10 @@ export function ImageTable({
                 </div>
                 <p className="mt-1 whitespace-pre-wrap break-words text-xs text-danger">{imagePullError.message}</p>
               </div>
-              <button type="button" onClick={dismissImagePullError} aria-label="关闭拉取错误"
+              <Button variant="outline" type="button" onClick={dismissImagePullError} aria-label="关闭拉取错误"
                 className="shrink-0 rounded-lg border border-control-line px-2.5 py-1 text-xs text-fg-muted transition-colors hover:text-fg">
                 关闭
-              </button>
+              </Button>
             </div>
           </div>
         ) : null}
@@ -162,14 +163,14 @@ export function ImageTable({
             <div className="flex items-center gap-2 text-sm text-fg-muted">
               <Loader2 aria-hidden size={14} className="shrink-0 animate-spin text-accent-fg" />
               <div className="min-w-0 flex-1 font-mono text-fg"><ImageReferenceLabel {...pullingImage} /></div>
-              <button
+              <Button variant="destructive"
                 type="button"
                 onClick={cancelImagePull}
                 disabled={pullingImage.cancelling}
                 className="min-h-11 shrink-0 rounded-lg border border-control-line px-2.5 py-1 text-xs text-fg-muted transition-colors hover:border-danger hover:text-danger disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {pullingImage.cancelling ? '正在停止…' : '停止拉取'}
-              </button>
+              </Button>
             </div>
             <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-fg-muted">
               <span className="basis-full break-words" aria-live="polite">
@@ -245,14 +246,14 @@ export function ImageTable({
                 </p>
               )}
               <div className="mt-4 flex justify-end gap-2">
-                <button
+                <Button variant="outline"
                   type="button"
                   onClick={() => setPendingDelete(null)}
                   className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted transition-colors hover:text-fg"
                 >
                   取消
-                </button>
-                <button
+                </Button>
+                <Button variant="destructive"
                   type="button"
                   onClick={() => {
                     const image = pendingDelete
@@ -262,7 +263,7 @@ export function ImageTable({
                   className="rounded-lg border border-danger/50 bg-danger/10 px-3 py-1.5 text-xs font-medium text-danger transition-colors hover:bg-danger/20"
                 >
                   确认删除
-                </button>
+                </Button>
               </div>
             </Dialog.Content>
           </Dialog.Portal>

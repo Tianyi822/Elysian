@@ -6,7 +6,7 @@
  */
 'use client';
 
-import React, { forwardRef, useState } from 'react';
+import React, { forwardRef, useEffect, useState } from 'react';
 import { motion, useReducedMotion, type HTMLMotionProps } from 'framer-motion';
 import { cn } from './utils';
 import { motionTransitions } from './motion-tokens';
@@ -24,6 +24,11 @@ export interface PressButtonProps
   pressStrength?: number;
   /** Expand button to fill 100% of container width */
   fullWidth?: boolean;
+  /** Preserve a compound control's geometry while sharing the press interaction. */
+  unstyled?: boolean;
+  /** Native controls must not synthesize pointer events from Enter (Radix,
+   * drag handles and menus distinguish keyboard and pointer activation). */
+  nativePress?: boolean;
   /** Button content */
   children?: React.ReactNode;
 }
@@ -40,10 +45,11 @@ const variantStyles: Record<PressButtonVariant, string> = {
 };
 
 const sizeStyles: Record<PressButtonSize, string> = {
-  sm: 'h-8 px-3.5 text-xs rounded-md gap-1.5',
-  md: 'h-10 px-4.5 text-sm rounded-lg gap-2',
-  lg: 'h-12 px-6 text-base rounded-lg gap-2.5',
-  icon: 'h-10 w-10 p-0 rounded-lg justify-center shrink-0',
+  // EasyUI 的 md/lg 圆角令牌为 10/14px，独立声明避免受工作台同名令牌影响。
+  sm: 'h-8 px-3.5 text-xs rounded-[10px] gap-1.5',
+  md: 'h-10 px-4.5 text-sm rounded-[14px] gap-2',
+  lg: 'h-12 px-6 text-base rounded-[14px] gap-2.5',
+  icon: 'h-10 w-10 p-0 rounded-[14px] justify-center shrink-0',
 };
 
 /**
@@ -57,49 +63,90 @@ export const PressButton = forwardRef<HTMLButtonElement, PressButtonProps>(
       size = 'md',
       pressStrength = 0.04,
       fullWidth = false,
+      unstyled = false,
+      nativePress = false,
       disabled,
       className,
       children,
       type = 'button',
+      onTapStart,
+      onTap,
+      onTapCancel,
+      animate,
+      transition,
+      whileTap,
+      onPointerDown,
+      onPointerUp,
+      onPointerCancel,
+      onPointerLeave,
+      onKeyDown,
+      onKeyUp,
+      onBlur,
       ...props
     },
     ref
   ) => {
     const reduced = useReducedMotion();
     const [isPressed, setIsPressed] = useState(false);
+    useEffect(() => { if (disabled) setIsPressed(false); }, [disabled]);
     const compression = Math.min(0.06, Math.max(0.01, pressStrength));
+    const pressAnimation = {
+      scaleX: isPressed && !disabled && !reduced ? 1 - compression : 1,
+      scaleY: isPressed && !disabled && !reduced ? 1 - compression * 1.6 : 1,
+      ...(nativePress ? { scale: isPressed && !disabled && !reduced ? 0.97 : 1 } : {}),
+    };
+    // Compound controls may also animate rotation or entry/exit. Do not replace
+    // their animation or their gesture callbacks with the shared press feedback.
+    const animation = animate && typeof animate === 'object' && !Array.isArray(animate) && !('start' in animate)
+      ? { ...animate, ...pressAnimation }
+      : animate ?? pressAnimation;
 
     return (
       <motion.button
         data-easyui="press-button"
+        data-press-button=""
         initial={false}
         ref={ref}
         type={type}
         disabled={disabled}
-        onTapStart={() => { if (!disabled && !reduced) setIsPressed(true); }}
-        onTap={() => setIsPressed(false)}
-        onTapCancel={() => setIsPressed(false)}
-        animate={{
-          // Tiny Y squash on press, then settle; a near-critical spring gives the
-          // subtle overshoot without bouncing.
-          scaleX: isPressed && !disabled && !reduced ? 1 - compression : 1,
-          scaleY: isPressed && !disabled && !reduced ? 1 - compression * 1.6 : 1,
+        onTapStart={nativePress ? onTapStart : (event, info) => {
+          if (!disabled && !reduced) setIsPressed(true);
+          onTapStart?.(event, info);
         }}
-        transition={reduced ? { duration: 0 } : motionTransitions.springSnappy}
-        whileTap={disabled || reduced ? undefined : { scale: 0.97 }}
+        onTap={nativePress ? onTap : (event, info) => { setIsPressed(false); onTap?.(event, info); }}
+        onTapCancel={nativePress ? onTapCancel : (event, info) => { setIsPressed(false); onTapCancel?.(event, info); }}
+        onPointerDown={event => {
+          onPointerDown?.(event);
+          if (nativePress && !event.defaultPrevented && event.button === 0 && !disabled && !reduced) setIsPressed(true);
+        }}
+        onPointerUp={event => { if (nativePress) setIsPressed(false); onPointerUp?.(event); }}
+        onPointerCancel={event => { if (nativePress) setIsPressed(false); onPointerCancel?.(event); }}
+        onPointerLeave={event => { if (nativePress) setIsPressed(false); onPointerLeave?.(event); }}
+        onKeyDown={event => {
+          onKeyDown?.(event);
+          if (nativePress && !event.defaultPrevented && ['Enter', ' '].includes(event.key) && !disabled && !reduced) setIsPressed(true);
+        }}
+        onKeyUp={event => { if (nativePress) setIsPressed(false); onKeyUp?.(event); }}
+        onBlur={event => { if (nativePress) setIsPressed(false); onBlur?.(event); }}
+        animate={animation}
+        transition={reduced ? { duration: 0 } : {
+          ...(transition ?? motionTransitions.springSnappy),
+          scaleX: motionTransitions.springSnappy,
+          scaleY: motionTransitions.springSnappy,
+          scale: motionTransitions.springSnappy,
+        }}
+        whileTap={disabled || reduced || nativePress ? undefined : whileTap ?? { scale: 0.97 }}
         className={cn(
-          'relative inline-flex items-center justify-center font-medium select-none focus-ring transition-colors duration-150 cursor-pointer',
-          variantStyles[variant],
-          variant !== 'ghost' && sizeStyles[size],
+          !unstyled && 'relative inline-flex items-center justify-center font-medium select-none focus-ring transition-colors duration-150 cursor-pointer',
+          !unstyled && variantStyles[variant],
+          !unstyled && sizeStyles[size],
           fullWidth && 'w-full',
-          disabled && 'opacity-30 cursor-not-allowed pointer-events-none',
+          disabled && !unstyled && 'opacity-30 cursor-not-allowed',
           className
         )}
         {...props}
       >
-        <span className="relative z-10 flex items-center gap-2">
-          {children}
-        </span>
+        {unstyled ? children : <span className="relative z-10 flex min-w-0 items-center justify-center gap-[inherit]">{children}</span>}
       </motion.button>
     );
   }

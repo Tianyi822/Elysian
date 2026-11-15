@@ -9,7 +9,7 @@ import type { FormEvent } from 'react'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { PasswordVisibilityButton } from '../security/passwordFieldParts'
 import { CTL_FIELD } from '../../components/formControl'
-import { Button } from '../../components/easyui/Button'
+import { Button } from '../../components/Button'
 import { useSessionStore } from '../../stores/sessionStore'
 import { RequireArea } from '../../app/RequireArea'
 import { ModelSettingsSection } from './ModelSettingsSection'
@@ -281,8 +281,8 @@ function AccountSecuritySettings() {
           <Dialog.Title className="text-sm font-semibold text-fg">{confirmKind === 'username' ? '确认修改用户名' : '确认修改密码'}</Dialog.Title>
           <Dialog.Description className="mt-2 text-xs leading-5 text-fg-muted">{confirmKind === 'username' ? '修改后，所有已登录设备都会退出，请用新用户名重新登录。' : '修改后，所有已登录设备都会退出，请用新密码重新登录。'}</Dialog.Description>
           <div className="mt-4 flex justify-end gap-2">
-            <Dialog.Close asChild><button type="button" className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted">取消</button></Dialog.Close>
-            <button type="button" disabled={submitting} className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium text-fg" onClick={() => void (confirmKind === 'username' ? confirmUsernameChange() : confirmPasswordChange())}>确认修改</button>
+            <Dialog.Close asChild><Button variant="outline" type="button" className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted">取消</Button></Dialog.Close>
+            <Button variant="primary" type="button" disabled={submitting} className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium text-fg" onClick={() => void (confirmKind === 'username' ? confirmUsernameChange() : confirmPasswordChange())}>确认修改</Button>
           </div>
         </Dialog.Content>
       </Dialog.Portal>

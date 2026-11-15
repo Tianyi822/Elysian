@@ -9,7 +9,7 @@ describe('JsonView 原文呈现', () => {
     const text = '{"value":9007199254740993,"nested":{"a":1}}'
     const view = render(<JsonView text={text} label="调用参数" />)
     expect(view.container.querySelector('pre')?.textContent).toBe(text)
-    expect(screen.getByText('调用参数', { selector: 'span' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '调用参数' })).toHaveAttribute('title', '复制调用参数原文')
   })
 
   it('超长原文默认折叠并提示省略量，展开后完整显示', async () => {

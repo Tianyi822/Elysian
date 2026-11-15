@@ -9,6 +9,7 @@ import { Pencil, Play, Square, Trash2 } from '../../components/icons'
 import { IconButton } from '../../components/IconButton'
 import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
+import { Button } from '../../components/Button'
 
 /*
  * 网站项目卡片：瀑布列表里的单卡，高度随内容伸缩。
@@ -110,7 +111,7 @@ export function WebsitesCard({
         </Link>
       </p>
       <div className="mt-auto flex flex-wrap items-center gap-2">
-        <button
+        <Button variant="outline"
           type="button"
           className={ACTION_BUTTON}
           disabled={busy}
@@ -120,9 +121,9 @@ export function WebsitesCard({
           }}
         >
           详情
-        </button>
-        {onRedeploy && <button type="button" className={ACTION_BUTTON} disabled={busy} onClick={(event) => { event.stopPropagation(); onRedeploy() }}>重新部署</button>}
-        {onRollback && <button type="button" className={ACTION_BUTTON} disabled={busy} onClick={(event) => { event.stopPropagation(); onRollback() }}>回滚</button>}
+        </Button>
+        {onRedeploy && <Button variant="outline" type="button" className={ACTION_BUTTON} disabled={busy} onClick={(event) => { event.stopPropagation(); onRedeploy() }}>重新部署</Button>}
+        {onRollback && <Button variant="outline" type="button" className={ACTION_BUTTON} disabled={busy} onClick={(event) => { event.stopPropagation(); onRollback() }}>回滚</Button>}
         <div className="ml-auto flex items-center gap-1.5" onClick={(event) => event.stopPropagation()}>
           <IconButton
             label={running ? '停止' : '启动'}

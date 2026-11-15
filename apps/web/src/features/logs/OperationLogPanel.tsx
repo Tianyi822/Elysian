@@ -12,8 +12,8 @@ import type { OperationLogEntry, OperationLogOutcome } from '@elysian/contracts'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { formatLoginTime } from '../../components/format'
-import { CTL_FIELD, CTL_TOOLBAR } from '../../components/formControl'
-import { Search } from '../../components/icons'
+import { CTL_TOOLBAR } from '../../components/formControl'
+import { SearchInput } from '../../components/SearchInput'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
@@ -27,6 +27,7 @@ import type {
 import { LogMessageCell } from './LogMessageCell'
 import { LogTable } from './LogTable'
 import type { LogColumn } from './LogTable'
+import { Button } from '../../components/Button'
 
 /**
  * 平台操作日志面板：服务端在写端点中间件与显式调用点采集的真实动作记录，
@@ -267,7 +268,7 @@ export function OperationLogPanel() {
 
   return (
     <div className="flex h-full flex-col">
-      {errorMessage ? <p role="alert" className="text-xs text-danger">刷新失败：{errorMessage}。已保留上次读取结果。<button type="button" className="ml-2 underline" onClick={() => void load(gateway)}>重试</button></p> : null}
+      {errorMessage ? <p role="alert" className="text-xs text-danger">刷新失败：{errorMessage}。已保留上次读取结果。<Button variant="link" type="button" className="ml-2 underline" onClick={() => void load(gateway)}>重试</Button></p> : null}
       {/*
         工具栏三块：筛选下拉 / 搜索 / 计数。窄屏（md 以下）一块一行，md 起回到一行三段、
         计数靠右。自由折行会把计数文字和控件混成一团，正是原来难以扫读的原因。
@@ -292,20 +293,13 @@ export function OperationLogPanel() {
           />
         </div>
         <div className="relative w-full md:max-w-md md:flex-1">
-          <label htmlFor="operation-log-search" className="sr-only">
-            搜索操作日志
-          </label>
-          <input
+          <SearchInput
             id="operation-log-search"
-            aria-label="搜索操作日志"
+            label="搜索操作日志"
             value={search}
-            onChange={(event) => setSearch(event.target.value)}
+            onChange={setSearch}
             placeholder="请输入搜索关键字"
-            className={`${CTL_FIELD} pl-8`}
-          />
-          <Search
-            aria-hidden
-            className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-fg-subtle"
+            className="w-full"
           />
         </div>
         <div className="flex items-center justify-between gap-3 text-xs text-fg-muted md:ml-auto">
@@ -371,14 +365,14 @@ export function OperationLogPanel() {
       {truncated ? (
         <div className="mt-3 flex flex-col items-start gap-2">
           <p className="text-xs text-fg-muted">还有更早的记录</p>
-          <button
+          <Button variant="outline"
             type="button"
             disabled={loadingOlder}
             onClick={() => void loadOlder(gateway)}
             className="rounded-lg border border-control-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:opacity-50"
           >
             {loadingOlder ? '加载中…' : '加载更早的记录'}
-          </button>
+          </Button>
           {olderError ? (
             <p role="status" className="text-xs text-danger">
               更早的记录加载失败

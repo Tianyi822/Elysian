@@ -1,5 +1,6 @@
 import * as Tooltip from '@radix-ui/react-tooltip'
 import type { FocusEventHandler, KeyboardEventHandler, PointerEventHandler, ReactNode } from 'react'
+import { Button } from './Button'
 
 /**
  * 图标按钮。图标按钮必须带 tooltip，这是项目红线，所以统一从这个组件出，
@@ -79,7 +80,7 @@ export function IconButton({
     ? styleFor(variant, tone).replace(/\bsize-\d+\b/g, '').trim()
     : styleFor(variant, tone)
   const button = (
-    <button
+    <Button unstyled
       type="button"
       aria-label={label}
       aria-busy={busy || undefined}
@@ -92,7 +93,7 @@ export function IconButton({
       className={`icon-button inline-flex items-center justify-center transition-colors disabled:cursor-not-allowed disabled:opacity-50 ${variant === 'solid' ? 'icon-button-solid' : ''} ${variantClass} ${formControl ? 'icon-button-form-control' : ''} ${className ?? ''}`}
     >
       {children}
-    </button>
+    </Button>
   )
 
   if (!tooltip) return button

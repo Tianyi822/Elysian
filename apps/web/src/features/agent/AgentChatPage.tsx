@@ -29,6 +29,7 @@ import { ChatUserInput } from './ChatUserInput'
 import { ChatUsageIndicator } from './ChatUsageIndicator'
 import { defaultReasoningLevel, reasoningLabel, useChatModels } from './useChatModels'
 import './agentChat.css'
+import { Button } from '../../components/Button'
 
 const PERMISSION_MODES: readonly { value: AgentChatPermissionMode; label: string; description: string; Icon: IconComponent }[] = [
   { value: 'ask', label: '请求批准', description: '需要批准的操作，按服务端规则请求确认。', Icon: Hand },
@@ -44,10 +45,10 @@ function SessionToggle({ expanded, controls, onClick, buttonRef }: {
   buttonRef?: Ref<HTMLButtonElement>
 }) {
   const label = expanded ? '收起会话列表' : '打开会话列表'
-  return <button ref={buttonRef} type="button" className="chat-session-toggle" aria-label={label}
+  return <Button variant="outline" size="icon" ref={buttonRef} type="button" className="chat-session-toggle" aria-label={label}
     aria-expanded={expanded} aria-controls={controls} onClick={onClick}>
     <List size={16} aria-hidden />
-  </button>
+  </Button>
 }
 
 /** 基本文本聊天，沿用现有会话、模型目录与任务续轮接口。 */
@@ -340,7 +341,7 @@ export function AgentChatPage() {
       <div className="flex min-w-0 flex-1 items-center gap-2">
         <span className="chat-title max-w-64 truncate text-sm font-medium" title={title}>{title}</span>
       </div>
-      <button type="button" className="chat-new" disabled={chat.sending} onClick={newConversation}><Plus size={14} aria-hidden /><span>新会话</span></button>
+      <Button variant="outline" type="button" className="chat-new" disabled={chat.sending} onClick={newConversation}><Plus size={14} aria-hidden /><span>新会话</span></Button>
     </header>
 
     <div ref={history} className="chat-history hover-scrollbar" onScroll={event => {
@@ -410,10 +411,10 @@ export function AgentChatPage() {
               : answer?.origin === 'runtime' && !stopped ? <ChatRuntimeResult key={message.runId} content={answer.content} /> : <ChatResponse key={message.runId} content={(chat.timelines[message.runId] || chat.syncError ? answer?.content : undefined) ?? live?.content ?? ''} reasoning={chat.reasoning[message.runId] ?? ''}
                 active={active && !finalizing} stopped={stopped} stopping={active && stopping} copyable={!!answer} quarantined={answer?.quarantined} onProgress={followContent} />}
             {message.runId === chat.run?.id && message.runId === session?.remote?.runId && chat.run.continuation && !session.pending?.input.continueFromRunId && <div className="flex flex-wrap items-center gap-3 text-xs text-fg-muted">
-              <button type="button" className="chat-new" disabled={!canSubmit || !!session.editing || (!session.pending?.input.continueFromRunId && !chat.run.continuation.allowed) || (!!session.pending && !session.pending.input.continueFromRunId)}
+              <Button variant="outline" type="button" className="chat-new" disabled={!canSubmit || !!session.editing || (!session.pending?.input.continueFromRunId && !chat.run.continuation.allowed) || (!!session.pending && !session.pending.input.continueFromRunId)}
                 onClick={() => { following.current = true; void chat.continueTask(api, model?.profile) }}>
                 继续任务
-              </button>
+              </Button>
               {chat.run.continuation.blockedReason && <p role="status">{chat.run.continuation.blockedReason}</p>}
             </div>}
             {!!answer?.wikiSources?.length && <ChatMemorySources sources={answer.wikiSources} api={agentMemory} />}
@@ -432,7 +433,7 @@ export function AgentChatPage() {
 
     <div className="chat-compose-area">
       {session?.pending?.input.continueFromRunId && <div className="mb-3 flex flex-wrap items-center gap-3 text-xs text-fg-muted">
-        <button type="button" className="chat-new" disabled={!canSubmit || !!session.editing} onClick={() => void chat.continueTask(api, model?.profile)}>重试继续任务</button>
+        <Button variant="outline" type="button" className="chat-new" disabled={!canSubmit || !!session.editing} onClick={() => void chat.continueTask(api, model?.profile)}>重试继续任务</Button>
         <p role="status">继续请求尚未确认，可重试确认原请求。</p>
       </div>}
       {chat.inputError && <p role="alert" className="mb-3 text-xs text-danger">{chat.inputError}</p>}

@@ -11,6 +11,7 @@ import { motion, AnimatePresence, useReducedMotion, type HTMLMotionProps } from 
 import { Bell } from 'lucide-react';
 import { cn } from './utils';
 import { motionTransitions } from './motion-tokens';
+import { Button } from '../Button'
 
 export interface NotificationBellProps extends Omit<HTMLMotionProps<'button'>, 'children'> {
   unread: boolean;
@@ -36,7 +37,7 @@ export const NotificationBell = forwardRef<HTMLButtonElement, NotificationBellPr
     }, [arrivalKey, unread, reduced]);
 
     return (
-      <motion.button
+      <Button unstyled
         data-easyui="notification-bell"
         ref={ref}
         type="button"
@@ -74,7 +75,7 @@ export const NotificationBell = forwardRef<HTMLButtonElement, NotificationBellPr
           )}
         </AnimatePresence>
         </span>
-      </motion.button>
+      </Button>
     );
   }
 );

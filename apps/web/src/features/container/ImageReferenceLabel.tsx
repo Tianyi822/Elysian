@@ -1,6 +1,7 @@
 import * as Popover from '@radix-ui/react-popover'
 import { useEffect, useRef, useState } from 'react'
 import { displayImageName, registryHost } from './imageReference'
+import { Button } from '../../components/Button'
 
 /** 名称保持简短；鼠标、键盘和触屏共用完整引用提示。 */
 export function ImageReferenceLabel({ name, tag, registry, className = '' }: {
@@ -34,7 +35,7 @@ export function ImageReferenceLabel({ name, tag, registry, className = '' }: {
 
   return <Popover.Root open={open} onOpenChange={setOpen}>
     <Popover.Trigger asChild>
-      <button ref={trigger} type="button" aria-label={`查看镜像引用 ${display}`}
+      <Button unstyled ref={trigger} type="button" aria-label={`查看镜像引用 ${display}`}
         className={`inline-block max-w-full truncate rounded align-middle text-left font-medium ${className}`}
         onPointerEnter={event => { if (event.pointerType !== 'touch') pointerEnter() }}
         onPointerLeave={event => { if (event.pointerType !== 'touch') pointerLeave() }}
@@ -42,7 +43,7 @@ export function ImageReferenceLabel({ name, tag, registry, className = '' }: {
         onFocus={() => { if (!touch.current) reveal() }} onBlur={closeSoon}
         onClick={event => { event.preventDefault(); cancelClose(); setOpen(value => !value); touch.current = false }}>
         {display}
-      </button>
+      </Button>
     </Popover.Trigger>
     <Popover.Portal>
       <Popover.Content ref={panel} aria-label="完整镜像引用" side="top" align="start" sideOffset={8} collisionPadding={12}

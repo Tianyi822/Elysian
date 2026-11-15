@@ -1,5 +1,6 @@
 import { JsonView } from './JsonView'
 import { CTL_SECONDARY } from '../../components/formControl'
+import { Button } from '../../components/Button'
 
 export function RevisionConflictNotice({ latest, baseRevision, onAccept }: {
   latest: { revision: number } | undefined
@@ -14,9 +15,9 @@ export function RevisionConflictNotice({ latest, baseRevision, onAccept }: {
         <summary className="cursor-pointer">查看服务端最新修订</summary>
         <div className="mt-2"><JsonView label="服务端最新修订 JSON" text={JSON.stringify(latest, null, 2)} /></div>
       </details>
-      <button type="button" className={`${CTL_SECONDARY} mt-2`} onClick={() => onAccept(latest.revision)}>
+      <Button variant="outline" type="button" className={`${CTL_SECONDARY} mt-2`} onClick={() => onAccept(latest.revision)}>
         使用修订 {latest.revision} 继续编辑
-      </button>
+      </Button>
     </div>
   )
 }

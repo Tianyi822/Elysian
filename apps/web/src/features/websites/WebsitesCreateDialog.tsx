@@ -14,6 +14,7 @@ import { SelectDropdown } from '../../components/SelectDropdown'
 import { X } from '../../components/icons'
 import { FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
 import { useMessageStore } from '../../stores/messageStore'
+import { Button } from '../../components/Button'
 
 const INPUT = `${FORM_CONTROL_HEIGHT_CLASS} w-full rounded-lg border border-control-line bg-surface-raised px-2.5 text-sm text-fg placeholder:text-fg-subtle disabled:opacity-60`
 const BUTTON = 'rounded-lg border border-control-line bg-surface-raised px-3 py-2 text-xs font-medium text-fg hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50'
@@ -189,13 +190,13 @@ export function WebsitesCreateDialog({ project, existingTask, onClose }: { proje
             {label('deploy-port', '端口 *', <input id="deploy-port" className={INPUT} inputMode="numeric" value={port} disabled={busy || !!project || waiting} onChange={(e) => setPort(Number(e.target.value.replace(/\D/g, '')))} />)}
             {config.target === 'service' && <>
               {label('deploy-command', '启动命令 *', <input id="deploy-command" className={INPUT} value={config.command} disabled={busy} placeholder={task?.suggestedCommand || candidate.suggestedCommand || '填写项目实际启动命令；Java 可在构建后确认'} onChange={(e) => patch({ command: e.target.value })} />)}
-              {(task?.suggestedCommand || candidate.suggestedCommand) && <button type="button" className={BUTTON} disabled={busy} onClick={() => patch({ command: task?.suggestedCommand || candidate.suggestedCommand })}>采用建议</button>}
+              {(task?.suggestedCommand || candidate.suggestedCommand) && <Button variant="outline" type="button" className={BUTTON} disabled={busy} onClick={() => patch({ command: task?.suggestedCommand || candidate.suggestedCommand })}>采用建议</Button>}
               <p className="text-xs text-fg-subtle">服务需监听容器内的 0.0.0.0:{port}；启动命令作为参数执行。普通 JAR 根据清单、主类与依赖确定启动方式。</p>
             </>}
             {caddyReady && !project && !waiting && <div className="space-y-2"><SelectDropdown ariaLabel="访问方式" items={[{ value: 'direct', label: 'IP＋端口直连 · HTTP' }, { value: 'domain', label: '域名访问 · HTTPS' }]} value={accessMode} onSelect={setAccessMode} fullWidth />{finalAccessMode === 'domain' && <>{label('deploy-domain', '域名 *', <input id="deploy-domain" className={INPUT} value={domain} onChange={(e) => setDomain(e.target.value)} />)}{label('deploy-cert', '公开 CA 证书链', <input id="deploy-cert" type="file" accept=".pem,.crt" onChange={(e) => void readCertificate(e.target.files?.[0], false)} className="block w-full text-xs" />)}{label('deploy-key', '私钥', <input id="deploy-key" type="file" accept=".pem,.key" onChange={(e) => void readCertificate(e.target.files?.[0], true)} className="block w-full text-xs" />)}</>}</div>}
             {label('deploy-note', '备注（可选）', <input id="deploy-note" className={INPUT} value={note} onChange={(e) => setNote(e.target.value)} disabled={busy || waiting} />)}
             {source?.mode === 'source' && candidate.kind !== 'html' && !waiting && <>
-              <button type="button" className="text-xs text-fg-muted underline underline-offset-4" aria-expanded={advanced} onClick={() => setAdvanced((old) => !old)}>高级构建配置</button>
+              <Button variant="link" type="button" className="text-xs text-fg-muted underline underline-offset-4" aria-expanded={advanced} onClick={() => setAdvanced((old) => !old)}>高级构建配置</Button>
               {advanced && <div className="space-y-3"><label className="flex items-center gap-2 text-xs"><input type="checkbox" checked={config.skipTests} onChange={(e) => patch({ skipTests: e.target.checked })} />明确跳过测试（将记录跳过原因）</label>{!candidate.wrapper && TOOL_DEFAULT[candidate.tool] && label('deploy-tool', '构建工具精确版本', <input id="deploy-tool" className={INPUT} value={config.toolVersion ?? ''} onChange={(e) => patch({ toolVersion: e.target.value })} />)}{label('deploy-tests', '自定义测试步骤（每行一个命令）', <textarea id="deploy-tests" className={`${INPUT} min-h-20 resize-none py-2`} value={customTests} onChange={(e) => setCustomTests(e.target.value)} placeholder="留空使用识别出的测试" />)}{label('deploy-build', '自定义构建步骤（每行一个命令）', <textarea id="deploy-build" className={`${INPUT} min-h-20 resize-none py-2`} value={customBuild} onChange={(e) => setCustomBuild(e.target.value)} placeholder="留空使用识别出的构建步骤" />)}<p className="text-xs text-fg-subtle">步骤只在该任务的非特权构建容器内执行；默认 2 CPU / 2 GiB，20 分钟超时。</p></div>}
             </>}
           </>}
@@ -213,15 +214,15 @@ export function WebsitesCreateDialog({ project, existingTask, onClose }: { proje
         {error && <p role="alert" className="text-xs text-danger">{error}</p>}
         {configuration && configurationWarning(source, config.candidateId) && <p role="status" className="text-xs text-warning">{configurationWarning(source, config.candidateId)}</p>}
         {configuration && catalog?.stale && <p role="status" className="text-xs text-warning">{catalog.detail || '使用已获取的版本目录缓存'}</p>}
-        {configuration && runtimeKind && catalogError && <div role="alert" className="text-xs text-danger">{catalogError}<button type="button" className={`${BUTTON} ml-2`} onClick={() => setCatalogAttempt((old) => old + 1)}>重试版本目录</button></div>}
+        {configuration && runtimeKind && catalogError && <div role="alert" className="text-xs text-danger">{catalogError}<Button variant="outline" type="button" className={`${BUTTON} ml-2`} onClick={() => setCatalogAttempt((old) => old + 1)}>重试版本目录</Button></div>}
       </div>
       <div className="flex flex-wrap justify-end gap-2 border-t border-line px-4 py-3">
-        {step === 1 && busy ? <button type="button" className={BUTTON} onClick={() => { abort.current?.abort(); if (source?.id) void api?.discardSource(source.id).catch(() => {}) }}>取消准备</button> : <button type="button" className={BUTTON} onClick={closeDialog}>{step === 3 && websiteDeploymentIsActive(task?.state ?? 'failed') ? '关闭，后台继续' : '关闭'}</button>}
-        {step === 1 && <button type="button" className={BUTTON} disabled={busy || !api} onClick={() => void prepare()}>{busy ? '准备中…' : '获取并识别'}</button>}
-        {step === 2 && <><button type="button" className={BUTTON} disabled={busy} onClick={() => setStep(1)}>返回来源</button><button type="button" className={BUTTON} disabled={busy || !candidate || (runtimeKind !== undefined && !(source?.mode === 'artifact' && config.target === 'static') && !catalog)} onClick={() => void deploy()}>{busy ? '正在提交…' : source?.mode === 'artifact' ? '部署并启动' : '构建并部署'}</button></>}
-        {step === 3 && waiting && <button type="button" className={BUTTON} disabled={busy} onClick={() => void deploy(true)}>确认并继续部署</button>}
-        {step === 3 && task && (websiteDeploymentIsActive(task.state) || waiting) && <button type="button" className={BUTTON} onClick={() => void api?.cancel(task.id).catch((e: unknown) => setError(errorOf(e)))}>取消任务</button>}
-        {step === 3 && task && ['failed', 'cancelled', 'interrupted'].includes(task.state) && source?.state === 'ready' && <button type="button" className={BUTTON} onClick={() => { setStep(2); setRequestId(randomId()); setConfig(task.config); setTask(undefined); setLogs(''); offset.current = 0 }}>重新配置并部署</button>}
+        {step === 1 && busy ? <Button variant="outline" type="button" className={BUTTON} onClick={() => { abort.current?.abort(); if (source?.id) void api?.discardSource(source.id).catch(() => {}) }}>取消准备</Button> : <Button variant="outline" type="button" className={BUTTON} onClick={closeDialog}>{step === 3 && websiteDeploymentIsActive(task?.state ?? 'failed') ? '关闭，后台继续' : '关闭'}</Button>}
+        {step === 1 && <Button variant="outline" type="button" className={BUTTON} disabled={busy || !api} onClick={() => void prepare()}>{busy ? '准备中…' : '获取并识别'}</Button>}
+        {step === 2 && <><Button variant="outline" type="button" className={BUTTON} disabled={busy} onClick={() => setStep(1)}>返回来源</Button><Button variant="outline" type="button" className={BUTTON} disabled={busy || !candidate || (runtimeKind !== undefined && !(source?.mode === 'artifact' && config.target === 'static') && !catalog)} onClick={() => void deploy()}>{busy ? '正在提交…' : source?.mode === 'artifact' ? '部署并启动' : '构建并部署'}</Button></>}
+        {step === 3 && waiting && <Button variant="primary" type="button" className={BUTTON} disabled={busy} onClick={() => void deploy(true)}>确认并继续部署</Button>}
+        {step === 3 && task && (websiteDeploymentIsActive(task.state) || waiting) && <Button variant="outline" type="button" className={BUTTON} onClick={() => void api?.cancel(task.id).catch((e: unknown) => setError(errorOf(e)))}>取消任务</Button>}
+        {step === 3 && task && ['failed', 'cancelled', 'interrupted'].includes(task.state) && source?.state === 'ready' && <Button variant="outline" type="button" className={BUTTON} onClick={() => { setStep(2); setRequestId(randomId()); setConfig(task.config); setTask(undefined); setLogs(''); offset.current = 0 }}>重新配置并部署</Button>}
       </div>
     </Dialog.Content>
   </Dialog.Portal></Dialog.Root>

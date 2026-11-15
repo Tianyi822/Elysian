@@ -10,6 +10,7 @@ import { CircleCheck, Info, TriangleAlert } from './icons'
 import type { IconComponent } from './icons'
 import { NotificationBell } from './easyui/NotificationBell'
 import './messageCenter.css'
+import { Button } from './Button'
 
 const UNEXPECTED_ERROR = '页面操作发生异常，请重试；若仍失败，请刷新页面。'
 const TONES: Record<MessageTone, { icon: IconComponent; color: string; label: string }> = {
@@ -164,13 +165,13 @@ export function MessageCenter() {
           onInteractOutside={event => { if (event.target instanceof Node && trigger.current?.contains(event.target)) event.preventDefault() }}>
           <div className="message-heading">
             <Dialog.Title className="text-sm font-semibold text-fg">消息</Dialog.Title>
-            <button type="button" className="message-clear" disabled={phase !== 'idle' || !displayed.length}
-              onClick={() => { void clear() }}>清空全部消息</button>
+            <Button variant="outline" type="button" className="message-clear" disabled={phase !== 'idle' || !displayed.length}
+              onClick={() => { void clear() }}>清空全部消息</Button>
           </div>
           {displayError && <div role="alert" className="mx-3 mb-2 flex items-start gap-2 text-xs leading-5 text-danger">
             <span className="min-w-0 flex-1">{displayError}</span>
-            <button type="button" className="shrink-0 rounded px-1 underline focus-visible:outline-2 focus-visible:outline-focus" disabled={phase !== 'idle'}
-              onClick={() => { if (state.errorKind === 'clear') void clear(); else void state.retry() }}>重试</button>
+            <Button variant="link" type="button" className="shrink-0 rounded px-1 underline focus-visible:outline-2 focus-visible:outline-focus" disabled={phase !== 'idle'}
+              onClick={() => { if (state.errorKind === 'clear') void clear(); else void state.retry() }}>重试</Button>
           </div>}
           <ol ref={list} aria-label="消息记录" className="message-list hover-scrollbar" data-frozen={phase !== 'idle' || undefined}
             style={snapshot ? { height: snapshot.listHeight || undefined, flex: 'none' } : undefined}
@@ -186,7 +187,7 @@ export function MessageCenter() {
           </ol>
           {!displayed.length && !state.loading && !state.error && <p className="message-empty text-center text-sm text-fg-subtle">暂无消息</p>}
           {state.loading && <p role="status" className="px-4 py-3 text-center text-xs text-fg-subtle">正在读取消息…</p>}
-          {(snapshot ? snapshot.hasMore : state.hasMore) && !state.loading && <button type="button" disabled={phase !== 'idle'} className="message-more" onClick={() => { void state.loadMore() }}>加载更多</button>}
+          {(snapshot ? snapshot.hasMore : state.hasMore) && !state.loading && <Button variant="outline" type="button" disabled={phase !== 'idle'} className="message-more" onClick={() => { void state.loadMore() }}>加载更多</Button>}
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

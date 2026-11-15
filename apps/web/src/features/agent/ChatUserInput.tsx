@@ -3,6 +3,7 @@ import type { AgentUserInputAnswer, AgentUserInputRequest } from '@elysian/contr
 import { Check, ChevronDown } from '../../components/icons'
 import { useImeEnterGuard } from '../../components/useImeEnterGuard'
 import './chatUserInput.css'
+import { Button } from '../../components/Button'
 
 const answered = (answer?: AgentUserInputAnswer) => !!(answer?.optionId || answer?.text?.trim())
 
@@ -44,7 +45,7 @@ export function ChatUserInput({ request, answers, submitting, pending, onAnswer,
     <div className="chat-question-heading"><span>{question.header}</span><span className="tabular-nums">第 {index + 1}/{request.questions.length} 题</span></div>
     <p id={`${prefix}-question`} ref={heading} tabIndex={-1} className="chat-question-title">{question.question}</p>
     <div role="radiogroup" aria-labelledby={`${prefix}-question`} className="chat-question-options">
-      {[...question.options, { id: '__custom', label: '自定义回答', description: '用自己的话补充你的选择。' }].map((option, position) => <button
+      {[...question.options, { id: '__custom', label: '自定义回答', description: '用自己的话补充你的选择。' }].map((option, position) => <Button unstyled
         key={`${question.id}:${position}`} type="button" role="radio" aria-checked={selected === position} disabled={locked}
         tabIndex={selected === position || selected < 0 && position === 0 ? 0 : -1}
         ref={element => { radios.current[position] = element }} className="chat-question-option"
@@ -61,7 +62,7 @@ export function ChatUserInput({ request, answers, submitting, pending, onAnswer,
         }}>
         <span className="chat-question-number">{selected === position ? <Check size={14} aria-hidden /> : position + 1}</span>
         <span className="chat-question-option-copy"><span className="chat-question-label">{option.label}{question.recommendedOptionId === option.id && <span className="chat-question-recommended">推荐</span>}</span><span className="chat-question-description">{option.description}</span></span>
-      </button>)}
+      </Button>)}
     </div>
     {custom && <div className="chat-question-custom"><label htmlFor={`${prefix}-answer`} className="sr-only">自定义回答</label>
       <textarea id={`${prefix}-answer`} ref={text} rows={3} maxLength={4000} disabled={locked} value={answer.text} placeholder="输入你的回答…"
@@ -71,11 +72,11 @@ export function ChatUserInput({ request, answers, submitting, pending, onAnswer,
       <span className="chat-question-description">Enter 换行，Ctrl / ⌘ + Enter 继续</span></div>}
     {pending && !submitting && <p role="status" className="chat-question-description">回答结果尚未确认。重试将沿用原回答。</p>}
     <div className="chat-question-actions">
-      <button type="button" className="chat-question-cancel" disabled={submitting} onClick={onCancel}>取消本轮</button>
-      <div><button type="button" disabled={submitting || index === 0} onClick={() => setIndex(index - 1)}>上一步</button>
-        <button type="button" onClick={advance} disabled={submitting || (!pending && (!answered(answer) || index === request.questions.length - 1 && !complete))}>
+      <Button variant="outline" type="button" className="chat-question-cancel" disabled={submitting} onClick={onCancel}>取消本轮</Button>
+      <div><Button variant="outline" type="button" disabled={submitting || index === 0} onClick={() => setIndex(index - 1)}>上一步</Button>
+        <Button variant="outline" type="button" onClick={advance} disabled={submitting || (!pending && (!answered(answer) || index === request.questions.length - 1 && !complete))}>
           {submitting ? '正在提交…' : pending ? '重试提交' : index === request.questions.length - 1 ? '提交选择' : '下一步'}
-        </button></div>
+        </Button></div>
     </div>
   </section>
 }

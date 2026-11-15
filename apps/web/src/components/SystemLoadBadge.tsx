@@ -10,6 +10,7 @@ import type { SystemLoad } from '../adapters/mock/resourceMetrics'
 import { formatDateTime } from './format'
 import { CircleHelp, Gauge } from './icons'
 import { getLastResourceSample, onStreamEvent } from '../stores/eventStreamStore'
+import { Button } from './Button'
 
 /**
  * 系统负载指示器：合并这台机器的忙闲（load average）与面板自身内存。
@@ -105,13 +106,13 @@ function ScopeHelp() {
   return (
     <Popover.Root>
       <Popover.Trigger asChild>
-        <button
+        <Button unstyled
           type="button"
           aria-label="内存口径说明"
           className="inline-flex size-4 items-center justify-center rounded text-fg-subtle outline-none transition-colors hover:text-fg focus-visible:ring-2 focus-visible:ring-info"
         >
           <CircleHelp aria-hidden size={13} />
-        </button>
+        </Button>
       </Popover.Trigger>
       <Popover.Portal>
         <Popover.Content
@@ -163,7 +164,7 @@ export function SystemLoadBadge({ navigation = false, collapsed = false }: { nav
       <Tooltip.Root>
         <Tooltip.Trigger asChild>
           <Popover.Trigger asChild>
-            <button
+            <Button unstyled
               type="button"
               aria-label="系统负载"
               className={[
@@ -186,7 +187,7 @@ export function SystemLoadBadge({ navigation = false, collapsed = false }: { nav
                 ·
               </span>
               <span className={collapsed ? 'sr-only' : 'tabular-nums'}>{memoryText}</span>
-            </button>
+            </Button>
           </Popover.Trigger>
         </Tooltip.Trigger>
         <Tooltip.Portal>

@@ -4,18 +4,19 @@ import type { PlatformLogLevel, RuntimeLogEntry } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { formatLoginTime } from '../../components/format'
-import { Search } from '../../components/icons'
+import { SearchInput } from '../../components/SearchInput'
 import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
 import { RefreshButton } from '../../components/RefreshState'
-import { CTL_FIELD, CTL_PRIMARY, CTL_TOOLBAR } from '../../components/formControl'
+import { CTL_PRIMARY, CTL_TOOLBAR } from '../../components/formControl'
 import { useRuntimeLogStore } from '../../stores/runtimeLogStore'
 import { useLogReportNotifications } from './useLogReportNotifications'
 import { ClearLogsDialog } from './ClearLogsDialog'
 import { LogMessageCell } from './LogMessageCell'
 import { LogTable } from './LogTable'
 import type { LogColumn } from './LogTable'
+import { Button } from '../../components/Button'
 
 /**
  * 平台运行日志面板：日期时间｜等级｜日志信息三列固定宽度表格（超出省略、点击展开悬浮窗），
@@ -172,26 +173,20 @@ export function RuntimeLogPanel() {
 
   return (
     <div className="flex h-full flex-col gap-3">
-      {errorMessage ? <p role="alert" className="text-xs text-danger">刷新失败：{errorMessage}。已保留上次读取结果。<button type="button" className="ml-2 underline" onClick={() => void load(gateway)}>重试</button></p> : null}
+      {errorMessage ? <p role="alert" className="text-xs text-danger">刷新失败：{errorMessage}。已保留上次读取结果。<Button variant="link" type="button" className="ml-2 underline" onClick={() => void load(gateway)}>重试</Button></p> : null}
       {/*
         工具栏三块：搜索 / 视图操作 / 日志大小与清空。窄屏（md 以下）一块一行，
         md 起回到一行三段、最后一块靠右——自由折行会把清空按钮孤零零甩到第二行。
       */}
       <div className={`${CTL_TOOLBAR} rect-toolbar flex flex-col gap-2 panel-surface px-4 py-3 md:flex-row md:items-center`}>
         <div className="relative w-full md:w-64">
-          <Search
-            aria-hidden
-            className="pointer-events-none absolute left-2.5 top-1/2 size-4 -translate-y-1/2 text-fg-subtle"
-          />
-          <label htmlFor="runtime-log-search" className="sr-only">
-            搜索日志关键字
-          </label>
-          <input
+          <SearchInput
             id="runtime-log-search"
+            label="搜索日志关键字"
             value={search}
-            onChange={(event) => setSearch(event.target.value)}
+            onChange={setSearch}
             placeholder="请输入搜索关键字"
-            className={`${CTL_FIELD} pl-8`}
+            className="w-full"
           />
         </div>
         <div role="group" aria-label="日志视图操作" className="flex flex-wrap items-center gap-2">
@@ -199,7 +194,6 @@ export function RuntimeLogPanel() {
             onPress={() => void load(gateway)}
             busy={manualRefreshing}
             label="刷新日志"
-            formControl
           />
         </div>
         <div className="flex items-center justify-between gap-2 md:ml-auto">
@@ -207,7 +201,7 @@ export function RuntimeLogPanel() {
             日志大小：<span className="tabular-nums text-fg">{formatLogBytes(storage.totalBytes)}</span>
           </span>
           {/* 危险感只在确认弹窗里呈现：工具栏按钮与其它按钮同款中性描边。 */}
-          <button type="button" className={CTL_PRIMARY} onClick={() => openClear('runtime')}>清空日志</button>
+          <Button variant="primary" type="button" className={CTL_PRIMARY} onClick={() => openClear('runtime')}>清空日志</Button>
         </div>
       </div>
 
@@ -238,14 +232,14 @@ export function RuntimeLogPanel() {
       {truncated ? (
         <div className="flex flex-col items-start gap-2">
           <p className="text-xs text-fg-muted">还有更早的记录</p>
-          <button
+          <Button variant="outline"
             type="button"
             disabled={loadingOlder}
             onClick={() => void loadOlder(gateway)}
             className="rounded-lg border border-control-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:opacity-50"
           >
             {loadingOlder ? '加载中…' : '加载更早的记录'}
-          </button>
+          </Button>
           {olderError ? (
             <p role="status" className="text-xs text-danger">
               更早的记录加载失败

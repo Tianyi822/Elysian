@@ -3,6 +3,7 @@ import { useGateway } from '../../adapters/GatewayProvider'
 import { captureAuthGeneration } from '../../adapters/http/unauthorized'
 import { CTL_SECONDARY } from '../../components/formControl'
 import { useDependencyProbeStore } from '../../stores/dependencyProbeStore'
+import { Button } from '../../components/Button'
 
 /**
  * Docker 页的依赖重检入口：探测失败时提供「重新检测 Docker」，成功后报告由
@@ -31,13 +32,13 @@ export function DockerDependencyEntry({ className = '', onReady }: { className?:
   }
 
   return (
-    <button
+    <Button variant="outline"
       type="button"
       className={`${CTL_SECONDARY} ${className}`.trim()}
       disabled={rechecking}
       onClick={() => { void retry() }}
     >
       {rechecking ? '正在检测 Docker…' : '重新检测 Docker'}
-    </button>
+    </Button>
   )
 }

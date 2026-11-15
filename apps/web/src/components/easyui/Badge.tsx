@@ -10,6 +10,7 @@ import * as React from "react";
 import { AnimatePresence, motion, useReducedMotion, type HTMLMotionProps } from "framer-motion";
 import { X } from "lucide-react";
 import { cn } from "./utils";
+import { Button } from '../Button'
 
 const spring = { type: "spring", stiffness: 520, damping: 36, mass: 0.6 } as const;
 
@@ -118,14 +119,14 @@ export function Badge({
       )}
 
       {onRemove && (
-        <button
+        <Button unstyled
           type="button"
           aria-label="移除"
           onClick={onRemove}
           className="grid size-4 place-items-center rounded-full opacity-60 outline-none transition hover:bg-nav-hover hover:opacity-100 focus-visible:ring-2 focus-visible:ring-current"
         >
           <X className="size-3" />
-        </button>
+        </Button>
       )}
     </motion.span>
   );
