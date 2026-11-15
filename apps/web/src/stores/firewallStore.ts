@@ -2,7 +2,6 @@ import { captureAuthGeneration } from '../adapters/http/unauthorized'
 import type {
   FirewallForwardInput,
   FirewallForwardRule,
-  FirewallImportResult,
   FirewallIpRule,
   FirewallIpRuleInput,
   FirewallRule,
@@ -53,8 +52,6 @@ type FirewallState = {
   scanStatus: 'idle' | 'loading' | 'ready' | 'error'
   scanError?: string
   scanProtection: FirewallScanProtection
-  /** 导出方向选择弹窗。 */
-  exportDialogOpen: boolean
   /** 同步规则的忙碌态。 */
   syncing: boolean
   saving: boolean
@@ -81,9 +78,6 @@ type FirewallState = {
   saveIpRule: (gateway: ElysianGateway, input: FirewallIpRuleInput) => Promise<boolean>
   saveForward: (gateway: ElysianGateway, input: FirewallForwardInput) => Promise<boolean>
   removeRule: (gateway: ElysianGateway, kind: 'port' | 'ip' | 'forward', ruleId: string) => Promise<void>
-  importRules: (gateway: ElysianGateway, inputs: readonly FirewallRuleInput[]) => Promise<FirewallImportResult>
-  openExport: () => void
-  closeExport: () => void
   openScan: (gateway: ElysianGateway) => void
   closeScan: () => void
   refreshScan: (gateway: ElysianGateway) => Promise<void>
@@ -134,7 +128,6 @@ export const useFirewallStore = create<FirewallState>((set, get) => ({
     stats: { totalBlockedIps: 0, totalFailedConnections: 0, currentBlockedIps: 0, currentFailedConnections: 0 },
     blocked: [],
   },
-  exportDialogOpen: false,
   syncing: false,
   saving: false,
   toggling: false,
@@ -363,33 +356,6 @@ export const useFirewallStore = create<FirewallState>((set, get) => ({
       }))
       notify(error instanceof Error ? `删除失败：${error.message}` : '删除失败', 'danger')
     }
-  },
-
-  async importRules(gateway, inputs) {
-    try {
-      const result = await gateway.firewall.importRules(inputs)
-      const parts = [`新增 ${result.added.length} 条`]
-      if (result.skipped > 0) parts.push(`跳过重复 ${result.skipped} 条`)
-      notify(
-        result.added.length > 0
-          ? `导入完成：${parts.join('，')}${REAL_ACTION_LABEL}`
-          : `导入完成：没有新增${result.skipped > 0 ? `，跳过重复 ${result.skipped} 条` : ''}`,
-      )
-      // 导入是逐条执行的真实命令，重拉把已落地条目如实带回列表。
-      await get().refreshLists(gateway)
-      return result
-    } catch (error) {
-      notify(error instanceof Error ? `导入失败：${error.message}` : '导入失败', 'danger')
-      return { added: [], skipped: 0 }
-    }
-  },
-
-  openExport() {
-    set({ exportDialogOpen: true })
-  },
-
-  closeExport() {
-    set({ exportDialogOpen: false })
   },
 
   // 防扫描数据懒加载：只在第一次打开弹窗时取。

@@ -219,12 +219,6 @@ export type FirewallScanProtection = {
   blocked: readonly FirewallBlockedIp[]
 }
 
-/** 批量导入的結果：新增的规则（含生成的 id 与状态）与因重复被跳过的数量。 */
-export type FirewallImportResult = {
-  added: readonly FirewallRule[]
-  skipped: number
-}
-
 /**
  * 防火墙区适配接口。演示态由 mock 实现；Docker 运行时由 HTTP adapter 接通容器内 ufw，
  * server 侧服务层与 web 侧 adapter 共用这一接口定义，页面不改。
@@ -237,8 +231,6 @@ export interface FirewallAdapter {
   create(input: FirewallRuleInput): Promise<FirewallRule>
   update(ruleId: string, input: FirewallRuleInput): Promise<FirewallRule>
   remove(ruleId: string): Promise<void>
-  /** 批量导入：去重后落进数据集，返回新增列表与跳过数量。 */
-  importRules(inputs: readonly FirewallRuleInput[]): Promise<FirewallImportResult>
   /** IP 规则（纯来源封禁，无端口）：真实态对应 `ufw allow/deny from <来源>`。 */
   listIpRules(): Promise<readonly FirewallIpRule[]>
   createIpRule(input: FirewallIpRuleInput): Promise<FirewallIpRule>

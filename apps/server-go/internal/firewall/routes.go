@@ -27,7 +27,6 @@ type Service interface {
 	Create(RuleInput) (FirewallRule, error)
 	Update(ruleId string, input RuleInput) (FirewallRule, error)
 	Remove(ruleId string) error
-	ImportRules(inputs []RuleInput) (ImportResult, error)
 	ListIpRules() ([]FirewallIpRule, error)
 	CreateIpRule(IpRuleInput) (FirewallIpRule, error)
 	UpdateIpRule(ruleId string, input IpRuleInput) (FirewallIpRule, error)
@@ -233,24 +232,6 @@ func newRouterWithService(svc Service) chi.Router {
 			return
 		}
 		shared.SendJSON(w, http.StatusOK, okBody{OK: true})
-	})
-
-	r.Post("/rules/import", func(w http.ResponseWriter, req *http.Request) {
-		body, ok := readJSONBody(w, req)
-		if !ok {
-			return
-		}
-		inputs, err := parseRuleInputList(body)
-		if err != nil {
-			middleware.WriteError(w, err)
-			return
-		}
-		result, err := svc.ImportRules(inputs)
-		if err != nil {
-			middleware.WriteError(w, err)
-			return
-		}
-		shared.SendJSON(w, http.StatusOK, result)
 	})
 
 	// 不读请求体（无 415/413/空体校验），但仍过同源守卫（POST 非 GET）。
@@ -572,26 +553,6 @@ func parseScanConfigBody(body any) (ScanConfig, error) {
 		HitCount:      jsNumber(row["hitCount"]),
 		BanSeconds:    jsNumber(row["banSeconds"]),
 	}, nil
-}
-
-func parseRuleInputList(body any) ([]RuleInput, error) {
-	row, ok := bodyRow(body)
-	if !ok {
-		return nil, shared.InvalidRequest("导入请求体无效")
-	}
-	rules, ok := row["rules"].([]any)
-	if !ok {
-		return nil, shared.InvalidRequest("导入请求体缺少规则数组")
-	}
-	inputs := make([]RuleInput, 0, len(rules))
-	for _, item := range rules {
-		input, err := parseRuleInput(item)
-		if err != nil {
-			return nil, err
-		}
-		inputs = append(inputs, input)
-	}
-	return inputs, nil
 }
 
 // mapDefault 严格等值匹配取 matched，否则取缺省（复刻 JS `=== ? a : b`）。

@@ -8,6 +8,16 @@ import { ChipGroup } from '../../components/ChipGroup'
 
 export const FIREWALL_INPUT_CLASS = CTL_FIELD
 
+/** 与服务端 notevalidation.go 保持一致，避免备注破坏 UFW 参数或按行回读。 */
+const UNSAFE_NOTE_CHARS = /[\u0000-\u001f\u007f\u2028\u2029]/
+
+export function firewallRuleNoteProblem(note: string): string | undefined {
+  if (!note) return undefined
+  if (UNSAFE_NOTE_CHARS.test(note)) return '备注不能包含换行或控制字符'
+  if (note.includes("'")) return '备注不能包含单引号'
+  return undefined
+}
+
 export function SegmentedControl<T extends string>({
   groupLabel,
   options,

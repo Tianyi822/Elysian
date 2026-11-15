@@ -1,7 +1,6 @@
 import type {
   FirewallForwardInput,
   FirewallForwardRule,
-  FirewallImportResult,
   FirewallIpRule,
   FirewallIpRuleInput,
   FirewallRule,
@@ -18,7 +17,7 @@ import { DEFAULT_SCAN_CONFIG, FIREWALL_ADDRESS_FAMILIES } from '@elysian/contrac
  * v4/v6 两行成对登记；「时间 —」的行 updatedAt 为 null，表示没有变更记录。
  */
 
-/** 种子规则导出给导入/导出的测试当夹具。 */
+/** 确定性种子规则，供面板与测试共用。 */
 export const SEED_RULES: readonly FirewallRule[] = [
   { id: 'fw-2234-ipv4', protocol: 'tcp', port: 2234, portTo: null, family: 'ipv4', status: 'unused', policy: 'allow', direction: 'inbound', source: '所有IP', note: '博客后端', updatedAt: '2025-07-06T23:35:56' },
   { id: 'fw-2234-ipv6', protocol: 'tcp', port: 2234, portTo: null, family: 'ipv6', status: 'unused', policy: 'allow', direction: 'inbound', source: '所有IP', note: '博客后端', updatedAt: '2025-07-06T23:35:56' },
@@ -170,27 +169,6 @@ export function removeFirewallRule(ruleId: string): void {
   const existing = rules.find((rule) => rule.id === ruleId)
   if (!existing) throw new Error(`未找到端口规则 ${ruleId}`)
   rules = rules.filter((rule) => rule.id !== ruleId)
-}
-
-/** 批量导入：与既有规则及批内互相去重，同协议同端口同地址族视为重复。 */
-export function importFirewallRules(
-  inputs: readonly FirewallRuleInput[],
-  updatedAt: string,
-): FirewallImportResult {
-  const seen = new Set(rules.map((rule) => `${rule.protocol}:${rule.port}:${rule.family}`))
-  const added: FirewallRule[] = []
-  let skipped = 0
-  for (const input of inputs) {
-    const key = `${input.protocol}:${input.port}:${input.family}`
-    if (seen.has(key)) {
-      skipped += 1
-      continue
-    }
-    seen.add(key)
-    const rule = addFirewallRule(input, updatedAt)
-    added.push(rule)
-  }
-  return { added: added.map((rule) => ({ ...rule })), skipped }
 }
 
 export function getFirewallIpRules(): readonly FirewallIpRule[] {

@@ -29,7 +29,6 @@ function sessionGateway(overrides: Partial<ElysianGateway['firewall']> = {}): El
       create: (input) => firewall.create(input),
       update: (ruleId, input) => firewall.update(ruleId, input),
       remove: (ruleId) => firewall.remove(ruleId),
-      importRules: (inputs) => firewall.importRules(inputs),
       listIpRules: () => firewall.listIpRules(),
       createIpRule: (input) => firewall.createIpRule(input),
       updateIpRule: (ruleId, input) => firewall.updateIpRule(ruleId, input),
@@ -77,7 +76,6 @@ beforeEach(() => {
       stats: { totalBlockedIps: 0, totalFailedConnections: 0, currentBlockedIps: 0, currentFailedConnections: 0 },
       blocked: [],
     },
-    exportDialogOpen: false,
     syncing: false,
     saving: false,
     toggling: false,
@@ -256,15 +254,6 @@ describe('防火墙面板', () => {
     )
   })
 
-  it('宽度探针把视图切换一起量进去：漏算 tab 组会把工具栏挤成换行与裁切', async () => {
-    await openFirewallPage()
-
-    // 行内一份、隐藏探针一份。探针里少一份，就说明同行判据的宽度预算漏算了 tab 组，
-    // 于是判成「放得下」而实际放不下，按钮标签被压成两行、tab 组被 overflow 裁掉。
-    const groups = screen.getAllByRole('group', { name: '规则类型', hidden: true })
-    expect(groups).toHaveLength(2)
-  })
-
   it('工具按钮与视图切换不参与收缩：换行只发生在按钮之间，不在标签内部', async () => {
     await openFirewallPage()
 
@@ -274,11 +263,14 @@ describe('防火墙面板', () => {
     expect(screen.getByRole('group', { name: '规则类型' }).className).toContain('shrink-0')
   })
 
-  it('四个工具按钮都可用：防扫描弹窗按样例呈现统计与空列表', async () => {
+  it('移除导入导出入口，防扫描与同步仍可用', async () => {
     const user = userEvent.setup()
     await openFirewallPage()
+    expect(screen.queryByRole('button', { name: '导入规则' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '导出规则' })).not.toBeInTheDocument()
+    expect(document.querySelector('input[type="file"]')).toBeNull()
 
-    for (const label of ['导入规则', '导出规则', '端口防扫描', '同步规则']) {
+    for (const label of ['端口防扫描', '同步规则']) {
       expect(screen.getByRole('button', { name: label })).toBeEnabled()
     }
 
@@ -341,109 +333,6 @@ describe('防火墙面板', () => {
     // 无匹配给中文空态
     await user.type(input, '99.')
     expect(within(dialog).getByText('没有匹配的 IP，换个关键字试试')).toBeInTheDocument()
-  })
-
-  it('导入规则：本地 JSON 文件解析入集，坏文件报危险通知', async () => {
-    const user = userEvent.setup()
-    await openFirewallPage()
-
-    const input = document.querySelector('input[type="file"]') as HTMLInputElement
-    expect(input).not.toBeNull()
-
-    // 坏文件：只给危险通知（danger → alert），不加规则
-    await user.upload(input, new File(['{ not json'], 'bad.json', { type: 'application/json' }))
-    expect(messageHistoryText('alert')).toContain('导入失败：不是有效的规则 JSON')
-    expect(screen.getByText(new RegExp(`共 ${SEED_RULE_COUNT} 条`))).toBeInTheDocument()
-
-    // 好文件：1 条新增 + 1 条与现有数据重复跳过（8443 是此前添加用例建出的）。
-    const payload = {
-      kind: 'elysian-firewall-rules',
-      direction: 'all',
-      rules: [
-        { protocol: 'tcp', port: 9090, family: 'ipv4', policy: 'allow', source: '所有IP', note: '演示导入' },
-        { protocol: 'tcp', port: 8443, family: 'ipv4', policy: 'allow', source: '所有IP', note: '重复行' },
-      ],
-    }
-    await user.upload(
-      input,
-      new File([JSON.stringify(payload)], 'rules.json', { type: 'application/json' }),
-    )
-
-    await waitFor(() =>
-      expect(messageHistoryText('status')).toContain(
-        '导入完成：新增 1 条，跳过重复 1 条（mock，待接入真实执行）',
-      ),
-    )
-    // 新规则进数据集：搜端口可见
-    await user.type(screen.getByLabelText('搜索端口、来源或备注'), '9090')
-    expect(await screen.findByText(/共 1 条/)).toBeInTheDocument()
-    expect(screen.getByRole('region', { name: '端口规则表' }).textContent).toContain('演示导入')
-  })
-
-  it('导入：被拒条目逐条标出（第几条、为什么），合法条目照常导入', async () => {
-    const user = userEvent.setup()
-    await openFirewallPage()
-
-    const input = document.querySelector('input[type="file"]') as HTMLInputElement
-    const payload = {
-      kind: 'elysian-firewall-rules',
-      rules: [
-        { protocol: 'tcp', port: 9091, family: 'ipv4', policy: 'allow', source: '所有IP', note: '合法行' },
-        { protocol: 'tcp', port: 9092, family: 'ipv4', policy: 'allow', source: '所有IP', note: "坏'备注" },
-        { protocol: 'udp', port: 70000, family: 'ipv4', policy: 'allow', source: '所有IP', note: null },
-      ],
-    }
-    await user.upload(
-      input,
-      new File([JSON.stringify(payload)], 'mixed.json', { type: 'application/json' }),
-    )
-
-    // 被拒的两条逐条给出序号与原因，不静默丢弃
-    const rejected = messageHistoryText('alert')
-    expect(rejected).toContain('导入：2 条被拒')
-    expect(rejected).toContain('第 2 条：备注不能包含单引号')
-    expect(rejected).toContain('第 3 条：协议、端口、地址族、策略或方向不合法')
-
-    // 合法的那条照常导入
-    await waitFor(() =>
-      expect(messageHistoryText('status')).toContain('导入完成：新增 1 条'),
-    )
-    await user.type(screen.getByLabelText('搜索端口、来源或备注'), '9091')
-    expect(screen.getByRole('region', { name: '端口规则表' }).textContent).toContain('合法行')
-  })
-
-  it('导出规则：选方向后生成包含对应规则数的本地下载', async () => {
-    const user = userEvent.setup()
-    const createObjectURL = vi.fn((_blob: Blob) => 'blob:mock')
-    vi.stubGlobal('URL', Object.assign(globalThis.URL, { createObjectURL, revokeObjectURL: vi.fn() }))
-    const clicks: string[] = []
-    vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(function (this: HTMLAnchorElement) {
-      clicks.push(this.download)
-    })
-
-    try {
-      await openFirewallPage()
-      // 数据集在用例间共享，别写死总数：读页面当前的「共 N 条」。
-      const total = Number((await screen.findByText(/共 \d+ 条/)).textContent?.match(/\d+/)?.[0])
-      await user.click(screen.getByRole('button', { name: '导出规则' }))
-      const dialog = await screen.findByRole('dialog', { name: '导出规则' })
-      expect(dialog.textContent).toContain(`的 ${total} 条规则`)
-
-      await user.click(within(dialog).getByRole('button', { name: '入站' }))
-      await user.click(within(dialog).getByRole('button', { name: '导出' }))
-
-      expect(createObjectURL).toHaveBeenCalledTimes(1)
-      expect(createObjectURL.mock.calls[0]![0].type).toBe('application/json')
-      expect(clicks[0]).toContain('-inbound-')
-      // 弹窗即关，下载动作本身经通知条留痕
-      expect(screen.queryByRole('dialog', { name: '导出规则' })).not.toBeInTheDocument()
-      expect(
-        messageHistoryText('status').includes('已导出'),
-      ).toBe(true)
-    } finally {
-      vi.restoreAllMocks()
-      vi.unstubAllGlobals()
-    }
   })
 
   it('同步规则：忙碌一拍后报从操作系统同步的 mock 通知', async () => {
@@ -548,8 +437,6 @@ describe('防火墙面板', () => {
     await user.click(screen.getByRole('button', { name: 'IP 规则' }))
     const region = await screen.findByRole('region', { name: 'IP 规则表' })
     expect(within(region).getByText('185.220.101.7')).toBeInTheDocument()
-    // IP 视图不带导入/导出（那两条只服务端口规则）
-    expect(screen.queryByRole('button', { name: '导入规则' })).not.toBeInTheDocument()
 
     await user.click(screen.getByRole('button', { name: '添加 IP 规则' }))
     const dialog = await screen.findByRole('dialog', { name: '添加 IP 规则' })

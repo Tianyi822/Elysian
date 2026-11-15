@@ -1,12 +1,9 @@
-import { useEffect, useLayoutEffect, useMemo, useRef, useState } from 'react'
-import * as Tooltip from '@radix-ui/react-tooltip'
-import { observeElementSize } from '../../utils/observeElementSize'
+import { useEffect, useMemo } from 'react'
 import { ToggleSwitch } from '../../components/ToggleSwitch'
-import { SlidePagination } from '../../components/easyui/SlidePagination'
+import { Pagination } from '../../components/Pagination'
 import { Badge } from '../../components/easyui/Badge'
-import { Button } from '../../components/easyui/Button'
-import { PressButton } from '../../components/easyui/PressButton'
-import { IOSSearchBar } from '../../components/easyui/IOSSearchBar'
+import { SearchInput } from '../../components/SearchInput'
+import { RefreshButton } from '../../components/RefreshState'
 import {
   FIREWALL_DIRECTION_LABELS,
   FIREWALL_POLICY_LABELS,
@@ -15,8 +12,6 @@ import {
 } from '@elysian/contracts'
 import type { FirewallForwardRule, FirewallIpRule, FirewallRule } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
-import { useMessageStore } from '../../stores/messageStore'
-import { useIntrinsicWidth } from '../../app/layout/headerAccessoryWidth'
 import { IconButton } from '../../components/IconButton'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
 import { CTL_TOOLBAR } from '../../components/formControl'
@@ -24,16 +19,15 @@ import { ChipGroup } from '../../components/ChipGroup'
 import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
 import { formatDateTime } from '../../components/format'
-import { Pencil, RefreshCw, Trash2 } from '../../components/icons'
+import { Pencil, Trash2 } from '../../components/icons'
 import { FIREWALL_PAGE_SIZE, useFirewallStore, type FirewallView } from '../../stores/firewallStore'
-import { FirewallExportDialog } from './FirewallExportDialog'
 import { FirewallForwardDialog } from './FirewallForwardDialog'
 import { FirewallIpRuleDialog } from './FirewallIpRuleDialog'
 import { FirewallRuleDialog } from './FirewallRuleDialog'
 import { FirewallRuleRemoveDialog } from './FirewallRuleRemoveDialog'
 import { FirewallScanDialog } from './FirewallScanDialog'
-import { formatFirewallImportProblems, parseFirewallRulesJson } from './firewallRuleIO'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
+import { Button } from '../../components/Button'
 
 /**
  * 系统防火墙面板：开关、统计、三类规则（端口/IP/转发）表格。
@@ -87,7 +81,7 @@ function ToggleRow({
   )
 }
 
-/** EasyUI PressButton 保留官方尺寸和压缩回弹，主题只替换颜色。 */
+/** EasyUI PressButton 保留官网圆角和压缩回弹，高度与本栏页签共用令牌。 */
 function ToolButton({
   label,
   onClick,
@@ -100,31 +94,15 @@ function ToolButton({
   primary?: boolean
 }) {
   return (
-    <PressButton
+    <Button type="button"
       variant={primary ? 'primary' : 'outline'}
       onClick={onClick}
       disabled={disabled}
-      className="shrink-0 whitespace-nowrap"
+      className="h-[var(--ctl-height)] shrink-0 whitespace-nowrap"
     >
       {label}
-    </PressButton>
+    </Button>
   )
-}
-
-function SyncButton({ onClick, busy = false }: { onClick?: () => void; busy?: boolean }) {
-  const label = busy ? '同步中…' : '同步规则'
-  return <Tooltip.Root>
-    <Tooltip.Trigger asChild>
-      <Button size="icon" variant="outline" className="rounded-full"
-        aria-label={label} onClick={onClick} isLoading={busy}
-        leftIcon={<RefreshCw size={14} aria-hidden />} />
-    </Tooltip.Trigger>
-    <Tooltip.Portal>
-      <Tooltip.Content side="bottom" sideOffset={6} className="z-[80] rounded border border-control-line bg-surface-raised px-2 py-1 text-xs text-fg shadow-lg">
-        {label}<Tooltip.Arrow className="fill-surface-raised" />
-      </Tooltip.Content>
-    </Tooltip.Portal>
-  </Tooltip.Root>
 }
 
 /** 三类规则的视图切换：分段按钮，切换时清空搜索。选中态是滑动的底色块。 */
@@ -169,7 +147,6 @@ export function FirewallPanel() {
   const dialogIpRule = useFirewallStore((s) => s.dialogIpRule)
   const dialogForward = useFirewallStore((s) => s.dialogForward)
   const scanDialogOpen = useFirewallStore((s) => s.scanDialogOpen)
-  const exportDialogOpen = useFirewallStore((s) => s.exportDialogOpen)
   const syncing = useFirewallStore((s) => s.syncing)
   const toggling = useFirewallStore((s) => s.toggling)
   const load = useFirewallStore((s) => s.load)
@@ -181,37 +158,7 @@ export function FirewallPanel() {
   const openCreateIp = useFirewallStore((s) => s.openCreateIp)
   const openCreateForward = useFirewallStore((s) => s.openCreateForward)
   const openScan = useFirewallStore((s) => s.openScan)
-  const openExport = useFirewallStore((s) => s.openExport)
-  const importRules = useFirewallStore((s) => s.importRules)
   const syncFromSystem = useFirewallStore((s) => s.syncFromSystem)
-  const importInputRef = useRef<HTMLInputElement>(null)
-  const toolbarRef = useRef<HTMLDivElement>(null)
-  const probeRef = useRef<HTMLDivElement>(null)
-  const searchProbeRef = useRef<HTMLDivElement>(null)
-  const [toolbarMetrics, setToolbarMetrics] = useState({ available: 0, gap: 0 })
-  const ready = status === 'ready'
-  const groupWidth = useIntrinsicWidth(probeRef, ready)
-  const searchWidth = useIntrinsicWidth(searchProbeRef, ready)
-
-  // 工具栏的可排布宽度与子项间距从计算样式读出，不和样式表里的 px 常量各写一份。
-  useLayoutEffect(() => {
-    if (!ready) return
-    const element = toolbarRef.current
-    if (!element) return
-    const measure = () => {
-      const style = getComputedStyle(element)
-      const available =
-        element.clientWidth - (Number.parseFloat(style.paddingLeft) || 0) - (Number.parseFloat(style.paddingRight) || 0)
-      setToolbarMetrics({ available, gap: Number.parseFloat(style.columnGap) || 0 })
-    }
-    measure()
-    return observeElementSize([element], measure)
-  }, [ready])
-
-  // 按搜索框完全展开后的宽度预留空间，避免聚焦伸展挤压按钮或触发换行。
-  // 放不下时页签先独占一行，操作与搜索按各自自然宽度换行。
-  const toolbarInline =
-    toolbarMetrics.available >= groupWidth + toolbarMetrics.gap + searchWidth && searchWidth > 0
 
   useEffect(() => {
     void load(gateway)
@@ -247,15 +194,11 @@ export function FirewallPanel() {
   }
 
   const toolbar = VIEW_TOOLBAR[view]
-  const toolbarButtons =
-    view === 'port'
-      ? [toolbar.addLabel, '导入规则', '导出规则', '端口防扫描']
-      : [toolbar.addLabel, '端口防扫描']
 
   return (
     <div>
-      {errorMessage ? <p role="alert" className="mb-3 text-xs text-danger">刷新失败：{errorMessage}。已保留上次读取结果。<button type="button" className="ml-2 underline" onClick={() => void load(gateway)}>重试</button></p> : null}
-      {operationError ? <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-danger/40 p-3 text-xs text-danger"><p className="min-w-0 flex-1">{operationError}</p><button type="button" className="rounded border border-line px-3 py-1.5 text-fg" onClick={() => void load(gateway)}>重新读取状态</button></div> : null}
+      {errorMessage ? <p role="alert" className="mb-3 text-xs text-danger">刷新失败：{errorMessage}。已保留上次读取结果。<Button variant="link" type="button" className="ml-2 underline" onClick={() => void load(gateway)}>重试</Button></p> : null}
+      {operationError ? <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-danger/40 p-3 text-xs text-danger"><p className="min-w-0 flex-1">{operationError}</p><Button variant="outline" type="button" className="rounded border border-line px-3 py-1.5 text-fg" onClick={() => void load(gateway)}>重新读取状态</Button></div> : null}
       <div className={`${CTL_TOOLBAR} firewall-toolbar mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 panel-surface px-4 py-1`}>
         {/* 防火墙动作只在容器内真实执行 ufw；宿主机本地开发是内存演示，明示出来。 */}
         {!isDockerRuntime() ? (
@@ -284,10 +227,9 @@ export function FirewallPanel() {
       </div>
       {/* 工具区按官方控件的自然尺寸排布；窄屏重排容器，不压缩组件。 */}
       <div
-        ref={toolbarRef}
         className={`${CTL_TOOLBAR} firewall-toolbar mb-4 flex flex-wrap items-center gap-3 panel-surface px-3 py-2`}
       >
-        <div className={toolbarInline ? 'shrink-0' : 'w-full'}>
+        <div className="shrink-0">
           <ViewSwitch view={view} onChange={setView} />
         </div>
         <div className="flex max-w-full flex-wrap items-center gap-2">
@@ -300,86 +242,23 @@ export function FirewallPanel() {
               else openCreateForward()
             }}
           />
-          {view === 'port' ? (
-            <>
-              {/* 导入：读用户在本地选择的 JSON 文件（FileReader 本地解析，不经网络），逐条校验后交 adapter 落库。 */}
-              <ToolButton label="导入规则" onClick={() => importInputRef.current?.click()} />
-              <input
-                ref={importInputRef}
-                type="file"
-                accept="application/json,.json"
-                className="hidden"
-                onChange={(event) => {
-                  const file = event.target.files?.[0]
-                  event.target.value = ''
-                  if (!file) return
-                  void file.text().then(async (text) => {
-                    const parsed = parseFirewallRulesJson(text)
-                    // 文件本身的问题（不是 JSON / 结构不对）属于界面层反馈，直接走通知。
-                    if (!parsed) {
-                      useMessageStore.getState().notify({
-                        tone: 'danger',
-                        message: '导入失败：不是有效的规则 JSON',
-                      })
-                      return
-                    }
-                    // 被拒条目逐条标出（第几条、为什么），不静默丢弃；合法条目照常导入。
-                    if (parsed.invalid > 0) {
-                      useMessageStore.getState().notify({
-                        tone: 'danger',
-                        message: `导入：${parsed.invalid} 条被拒（${formatFirewallImportProblems(parsed.problems)}）`,
-                      })
-                    }
-                    if (parsed.rules.length === 0) {
-                      // 一条合法条目都没有时不发导入请求，避免「导入完成：没有新增」把被拒说成没事发生。
-                      if (parsed.invalid === 0) {
-                        useMessageStore.getState().notify({
-                          tone: 'info',
-                          message: '导入：文件里没有规则条目',
-                        })
-                      }
-                      return
-                    }
-                    await importRules(gateway, parsed.rules)
-                  })
-                }}
-              />
-              <ToolButton label="导出规则" onClick={() => openExport()} />
-            </>
-          ) : null}
           <ToolButton label="端口防扫描" onClick={() => openScan(gateway)} />
-          <SyncButton
-            onClick={() => void syncFromSystem(gateway)}
+          <RefreshButton
+            onPress={() => void syncFromSystem(gateway)}
             busy={syncing}
+            label={syncing ? '同步中…' : '同步规则'}
           />
         </div>
-        <div className="ml-auto flex w-[340px] max-w-full justify-start sm:justify-end">
-          <IOSSearchBar
-            id="firewall-search"
-            label={toolbar.searchLabel}
-            value={search}
-            onChange={setSearch}
-            placeholder={toolbar.searchLabel}
-          />
-        </div>
-      </div>
-      {/* 固有宽度探针：脱离布局、量出「左区整组」与搜索框各自需要多宽，供折行判断使用。
-          左区必须与真实行同构（视图切换 + 按钮），漏掉任何一项都会让预算偏小、误判放得下。
-          外壳收成 0×0 并裁切：这行自然宽度比窄屏更宽，若参与文档滚动宽度，
-          打开顶栏折叠菜单时滚动条补偿会按这份超出把整页挤窄。
-          invisible（含 aria-hidden + pointer-events-none）使探针不参与无障碍树与交互。 */}
-      <div aria-hidden className="pointer-events-none invisible absolute top-0 left-0 h-0 w-0 overflow-hidden">
-        <div ref={probeRef} className={`${CTL_TOOLBAR} firewall-toolbar flex w-max items-center gap-3`}>
-          <ViewSwitch view={view} onChange={() => {}} />
-          <div className="flex items-center gap-2">
-            {toolbarButtons.map((label) => (
-              <ToolButton key={label} label={label} primary={label === toolbar.addLabel} />
-            ))}
-            <SyncButton />
-          </div>
-        </div>
-        {/* 预留 IOSSearchBar 官方展开宽度，聚焦期间布局不跳动。 */}
-        <div ref={searchProbeRef} className="w-[340px]" />
+        <SearchInput
+          // 搜索槽从 220px 起使用剩余空间，最多 340px；内部聚焦动画只在
+          // 槽位内伸展。三个分组放不下时才自然换行，不强制页签独占一行。
+          className="ml-auto w-auto min-w-[min(220px,100%)] max-w-[min(340px,100%)] flex-[1_1_220px] sm:justify-end"
+          id="firewall-search"
+          label={toolbar.searchLabel}
+          value={search}
+          onChange={setSearch}
+          placeholder={toolbar.searchLabel}
+        />
       </div>
       {view === 'port' ? (
         <>
@@ -433,12 +312,9 @@ export function FirewallPanel() {
               </tbody>
             </table>
           </div>
-          <div className="mt-3 flex flex-wrap items-center justify-between gap-2 text-xs text-fg-muted">
-            <span>
-              共 {filtered.rules.length} 条 · 每页 {FIREWALL_PAGE_SIZE} 条
-            </span>
-            <SlidePagination pageCount={pageCount} page={safePage} onChange={setPage} showControls={false} />
-          </div>
+          <Pagination className="mt-3" summary={`共 ${filtered.rules.length} 条`}
+            pageSize={FIREWALL_PAGE_SIZE} pageCount={pageCount} page={safePage}
+            onPageChange={setPage} showControls={false} />
         </>
       ) : view === 'ip' ? (
         <div role="region" aria-label="IP 规则表" className="hover-scrollbar overflow-x-auto panel-surface">
@@ -520,7 +396,6 @@ export function FirewallPanel() {
       {dialogIpRule !== undefined ? <FirewallIpRuleDialog /> : null}
       {dialogForward !== undefined ? <FirewallForwardDialog /> : null}
       <FirewallRuleRemoveDialog />
-      {exportDialogOpen ? <FirewallExportDialog /> : null}
       {scanDialogOpen ? <FirewallScanDialog /> : null}
     </div>
   )

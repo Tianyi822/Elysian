@@ -1,7 +1,6 @@
 import { withRequestDeadline } from './requestDeadline'
 import type {
   FirewallForwardRule,
-  FirewallImportResult,
   FirewallIpRule,
   FirewallPortSync,
   FirewallRule,
@@ -299,22 +298,6 @@ export function createHttpFirewallAdapter(baseUrl = '/api/security/firewall'): F
 
     async remove(ruleId) {
       await requestJson(`${baseUrl}/rules/${encodeURIComponent(ruleId)}`, { method: 'DELETE' })
-    },
-
-    async importRules(inputs) {
-      const body = await requestJson(`${baseUrl}/rules/import`, {
-        method: 'POST',
-        headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ rules: inputs }),
-      })
-      const row = asObject(body)
-      if (!Array.isArray(row.added)) {
-        throw new Error('防火墙导入结果响应无效：应为数组')
-      }
-      return {
-        added: row.added.map((rule) => parseFirewallRule(rule)),
-        skipped: typeof row.skipped === 'number' ? row.skipped : 0,
-      } satisfies FirewallImportResult
     },
 
     async listIpRules() {

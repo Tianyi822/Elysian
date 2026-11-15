@@ -206,19 +206,4 @@ describe('变更后与系统重拉同步', () => {
 
     expect(useFirewallStore.getState().rules).toEqual([])
   })
-
-  it('导入完成后重拉列表：以系统返回的完整列表为准', async () => {
-    const list = vi.fn(async () => [RULE_V4, RULE_V6])
-    const gateway = gatewayWith({
-      list: list as unknown as () => Promise<readonly FirewallRule[]>,
-      importRules: async () => ({ added: [RULE_V4], skipped: 0 }),
-    })
-
-    await useFirewallStore.getState().importRules(gateway, [])
-
-    expect(useFirewallStore.getState().rules.map((rule) => rule.id)).toEqual([
-      'ufw-allow-in-tcp-22-any.ipv4',
-      'ufw-allow-in-tcp-22-any.ipv6',
-    ])
-  })
 })

@@ -251,16 +251,6 @@ var operationDescriptors = map[string]*opDescriptor{
 	"DELETE /api/security/firewall/rules/:id": {
 		category: "security", action: "删除端口规则", targetFn: targetOfID,
 	},
-	"POST /api/security/firewall/rules/import": {
-		category: "security", action: "导入端口规则",
-		summarize: func(input *opInput) *string {
-			rules, ok := input.body["rules"].([]any)
-			if !ok {
-				return nil
-			}
-			return sp(fmt.Sprintf("共 %d 条", len(rules)))
-		},
-	},
 	"POST /api/security/firewall/sync": {
 		category: "security", action: "从系统同步防火墙规则",
 	},

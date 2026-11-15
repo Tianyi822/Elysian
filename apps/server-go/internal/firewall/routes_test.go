@@ -59,7 +59,6 @@ type fakeService struct {
 	create         func(RuleInput) (FirewallRule, error)
 	update         func(string, RuleInput) (FirewallRule, error)
 	remove         func(string) error
-	importRules    func([]RuleInput) (ImportResult, error)
 	listIpRules    func() ([]FirewallIpRule, error)
 	createIpRule   func(IpRuleInput) (FirewallIpRule, error)
 	updateIpRule   func(string, IpRuleInput) (FirewallIpRule, error)
@@ -115,13 +114,6 @@ func (f *fakeService) Remove(id string) error {
 		return f.remove(id)
 	}
 	return nil
-}
-
-func (f *fakeService) ImportRules(inputs []RuleInput) (ImportResult, error) {
-	if f.importRules != nil {
-		return f.importRules(inputs)
-	}
-	return ImportResult{Added: []FirewallRule{sampleRule}, Skipped: 0}, nil
 }
 
 func (f *fakeService) ListIpRules() ([]FirewallIpRule, error) {
@@ -344,18 +336,30 @@ func TestRouterDeleteRulesDecodesID(t *testing.T) {
 	}
 }
 
-func TestRouterImportAndSync(t *testing.T) {
-	app := mountApp(Deps{Available: true, service: &fakeService{}})
+func TestRouterRemovedImportEndpoint(t *testing.T) {
+	created := false
+	app := mountApp(Deps{Available: true, service: &fakeService{
+		create: func(RuleInput) (FirewallRule, error) {
+			created = true
+			return sampleRule, nil
+		},
+	}})
 
-	code, body := doJSON(t, app, jsonRequest("POST", "/rules/import", map[string]any{
+	code, _ := doJSON(t, app, jsonRequest("POST", "/rules/import", map[string]any{
 		"rules": []any{map[string]any{"protocol": "tcp", "port": 3306}},
 	}))
-	if code != 200 || body["skipped"] != float64(0) {
-		t.Errorf("导入转发错误：%d %v", code, body)
+	if code != http.StatusNotFound {
+		t.Fatalf("已移除的导入端点应返回 404，实际为 %d", code)
 	}
+	if created {
+		t.Fatal("已移除的端点不得创建规则")
+	}
+}
 
-	code, body = doJSON(t, app, requestOf("POST", "/sync", "", nil))
-	if code != 200 || body["total"] != float64(2) {
+func TestRouterSync(t *testing.T) {
+	app := mountApp(Deps{Available: true, service: &fakeService{}})
+	code, body := doJSON(t, app, requestOf("POST", "/sync", "", nil))
+	if code != http.StatusOK || body["total"] != float64(2) {
 		t.Errorf("POST /sync 应返回同步总数：%d %v", code, body)
 	}
 }

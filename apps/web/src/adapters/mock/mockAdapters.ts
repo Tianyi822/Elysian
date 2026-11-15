@@ -39,7 +39,6 @@ import type {
   FileSearchResult,
   FirewallForwardInput,
   FirewallForwardRule,
-  FirewallImportResult,
   FirewallIpRule,
   FirewallIpRuleInput,
   FirewallRule,
@@ -121,7 +120,6 @@ import {
   getFirewallRules,
   getFirewallToggles,
   getScanProtection,
-  importFirewallRules,
   removeFirewallForward,
   removeFirewallIpRule,
   removeFirewallRule,
@@ -1223,10 +1221,6 @@ export class MockFirewallAdapter implements FirewallAdapter {
 
   async remove(ruleId: string): Promise<void> {
     removeFirewallRule(ruleId)
-  }
-
-  async importRules(inputs: readonly FirewallRuleInput[]): Promise<FirewallImportResult> {
-    return importFirewallRules(inputs, new Date().toISOString())
   }
 
   async listIpRules(): Promise<readonly FirewallIpRule[]> {

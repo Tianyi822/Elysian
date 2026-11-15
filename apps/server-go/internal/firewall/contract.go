@@ -104,12 +104,6 @@ type FirewallScanProtection struct {
 	Blocked []FirewallBlockedIp `json:"blocked"`
 }
 
-// ImportResult 批量导入结果：新增的规则与因重复被跳过的数量。
-type ImportResult struct {
-	Added   []FirewallRule `json:"added"`
-	Skipped int            `json:"skipped"`
-}
-
 // RuleInput 新建或修改端口规则的输入（路由层宽进后的形状；Port 为 NaN 时由
 // 服务层校验拒绝，错误消息按 JS String(number) 格式化）。
 type RuleInput struct {
