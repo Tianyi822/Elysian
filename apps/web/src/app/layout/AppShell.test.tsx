@@ -367,16 +367,24 @@ describe('模板外壳', () => {
     expect(labels[2]).toBe('安全')
   })
 
-  it('桌面侧边栏可以收起并展开', async () => {
+  it('桌面侧边栏收展保留按钮焦点，按压与定位由不同元素承载', async () => {
     const user = userEvent.setup()
     renderApp('/')
 
     const collapse = screen.getByRole('button', { name: '收起侧边栏' })
+    expect(collapse.parentElement).toHaveClass('desktop-navigation-toggle')
+    expect(collapse).not.toHaveClass('desktop-navigation-toggle')
     await user.click(collapse)
-    expect(screen.getByRole('button', { name: '展开侧边栏' })).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '展开侧边栏' })).toBe(collapse)
+    expect(collapse).toHaveFocus()
 
-    await user.click(screen.getByRole('button', { name: '展开侧边栏' }))
-    expect(screen.getByRole('button', { name: '收起侧边栏' })).toBeInTheDocument()
+    await user.keyboard('{Enter}')
+    expect(screen.getByRole('button', { name: '收起侧边栏' })).toBe(collapse)
+    expect(collapse).toHaveFocus()
+    await user.keyboard(' ')
+    expect(screen.getByRole('button', { name: '展开侧边栏' })).toBe(collapse)
+    await user.click(collapse)
+    expect(screen.getByRole('button', { name: '收起侧边栏' })).toBe(collapse)
   })
 })
 

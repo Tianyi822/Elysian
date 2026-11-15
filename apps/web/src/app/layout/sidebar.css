@@ -4,6 +4,7 @@
   transition: width 200ms ease-out;
 }
 
+/* 平移由普通外层承载，避免按钮自身的 PressButton 缩放覆盖 transform。 */
 .desktop-navigation-toggle {
   transform: translateX(0);
   transition: transform 200ms ease-out;

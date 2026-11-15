@@ -116,15 +116,17 @@ export function AppShell() {
                 <Bot aria-hidden size={24} className="shrink-0 text-nav-fg" />
                 <span>Elysian</span>
               </span>
-              <IconButton
-                onPress={() => setSidebarCollapsed(!sidebarCollapsed)}
-                label={sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'}
-                tooltip={false}
-                variant="ghost"
-                className="desktop-navigation-toggle ml-auto mr-1 size-7 shrink-0 rounded-lg text-nav-muted hover:bg-nav-hover hover:text-nav-fg"
-              >
-                {sidebarCollapsed ? <PanelLeftOpen aria-hidden size={17} /> : <PanelLeftClose aria-hidden size={17} />}
-              </IconButton>
+              <span className="desktop-navigation-toggle ml-auto mr-1 inline-flex shrink-0">
+                <IconButton
+                  onPress={() => setSidebarCollapsed(!sidebarCollapsed)}
+                  label={sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'}
+                  tooltip={false}
+                  variant="ghost"
+                  className="size-7 shrink-0 rounded-lg text-nav-muted hover:bg-nav-hover hover:text-nav-fg"
+                >
+                  {sidebarCollapsed ? <PanelLeftOpen aria-hidden size={17} /> : <PanelLeftClose aria-hidden size={17} />}
+                </IconButton>
+              </span>
             </div>
             <div className="min-h-0 flex-1">
               <Sidebar collapsed={sidebarCollapsed} />
