@@ -32,7 +32,7 @@ import "./data-table.css";
 /*  • <Sparkline /> and <DeltaPill /> ready to drop into any cell              */
 /*  • Sorting makes rows glide to their new place instead of jumping           */
 /*  • Under 640px the table becomes stacked cards (with a sort menu)           */
-/*  • Search, "show more" paging, empty state, keyboard + screen-reader support */
+/*  • Search, scroll-driven row mounting, empty state, keyboard + a11y support  */
 /*                                                                             */
 /*  One file · deps: react 19, framer-motion, tailwindcss · light + dark.      */
 /* -------------------------------------------------------------------------- */
@@ -91,7 +91,7 @@ export interface DataTableProps<T> {
   toolbar?: ReactNode;
   /** Persistent navigation, retained while selection replaces search/actions. */
   toolbarNavigation?: ReactNode;
-  /** Rows shown at first; "Show more" reveals this many each time (default 20, Infinity = all) */
+  /** Rows mounted per batch; the rest mount as the body scrolls (default 20, Infinity = all) */
   pageSize?: number;
   /** Scroll height in px, or the remaining main/window height (default "viewport") */
   maxHeight?: number | "viewport";
@@ -263,7 +263,7 @@ export function DataTable<T>({
   const [rootRef, width] = useElementWidth<HTMLDivElement>(960);
   const cards = width < cardBreakpoint;
   const scrollRef = useRef<HTMLDivElement>(null);
-  const footerRef = useRef<HTMLDivElement>(null);
+  const sentinelRef = useRef<HTMLDivElement>(null);
   const [viewportMaxHeight, setViewportMaxHeight] = useState<number>();
   const [toolbarHeight, setToolbarHeight] = useState(44);
   const toolbarObserver = useRef<ResizeObserver | null>(null);
@@ -343,6 +343,19 @@ export function DataTable<T>({
   const visible = processed.slice(0, limit);
   const hasMore = processed.length > limit;
 
+  // The body is the only pager: reaching its end mounts the next batch, so long
+  // tables stay cheap to sort without a footer that only reproduces scrolling.
+  useEffect(() => {
+    const sentinel = sentinelRef.current;
+    if (!hasMore || !active || !sentinel) return;
+    const observer = new IntersectionObserver(
+      (entries) => { if (entries.some(entry => entry.isIntersecting)) setLimit(current => current + pageSize); },
+      { root: cards ? null : scrollRef.current, rootMargin: "240px" },
+    );
+    observer.observe(sentinel);
+    return () => observer.disconnect();
+  }, [hasMore, active, cards, pageSize, limit]);
+
   useLayoutEffect(() => {
     if (cards || maxHeight !== "viewport" || !active) return;
     const viewport = scrollRef.current;
@@ -360,14 +373,13 @@ export function DataTable<T>({
       const bottom = Math.min(windowBottom, visualBottom, mainHasBox ? mainRect.bottom : windowBottom)
         - (parseFloat(mainStyle?.paddingBottom ?? "0") || 0);
       const paneTop = Math.max(visualTop, mainHasBox ? mainRect.top : 0);
-      const footerHeight = footerRef.current?.getBoundingClientRect().height ?? 0;
       // A table above the visible pane must not keep growing as main scrolls.
       const top = Math.max(viewport.getBoundingClientRect().top, paneTop);
-      const paneHeight = Math.max(1, Math.floor(bottom - paneTop - footerHeight));
+      const paneHeight = Math.max(1, Math.floor(bottom - paneTop));
       // Offscreen tables keep a header and two rows available without imposing
       // a min-height: short tables still use only their natural content height.
       const minimum = Math.min(density === "compact" ? 132 : 164, paneHeight);
-      const next = Math.max(minimum, Math.floor(bottom - top - footerHeight));
+      const next = Math.max(minimum, Math.floor(bottom - top));
       setViewportMaxHeight(previous => previous === next ? previous : next);
     };
     const schedule = () => {
@@ -375,7 +387,6 @@ export function DataTable<T>({
     };
     const observer = new ResizeObserver(schedule);
     observer.observe(viewport);
-    if (footerRef.current) observer.observe(footerRef.current);
     // Ancestor boxes cover wrapped controls and other tables changing layout
     // above this one, without observing every DOM mutation in the application.
     for (let ancestor = viewport.parentElement; ancestor; ancestor = ancestor.parentElement) {
@@ -399,7 +410,7 @@ export function DataTable<T>({
       visualViewport?.removeEventListener("resize", schedule);
       visualViewport?.removeEventListener("scroll", schedule);
     };
-  }, [active, cards, maxHeight, density, toolbarHeight, hasMore, processed.length, visible.length]);
+  }, [active, cards, maxHeight, density, toolbarHeight, processed.length, visible.length]);
 
   const cols = cards ? columns.filter((c) => !c.hideOnMobile) : columns;
   const primary = columns.find((c) => c.primary) ?? columns[0];
@@ -779,22 +790,8 @@ export function DataTable<T>({
               {processed.length === 0 && empty}
             </div>
           </div>
+          {hasMore && <div ref={sentinelRef} aria-hidden className="h-px" />}
         </motion.div>
-
-        {hasMore && (
-          <div ref={footerRef} className={cx("flex items-center justify-between gap-3 px-4 py-3 text-[12.5px]", !cards && cx("border-t", hairline), cards && "pt-4")}>
-            <span className={`tabular-nums ${muted}`}>
-              显示 {visible.length}／共 {processed.length} 条
-            </span>
-            <Button unstyled
-              type="button"
-              onClick={() => setLimit((l) => l + pageSize)}
-              className={`h-9 rounded-xl bg-surface-raised px-3.5 text-[12.5px] font-medium text-fg-muted transition-transform active:scale-[0.97]   [@media(hover:hover)]:hover:bg-line  ${focus}`}
-            >
-              显示更多 {Math.min(pageSize, processed.length - limit)} 条
-            </Button>
-          </div>
-        )}
       </div>
 
       <p className="sr-only" role="status" aria-live="polite">

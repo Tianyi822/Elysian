@@ -10,6 +10,7 @@ import { useLogsStore } from '../../stores/logsStore'
 import { useMessageStore } from '../../stores/messageStore'
 import { useRuntimeLogStore } from '../../stores/runtimeLogStore'
 import { renderApp } from '../../test/renderApp'
+import { scrollTableBatch } from '../../test/tableRows'
 import { formatLoginTime } from '../../components/format'
 import { TIMESTAMP_CHARS } from './LogTable'
 import { levelTone, matchesRuntimeSearch } from './RuntimeLogPanel'
@@ -83,7 +84,7 @@ function bodyRows(): HTMLElement[] {
   return within(table).getAllByRole('row').slice(1)
 }
 
-/** 官方首窗展示 20 条；剩余已加载记录由「显示更多」追加。 */
+/** 官方首批挂载 20 条；剩余已加载记录随表体滚动补足。 */
 async function waitForTable(): Promise<void> {
   await waitFor(() => expect(bodyRows()).toHaveLength(Math.min(20, SEED_RUNTIME_LOGS.length)))
 }
@@ -152,15 +153,14 @@ describe('运行日志表格', () => {
     expect(popover).toHaveTextContent(firstEntry.source)
   })
 
-  it('显示更多只追加已加载条目，不再次查询服务端且原始顺序保持', async () => {
-    const user = userEvent.setup({ delay: null })
+  it('滚到底只补足已加载条目，不再次查询服务端且原始顺序保持', async () => {
     const gateway = gatewayWithLogs()
     const request = vi.spyOn(gateway.logs, 'runtimeLog')
     renderApp('/logs', { gateway })
     await waitForTable()
     const requests = request.mock.calls.length
 
-    await user.click(within(region()).getByRole('button', { name: '显示更多 20 条' }))
+    await scrollTableBatch()
 
     await waitFor(() => expect(bodyRows()).toHaveLength(40))
     expect(request).toHaveBeenCalledTimes(requests)

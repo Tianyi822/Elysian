@@ -9,6 +9,7 @@ import { SEED_FORWARDS, SEED_IP_RULES, SEED_RULES, resetFirewallData } from '../
 import { useFirewallStore, FIREWALL_PAGE_SIZE } from '../../stores/firewallStore'
 import { useMessageStore } from '../../stores/messageStore'
 import { renderApp } from '../../test/renderApp'
+import { scrollTablesToEnd } from '../../test/tableRows'
 
 /**
  * 防火墙面板的端到端行为：分页、搜索、开关、三类规则视图与增删改。
@@ -107,15 +108,14 @@ describe('防火墙面板', () => {
     ]))
   })
 
-  it('先展示 20 条，显示更多追加剩余行并保留前面数据', async () => {
-    const user = userEvent.setup()
+  it('先展示 20 条，滚到底补足剩余行并保留前面数据', async () => {
     await openFirewallPage()
     const table = screen.getByRole('region', { name: '端口规则表' })
     expect(within(table).getAllByRole('row')).toHaveLength(FIREWALL_PAGE_SIZE + 1)
     expect(screen.queryByRole('navigation', { name: '分页' })).not.toBeInTheDocument()
-    await user.click(within(table).getByRole('button', { name: /显示更多/ }))
-    expect(within(table).getAllByRole('row')).toHaveLength(SEED_RULE_COUNT + 1)
     expect(within(table).queryByRole('button', { name: /显示更多/ })).not.toBeInTheDocument()
+    await scrollTablesToEnd()
+    expect(within(table).getAllByRole('row')).toHaveLength(SEED_RULE_COUNT + 1)
   })
 
   it('搜索按端口与备注过滤，无结果给空行提示', async () => {
@@ -232,8 +232,8 @@ describe('防火墙面板', () => {
 
     await user.click(within(confirm).getByRole('button', { name: '取消' }))
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    // 每个用例从原始种子独立开始。
-    expect(screen.getByText(new RegExp(`共 ${SEED_RULE_COUNT} 条`))).toBeInTheDocument()
+    // 每个用例从原始种子独立开始；行数取表格的完整匹配数，不受分批挂载影响。
+    expect(screen.getByRole('table', { name: '端口规则表' })).toHaveAttribute('aria-rowcount', String(SEED_RULE_COUNT + 1))
 
     await user.click(within(row).getByRole('button', { name: '删除' }))
     await user.click(
@@ -242,7 +242,7 @@ describe('防火墙面板', () => {
         { name: '确认删除' },
       ),
     )
-    await waitFor(() => expect(screen.getByText(new RegExp(`共 ${SEED_RULE_COUNT - 1} 条`))).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByRole('table', { name: '端口规则表' })).toHaveAttribute('aria-rowcount', String(SEED_RULE_COUNT)))
     expect(messageHistoryText('status')).toContain(
       '端口规则 tcp 2234 已删除（mock，待接入真实执行）',
     )

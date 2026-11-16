@@ -9,6 +9,7 @@ import { useLogsStore } from '../stores/logsStore'
 import { useMessageStore } from '../stores/messageStore'
 import { useSecurityStore } from '../stores/securityStore'
 import { useSettingsTabStore } from '../stores/settingsTabStore'
+import { IntersectionObserverStub } from './tableRows'
 
 /*
  * Radix 的浮层组件依赖几个 jsdom 未实现的浏览器 API，缺了会在打开浮层时报错。
@@ -46,6 +47,13 @@ if (!('ResizeObserver' in globalThis)) {
   Object.defineProperty(globalThis, 'ResizeObserver', {
     writable: true,
     value: ResizeObserverStub,
+  })
+}
+
+if (!('IntersectionObserver' in globalThis)) {
+  Object.defineProperty(globalThis, 'IntersectionObserver', {
+    writable: true,
+    value: IntersectionObserverStub,
   })
 }
 

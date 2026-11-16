@@ -5,6 +5,7 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DataTable, type Id } from './DataTable'
 import { TableBatchActions } from './TableBatchActions'
 import { advanceAuthGeneration } from '../adapters/http/unauthorized'
+import { scrollTablesToEnd } from '../test/tableRows'
 
 type Row = { key: string; name: string; value: number | null }
 const rows: Row[] = Array.from({ length: 25 }, (_, index) => ({ key: String(index), name: `条目${index}`, value: index === 24 ? null : 24 - index }))
@@ -12,15 +13,17 @@ const columns = [{ key: 'name', header: '名称', primary: true, accessor: (row:
 const getRowId = (row: Row) => row.key
 const getRowLabel = (row: Row) => row.name
 
-it('默认20条，全选覆盖尚未展开行，清除恢复查询', async () => {
+it('首批20条无追加页脚，滚到底自动补行，全选覆盖尚未挂载行', async () => {
   const user = userEvent.setup()
   render(<DataTable rows={rows} columns={columns} getRowId={getRowId} getRowLabel={getRowLabel} />)
   expect(within(screen.getByRole('table')).getAllByRole('row')).toHaveLength(21)
+  expect(screen.queryByRole('button', { name: /显示更多/ })).not.toBeInTheDocument()
+  expect(screen.queryByText(/共 25 条/)).not.toBeInTheDocument()
   await user.click(screen.getByRole('checkbox', { name: '全选已加载的匹配行' }))
   expect(await screen.findByText('已选 25 项')).toBeInTheDocument()
   await user.click(screen.getByRole('button', { name: /^清除$/ }))
   await waitFor(() => expect(screen.getByRole('searchbox')).toHaveFocus())
-  await user.click(screen.getByRole('button', { name: '显示更多 5 条' }))
+  await scrollTablesToEnd()
   expect(within(screen.getByRole('table')).getAllByRole('row')).toHaveLength(26)
 })
 it('稳定排序循环，空值始终在末尾，排序后Shift使用稳定身份', async () => {
@@ -87,19 +90,14 @@ describe('表格使用窗口剩余高度', () => {
     observers.filter(record => record.targets.has(element)).forEach(record => record.callback([], record.observer))
   })
 
-  it('扣除主区留白与追加页脚，展开最后一页后立即回收页脚空间，短表不撑高', async () => {
+  it('扣除主区留白后用满剩余高度，短表不撑高', async () => {
     render(<main style={{ paddingBottom: 24 }}><DataTable rows={rows} columns={columns} getRowId={getRowId} /></main>)
     const viewport = screen.getByRole('region', { name: '数据表格（可滚动）' })
     const main = viewport.closest('main')!
-    const footer = screen.getByRole('button', { name: '显示更多 5 条' }).parentElement!
     vi.spyOn(main, 'getBoundingClientRect').mockReturnValue(rect(80, 660))
     vi.spyOn(viewport, 'getBoundingClientRect').mockReturnValue(rect(200, 300))
-    vi.spyOn(footer, 'getBoundingClientRect').mockReturnValue(rect(500, 60))
     fireEvent(window, new Event('resize'))
-    await waitFor(() => expect(viewport).toHaveStyle({ maxHeight: '456px' }))
-    await userEvent.setup().click(screen.getByRole('button', { name: '显示更多 5 条' }))
-    expect(footer).not.toBeInTheDocument()
-    expect(viewport).toHaveStyle({ maxHeight: '516px' })
+    await waitFor(() => expect(viewport).toHaveStyle({ maxHeight: '516px' }))
     expect(viewport.style.height).toBe('')
     expect(viewport.style.minHeight).toBe('')
   })

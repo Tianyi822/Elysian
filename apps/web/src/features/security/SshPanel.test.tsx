@@ -8,6 +8,7 @@ import { useMessageStore } from '../../stores/messageStore'
 import { SSH_PAGE_SIZE, useSshStore } from '../../stores/sshStore'
 import { renderApp } from '../../test/renderApp'
 import { INITIAL_SSH_STATE, openSshTab, resetSshPanel, securityTab, sshSessions } from '../../test/sshPanel'
+import { scrollTablesToEnd } from '../../test/tableRows'
 import { sshPortConfirmConsequences } from './SshPanel'
 
 /**
@@ -177,8 +178,8 @@ describe('SSH 管理页签', () => {
     expect(useSshStore.getState().loginRecords).toBe(originalRecords)
   })
 
-  it('登录记录保留原时间顺序和所有展示字段，显示更多按官方方式追加', async () => {
-    const user = await openSshRecords()
+  it('登录记录保留原时间顺序和所有展示字段，滚到底补足其余记录', async () => {
+    await openSshRecords()
     const records = screen.getByRole('region', { name: 'SSH 登录记录' })
     const table = within(records).getByRole('table')
     expect(within(table).getAllByRole('columnheader').map(cell => cell.textContent).filter(Boolean)).toEqual(['IP 地址', '登录时间', '端口', '状态', '用户'])
@@ -190,7 +191,7 @@ describe('SSH 管理页签', () => {
     expect(rows[0]?.textContent).toContain('成功')
     expect(rows[0]?.textContent).toContain('root')
     expect(within(rows.find(row => row.textContent?.includes('失败'))!).getByText('失败')).toHaveClass('text-danger')
-    await user.click(within(records).getByRole('button', { name: /显示更多/ }))
+    await scrollTablesToEnd()
     await waitFor(() => expect(within(table).getAllByRole('row').slice(1)).toHaveLength(SEED_LOGIN_RECORDS.length))
     expect(within(records).queryByRole('navigation')).not.toBeInTheDocument()
   })

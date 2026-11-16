@@ -4,6 +4,7 @@ import { beforeEach, describe, expect, it } from 'vitest'
 import { SEED_LOGIN_KEYS } from '../../adapters/mock/sshData'
 import { SSH_PAGE_SIZE, useSshStore } from '../../stores/sshStore'
 import { openSshTab, resetSshPanel, sshSessions } from '../../test/sshPanel'
+import { scrollTablesToEnd } from '../../test/tableRows'
 
 /**
  * SSH 密钥表的端到端行为：种子列表、按名称、账号与指纹搜索、创建、删除、查看密钥。
@@ -24,23 +25,19 @@ function userRows(): HTMLElement[] {
   return within(table).getAllByRole('row').slice(1)
 }
 
-function showMore(): HTMLElement {
-  return within(keyCard()).getByRole('button', { name: /显示更多/ })
-}
-
 describe('SSH 密钥表', () => {
-  it('先显示 20 把密钥，显示更多后追加其余密钥', async () => {
-    const user = await openSshTab()
+  it('先显示 20 把密钥，滚到底补足其余密钥', async () => {
+    await openSshTab()
     expect(userRows()).toHaveLength(SSH_PAGE_SIZE)
-    await user.click(showMore())
-    await waitFor(() => expect(userRows()).toHaveLength(SEED_LOGIN_KEYS.length))
     expect(within(keyCard()).queryByRole('button', { name: /显示更多/ })).not.toBeInTheDocument()
+    await scrollTablesToEnd()
+    await waitFor(() => expect(userRows()).toHaveLength(SEED_LOGIN_KEYS.length))
     expect(within(keyCard()).queryByRole('navigation')).not.toBeInTheDocument()
   })
 
   it('改变搜索后重置展示窗口，过滤仍按原密钥判据', async () => {
     const user = await openSshTab()
-    await user.click(showMore())
+    await scrollTablesToEnd()
     const input = within(keyCard()).getByLabelText('搜索密钥')
     await user.type(input, '临时密钥')
     const count = SEED_LOGIN_KEYS.filter(key => key.name.includes('临时密钥')).length
@@ -125,9 +122,9 @@ describe('SSH 密钥表', () => {
     // 关闭后入列的条目不带私钥：列表与查看都取不到它。
     expect(useSshStore.getState().keys.at(-1)?.privateKey).toBeUndefined()
 
-    // 新密钥排在最后一把之后，追加显示后可见。
+    // 新密钥排在最后一把之后，滚到底补足后可见。
     expect(useSshStore.getState().keys).toHaveLength(SEED_LOGIN_KEYS.length + 1)
-    await user.click(showMore())
+    await scrollTablesToEnd()
     expect(keyCard().textContent).toContain('运维笔记本')
     // 归属账号落到行里：这把密钥记在 wangwu 名下
     const created = userRows().find((row) => row.textContent?.includes('运维笔记本'))
