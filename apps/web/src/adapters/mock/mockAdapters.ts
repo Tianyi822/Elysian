@@ -120,6 +120,7 @@ import {
   getFirewallRules,
   getFirewallToggles,
   getScanProtection,
+  setRuleScanProtection,
   removeFirewallForward,
   removeFirewallIpRule,
   removeFirewallRule,
@@ -1269,6 +1270,10 @@ export class MockFirewallAdapter implements FirewallAdapter {
 
   async scanProtection(): Promise<FirewallScanProtection> {
     return getScanProtection()
+  }
+
+  async setRuleScanProtection(ruleId: string, enabled: boolean): Promise<FirewallScanProtection> {
+    return setRuleScanProtection(ruleId, enabled)
   }
 
   async setScanProtection(enabled: boolean): Promise<FirewallScanProtection> {

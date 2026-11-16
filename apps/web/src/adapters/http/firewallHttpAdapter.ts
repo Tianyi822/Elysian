@@ -360,6 +360,14 @@ export function createHttpFirewallAdapter(baseUrl = '/api/security/firewall'): F
       return parseScanResponse(await requestJson(`${baseUrl}/scan`))
     },
 
+    async setRuleScanProtection(ruleId, enabled) {
+      return parseScanResponse(await requestJson(`${baseUrl}/rules/${encodeURIComponent(ruleId)}/scan`, {
+        method: 'PUT',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ enabled }),
+      }))
+    },
+
     async setScanProtection(enabled) {
       return parseScanResponse(
         await requestJson(`${baseUrl}/scan/toggle`, {

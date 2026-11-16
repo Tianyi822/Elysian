@@ -1,7 +1,9 @@
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
+import * as Tooltip from '@radix-ui/react-tooltip'
 import { ToggleSwitch } from '../../components/ToggleSwitch'
 import { DataTable, type Id, type SortState } from '../../components/DataTable'
 import { TableBatchActions } from '../../components/TableBatchActions'
+import { TableCreateButton } from '../../components/TableCreateButton'
 import { usePanelStore } from '../../stores/panelStore'
 import { isProtectedPanelRule, portRuleGroup } from './securityTableLogic'
 import { Badge } from '../../components/easyui/Badge'
@@ -11,6 +13,7 @@ import {
   FIREWALL_DIRECTION_LABELS,
   FIREWALL_POLICY_LABELS,
   FIREWALL_RULE_STATUS_LABELS,
+  firewallRuleScanEnabled,
   formatFirewallPort,
 } from '@elysian/contracts'
 import type { FirewallForwardRule, FirewallIpRule, FirewallRule } from '@elysian/contracts'
@@ -22,13 +25,12 @@ import { ChipGroup } from '../../components/ChipGroup'
 import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
 import { formatDateTime } from '../../components/format'
-import { Pencil, Trash2 } from '../../components/icons'
+import { Pencil, ShieldCheck, Trash2 } from '../../components/icons'
 import { useFirewallStore, type FirewallView } from '../../stores/firewallStore'
 import { FirewallForwardDialog } from './FirewallForwardDialog'
 import { FirewallIpRuleDialog } from './FirewallIpRuleDialog'
 import { FirewallRuleDialog } from './FirewallRuleDialog'
 import { FirewallRuleRemoveDialog } from './FirewallRuleRemoveDialog'
-import { FirewallScanDialog } from './FirewallScanDialog'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { Button } from '../../components/Button'
 
@@ -49,6 +51,29 @@ const STATUS_TONES: Record<FirewallRule['status'], StatusTone> = {
 function PolicyText({ policy }: { policy: FirewallRule['policy'] }) {
   const tone = policy === 'allow' ? 'text-success' : policy === 'deny' ? 'text-danger' : 'text-warning'
   return <span className={tone}>{FIREWALL_POLICY_LABELS[policy]}</span>
+}
+
+/** 端口旁的只读标记与表单共用防扫描判据，未知状态不显示已开启。 */
+function PortCell({ rule }: { rule: FirewallRule }) {
+  const scan = useFirewallStore(s => s.scanProtection)
+  const scanStatus = useFirewallStore(s => s.scanStatus)
+  return <span className="inline-flex items-center gap-1.5 whitespace-nowrap tabular-nums">
+    <span>{formatFirewallPort(rule)}</span>
+    {scanStatus === 'ready' && firewallRuleScanEnabled(rule, scan) && <Tooltip.Root>
+      <Tooltip.Trigger asChild>
+        <span role="img" aria-label="已开启防扫描" tabIndex={0} className="inline-flex shrink-0 rounded-sm text-success">
+          {/* 数字字面中心略低于行盒中心，盾牌下移 1px 做视觉对齐。 */}
+          <ShieldCheck aria-hidden size={14} className="translate-y-px" />
+        </span>
+      </Tooltip.Trigger>
+      <Tooltip.Portal>
+        <Tooltip.Content sideOffset={6} className="z-[80] rounded border border-control-line bg-surface-raised px-2 py-1 text-xs text-fg shadow-lg">
+          已开启防扫描
+          <Tooltip.Arrow className="fill-surface-raised" />
+        </Tooltip.Content>
+      </Tooltip.Portal>
+    </Tooltip.Root>}
+  </span>
 }
 
 /** EasyUI 中性 Badge：端口/IP/转发沿用真实计数，标签与数字紧凑呈现。 */
@@ -80,33 +105,6 @@ function ToggleRow({
       {label}
       <ToggleSwitch label={label} checked={checked} disabled={disabled} busy={disabled} onCheckedChange={onCheckedChange} />
     </label>
-  )
-}
-
-/** EasyUI PressButton 保留官网圆角和压缩回弹，高度与本栏页签共用令牌。 */
-function ToolButton({
-  label,
-  ariaLabel,
-  onClick,
-  disabled = false,
-  primary = false,
-}: {
-  label: string
-  ariaLabel?: string
-  onClick?: () => void
-  disabled?: boolean
-  primary?: boolean
-}) {
-  return (
-    <Button type="button"
-      variant={primary ? 'primary' : 'outline'}
-      aria-label={ariaLabel}
-      onClick={onClick}
-      disabled={disabled}
-      className="h-[var(--ctl-height)] shrink-0 whitespace-nowrap"
-    >
-      {label}
-    </Button>
   )
 }
 
@@ -150,7 +148,7 @@ export function FirewallPanel() {
   const dialogRule = useFirewallStore((s) => s.dialogRule)
   const dialogIpRule = useFirewallStore((s) => s.dialogIpRule)
   const dialogForward = useFirewallStore((s) => s.dialogForward)
-  const scanDialogOpen = useFirewallStore((s) => s.scanDialogOpen)
+  const scanError = useFirewallStore((s) => s.scanError)
   const syncing = useFirewallStore((s) => s.syncing)
   const toggling = useFirewallStore((s) => s.toggling)
   const load = useFirewallStore((s) => s.load)
@@ -160,7 +158,6 @@ export function FirewallPanel() {
   const openCreate = useFirewallStore((s) => s.openCreate)
   const openCreateIp = useFirewallStore((s) => s.openCreateIp)
   const openCreateForward = useFirewallStore((s) => s.openCreateForward)
-  const openScan = useFirewallStore((s) => s.openScan)
   const syncFromSystem = useFirewallStore((s) => s.syncFromSystem)
 
   useEffect(() => {
@@ -193,27 +190,26 @@ export function FirewallPanel() {
   }
 
   const toolbar = VIEW_TOOLBAR[view]
+  const tableNavigation = <div className={`${CTL_TOOLBAR} firewall-toolbar flex max-w-full`}>
+    <ViewSwitch view={view} onChange={setView} />
+  </div>
   const tableToolbar = (
-    <div role="group" aria-label="规则操作" className={`${CTL_TOOLBAR} firewall-toolbar flex max-w-full flex-wrap items-center justify-end gap-3`}>
-      <ViewSwitch view={view} onChange={setView} />
-      <div className="flex max-w-full flex-wrap items-center gap-2">
-        <ToolButton
-          label="添加规则"
-          ariaLabel={toolbar.addLabel}
-          primary
-          onClick={() => {
-            if (view === 'port') openCreate()
-            else if (view === 'ip') openCreateIp()
-            else openCreateForward()
-          }}
-        />
-        <ToolButton label="端口防扫描" onClick={() => openScan(gateway)} />
-        <RefreshButton
-          onPress={() => void syncFromSystem(gateway)}
-          busy={syncing}
-          label={syncing ? '同步中…' : '同步规则'}
-        />
-      </div>
+    <div role="group" aria-label="规则操作" className={`${CTL_TOOLBAR} firewall-toolbar flex max-w-full items-center gap-2`}>
+      <TableCreateButton
+        label="添加规则"
+        ariaLabel={toolbar.addLabel}
+        onPress={() => {
+          if (view === 'port') openCreate()
+          else if (view === 'ip') openCreateIp()
+          else openCreateForward()
+        }}
+      />
+      <RefreshButton
+        className="dt-toolbar-control-icon"
+        onPress={() => void syncFromSystem(gateway)}
+        busy={syncing}
+        label={syncing ? '同步中…' : '同步规则'}
+      />
     </div>
   )
 
@@ -221,6 +217,7 @@ export function FirewallPanel() {
     <div>
       {errorMessage ? <p role="alert" className="mb-3 text-xs text-danger">刷新失败：{errorMessage}。已保留上次读取结果。<Button variant="link" type="button" className="ml-2 underline" onClick={() => void load(gateway)}>重试</Button></p> : null}
       {operationError ? <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-danger/40 p-3 text-xs text-danger"><p className="min-w-0 flex-1">{operationError}</p><Button variant="outline" type="button" className="rounded border border-line px-3 py-1.5 text-fg" onClick={() => void load(gateway)}>重新读取状态</Button></div> : null}
+      {scanError ? <p role="alert" className="mb-3 text-xs text-danger">防扫描：{scanError}<Button variant="link" type="button" className="ml-2 underline" onClick={() => void useFirewallStore.getState().refreshScan(gateway)}>重新读取状态</Button></p> : null}
       <div className={`${CTL_TOOLBAR} firewall-toolbar mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 panel-surface px-4 py-1`}>
         {/* 防火墙动作只在容器内真实执行 ufw；宿主机本地开发是内存演示，明示出来。 */}
         {!isDockerRuntime() ? (
@@ -247,13 +244,12 @@ export function FirewallPanel() {
         <StatChip label="IP 规则" count={ipRules.length} />
         <StatChip label="端口转发" count={forwards.length} />
       </div>
-      <FirewallRulesTable rows={filtered} view={view} query={search} onQueryChange={setSearch} toolbar={tableToolbar} />
+      <FirewallRulesTable rows={filtered} view={view} query={search} onQueryChange={setSearch} toolbar={tableToolbar} toolbarNavigation={tableNavigation} />
 
       {dialogRule !== undefined ? <FirewallRuleDialog /> : null}
       {dialogIpRule !== undefined ? <FirewallIpRuleDialog /> : null}
       {dialogForward !== undefined ? <FirewallForwardDialog /> : null}
       <FirewallRuleRemoveDialog />
-      {scanDialogOpen ? <FirewallScanDialog /> : null}
     </div>
   )
 }
@@ -274,7 +270,7 @@ function RowActions({ kind, id, label, onEdit }: { kind: 'port' | 'ip' | 'forwar
   )
 }
 
-type TableQuery = { query: string; onQueryChange(value: string): void; toolbar: ReactNode }
+type TableQuery = { query: string; onQueryChange(value: string): void; toolbar: ReactNode; toolbarNavigation: ReactNode }
 const ruleDate = (rule: { updatedAt: string | null }) => rule.updatedAt ? formatDateTime(rule.updatedAt) : '—'
 const ruleNote = (rule: { note: string | null }) => <span title={rule.note || undefined}>{rule.note || '—'}</span>
 
@@ -288,7 +284,7 @@ function FirewallBatch<T extends { id: string }>({ rows, kind, getLabel, onSucce
   const syncing = useFirewallStore(s => s.syncing)
   return <TableBatchActions selectedRows={rows} getRowId={row => row.id} getRowLabel={getLabel}
     onSucceeded={onSucceeded} disabled={syncing} actions={[{
-      key: 'remove', label: '删除', danger: true,
+      key: 'remove', label: '删除', icon: <Trash2 aria-hidden size={16} />, danger: true,
       description: kind === 'port' ? isDockerRuntime() ? '删除所选规则；同一规则的 IPv4／IPv6 展示行由一次操作成对移除。面板入口保底规则仍受保护。' : '删除所选演示规则，逐项移除已选中的展示行。面板入口保底规则仍受保护。' : '删除所选规则，保留现有系统校验与操作边界。',
       eligible: row => removing.includes(row.id) ? '规则正在删除' : eligible?.(row),
       // 真实 UFW 以一条规范规则成对删除 IPv4／IPv6；演示 adapter 按精确 ID 删除。
@@ -298,7 +294,7 @@ function FirewallBatch<T extends { id: string }>({ rows, kind, getLabel, onSucce
 }
 
 /** Keep the official toolbar and shared-layout indicator mounted across rule views. */
-function FirewallRulesTable({ rows: allRows, view, query, onQueryChange, toolbar }: TableQuery & {
+function FirewallRulesTable({ rows: allRows, view, query, onQueryChange, toolbar, toolbarNavigation }: TableQuery & {
   view: FirewallView
   rows: { rules: readonly FirewallRule[]; ipRules: readonly FirewallIpRule[]; forwards: readonly FirewallForwardRule[] }
 }) {
@@ -314,7 +310,8 @@ function FirewallRulesTable({ rows: allRows, view, query, onQueryChange, toolbar
     view, ids: typeof next === 'function' ? next(current.view === view ? current.ids : []) : next,
   }))
   const common = {
-    query, onQueryChange, toolbar, selectionKey: view,
+    className: 'firewall-data-table',
+    query, onQueryChange, toolbar, toolbarNavigation, selectionKey: view,
     selected, onSelectionChange: setSelected,
     sort: sorting.view === view ? sorting.value : null,
     onSortChange: (value: SortState) => setSorting({ view, value }),
@@ -323,18 +320,20 @@ function FirewallRulesTable({ rows: allRows, view, query, onQueryChange, toolbar
   if (view === 'port') {
     const rows = allRows.rules
     return <DataTable rows={rows} ariaLabel="端口规则表" {...common} filterMode="external"
+      // 44px 选择列与九列最小宽度合计 1200px，空间不足时仅表体横向滚动。
+      minWidth={1200}
       searchPlaceholder="搜索端口、来源或备注"
       getRowId={rule => rule.id} getRowLabel={rule => `${rule.protocol} ${formatFirewallPort(rule)}`}
       columns={[
-        { key: 'port', header: '端口', primary: true, accessor: rule => rule.port, cell: rule => formatFirewallPort(rule), width: '13%' },
-        { key: 'protocol', header: '协议', accessor: rule => rule.protocol, width: '8%' },
-        { key: 'status', header: '使用状态', accessor: rule => FIREWALL_RULE_STATUS_LABELS[rule.status], cell: rule => <StatusTag label={FIREWALL_RULE_STATUS_LABELS[rule.status]} tone={STATUS_TONES[rule.status]} />, width: '11%' },
-        { key: 'policy', header: '策略', accessor: rule => FIREWALL_POLICY_LABELS[rule.policy], cell: rule => <PolicyText policy={rule.policy} />, width: '8%' },
-        { key: 'direction', header: '方向', accessor: rule => FIREWALL_DIRECTION_LABELS[rule.direction], width: '8%' },
-        { key: 'source', header: '来源', accessor: rule => rule.source, width: '12%' },
-        { key: 'note', header: '备注', accessor: rule => rule.note, cell: ruleNote, width: '17%' },
-        { key: 'updatedAt', header: '时间', accessor: rule => rule.updatedAt, cell: ruleDate, width: '15%' },
-        { key: 'actions', header: '操作', sortable: false, width: '8%', cell: rule => <RowActions kind="port" id={rule.id} label={`${rule.protocol} ${formatFirewallPort(rule)}`} onEdit={() => useFirewallStore.getState().openEdit(rule)} /> },
+        { key: 'port', header: '端口', primary: true, accessor: rule => rule.port, cell: rule => <PortCell rule={rule} />, width: 'minmax(176px, 13fr)' },
+        { key: 'protocol', header: '协议', accessor: rule => rule.protocol, width: 'minmax(72px, 8fr)' },
+        { key: 'status', header: '使用状态', accessor: rule => FIREWALL_RULE_STATUS_LABELS[rule.status], cell: rule => <StatusTag label={FIREWALL_RULE_STATUS_LABELS[rule.status]} tone={STATUS_TONES[rule.status]} />, width: 'minmax(96px, 11fr)' },
+        { key: 'policy', header: '策略', accessor: rule => FIREWALL_POLICY_LABELS[rule.policy], cell: rule => <PolicyText policy={rule.policy} />, width: 'minmax(72px, 8fr)' },
+        { key: 'direction', header: '方向', accessor: rule => FIREWALL_DIRECTION_LABELS[rule.direction], width: 'minmax(72px, 8fr)' },
+        { key: 'source', header: '来源', accessor: rule => rule.source, width: 'minmax(176px, 12fr)' },
+        { key: 'note', header: '备注', accessor: rule => rule.note, cell: ruleNote, width: 'minmax(176px, 17fr)' },
+        { key: 'updatedAt', header: '时间', accessor: rule => rule.updatedAt, cell: ruleDate, width: 'minmax(128px, 15fr)' },
+        { key: 'actions', header: '操作', sortable: false, width: 'minmax(88px, 8fr)', cell: rule => <RowActions kind="port" id={rule.id} label={`${rule.protocol} ${formatFirewallPort(rule)}`} onEdit={() => useFirewallStore.getState().openEdit(rule)} /> },
       ]}
       bulkActions={ids => <FirewallBatch key={view} rows={rows.filter(rule => ids.includes(rule.id))} kind="port" groupBy={portRuleGroup}
         getLabel={rule => `${rule.protocol} ${formatFirewallPort(rule)}`} eligible={rule => isProtectedPanelRule(rule, panelPort) ? '面板入口保底规则不允许删除' : undefined}

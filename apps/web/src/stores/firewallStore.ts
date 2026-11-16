@@ -48,8 +48,8 @@ type FirewallState = {
   dialogForward: FirewallForwardRule | 'new' | undefined
   /** 待确认删除的规则（三类共用一个确认弹窗，按 kind 区分）。 */
   removeTarget: { kind: 'port' | 'ip' | 'forward'; id: string; label: string } | undefined
-  /** 防扫描弹窗：数据在首次打开时懒加载，打开期间轮询刷新。 */
-  scanDialogOpen: boolean
+  /** 端口操作区与表单共用的防扫描事实。 */
+  scanSaving: boolean
   scanStatus: 'idle' | 'loading' | 'ready' | 'error'
   scanError?: string
   scanProtection: FirewallScanProtection
@@ -76,16 +76,13 @@ type FirewallState = {
   closeDialog: () => void
   openRemove: (target: { kind: 'port' | 'ip' | 'forward'; id: string; label: string }) => void
   closeRemove: () => void
-  saveRule: (gateway: ElysianGateway, input: FirewallRuleInput) => Promise<boolean>
+  saveRule: (gateway: ElysianGateway, input: FirewallRuleInput, scanEnabled?: boolean, scanConfig?: Omit<FirewallScanConfig, 'ports'>) => Promise<boolean>
   saveIpRule: (gateway: ElysianGateway, input: FirewallIpRuleInput) => Promise<boolean>
   saveForward: (gateway: ElysianGateway, input: FirewallForwardInput) => Promise<boolean>
   removeRule: (gateway: ElysianGateway, kind: 'port' | 'ip' | 'forward', ruleId: string) => Promise<SecurityActionResult>
-  openScan: (gateway: ElysianGateway) => void
-  closeScan: () => void
   refreshScan: (gateway: ElysianGateway) => Promise<void>
-  toggleScanProtection: (gateway: ElysianGateway, enabled: boolean) => Promise<void>
-  setScanConfig: (gateway: ElysianGateway, config: FirewallScanConfig) => Promise<void>
   unblockIp: (gateway: ElysianGateway, ip: string) => Promise<SecurityActionResult>
+  setRuleScan: (gateway: ElysianGateway, ruleId: string, enabled: boolean, config?: Omit<FirewallScanConfig, 'ports'>) => Promise<boolean>
   syncFromSystem: (gateway: ElysianGateway) => Promise<void>
 }
 
@@ -108,11 +105,13 @@ function sameReadSnapshot(snapshot: Pick<FirewallState, 'rules' | 'ipRules' | 'f
 
 export const useFirewallStore = create<FirewallState>((set, get) => {
   let actionAuth = captureAuthGeneration()
+  let scanRevision = 0
+  let pendingScan: { auth: number; gateway: ElysianGateway; promise: Promise<void> } | undefined
   const syncActionGeneration = () => {
     const auth = captureAuthGeneration()
     if (auth !== actionAuth) {
       actionAuth = auth
-      set({ removingRuleIds: [], unblockingIps: [] })
+      set({ removingRuleIds: [], unblockingIps: [], scanSaving: false, saving: false })
     }
     return auth
   }
@@ -131,7 +130,7 @@ export const useFirewallStore = create<FirewallState>((set, get) => {
   dialogIpRule: undefined,
   dialogForward: undefined,
   removeTarget: undefined,
-  scanDialogOpen: false,
+  scanSaving: false,
   scanStatus: 'idle',
   scanError: undefined,
   scanProtection: {
@@ -156,7 +155,7 @@ export const useFirewallStore = create<FirewallState>((set, get) => {
     set({ status: hadData ? 'ready' : 'loading', errorMessage: undefined })
     operation.promise = (async () => {
       try {
-        const data = await readFirewall(gateway)
+        const [data] = await Promise.all([readFirewall(gateway), get().refreshScan(gateway)])
         if (current() && sameReadSnapshot(operation.snapshot, get())) set({ status: 'ready', ...data, operationError: undefined, errorMessage: undefined })
       } catch (error) {
         if (current()) set({ status: hadData ? 'ready' : 'error', errorMessage: error instanceof Error ? error.message : '防火墙数据加载失败' })
@@ -176,14 +175,9 @@ export const useFirewallStore = create<FirewallState>((set, get) => {
   async refreshLists(gateway) {
     const auth = captureAuthGeneration()
     try {
-      const [toggles, rules, ipRules, forwards] = await Promise.all([
-        gateway.firewall.toggles(),
-        gateway.firewall.list(),
-        gateway.firewall.listIpRules(),
-        gateway.firewall.listForwards(),
-      ])
+      const [data] = await Promise.all([readFirewall(gateway), get().refreshScan(gateway)])
       if (auth !== captureAuthGeneration()) return
-      set({ toggles, rules, ipRules, forwards, operationError: undefined })
+      set({ ...data, operationError: undefined })
     } catch (error) {
       if (auth !== captureAuthGeneration()) return
       const message = error instanceof Error ? `列表同步失败：${error.message}` : '列表同步失败'
@@ -261,28 +255,46 @@ export const useFirewallStore = create<FirewallState>((set, get) => {
     set({ removeTarget: undefined })
   },
 
-  async saveRule(gateway, input) {
+  async saveRule(gateway, input, scanEnabled, scanConfig) {
     const editing = get().dialogRule
-    if (editing === undefined || get().saving) return false
+    const auth = syncActionGeneration()
+    if (editing === undefined || get().saving || get().scanSaving) return false
     set({ saving: true, operationError: undefined })
+    let saved: FirewallRule | undefined
     try {
-      if (editing === 'new') {
-        const created = await gateway.firewall.create(input)
-        set({ dialogRule: undefined, saving: false })
-        notify(`端口规则 ${created.protocol} ${created.port}${created.portTo ? `:${created.portTo}` : ''} 已添加${REAL_ACTION_LABEL}`)
-      } else {
-        const updated = await gateway.firewall.update(editing.id, input)
-        set({ dialogRule: undefined, saving: false })
-        notify(`端口规则 ${updated.protocol} ${updated.port}${updated.portTo ? `:${updated.portTo}` : ''} 已修改${REAL_ACTION_LABEL}`)
+      // 扫描设置失败后已保存的规则成为编辑目标；原样重试只重试扫描，不重复创建/改写规则。
+      const unchanged = editing !== 'new' && editing.protocol === input.protocol && editing.port === input.port
+        && editing.portTo === (input.portTo ?? null) && (isDockerRuntime() || editing.family === input.family) && editing.policy === input.policy
+        && editing.direction === (input.direction ?? 'inbound') && editing.source === input.source && editing.note === input.note
+      saved = unchanged ? editing : editing === 'new'
+        ? await gateway.firewall.create(input) : await gateway.firewall.update(editing.id, input)
+      if (auth !== captureAuthGeneration()) return false
+      if (scanEnabled !== undefined) {
+        set({ dialogRule: saved })
+        const applied = await get().setRuleScan(gateway, saved.id, scanEnabled, scanConfig)
+        if (auth !== captureAuthGeneration()) return false
+        if (!applied) {
+          const detail = get().scanError || '请刷新状态后重试'
+          await get().refreshLists(gateway)
+          if (auth !== captureAuthGeneration()) return false
+          set({ operationError: `规则已保存，防扫描设置未完成：${detail}。可在此重试。` })
+          return false
+        }
       }
-      // 列表以重拉为准：v4/v6 双生行与时间戳只有系统说得清。
+      set({ dialogRule: undefined })
+      notify(`端口规则 ${saved.protocol} ${saved.port}${saved.portTo ? `:${saved.portTo}` : ''} 已${editing === 'new' ? '添加' : '修改'}${REAL_ACTION_LABEL}`)
       await get().refreshLists(gateway)
       return true
     } catch (error) {
+      if (auth !== captureAuthGeneration()) return false
       const message = error instanceof Error ? `保存失败：${error.message}` : '保存失败'
-      set({ saving: false, operationError: message })
+      if (hasUncertainOutcome(error)) await get().refreshLists(gateway)
+      if (auth !== captureAuthGeneration()) return false
+      set({ operationError: message })
       notify(message, 'danger')
       return false
+    } finally {
+      if (auth === captureAuthGeneration()) set({ saving: false })
     }
   },
 
@@ -380,67 +392,59 @@ export const useFirewallStore = create<FirewallState>((set, get) => {
     }
   },
 
-  // 防扫描数据懒加载：只在第一次打开弹窗时取。
-  openScan(gateway) {
-    set({ scanDialogOpen: true })
-    if (get().scanStatus !== 'idle' && get().scanStatus !== 'error') return
-    set({ scanStatus: 'loading', scanError: undefined })
-    gateway.firewall
-      .scanProtection()
-      .then((scanProtection) => set({ scanStatus: 'ready', scanProtection, scanError: undefined }))
-      .catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : '读取防扫描数据失败'
-        set({ scanStatus: 'error', scanError: message })
-        notify(`读取防扫描数据失败：${message}`, 'danger')
-      })
-  },
-
-  closeScan() {
-    set({ scanDialogOpen: false })
-  },
-
-  /** 弹窗打开期间的轮询刷新：新出现的封锁 IP 顺手发通知（什么时候拦了谁）。 */
   async refreshScan(gateway) {
-    if (get().scanStatus !== 'ready') return
-    const auth = captureAuthGeneration()
+    const auth = syncActionGeneration()
+    if (get().scanSaving) return
+    if (pendingScan?.auth === auth && pendingScan.gateway === gateway) return pendingScan.promise
+    const revision = ++scanRevision
+    const operation = { auth, gateway, promise: Promise.resolve() }
+    pendingScan = operation
+    set({ scanStatus: get().scanStatus === 'ready' ? 'ready' : 'loading' })
+    operation.promise = (async () => {
+      try {
+        const scanProtection = await gateway.firewall.scanProtection()
+        if (auth === captureAuthGeneration() && revision === scanRevision) set({ scanProtection, scanStatus: 'ready', scanError: undefined })
+      } catch (error) {
+        if (auth !== captureAuthGeneration() || revision !== scanRevision) return
+        set({ scanStatus: 'error', scanError: error instanceof Error ? error.message : '读取防扫描状态失败' })
+      } finally { if (pendingScan === operation) pendingScan = undefined }
+    })()
+    return operation.promise
+  },
+
+  async setRuleScan(gateway, ruleId, enabled, config) {
+    const auth = syncActionGeneration()
+    if (get().scanSaving) return false
+    ++scanRevision
+    pendingScan = undefined
+    set({ scanSaving: true, scanError: undefined })
+    let savingConfig = false
     try {
-      const next = await gateway.firewall.scanProtection()
-      if (auth !== captureAuthGeneration()) return
-      const known = new Set(get().scanProtection.blocked.map((entry) => entry.ip))
-      set({ scanProtection: next, scanError: undefined })
-      for (const entry of next.blocked) {
-        if (!known.has(entry.ip)) {
-          notify(`防扫描已封锁 IP ${entry.ip}${REAL_ACTION_LABEL}`)
-        }
+      let scanProtection = await gateway.firewall.setRuleScanProtection(ruleId, enabled)
+      if (auth !== captureAuthGeneration()) return false
+      set({ scanProtection, scanStatus: 'ready', scanError: undefined })
+      if (enabled && config && (config.windowSeconds !== scanProtection.config.windowSeconds
+        || config.hitCount !== scanProtection.config.hitCount || config.banSeconds !== scanProtection.config.banSeconds)) {
+        savingConfig = true
+        // 使用端口启停回执里的最新列表，保留其他已保护端口；阈值沿用现有共享配置接口。
+        scanProtection = await gateway.firewall.setScanConfig({ ...config, ports: scanProtection.config.ports })
+        if (auth !== captureAuthGeneration()) return false
+        set({ scanProtection, scanStatus: 'ready', scanError: undefined })
       }
+      return true
     } catch (error) {
-      if (auth !== captureAuthGeneration()) return
-      const message = error instanceof Error ? error.message : '刷新防扫描数据失败'
-      if (get().scanError !== message) notify(`刷新防扫描数据失败：${message}`, 'danger')
+      if (auth !== captureAuthGeneration()) return false
+      const detail = error instanceof Error ? error.message : '防扫描设置失败'
+      const message = savingConfig ? `防扫描配置保存失败：${detail}` : detail
+      // 所有失败均回读事实，尤其写超时不能把旧快照当成已回滚，也不自动重投。
+      set({ scanSaving: false, scanStatus: 'loading' })
+      await get().refreshScan(gateway)
+      if (auth !== captureAuthGeneration()) return false
       set({ scanError: message })
-    }
-  },
-
-  async toggleScanProtection(gateway, enabled) {
-    const previous = get().scanProtection
-    if (previous) set({ scanProtection: { ...previous, enabled } })
-    try {
-      const next = await gateway.firewall.setScanProtection(enabled)
-      set({ scanProtection: next })
-      notify(`端口防扫描已${enabled ? '开启' : '关闭'}${REAL_ACTION_LABEL}`)
-    } catch {
-      if (previous) set({ scanProtection: previous })
-      notify('切换防扫描开关失败', 'danger')
-    }
-  },
-
-  async setScanConfig(gateway, config) {
-    try {
-      const next = await gateway.firewall.setScanConfig(config)
-      set({ scanProtection: next })
-      notify(`防扫描配置已更新${REAL_ACTION_LABEL}`)
-    } catch (error) {
-      notify(error instanceof Error ? `配置失败：${error.message}` : '配置失败', 'danger')
+      notify(`防扫描设置失败：${message}`, 'danger')
+      return false
+    } finally {
+      if (auth === captureAuthGeneration()) set({ scanSaving: false })
     }
   },
 
@@ -465,18 +469,22 @@ export const useFirewallStore = create<FirewallState>((set, get) => {
 
   async syncFromSystem(gateway) {
     if (get().syncing) return
+    const auth = syncActionGeneration()
     set({ syncing: true })
     try {
       await gateway.firewall.syncFromSystem()
       // 同步后重拉三类列表，让系统侧（含命令行手敲）的规则进面板。
-      set({ ...await readFirewall(gateway), status: 'ready', errorMessage: undefined, operationError: undefined })
+      const [data] = await Promise.all([readFirewall(gateway), get().refreshScan(gateway)])
+      if (auth !== captureAuthGeneration()) return
+      set({ ...data, status: 'ready', errorMessage: undefined, operationError: undefined })
       notify(`已从操作系统同步防火墙规则，当前共 ${get().rules.length + get().ipRules.length + get().forwards.length} 条${REAL_ACTION_LABEL}`)
     } catch (error) {
+      if (auth !== captureAuthGeneration()) return
       const message = error instanceof Error ? `同步失败：${error.message}` : '同步失败'
       set({ operationError: message })
       notify(message, 'danger')
     } finally {
-      set({ syncing: false })
+      if (auth === captureAuthGeneration()) set({ syncing: false })
     }
   },
 })

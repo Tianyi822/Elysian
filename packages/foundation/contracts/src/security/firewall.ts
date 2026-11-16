@@ -219,6 +219,26 @@ export type FirewallScanProtection = {
   blocked: readonly FirewallBlockedIp[]
 }
 
+/** 当前内核 multiport 监控上限；端口状态独立于规则行，双栈和来源规则共用。 */
+export const FIREWALL_SCAN_PORT_LIMIT = 15
+type ScanRule = Pick<FirewallRule, 'protocol' | 'direction' | 'port'> & { portTo?: number | null }
+
+export function firewallRuleScanProblem(rule: ScanRule, protectedPorts: readonly number[] = []): string | undefined {
+  if (rule.protocol !== 'tcp' || rule.direction !== 'inbound') return '防扫描仅适用于 TCP 入站端口'
+  const end = rule.portTo ?? rule.port
+  if (protectedPorts.some(port => port >= rule.port && port <= end)) return '面板访问端口不能启用防扫描'
+  if (end - rule.port + 1 > FIREWALL_SCAN_PORT_LIMIT) return `防扫描最多监控 ${FIREWALL_SCAN_PORT_LIMIT} 个端口`
+  return undefined
+}
+
+export function firewallRuleScanEnabled(rule: ScanRule, scan: FirewallScanProtection): boolean {
+  if (!scan.enabled || rule.protocol !== 'tcp' || rule.direction !== 'inbound') return false
+  const end = rule.portTo ?? rule.port
+  if (end - rule.port + 1 > FIREWALL_SCAN_PORT_LIMIT) return false
+  for (let port = rule.port; port <= end; port++) if (!scan.config.ports.includes(port)) return false
+  return true
+}
+
 /**
  * 防火墙区适配接口。演示态由 mock 实现；Docker 运行时由 HTTP adapter 接通容器内 ufw，
  * server 侧服务层与 web 侧 adapter 共用这一接口定义，页面不改。
@@ -243,6 +263,8 @@ export interface FirewallAdapter {
   removeForward(ruleId: string): Promise<void>
   /** 端口防扫描状态：开关、配置、统计与当前封锁列表（真实实现基于内核 xt_recent 双名单 jail）。 */
   scanProtection(): Promise<FirewallScanProtection>
+  /** 在服务端合并指定规则的端口状态，不覆盖其它端口；保持规则和防扫描响应原格式。 */
+  setRuleScanProtection(ruleId: string, enabled: boolean): Promise<FirewallScanProtection>
   setScanProtection(enabled: boolean): Promise<FirewallScanProtection>
   /** 更新防扫描配置（监控端口、窗口、阈值、封禁时长）；真实态改写规则文本并 reload。 */
   setScanConfig(config: FirewallScanConfig): Promise<FirewallScanProtection>

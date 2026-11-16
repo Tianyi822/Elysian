@@ -36,6 +36,7 @@ type Service interface {
 	UpdateForward(ruleId string, input ForwardInput) (FirewallForwardRule, error)
 	RemoveForward(ruleId string) error
 	ScanProtection() (FirewallScanProtection, error)
+	SetRuleScanProtection(ruleID string, enabled bool) (FirewallScanProtection, error)
 	SetScanProtection(enabled bool) (FirewallScanProtection, error)
 	SetScanConfig(config ScanConfig) (FirewallScanProtection, error)
 	UnblockIp(ip string) (FirewallScanProtection, error)
@@ -232,6 +233,25 @@ func newRouterWithService(svc Service) chi.Router {
 			return
 		}
 		shared.SendJSON(w, http.StatusOK, okBody{OK: true})
+	})
+
+	r.Put("/rules/{id}/scan", func(w http.ResponseWriter, req *http.Request) {
+		body, ok := readJSONBody(w, req)
+		if !ok {
+			return
+		}
+		row, _ := bodyRow(body)
+		enabled, ok := row["enabled"].(bool)
+		if !ok {
+			middleware.WriteError(w, shared.InvalidRequest("开关值无效"))
+			return
+		}
+		scan, err := svc.SetRuleScanProtection(chi.URLParam(req, "id"), enabled)
+		if err != nil {
+			middleware.WriteError(w, err)
+			return
+		}
+		shared.SendJSON(w, http.StatusOK, scan)
 	})
 
 	// 不读请求体（无 415/413/空体校验），但仍过同源守卫（POST 非 GET）。

@@ -9,7 +9,7 @@ import type {
   FirewallScanProtection,
   FirewallToggles,
 } from '@elysian/contracts'
-import { DEFAULT_SCAN_CONFIG, FIREWALL_ADDRESS_FAMILIES } from '@elysian/contracts'
+import { DEFAULT_SCAN_CONFIG, FIREWALL_ADDRESS_FAMILIES, FIREWALL_SCAN_PORT_LIMIT, PANEL_PORT, firewallRuleScanProblem } from '@elysian/contracts'
 
 /*
  * 防火墙演示数据集。种子行手工固定（时间取自真实样例），确定性可复现；
@@ -255,6 +255,22 @@ export function getScanProtection(): FirewallScanProtection {
 
 export function setScanProtection(enabled: boolean): FirewallScanProtection {
   scan = { ...scan, enabled }
+  return getScanProtection()
+}
+
+export function setRuleScanProtection(ruleId: string, enabled: boolean): FirewallScanProtection {
+  const rule = rules.find(item => item.id === ruleId)
+  if (!rule) throw new Error('端口规则不存在，请先刷新规则')
+  const problem = firewallRuleScanProblem(rule, [PANEL_PORT, PANEL_PORT + 1])
+  if (problem) throw new Error(problem)
+  const end = rule.portTo ?? rule.port
+  const ports = new Set(scan.enabled ? scan.config.ports : [])
+  for (let port = rule.port; port <= end; port++) {
+    if (enabled) ports.add(port)
+    else ports.delete(port)
+  }
+  if (ports.size > FIREWALL_SCAN_PORT_LIMIT) throw new Error(`防扫描最多监控 ${FIREWALL_SCAN_PORT_LIMIT} 个端口`)
+  scan = { ...scan, enabled: ports.size > 0, config: { ...scan.config, ports: [...ports].sort((a, b) => a - b) } }
   return getScanProtection()
 }
 

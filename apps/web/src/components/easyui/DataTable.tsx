@@ -18,6 +18,8 @@ import React, {
 } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
 import { Button } from "../Button";
+import { IconButton } from "../IconButton";
+import { X } from "../icons";
 import { SelectDropdown } from "../SelectDropdown";
 import { useImeEnterGuard } from "../useImeEnterGuard";
 import "./data-table.css";
@@ -87,10 +89,14 @@ export interface DataTableProps<T> {
   bulkActions?: (selectedIds: Id[]) => ReactNode;
   /** Right side of the toolbar, replacing the row count when provided */
   toolbar?: ReactNode;
+  /** Persistent navigation, retained while selection replaces search/actions. */
+  toolbarNavigation?: ReactNode;
   /** Rows shown at first; "Show more" reveals this many each time (default 20, Infinity = all) */
   pageSize?: number;
   /** Scroll height in px, or the remaining main/window height (default "viewport") */
   maxHeight?: number | "viewport";
+  /** Minimum desktop table width in px; overflow scrolls inside the table. Cards stay fluid. */
+  minWidth?: number;
   density?: "comfortable" | "compact";
   /** Width below which rows become cards (default 640) */
   cardBreakpoint?: number;
@@ -239,8 +245,10 @@ export function DataTable<T>({
   onSelectionChange,
   bulkActions,
   toolbar,
+  toolbarNavigation,
   pageSize = 20,
   maxHeight = "viewport",
+  minWidth = 560,
   density = "comfortable",
   cardBreakpoint = 640,
   onRowClick,
@@ -446,12 +454,12 @@ export function DataTable<T>({
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: reduce ? 0 : -6, transition: { duration: 0.12 } }}
       transition={{ duration: 0.2, ease: EASE_OUT }}
-      className="flex h-11 w-full items-center justify-between gap-3"
+      className="dt-toolbar-selection flex h-11 w-full items-center justify-between gap-3"
     >
-      <p className="text-[13px] font-medium text-fg " aria-live="polite">
+      <p className="dt-selection-count text-[13px] font-medium text-fg" aria-live="polite">
         已选 {selectedIds.length} 项
       </p>
-      <div className="flex items-center gap-1.5">
+      {!toolbarNavigation && <div className="dt-selection-clear flex items-center gap-1.5">
         <Button unstyled
           type="button"
           onClick={() => { restoreSearchFocus.current = true; setSelected([]); }}
@@ -459,7 +467,7 @@ export function DataTable<T>({
         >
           清除
         </Button>
-      </div>
+      </div>}
     </motion.div>
   );
 
@@ -471,10 +479,10 @@ export function DataTable<T>({
       animate={{ opacity: 1, y: 0 }}
       exit={{ opacity: 0, y: reduce ? 0 : -6, transition: { duration: 0.12 } }}
       transition={{ duration: 0.2, ease: EASE_OUT }}
-      className={cx("flex w-full items-center justify-between gap-3", toolbar ? "min-h-11 flex-wrap" : "h-full")}
+      className={cx("dt-toolbar-normal flex w-full items-center justify-between gap-3", toolbar ? "min-h-11 flex-wrap" : "h-full")}
     >
       {searchable ? (
-        <label className={cx("relative flex min-w-0 max-w-[320px] flex-1 items-center", !!toolbar && "basis-[220px]")}>
+        <label className={cx("dt-toolbar-search relative flex min-w-0 max-w-[320px] flex-1 items-center", !!toolbar && "basis-[220px]")}>
           <svg viewBox="0 0 24 24" className="pointer-events-none absolute left-3 h-4 w-4 text-fg-subtle" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" aria-hidden>
             <circle cx="11" cy="11" r="6.5" />
             <path d="m16 16 4 4" />
@@ -493,7 +501,7 @@ export function DataTable<T>({
       ) : (
         <span className={`text-[13px] ${muted}`}>{processed.length} 行</span>
       )}
-      <div className="ml-auto flex max-w-full shrink-0 flex-wrap items-center gap-2">
+      <div className="dt-toolbar-actions ml-auto flex max-w-full shrink-0 flex-wrap items-center gap-2">
         {searchable && !toolbar && <span className={`hidden text-[12.5px] tabular-nums sm:block ${muted}`}>{processed.length} 行</span>}
         {toolbar}
       </div>
@@ -639,7 +647,7 @@ export function DataTable<T>({
                 <Checkbox checked={isSel} onToggle={(e) => toggleRow(getRowId(row), index, e)} label={`选择 ${label}`} />
               </div>
             )}
-            <div role="cell" className="min-w-0 flex-1 text-[14px] font-medium text-fg ">
+            <div role="cell" className="min-w-0 flex-1 text-[14px] font-medium text-fg [overflow-wrap:anywhere]">
               {primary ? renderCell(row, primary) : null}
             </div>
           </div>
@@ -648,7 +656,7 @@ export function DataTable<T>({
               {rest.map((c) => (
                 <div key={c.key} role="cell" className={cx("min-w-0", c.fullWidthOnMobile && "col-span-2")}>
                   <p className={`mb-1 text-[11.5px] ${muted}`}>{c.mobileLabel ?? c.header}</p>
-                  <div className="text-[13.5px] text-fg ">{renderCell(row, c)}</div>
+                  <div className="text-[13.5px] text-fg [overflow-wrap:anywhere]">{renderCell(row, c)}</div>
                 </div>
               ))}
             </div>
@@ -693,7 +701,7 @@ export function DataTable<T>({
               c === primary ? "font-medium text-fg " : "text-fg-muted ",
             )}
           >
-            <div className="min-w-0 max-w-full">{renderCell(row, c)}</div>
+            <div className="min-w-0 max-w-full [overflow-wrap:anywhere]">{renderCell(row, c)}</div>
           </div>
         ))}
       </motion.div>
@@ -720,14 +728,25 @@ export function DataTable<T>({
     </div>
   );
 
+  const bulkActionSlot = <div className="dt-bulk-slot" hidden={!selectable || selectedIds.length === 0}>{bulkActions?.(selectedIds)}</div>;
+  const selectionActive = selectable && selectedIds.length > 0;
+
   return (
     <div ref={rootRef} role="region" aria-label={ariaLabel} aria-busy={busy || undefined} className={cx("easyui-data-table w-full min-w-0 text-fg antialiased", className)}>
-      {/* Preserve the wrapped toolbar's space when selection replaces its controls. */}
-      <div className={cx("relative mb-3", toolbar ? "min-h-11" : "h-11")} style={toolbar ? { minHeight: toolbarHeight } : undefined}>
+      {/* Navigation stays outside the animated search/selection replacement. */}
+      <div className={cx("dt-toolbar relative mb-3", toolbar || toolbarNavigation ? "min-h-11" : "h-11", !!toolbarNavigation && "dt-toolbar-navigation-layout", selectionActive && "dt-toolbar-selection-active")} style={toolbar && !toolbarNavigation ? { minHeight: toolbarHeight } : undefined}>
+        {toolbarNavigation && <div className="dt-toolbar-navigation">
+          {toolbarNavigation}
+          <div role="group" aria-label="多选操作" className="dt-toolbar-navigation-actions" hidden={!selectionActive}>
+            {bulkActionSlot}
+            <IconButton label="清除" variant="ghost" className="dt-action dt-action-icon"
+              onPress={() => { restoreSearchFocus.current = true; setSelected([]); }}><X aria-hidden size={16} /></IconButton>
+          </div>
+        </div>}
         <AnimatePresence mode="wait" initial={false}>
           {selectedIds.length > 0 && selectable ? selectionBar : normalBar}
         </AnimatePresence>
-        <div className="dt-bulk-slot" hidden={!selectable || selectedIds.length === 0}>{bulkActions?.(selectedIds)}</div>
+        {!toolbarNavigation && bulkActionSlot}
       </div>
 
       <div
@@ -739,7 +758,7 @@ export function DataTable<T>({
           ref={scrollRef}
           layoutScroll
           onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 2)}
-          className={cx(!cards && "overflow-auto overscroll-contain")}
+          className={cx(!cards && "table-scrollbar overflow-auto overscroll-contain")}
           style={!cards ? { maxHeight: maxHeight === "viewport" ? viewportMaxHeight : maxHeight } : undefined}
           tabIndex={!cards ? 0 : undefined}
           role={!cards ? "region" : undefined}
@@ -750,7 +769,7 @@ export function DataTable<T>({
             aria-label={ariaLabel}
             aria-rowcount={processed.length + 1}
             aria-colcount={cols.length + (selectable ? 1 : 0)}
-            className={cx(!cards && "min-w-[560px]")}
+            style={!cards ? { minWidth } : undefined}
           >
             {!cards && header}
             <div key={JSON.stringify([cards ? "cards" : "table", selectionKey])} role="rowgroup" className={cx("relative", cards && "flex flex-col gap-2.5")}>

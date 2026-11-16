@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import {
   parseFirewallOverviewResponse,
   parseFirewallPortSync,
@@ -8,6 +8,7 @@ import {
   parseIpRulesResponse,
   parseRuleResponse,
   parseScanResponse,
+  createHttpFirewallAdapter,
 } from './firewallHttpAdapter'
 
 /*
@@ -55,6 +56,19 @@ const SCAN = {
   stats: { totalBlockedIps: 3, totalFailedConnections: 1200, currentBlockedIps: 1, currentFailedConnections: 40 },
   blocked: [{ ip: '203.0.113.9', blockedAt: '2026-09-20T08:00:00.000Z' }],
 }
+
+it('逐规则防扫描只提交目标和布尔值，回执保留原 scan 格式', async () => {
+  const fetch = vi.fn(async () => new Response(JSON.stringify(SCAN), { status: 200, headers: { 'content-type': 'application/json' } }))
+  vi.stubGlobal('fetch', fetch)
+  try {
+    const result = await createHttpFirewallAdapter().setRuleScanProtection('rule/source.ipv6', true)
+    expect(result).toEqual(SCAN)
+    const [url, init] = fetch.mock.calls[0] as unknown as [string, RequestInit]
+    expect(url).toBe('/api/security/firewall/rules/rule%2Fsource.ipv6/scan')
+    expect(init.method).toBe('PUT')
+    expect(JSON.parse(init.body as string)).toEqual({ enabled: true })
+  } finally { vi.unstubAllGlobals() }
+})
 
 describe('parseFirewallOverviewResponse', () => {
   const valid = {

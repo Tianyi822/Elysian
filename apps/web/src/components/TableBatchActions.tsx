@@ -5,6 +5,7 @@ import { captureAuthGeneration } from '../adapters/http/unauthorized'
 import { useMessageStore } from '../stores/messageStore'
 import { tableBatchFailure, type TableBatchOutcome } from '../utils/tableBatch'
 import { Button } from './Button'
+import { IconButton } from './IconButton'
 import { DataTableActivityContext } from './dataTableActivity'
 import { DROPDOWN_OPTION_CLASS, DROPDOWN_SURFACE_CLASS } from './dropdownStyles'
 
@@ -13,6 +14,8 @@ type Id = string | number
 export interface TableBatchAction<T> {
   key: string
   label: string
+  /** Compact icon presentation with the same accessible name and confirmation. */
+  icon?: ReactNode
   danger?: boolean
   description?: ReactNode
   /** Returning a reason skips the row. No return value means eligible. */
@@ -90,7 +93,10 @@ export function TableBatchActions<T>({ selectedRows, getRowId, getRowLabel, acti
   const statusLabel = { succeeded: '成功', failed: '失败', unknown: '结果未确认', skipped: '跳过', pending: '未执行' }
   return <>
     <div className="dt-batch-actions">
-      {actions.map((action, index) => <Button unstyled type="button" key={action.key}
+      {actions.map((action, index) => action.icon ? <IconButton key={action.key}
+        label={action.label} variant="ghost" tone={action.danger ? 'danger-hover' : 'neutral'}
+        disabled={disabled || running || !selectedRows.length} onPress={() => choose(action)}
+        className={`dt-action dt-action-icon ${index !== 0 ? 'dt-batch-wide' : ''}`}>{action.icon}</IconButton> : <Button unstyled type="button" key={action.key}
         disabled={disabled || running || !selectedRows.length} onClick={() => choose(action)}
         className={`dt-action ${index === 0 ? 'dt-action-primary' : 'dt-batch-wide'} ${action.danger && index !== 0 ? 'dt-action-danger' : ''}`}>{action.label}</Button>)}
       {actions.length > 1 && <DropdownMenu.Root modal={false}>

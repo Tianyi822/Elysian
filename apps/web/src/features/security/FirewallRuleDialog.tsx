@@ -7,12 +7,16 @@ import {
   FIREWALL_POLICIES,
   FIREWALL_POLICY_LABELS,
   FIREWALL_PROTOCOLS,
+  PANEL_PORT,
+  firewallRuleScanEnabled,
+  firewallRuleScanProblem,
 } from '@elysian/contracts'
 import type {
   FirewallAddressFamily,
   FirewallDirection,
   FirewallPolicy,
   FirewallProtocol,
+  FirewallScanConfig,
 } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
@@ -20,6 +24,9 @@ import { X } from '../../components/icons'
 import { useFirewallStore } from '../../stores/firewallStore'
 import { FIREWALL_INPUT_CLASS, SegmentedControl, parsePortInput, firewallRuleNoteProblem } from './firewallFormParts'
 import { Button } from '../../components/Button'
+import { ToggleSwitch } from '../../components/ToggleSwitch'
+import { usePanelStore } from '../../stores/panelStore'
+import { ScrollArea } from '../../components/ScrollArea'
 
 /**
  * 添加/修改端口规则弹窗：协议、地址族、策略、方向用分段按钮，端口（单值或冒号段）、来源、备注用输入框。
@@ -36,6 +43,14 @@ type Draft = {
   note: string
 }
 
+type ScanSettings = Omit<FirewallScanConfig, 'ports'>
+type ScanDraft = Record<keyof ScanSettings, string>
+const SCAN_FIELDS = [
+  { key: 'windowSeconds', label: '判定窗口', unit: '秒', min: 10, max: 3600 },
+  { key: 'hitCount', label: '触发阈值', unit: '次', min: 3, max: 1000 },
+  { key: 'banSeconds', label: '封禁时长', unit: '秒', min: 60, max: 86400 },
+] as const
+
 export function FirewallRuleDialog() {
   const gateway = useGateway()
   const dialogRule = useFirewallStore((s) => s.dialogRule)
@@ -43,6 +58,9 @@ export function FirewallRuleDialog() {
   const operationError = useFirewallStore((s) => s.operationError)
   const closeDialog = useFirewallStore((s) => s.closeDialog)
   const saveRule = useFirewallStore((s) => s.saveRule)
+  const scan = useFirewallStore(s => s.scanProtection)
+  const scanStatus = useFirewallStore(s => s.scanStatus)
+  const ports = usePanelStore(s => s.info?.ports)
 
   const editing = dialogRule !== 'new' ? dialogRule : undefined
   const [draft, setDraft] = useState<Draft>(() =>
@@ -60,6 +78,26 @@ export function FirewallRuleDialog() {
       : { protocol: 'tcp', port: '', family: 'ipv4', policy: 'allow', direction: 'inbound', source: '', note: '' },
   )
   const [portError, setPortError] = useState<string | undefined>(undefined)
+  const [scanChoice, setScanChoice] = useState<boolean | undefined>(undefined)
+  const [scanDraft, setScanDraft] = useState<Partial<ScanDraft>>({})
+  const [validateScan, setValidateScan] = useState(false)
+  // 未编辑的字段跟随真实配置；读取或写入失败时保留用户已填的草稿。
+  const scanValues: ScanDraft = {
+    windowSeconds: `${scan.config.windowSeconds}`,
+    hitCount: `${scan.config.hitCount}`,
+    banSeconds: `${scan.config.banSeconds}`,
+    ...scanDraft,
+  }
+  const scanErrors: Partial<ScanDraft> = {}
+  for (const { key, label, min, max, unit } of SCAN_FIELDS) {
+    const value = Number(scanValues[key])
+    if (!scanValues[key].trim()) scanErrors[key] = `请填写${label}`
+    else if (!Number.isInteger(value) || value < min || value > max) scanErrors[key] = `${label}需为 ${min}–${max} ${unit}的整数`
+  }
+  const parsedPort = parsePortInput(draft.port)
+  const scanRule = { protocol: draft.protocol, direction: draft.direction, ...('error' in parsedPort ? { port: 0 } : parsedPort) }
+  const scanProblem = 'error' in parsedPort ? '填写有效端口后可设置防扫描' : firewallRuleScanProblem(scanRule, [ports?.frontendPort ?? PANEL_PORT, ports?.backendPort ?? PANEL_PORT + 1])
+  const scanEnabled = !scanProblem && (scanChoice ?? firewallRuleScanEnabled(scanRule, scan))
 
   if (dialogRule === undefined) return null
   const isNew = dialogRule === 'new'
@@ -75,6 +113,10 @@ export function FirewallRuleDialog() {
     setPortError(undefined)
     // 备注禁区前置拦截：提示已在输入框下常显，这里只挡保存，不发请求。
     if (noteError) return
+    if (scanEnabled) {
+      setValidateScan(true)
+      if (scanStatus !== 'ready' || Object.keys(scanErrors).length) return
+    }
     void saveRule(gateway, {
       protocol: draft.protocol,
       port: parsed.port,
@@ -84,11 +126,15 @@ export function FirewallRuleDialog() {
       direction: draft.direction,
       source: draft.source.trim() || '所有IP',
       note: draft.note.trim() || null,
-    })
+    }, !scanProblem && scanStatus === 'ready' ? scanEnabled : undefined, scanEnabled ? {
+      windowSeconds: Number(scanValues.windowSeconds),
+      hitCount: Number(scanValues.hitCount),
+      banSeconds: Number(scanValues.banSeconds),
+    } : undefined)
   }
 
   return (
-    <Dialog.Root open onOpenChange={(next) => { if (!next) closeDialog() }}>
+    <Dialog.Root open onOpenChange={(next) => { if (!next && !saving) closeDialog() }}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-50 bg-overlay" />
         <Dialog.Content
@@ -115,6 +161,7 @@ export function FirewallRuleDialog() {
               <Button variant="ghost" size="icon"
                 type="button"
                 aria-label="关闭弹窗"
+                disabled={saving}
                 className="inline-flex size-7 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg"
               >
                 <X aria-hidden size={15} />
@@ -122,7 +169,7 @@ export function FirewallRuleDialog() {
             </Dialog.Close>
           </div>
 
-          <div className="flex flex-col gap-4 overflow-y-auto px-4 py-4">
+          <ScrollArea label="端口规则表单"><fieldset disabled={saving} className="flex min-w-0 flex-col gap-4 px-4 py-4">
             <div className="flex flex-wrap gap-4">
               <div>
                 <p className="mb-1 text-xs font-medium text-fg-muted">协议</p>
@@ -193,6 +240,37 @@ export function FirewallRuleDialog() {
               />
             </div>
 
+            <div className="flex items-center justify-between gap-4">
+              <div>
+                <p className="text-sm font-medium text-fg">防扫描</p>
+                <p className="mt-1 text-xs text-fg-muted">{scanProblem || (scanStatus !== 'ready' ? '防扫描状态未就绪，请刷新后重试' : '仅保护此 TCP 入站端口，IPv4／IPv6 共用设置')}</p>
+                {scanStatus !== 'ready' ? <Button type="button" variant="link" className="mt-1 text-xs underline" onClick={() => void useFirewallStore.getState().refreshScan(gateway)}>重新读取防扫描状态</Button> : null}
+              </div>
+              <ToggleSwitch label="防扫描" checked={scanEnabled} disabled={!!scanProblem || scanStatus !== 'ready' || saving} onCheckedChange={setScanChoice} />
+            </div>
+
+            {scanEnabled ? <fieldset className="min-w-0 rounded-lg border border-line bg-surface px-3 py-3" aria-describedby="firewall-scan-config-description">
+              <legend className="px-1 text-xs font-medium text-fg">防扫描配置</legend>
+              <p id="firewall-scan-config-description" className="mb-3 text-xs leading-5 text-fg-muted">以下配置由所有已开启防扫描的端口共用，修改后统一生效。</p>
+              <div className="grid min-w-0 grid-cols-1 gap-3 min-[480px]:grid-cols-3">
+                {SCAN_FIELDS.map(({ key, label, unit, min, max }) => {
+                  const id = `firewall-scan-${key}`
+                  const error = validateScan ? scanErrors[key] : undefined
+                  return <div key={key} className="min-w-0">
+                    <label htmlFor={id} className="mb-1 block text-xs font-medium text-fg-muted">
+                      {label}（{unit}） <span aria-hidden className="text-danger">*</span>
+                    </label>
+                    <input id={id} type="number" inputMode="numeric" min={min} max={max} step={1} required
+                      value={scanValues[key]} onChange={event => setScanDraft(current => ({ ...current, [key]: event.target.value }))}
+                      aria-invalid={error ? true : undefined} aria-describedby={`${id}-hint${error ? ` ${id}-error` : ''}`}
+                      className={FIREWALL_INPUT_CLASS} />
+                    <p id={`${id}-hint`} className="mt-1 text-xs text-fg-subtle">{min}–{max} {unit}</p>
+                    {error ? <p id={`${id}-error`} role="alert" className="mt-1 text-xs text-danger">{error}</p> : null}
+                  </div>
+                })}
+              </div>
+            </fieldset> : null}
+
             <div>
               <label htmlFor="firewall-rule-note" className="mb-1 block text-xs font-medium text-fg-muted">
                 备注
@@ -207,7 +285,7 @@ export function FirewallRuleDialog() {
               />
               {noteError ? <p className="mt-1 text-xs text-danger">{noteError}</p> : null}
             </div>
-          </div>
+          </fieldset></ScrollArea>
 
           {/* ml-auto 保证按钮组恒靠右：演示态左侧有说明文字、真实态没有，布局都不变。 */}
           {operationError ? <p role="alert" className="px-4 py-2 text-xs text-danger">{operationError}</p> : null}
@@ -219,6 +297,7 @@ export function FirewallRuleDialog() {
               <Button variant="outline"
                 type="button"
                 onClick={() => closeDialog()}
+                disabled={saving}
                 className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted transition-colors hover:text-fg"
               >
                 取消
@@ -226,7 +305,7 @@ export function FirewallRuleDialog() {
               <Button variant="outline"
                 type="button"
                 onClick={submit}
-                disabled={saving}
+                disabled={saving || (scanChoice !== undefined && !scanProblem && scanStatus !== 'ready')}
                 className="rounded-lg border border-control-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:opacity-50"
               >
                 {isNew ? '添加规则' : '保存修改'}

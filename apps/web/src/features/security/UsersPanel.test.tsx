@@ -67,9 +67,10 @@ describe('用户管理页签', () => {
     // 状态不靠颜色单独表达；备注为空显示 —
     expect(within(rows[4] as HTMLElement).getByText('已停用')).toBeInTheDocument()
     expect(rows[2]?.children[5]?.textContent).toBe('—')
-    expect(
-      screen.getByText(`${SEED_HOST_USERS.length} 行`),
-    ).toBeInTheDocument()
+    expect(within(usersPanel()).queryByText(/^\d+ 行$/)).not.toBeInTheDocument()
+    const actions = within(usersPanel()).getByRole('group', { name: '用户操作' })
+    expect(within(actions).getByRole('button', { name: '创建用户' })).toBeEnabled()
+    expect(within(actions).getByRole('button', { name: '从系统同步账号' })).toBeEnabled()
 
     expect(within(rows[0] as HTMLElement).getByRole('checkbox', { name: '选择 deploy' })).toBeInTheDocument()
   })
@@ -81,7 +82,7 @@ describe('用户管理页签', () => {
     await user.type(input, '运维')
     await waitFor(() => expect(userRows()).toHaveLength(1))
     expect(userRows()[0]?.children[1]?.textContent).toBe('wangwu')
-    expect(within(usersPanel()).getByText('1 行')).toBeInTheDocument()
+    expect(within(usersPanel()).queryByText(/^\d+ 行$/)).not.toBeInTheDocument()
 
     await user.clear(input)
     await user.type(input, 'BACKUP')
@@ -136,9 +137,7 @@ describe('用户管理页签', () => {
     )
     // 新账号排在第一条，摘要同步
     expect(userRows()[0]?.children[1]?.textContent).toBe('chenyi')
-    expect(
-      screen.getByText(`${SEED_HOST_USERS.length + 1} 行`),
-    ).toBeInTheDocument()
+    expect(userRows()).toHaveLength(SEED_HOST_USERS.length + 1)
     expect(messageHistoryText('status')).toContain(
       '账号 chenyi 已创建（mock，待接入真实执行）',
     )
@@ -295,7 +294,7 @@ describe('用户管理页签', () => {
     await openUsersTab(gateway)
 
     expect(within(usersPanel()).getByText('没有结果')).toBeInTheDocument()
-    expect(within(usersPanel()).getByText('0 行')).toBeInTheDocument()
+    expect(within(usersPanel()).queryByText(/^\d+ 行$/)).not.toBeInTheDocument()
     const table = within(usersPanel()).getByRole('table')
     const rows = within(table).getAllByRole('row')
     expect(rows).toHaveLength(1)

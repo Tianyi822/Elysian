@@ -9,11 +9,11 @@ const labels: Record<SshRefreshSection, string> = {
   records: '刷新 SSH 登录记录',
 }
 
-export function SshRefreshButton({ section }: { section: SshRefreshSection }) {
+export function SshRefreshButton({ section, className }: { section: SshRefreshSection; className?: string }) {
   const gateway = useGateway()
   const busy = useSshStore(state => state.sectionRefreshing[section])
   const refresh = useSshStore(state => state.refreshSection)
-  return <RefreshButton label={labels[section]} busy={busy} onPress={() => void refresh(gateway, section)} />
+  return <RefreshButton className={className} label={labels[section]} busy={busy} onPress={() => void refresh(gateway, section)} />
 }
 
 export function SshRefreshError({ section }: { section: SshRefreshSection }) {

@@ -4,14 +4,13 @@ import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { DataTable } from '../../components/DataTable'
 import { TableBatchActions } from '../../components/TableBatchActions'
+import { TableCreateButton } from '../../components/TableCreateButton'
 import { IconButton } from '../../components/IconButton'
 import { formatDateTime } from '../../components/format'
 import { KeyRound, Trash2 } from '../../components/icons'
 import { useSshStore } from '../../stores/sshStore'
-import { ACTION_CLASS } from './sshCardParts'
 import { filterSshKeys } from './sshKeySearch'
 import { SshRefreshButton, SshRefreshError } from './SshRefresh'
-import { Button } from '../../components/Button'
 
 /** 搜索仍按原名称、账号与指纹判据；私钥不进入列表。 */
 export function SshKeyCard({ active }: { active: boolean }) {
@@ -32,9 +31,10 @@ export function SshKeyCard({ active }: { active: boolean }) {
   return <section aria-label="SSH 密钥" className="min-w-0">
     <SshRefreshError section="keys" />
     <DataTable rows={rows} ariaLabel="SSH 密钥表" active={active} query={search} onQueryChange={setKeySearch}
-      toolbar={<div className="flex max-w-full flex-wrap items-center gap-2">
-        <Button variant="primary" type="button" onClick={() => openCreateKey()} className={ACTION_CLASS}>创建 SSH 密钥</Button>
-        <SshRefreshButton section="keys" />
+      className="dt-toolbar-inline-actions"
+      toolbar={<div role="group" aria-label="密钥操作" className="flex shrink-0 items-center gap-2">
+        <TableCreateButton label="创建 SSH 密钥" onPress={() => openCreateKey()} />
+        <SshRefreshButton section="keys" className="dt-toolbar-control-icon" />
       </div>}
       filterMode="external" searchLabel="搜索密钥" searchPlaceholder="搜索名称、账号或指纹" getRowId={key => key.id} getRowLabel={key => key.name}
       selected={selected} onSelectionChange={setSelected}

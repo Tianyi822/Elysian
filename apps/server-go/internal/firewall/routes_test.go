@@ -70,6 +70,7 @@ type fakeService struct {
 	scanProtection func() (FirewallScanProtection, error)
 	setScanProt    func(bool) (FirewallScanProtection, error)
 	setScanConfig  func(ScanConfig) (FirewallScanProtection, error)
+	setRuleScan    func(string, bool) (FirewallScanProtection, error)
 	unblockIp      func(string) (FirewallScanProtection, error)
 	sync           func() (int, error)
 }
@@ -177,6 +178,13 @@ func (f *fakeService) ScanProtection() (FirewallScanProtection, error) {
 		return f.scanProtection()
 	}
 	return scanFixture(true), nil
+}
+
+func (f *fakeService) SetRuleScanProtection(id string, enabled bool) (FirewallScanProtection, error) {
+	if f.setRuleScan != nil {
+		return f.setRuleScan(id, enabled)
+	}
+	return scanFixture(enabled), nil
 }
 
 func (f *fakeService) SetScanProtection(enabled bool) (FirewallScanProtection, error) {

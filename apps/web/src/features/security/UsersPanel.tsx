@@ -10,8 +10,8 @@ import { RefreshButton } from '../../components/RefreshState'
 import { Pencil, Trash2 } from '../../components/icons'
 import { DataTable } from '../../components/DataTable'
 import { TableBatchActions } from '../../components/TableBatchActions'
+import { TableCreateButton } from '../../components/TableCreateButton'
 import { useUsersStore } from '../../stores/usersStore'
-import { ACTION_CLASS } from './sshCardParts'
 import { HostUserDialog } from './HostUserDialog'
 import { HostUserRemoveDialog } from './HostUserRemoveDialog'
 import { filterHostUsers } from './hostUserSearch'
@@ -64,23 +64,22 @@ export function UsersPanel() {
     <div>
       {errorMessage ? <p role="alert" className="mb-3 text-xs text-danger">刷新失败：{errorMessage}。已保留上次读取结果。<Button variant="link" type="button" className="ml-2 underline" onClick={() => void load(gateway)}>重试</Button></p> : null}
       {operationError ? <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-danger/40 p-3 text-xs text-danger"><p className="min-w-0 flex-1">{operationError}</p><Button variant="outline" type="button" className="rounded border border-line px-3 py-1.5 text-fg" onClick={() => void load(gateway)}>重新读取状态</Button></div> : null}
-      <div className="mb-4 flex flex-wrap items-center gap-2 panel-surface px-4 py-3">
-        {/* 用户动作只在容器内真实执行 useradd/usermod/userdel；宿主机本地开发是内存演示，明示出来。 */}
-        {!isDockerRuntime() ? (
+      {/* 用户动作只在容器内真实执行；宿主机本地开发明示演示状态。 */}
+      {!isDockerRuntime() ? (
+        <div className="mb-4 panel-surface px-4 py-3">
           <span role="status" className="text-sm text-fg-muted">
             演示数据
           </span>
-        ) : null}
-        <Button variant="primary" type="button" onClick={() => openCreate()} className={ACTION_CLASS}>
-          创建用户
-        </Button>
-        <RefreshButton
-          onPress={() => void syncFromSystem(gateway)}
-          busy={syncing}
-          label={syncing ? '正在从系统同步账号' : '从系统同步账号'}
-        />
-      </div>
+        </div>
+      ) : null}
       <DataTable rows={filtered} ariaLabel="主机账号表" query={search} onQueryChange={setSearch}
+        className="dt-toolbar-inline-actions"
+        toolbar={<div role="group" aria-label="用户操作" className="flex shrink-0 items-center gap-2">
+          <TableCreateButton label="创建用户" onPress={() => openCreate()} />
+          <RefreshButton className="dt-toolbar-control-icon"
+            onPress={() => void syncFromSystem(gateway)} busy={syncing}
+            label={syncing ? '正在从系统同步账号' : '从系统同步账号'} />
+        </div>}
         filterMode="external" searchPlaceholder="搜索用户名或备注" busy={syncing}
         getRowId={user => user.id} getRowLabel={user => user.name} selected={selected} onSelectionChange={setSelected}
         columns={[

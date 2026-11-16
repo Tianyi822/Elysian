@@ -1,10 +1,10 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { waitFor } from '@testing-library/react'
 import type { FirewallRule, FirewallToggles } from '@elysian/contracts'
 import type { ElysianGateway } from '../contracts/adapters'
 import { useFirewallStore } from './firewallStore'
 import { useMessageStore } from './messageStore'
 import { RequestTimeoutError } from '../adapters/http/requestDeadline'
+import { advanceAuthGeneration } from '../adapters/http/unauthorized'
 
 /*
  * 防火墙 store 的行为测试。网关用手写 stub 注入，只依赖 adapter 接口形状；
@@ -34,6 +34,7 @@ function gatewayWith(overrides: Partial<ElysianGateway['firewall']> = {}): Elysi
       list: async () => [],
       listIpRules: async () => [],
       listForwards: async () => [],
+      scanProtection: async () => useFirewallStore.getInitialState().scanProtection,
       setToggles: async (next: FirewallToggles) => ({ ...next }),
       ...overrides,
     },
@@ -45,30 +46,122 @@ beforeEach(async () => {
   useMessageStore.setState({ messages: [] })
 })
 
-describe('防扫描读取通知', () => {
-  it('首次读取失败可重试，同一轮询错误只通知一次，恢复后再次失败重新通知', async () => {
+describe('逐端口防扫描', () => {
+  it('旧会话的迟到写回执不覆盖新会话端口状态', async () => {
+    const initial = useFirewallStore.getInitialState().scanProtection
+    const write = deferred<typeof initial>()
+    const old = gatewayWith({ setRuleScanProtection: () => write.promise })
+    const pending = useFirewallStore.getState().setRuleScan(old, 'old-22', true)
+    advanceAuthGeneration()
+    const current = { ...initial, enabled: true, config: { ...initial.config, ports: [80] } }
+    await useFirewallStore.getState().load(gatewayWith({ scanProtection: async () => current }))
+    write.resolve({ ...initial, enabled: true, config: { ...initial.config, ports: [22] } })
+    expect(await pending).toBe(false)
+    expect(useFirewallStore.getState()).toMatchObject({ scanProtection: current, scanSaving: false })
+  })
+
+  it('读取失败不阻止规则加载，可以独立重试', async () => {
     let failing = true
-    const protection = useFirewallStore.getInitialState().scanProtection
     const gateway = gatewayWith({ scanProtection: async () => {
       if (failing) throw new Error('防扫描服务不可用')
-      return protection
+      return useFirewallStore.getInitialState().scanProtection
     } })
-    useFirewallStore.getState().openScan(gateway)
-    await waitFor(() => expect(useFirewallStore.getState().scanStatus).toBe('error'))
-    expect(useMessageStore.getState().messages).toHaveLength(1)
-    failing = false
-    useFirewallStore.getState().openScan(gateway)
-    await waitFor(() => expect(useFirewallStore.getState().scanStatus).toBe('ready'))
-    await useMessageStore.getState().clear()
-    failing = true
-    await useFirewallStore.getState().refreshScan(gateway)
-    await useFirewallStore.getState().refreshScan(gateway)
-    expect(useMessageStore.getState().messages).toHaveLength(1)
+    await useFirewallStore.getState().load(gateway)
+    expect(useFirewallStore.getState()).toMatchObject({ status: 'ready', scanStatus: 'error', scanError: '防扫描服务不可用' })
     failing = false
     await useFirewallStore.getState().refreshScan(gateway)
-    failing = true
-    await useFirewallStore.getState().refreshScan(gateway)
-    expect(useMessageStore.getState().messages).toHaveLength(2)
+    expect(useFirewallStore.getState()).toMatchObject({ scanStatus: 'ready', scanError: undefined })
+  })
+
+  it('写超时只回读事实，不重投或用旧状态覆盖实际结果', async () => {
+    const protection = { ...useFirewallStore.getInitialState().scanProtection, enabled: true, config: { ports: [22, 80], windowSeconds: 60, hitCount: 8, banSeconds: 3600 } }
+    const write = vi.fn(async () => { throw new RequestTimeoutError(true) })
+    const gateway = gatewayWith({ setRuleScanProtection: write, scanProtection: async () => protection })
+    expect(await useFirewallStore.getState().setRuleScan(gateway, 'rule-22', true)).toBe(false)
+    expect(write).toHaveBeenCalledTimes(1)
+    expect(useFirewallStore.getState()).toMatchObject({ scanProtection: protection, scanSaving: false, scanStatus: 'ready' })
+  })
+
+  it('旧读取不会覆盖更新端口后的回执，保存期间不重复下发', async () => {
+    const initial = useFirewallStore.getInitialState().scanProtection
+    const read = deferred<typeof initial>()
+    const write = deferred<typeof initial>()
+    const apply = vi.fn(() => write.promise)
+    const gateway = gatewayWith({ scanProtection: () => read.promise, setRuleScanProtection: apply })
+    const loading = useFirewallStore.getState().refreshScan(gateway)
+    const saving = useFirewallStore.getState().setRuleScan(gateway, 'rule-22', true)
+    expect(await useFirewallStore.getState().setRuleScan(gateway, 'rule-80', true)).toBe(false)
+    write.resolve({ ...initial, enabled: true, config: { ...initial.config, ports: [22] } })
+    await saving
+    read.resolve(initial)
+    await loading
+    expect(useFirewallStore.getState().scanProtection.config.ports).toEqual([22])
+    expect(apply).toHaveBeenCalledTimes(1)
+  })
+
+  it('创建已成功但扫描失败时保留已创建身份，重试不会再创建或修改规则', async () => {
+    const create = vi.fn(async () => RULE_V4)
+    const update = vi.fn(async () => RULE_V4)
+    const apply = vi.fn().mockRejectedValueOnce(new Error('应用失败')).mockResolvedValueOnce({ ...useFirewallStore.getInitialState().scanProtection, enabled: true })
+    const gateway = gatewayWith({ create, update, setRuleScanProtection: apply })
+    const input = { protocol: 'tcp', port: 22, family: 'ipv4', policy: 'allow', direction: 'inbound', source: '所有IP', note: null } as const
+    useFirewallStore.getState().openCreate()
+    expect(await useFirewallStore.getState().saveRule(gateway, input, true)).toBe(false)
+    expect(useFirewallStore.getState().dialogRule).toEqual(RULE_V4)
+    expect(useFirewallStore.getState().operationError).toContain('规则已保存')
+    expect(await useFirewallStore.getState().saveRule(gateway, input, true)).toBe(true)
+    expect(create).toHaveBeenCalledTimes(1)
+    expect(update).not.toHaveBeenCalled()
+    expect(apply).toHaveBeenCalledTimes(2)
+  })
+
+  it('配置失败保留已创建规则与实际扫描状态，重试使用最新监控列表且不重复创建', async () => {
+    let actual = useFirewallStore.getInitialState().scanProtection
+    const create = vi.fn(async () => RULE_V4)
+    const update = vi.fn(async () => RULE_V4)
+    const configure = vi.fn().mockRejectedValueOnce(new RequestTimeoutError(true)).mockImplementationOnce(async config => {
+      actual = { ...actual, config }
+      return actual
+    })
+    const gateway = gatewayWith({
+      create, update, setScanConfig: configure,
+      setRuleScanProtection: async () => {
+        actual = { ...actual, enabled: true, config: { ...actual.config, ports: [22, 80] } }
+        return actual
+      },
+      scanProtection: async () => actual,
+    })
+    const input = { protocol: 'tcp', port: 22, family: 'ipv4', policy: 'allow', direction: 'inbound', source: '所有IP', note: null } as const
+    const settings = { windowSeconds: 120, hitCount: 6, banSeconds: 7200 }
+    useFirewallStore.getState().openCreate()
+    expect(await useFirewallStore.getState().saveRule(gateway, input, true, settings)).toBe(false)
+    expect(configure).toHaveBeenCalledTimes(1)
+    expect(configure).toHaveBeenLastCalledWith({ ...settings, ports: [22, 80] })
+    expect(useFirewallStore.getState()).toMatchObject({ dialogRule: RULE_V4, saving: false, scanSaving: false, scanProtection: actual })
+    expect(useFirewallStore.getState().operationError).toContain('防扫描配置保存失败')
+    expect(await useFirewallStore.getState().saveRule(gateway, input, true, settings)).toBe(true)
+    expect(create).toHaveBeenCalledTimes(1)
+    expect(update).not.toHaveBeenCalled()
+    expect(configure).toHaveBeenCalledTimes(2)
+    expect(useFirewallStore.getState().scanProtection.config).toEqual({ ...settings, ports: [22, 80] })
+  })
+
+  it('配置保存中的旧会话回执不覆盖新会话状态', async () => {
+    const initial = useFirewallStore.getInitialState().scanProtection
+    const configured = deferred<typeof initial>()
+    const configure = vi.fn(() => configured.promise)
+    const gateway = gatewayWith({
+      setRuleScanProtection: async () => ({ ...initial, enabled: true, config: { ...initial.config, ports: [22] } }),
+      setScanConfig: configure,
+    })
+    const pending = useFirewallStore.getState().setRuleScan(gateway, 'rule-22', true, { windowSeconds: 120, hitCount: 6, banSeconds: 7200 })
+    await vi.waitFor(() => expect(configure).toHaveBeenCalledTimes(1))
+    advanceAuthGeneration()
+    const current = { ...initial, enabled: true, config: { ...initial.config, ports: [80] } }
+    await useFirewallStore.getState().load(gatewayWith({ scanProtection: async () => current }))
+    configured.resolve({ ...initial, enabled: true, config: { ports: [22], windowSeconds: 120, hitCount: 6, banSeconds: 7200 } })
+    expect(await pending).toBe(false)
+    expect(useFirewallStore.getState()).toMatchObject({ scanProtection: current, scanSaving: false })
   })
 })
 

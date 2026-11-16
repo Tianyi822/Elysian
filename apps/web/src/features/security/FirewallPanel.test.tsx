@@ -5,7 +5,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { PANEL_PORT } from '@elysian/contracts'
 import type { ElysianGateway } from '../../contracts/adapters'
 import { createMockGateway } from '../../adapters/mock/gateway'
-import { SEED_FORWARDS, SEED_IP_RULES, SEED_RULES } from '../../adapters/mock/firewallData'
+import { SEED_FORWARDS, SEED_IP_RULES, SEED_RULES, resetFirewallData } from '../../adapters/mock/firewallData'
 import { useFirewallStore, FIREWALL_PAGE_SIZE } from '../../stores/firewallStore'
 import { useMessageStore } from '../../stores/messageStore'
 import { renderApp } from '../../test/renderApp'
@@ -39,6 +39,7 @@ function sessionGateway(overrides: Partial<ElysianGateway['firewall']> = {}): El
       updateForward: (ruleId, input) => firewall.updateForward(ruleId, input),
       removeForward: (ruleId) => firewall.removeForward(ruleId),
       scanProtection: () => firewall.scanProtection(),
+      setRuleScanProtection: (id, enabled) => firewall.setRuleScanProtection(id, enabled),
       setScanProtection: (enabled) => firewall.setScanProtection(enabled),
       setScanConfig: (config) => firewall.setScanConfig(config),
       unblockIp: (ip) => firewall.unblockIp(ip),
@@ -55,6 +56,7 @@ async function openFirewallPage(gateway: ElysianGateway = sessionGateway()) {
 }
 
 beforeEach(() => {
+  resetFirewallData()
   useFirewallStore.setState({
     status: 'idle',
     errorMessage: undefined,
@@ -69,7 +71,7 @@ beforeEach(() => {
     dialogIpRule: undefined,
     dialogForward: undefined,
     removeTarget: undefined,
-    scanDialogOpen: false,
+    scanSaving: false,
     scanStatus: 'idle',
     scanProtection: {
       enabled: false,
@@ -96,10 +98,10 @@ describe('防火墙面板', () => {
     await user.click(within(dialog).getByRole('button', { name: '添加规则' }))
     expect(create).not.toHaveBeenCalled()
     expect(useMessageStore.getState().messages).toHaveLength(previousCount)
-    await user.type(within(dialog).getByLabelText(/端口/), '3388')
+    await user.type(within(dialog).getByRole('textbox', { name: /^端口/ }), '3388')
     await user.click(within(dialog).getByRole('button', { name: '添加规则' }))
     expect(await within(dialog).findByRole('alert')).toHaveTextContent('保存失败：防火墙暂不可写')
-    expect(within(dialog).getByLabelText(/端口/)).toHaveValue('3388')
+    expect(within(dialog).getByRole('textbox', { name: /^端口/ })).toHaveValue('3388')
     expect(useMessageStore.getState().messages).toEqual(expect.arrayContaining([
       expect.objectContaining({ tone: 'danger', message: '保存失败：防火墙暂不可写' }),
     ]))
@@ -193,7 +195,7 @@ describe('防火墙面板', () => {
     await user.click(within(dialog).getByRole('button', { name: '添加规则' }))
     expect(within(dialog).getByText(/端口需为 1-65535 的整数/)).toBeInTheDocument()
 
-    await user.type(within(dialog).getByLabelText(/端口/), '8443')
+    await user.type(within(dialog).getByRole('textbox', { name: /^端口/ }), '8443')
     await user.type(within(dialog).getByLabelText('备注'), '演示入口')
     await user.click(within(dialog).getByRole('button', { name: '添加规则' }))
 
@@ -230,8 +232,8 @@ describe('防火墙面板', () => {
 
     await user.click(within(confirm).getByRole('button', { name: '取消' }))
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    // 添加用例先运行过，种子之外多了一条 8443。
-    expect(screen.getByText(new RegExp(`共 ${SEED_RULE_COUNT + 1} 条`))).toBeInTheDocument()
+    // 每个用例从原始种子独立开始。
+    expect(screen.getByText(new RegExp(`共 ${SEED_RULE_COUNT} 条`))).toBeInTheDocument()
 
     await user.click(within(row).getByRole('button', { name: '删除' }))
     await user.click(
@@ -240,7 +242,7 @@ describe('防火墙面板', () => {
         { name: '确认删除' },
       ),
     )
-    await waitFor(() => expect(screen.getByText(new RegExp(`共 ${SEED_RULE_COUNT} 条`))).toBeInTheDocument())
+    await waitFor(() => expect(screen.getByText(new RegExp(`共 ${SEED_RULE_COUNT - 1} 条`))).toBeInTheDocument())
     expect(messageHistoryText('status')).toContain(
       '端口规则 tcp 2234 已删除（mock，待接入真实执行）',
     )
@@ -258,7 +260,11 @@ describe('防火墙面板', () => {
     const region = screen.getByRole('region', { name: '端口规则表' })
     await user.click(within(region).getByRole('checkbox', { name: '全选已加载的匹配行' }))
     expect(await within(region).findByText('已选 3 项')).toBeInTheDocument()
-    await user.click(within(region).getAllByRole('button', { name: '删除' })[0]!)
+    const selectionActions = within(region).getByRole('group', { name: '多选操作' })
+    const removeButton = within(selectionActions).getByRole('button', { name: '删除' })
+    expect(removeButton.querySelector('svg')).not.toBeNull()
+    expect(within(selectionActions).getByRole('button', { name: '清除' }).querySelector('svg')).not.toBeNull()
+    await user.click(removeButton)
     const confirm = await screen.findByRole('dialog', { name: '确认删除？' })
     expect(confirm).toHaveTextContent('将处理 2 项，跳过 1 项')
     expect(confirm).toHaveTextContent('面板入口保底规则不允许删除')
@@ -277,17 +283,17 @@ describe('防火墙面板', () => {
 
     const table = screen.getByRole('region', { name: '端口规则表' })
     const controls = within(table).getByRole('group', { name: '规则操作' })
-    const tabs = within(controls).getByRole('group', { name: '规则类型' })
+    const tabs = within(table).getByRole('group', { name: '规则类型' })
     const add = within(controls).getByRole('button', { name: '添加端口规则' })
     // EasyUI 工具按钮沿用原来的不收缩、不拆标签约束。
     expect(add).toHaveClass('shrink-0', 'whitespace-nowrap')
     expect(add).toHaveTextContent(/^添加规则$/)
-    expect(within(controls).getByRole('group', { name: '规则类型' })).toHaveClass('shrink-0')
-    expect(within(controls).getByRole('button', { name: '端口防扫描' })).toBeEnabled()
+    expect(tabs).toHaveClass('shrink-0')
+    expect(within(controls).queryByRole('button', { name: '端口防扫描' })).not.toBeInTheDocument()
     expect(within(controls).getByRole('button', { name: '同步规则' })).toBeEnabled()
     expect(within(table).queryByText(/^\d+ 行$/)).not.toBeInTheDocument()
 
-    await user.click(within(controls).getByRole('button', { name: '端口规则' }))
+    await user.click(within(tabs).getByRole('button', { name: '端口规则' }))
     await user.keyboard('{ArrowRight}')
     expect(screen.getByRole('button', { name: 'IP 规则' })).toHaveFocus()
     expect(screen.getByRole('group', { name: '规则操作' })).toBe(controls)
@@ -299,76 +305,80 @@ describe('防火墙面板', () => {
     expect(screen.getByRole('button', { name: '添加端口转发' })).toHaveTextContent(/^添加规则$/)
   })
 
-  it('移除导入导出入口，防扫描与同步仍可用', async () => {
+  it('多选只替换搜索和规则动作，常驻页签可以直接切换类型并清除旧选择', async () => {
     const user = userEvent.setup()
     await openFirewallPage()
-    expect(screen.queryByRole('button', { name: '导入规则' })).not.toBeInTheDocument()
-    expect(screen.queryByRole('button', { name: '导出规则' })).not.toBeInTheDocument()
-    expect(document.querySelector('input[type="file"]')).toBeNull()
+    const table = screen.getByRole('region', { name: '端口规则表' })
+    const tabs = within(table).getByRole('group', { name: '规则类型' })
+    const ipTab = within(tabs).getByRole('button', { name: 'IP 规则' })
+    await user.click(within(table).getByRole('checkbox', { name: '全选已加载的匹配行' }))
+    expect(await within(table).findByText(`已选 ${SEED_RULE_COUNT} 项`)).toBeInTheDocument()
+    await waitFor(() => expect(within(table).queryByRole('searchbox')).not.toBeInTheDocument())
+    expect(screen.getByRole('group', { name: '规则类型' })).toBe(tabs)
+    expect(screen.getByRole('button', { name: 'IP 规则' })).toBe(ipTab)
+    expect(within(table).queryByRole('button', { name: '添加端口规则' })).not.toBeInTheDocument()
 
-    for (const label of ['端口防扫描', '同步规则']) {
-      expect(screen.getByRole('button', { name: label })).toBeEnabled()
-    }
-
-    await user.click(screen.getByRole('button', { name: '端口防扫描' }))
-    const dialog = await screen.findByRole('dialog', { name: '端口防扫描' })
-    expect(dialog.textContent).toContain('演示 · 待接入真实执行')
-    expect(within(dialog).getByRole('switch', { name: '防扫描开关' })).toHaveAttribute(
-      'aria-checked',
-      'true',
-    )
-    // 与参照样例一致的四个统计值
-    expect(within(dialog).getByText('封锁的IP总数').parentElement).toHaveTextContent('340')
-    expect(within(dialog).getByText('连接失败总数').parentElement).toHaveTextContent('168694')
-    expect(within(dialog).getByText('当前封锁IP数').parentElement).toHaveTextContent('0')
-    expect(within(dialog).getByText('当前连接失败次数').parentElement).toHaveTextContent('0')
-    // 列表为空，与参照样例一致
-    expect(within(dialog).getByText('没有结果')).toBeInTheDocument()
-    // 关掉开关留 mock 通知。弹窗开着时通知区被 Radix 标记 aria-hidden，role 查询要带 hidden。
-    await user.click(within(dialog).getByRole('switch', { name: '防扫描开关' }))
-    expect(
-      messageHistoryText('status'),
-    ).toContain('端口防扫描已关闭')
+    await user.click(ipTab)
+    const ipTable = await screen.findByRole('region', { name: 'IP 规则表' })
+    expect(screen.getByRole('group', { name: '规则类型' })).toBe(tabs)
+    expect(ipTab).toHaveAttribute('aria-pressed', 'true')
+    expect(await within(ipTable).findByRole('searchbox', { name: '搜索来源或备注' })).toHaveValue('')
+    expect(within(ipTable).queryByText(/^已选 \d+ 项$/)).not.toBeInTheDocument()
+    expect(within(ipTable).getByRole('button', { name: '添加 IP 规则' })).toBeEnabled()
+    expect(within(ipTable).getByRole('checkbox', { name: '全选已加载的匹配行' })).toHaveAttribute('aria-checked', 'false')
   })
 
-  it('防扫描封锁列表：IP 搜索框只收 IP 格式字符并模糊过滤', async () => {
+  it('清除多选恢复搜索焦点，页签元素保持不变', async () => {
     const user = userEvent.setup()
-    const blockedScan = {
-      enabled: true,
-      config: { ports: [22, 23, 3306], windowSeconds: 60, hitCount: 8, banSeconds: 3600 },
-      stats: {
-        totalBlockedIps: 2,
-        totalFailedConnections: 9,
-        currentBlockedIps: 2,
-        currentFailedConnections: 9,
-      },
-      blocked: [
-        { ip: '172.22.0.3', blockedAt: '2026-09-19T01:04:46.179Z' },
-        { ip: '198.51.100.7', blockedAt: '2026-09-19T01:05:00.000Z' },
-      ],
+    await openFirewallPage()
+    const table = screen.getByRole('region', { name: '端口规则表' })
+    const tabs = within(table).getByRole('group', { name: '规则类型' })
+    await user.click(within(table).getByRole('checkbox', { name: '全选已加载的匹配行' }))
+    await user.click(await within(table).findByRole('button', { name: '清除' }))
+    await waitFor(() => expect(within(table).getByRole('searchbox')).toHaveFocus())
+    expect(screen.getByRole('group', { name: '规则类型' })).toBe(tabs)
+    expect(within(table).getByRole('button', { name: '添加端口规则' })).toBeEnabled()
+  })
+
+  it('操作列只保留修改与删除，表单开启防扫描后双栈端口均显示盾牌与提示', async () => {
+    const user = userEvent.setup()
+    await openFirewallPage()
+    const table = screen.getByRole('region', { name: '端口规则表' })
+    expect(within(table).queryByRole('switch')).not.toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '端口防扫描' })).not.toBeInTheDocument()
+    const rows = within(table).getAllByRole('row', { name: /选择 tcp 2234/ })
+    expect(within(rows[0]!).getAllByRole('button').map(button => button.getAttribute('aria-label'))).toEqual(['修改', '删除'])
+    await user.click(within(rows[0]!).getByRole('button', { name: '修改' }))
+    let dialog = await screen.findByRole('dialog', { name: '修改端口规则' })
+    await user.click(within(dialog).getByRole('switch', { name: '防扫描' }))
+    await user.click(within(dialog).getByRole('button', { name: '保存修改' }))
+    await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
+    expect(useFirewallStore.getState().scanProtection.config.ports).toContain(2234)
+    expect(useFirewallStore.getState().scanProtection.config.ports).not.toContain(2233)
+    const protectedRows = within(table).getAllByRole('row', { name: /选择 tcp 2234/ })
+    for (const row of protectedRows) expect(within(row).getByRole('img', { name: '已开启防扫描' })).toBeInTheDocument()
+    for (const row of within(table).getAllByRole('row', { name: /选择 tcp 2233/ })) {
+      expect(within(row).queryByRole('img', { name: '已开启防扫描' })).not.toBeInTheDocument()
     }
-    await openFirewallPage(
-      sessionGateway({ scanProtection: async () => blockedScan }),
-    )
+    const shield = within(protectedRows[0]!).getByRole('img', { name: '已开启防扫描' })
+    await user.hover(shield)
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('已开启防扫描')
+    await user.unhover(shield)
+    await user.click(within(within(table).getAllByRole('row', { name: /选择 tcp 2234/ })[1]!).getByRole('button', { name: '修改' }))
+    dialog = await screen.findByRole('dialog', { name: '修改端口规则' })
+    expect(within(dialog).getByRole('switch', { name: '防扫描' })).toHaveAttribute('aria-checked', 'true')
+  })
 
-    await user.click(screen.getByRole('button', { name: '端口防扫描' }))
-    const dialog = await screen.findByRole('dialog', { name: '端口防扫描' })
-    expect(within(dialog).getAllByRole('button', { name: '解封' })).toHaveLength(2)
-
-    const input = within(dialog).getByLabelText('搜索 IP')
-    // 非法字符被剥掉，只留数字与点号；按子串模糊过滤
-    await user.type(input, 'abc22.0x')
-    expect(input).toHaveValue('22.0')
-    expect(within(dialog).getByText('172.22.0.3')).toBeInTheDocument()
-    await waitFor(() => expect(within(dialog).queryByText('198.51.100.7')).not.toBeInTheDocument())
-
-    // 清空搜索回到全量
-    await user.clear(input)
-    expect(within(dialog).getAllByRole('button', { name: '解封' })).toHaveLength(2)
-
-    // 无匹配给中文空态
-    await user.type(input, '99.')
-    expect(within(dialog).getByText('没有结果')).toBeInTheDocument()
+  it('扫描读取失败仍保留规则，编辑表单里的防扫描开关禁用', async () => {
+    await openFirewallPage(sessionGateway({ scanProtection: async () => { throw new Error('扫描读取失败') } }))
+    const table = screen.getByRole('region', { name: '端口规则表' })
+    expect(within(table).queryByRole('switch')).not.toBeInTheDocument()
+    expect(within(table).queryByRole('img', { name: '已开启防扫描' })).not.toBeInTheDocument()
+    expect(screen.getByText(/扫描读取失败/)).toBeInTheDocument()
+    const user = userEvent.setup()
+    await user.click(within(within(table).getAllByRole('row', { name: /选择 tcp 2234/ })[0]!).getByRole('button', { name: '修改' }))
+    const dialog = await screen.findByRole('dialog', { name: '修改端口规则' })
+    expect(within(dialog).getByRole('switch', { name: '防扫描' })).toBeDisabled()
   })
 
   it('同步规则：忙碌一拍后报从操作系统同步的 mock 通知', async () => {

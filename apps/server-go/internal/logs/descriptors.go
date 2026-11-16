@@ -285,6 +285,10 @@ var operationDescriptors = map[string]*opDescriptor{
 			return sp("已关闭")
 		},
 	},
+	"PUT /api/security/firewall/rules/:id/scan": {
+		category: "security", action: "设置端口防扫描", targetFn: targetOfID,
+		summarize: func(input *opInput) *string { return sp("防扫描：" + onOff(input.body["enabled"])) },
+	},
 	"PUT /api/security/firewall/scan/config": {
 		category: "security", action: "修改防扫描配置",
 		summarize: func(input *opInput) *string {
