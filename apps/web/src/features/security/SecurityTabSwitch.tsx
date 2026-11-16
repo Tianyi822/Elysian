@@ -2,8 +2,7 @@ import { useRef } from 'react'
 import { HeaderTabs } from '../../app/layout/HeaderTabs'
 import { useHeaderAccessoryWidth, useIntrinsicWidth } from '../../app/layout/headerAccessoryWidth'
 import { useNarrowViewport } from '../../app/layout/narrowViewport'
-import { SelectDropdown } from '../../components/SelectDropdown'
-import { CTL_SELECT } from '../../components/formControl'
+import { GooeySelect } from '../../components/GooeySelect'
 import { SECURITY_TABS, useSecurityStore } from '../../stores/securityStore'
 
 /**
@@ -16,7 +15,7 @@ import { SECURITY_TABS, useSecurityStore } from '../../stores/securityStore'
  * 都会改变可用宽度）。摊开所需宽度由隐藏探针量出，探针与可见形态共用同一段渲染。
  *
  * 两种形态都常驻 DOM、只切显示，测量与查询因此都不受当前形态影响。
- * 收起后的菜单用 SelectDropdown，不用原生 select。浮层不锁页面滚动。
+ * 收起后的菜单复用 EasyUI GooeySelect，不用原生 select。浮层不锁页面滚动。
  */
 export function SecurityTabSwitch() {
   const tab = useSecurityStore((s) => s.tab)
@@ -45,15 +44,13 @@ export function SecurityTabSwitch() {
         <HeaderTabs items={SECURITY_TABS} value={tab} onSelect={setTab} groupLabel="安全页签" />
       </div>
 
-      <SelectDropdown
+      <GooeySelect
         ariaLabel="安全页签"
-        align="end"
         items={SECURITY_TABS}
         value={tab}
         onSelect={setTab}
-        valueClassName="font-medium text-fg"
-        triggerClassName={`${CTL_SELECT} ${expanded ? 'hidden' : 'inline-flex'}`}
-        contentClassName="select-menu"
+        active={!expanded}
+        className={expanded ? 'hidden' : 'inline-flex'}
       />
     </>
   )

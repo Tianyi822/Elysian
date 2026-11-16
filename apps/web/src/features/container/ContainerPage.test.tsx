@@ -312,11 +312,11 @@ describe('镜像视图', () => {
     ).toHaveClass('hidden')
 
     await user.click(trigger)
-    await user.click(await screen.findByRole('menuitemradio', { name: '镜像' }))
+    await user.click(await screen.findByRole('option', { name: '镜像' }))
 
     expect(useContainersStore.getState().view).toBe('images')
     expect(await screen.findByRole('table', { name: '镜像列表' })).toBeInTheDocument()
-    expect(trigger).toHaveTextContent('镜像')
+    expect(trigger.closest('.easyui-gooey-menu')).toHaveTextContent('镜像')
   })
 
   it('切换到镜像视图显示 8 行镜像与引用数', async () => {

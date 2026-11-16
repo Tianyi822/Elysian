@@ -83,6 +83,13 @@
   --t-info: #95bdeb;
   --t-focus: #9bb5ff;
 
+  /* EasyUI Gooey Menu: solid liquid surfaces and a blue selected dot. */
+  --t-gooey-bg: #0e0e0e;
+  --t-gooey-fg: #f4f4f4;
+  --t-gooey-muted: #dcdcdc;
+  --t-gooey-active: #232323;
+  --t-gooey-indicator: #3b82f6;
+
   --t-code-bg: #18181a;
   --t-code-fg: #e6edf3;
   --t-code-comment: #a4b1c2;
@@ -157,6 +164,12 @@
   --t-danger: #a7344e;
   --t-info: #405d8b;
   --t-focus: #2f55bf;
+
+  --t-gooey-bg: #000000;
+  --t-gooey-fg: #f4f4f4;
+  --t-gooey-muted: #dcdcdc;
+  --t-gooey-active: #232323;
+  --t-gooey-indicator: #3b82f6;
 
   --t-code-bg: #f7f8fa;
   --t-code-fg: #263342;
@@ -748,15 +761,7 @@ select:not(:disabled) {
   cursor: pointer;
 }
 
-/*
- * 单选菜单的统一皮肤：与触发器齐宽，控件档描边配抬起的底色，选项一档高。
- * 顶栏页签收起后的菜单、仪表盘时间范围、终端会话下拉都经 SelectDropdown 的 contentClassName
- * 挂上它，全站这些下拉菜单读起来是同一个东西。
- *
- * 这一条与 headerControls.css、dashboard.css 同样不分层：SelectDropdown 会给菜单补
- * bg-surface、border-line、text-xs、min-w-32 这些 utility 类，而分层规则赢不过 utilities 层，
- * 只有未分层规则压得住它们。宽度取 Radix 给的自定义属性，菜单因此不会比触发器更宽。
- */
+/* 扩展动作菜单保留的局部皮肤；页头收纳由 EasyUI GooeyMenu 自带几何。 */
 .select-menu {
   width: var(--radix-dropdown-menu-trigger-width);
   border-radius: var(--radius-xl);

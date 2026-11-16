@@ -28,7 +28,11 @@ function segmentSlot(): HTMLElement {
 }
 
 function trigger(): HTMLElement {
-  return screen.getByRole('button', { name: /数据库类型/ })
+  return screen.getByRole('button', { name: /数据库类型/, hidden: true })
+}
+
+function gooeyControl(): HTMLElement {
+  return trigger().closest('.easyui-gooey-menu') as HTMLElement
 }
 
 beforeEach(() => {
@@ -96,37 +100,38 @@ describe('数据库类型切换', () => {
 
   it('窄屏下拉由界面自绘：展开可选，选中后收起并更新当前项', async () => {
     const user = userEvent.setup()
+    stubNarrowViewport()
     renderApp('/databases', { gateway: switchGateway() })
 
     await user.click(trigger())
 
-    const options = await screen.findAllByRole('menuitemradio')
+    const options = await screen.findAllByRole('option')
     expect(options).toHaveLength(DATABASE_ENGINES.length)
     expect(options.map((option) => option.textContent)).toEqual([...DATABASE_ENGINES])
-    expect(screen.getByRole('menuitemradio', { name: 'MariaDB' })).toHaveAttribute(
-      'aria-checked',
+    expect(screen.getByRole('option', { name: 'MariaDB' })).toHaveAttribute(
+      'aria-selected',
       'true',
     )
 
-    await user.click(screen.getByRole('menuitemradio', { name: 'SQLite' }))
+    await user.click(screen.getByRole('option', { name: 'SQLite' }))
 
-    expect(screen.queryByRole('menuitemradio')).not.toBeInTheDocument()
-    expect(trigger()).toHaveTextContent('SQLite')
+    expect(screen.queryByRole('option')).not.toBeInTheDocument()
+    expect(gooeyControl()).toHaveTextContent('SQLite')
     expect(within(segmentGroup()).getByRole('button', { name: 'SQLite' })).toHaveAttribute(
       'aria-pressed',
       'true',
     )
   })
 
-  it('内容区放得下六个类型时保持平铺，只藏下拉', () => {
+  it('内容区放得下四个类型时保持平铺，只藏胶囊菜单', () => {
     // jsdom 量不出任何宽度、也没有媒体查询，按「宽屏且放得下」处理：平铺参与布局，下拉只在收起时出场。
     renderApp('/databases', { gateway: switchGateway() })
 
     expect(segmentSlot()).not.toHaveClass('hidden')
-    expect(trigger()).toHaveClass('hidden')
+    expect(gooeyControl()).toHaveClass('hidden')
   })
 
-  it('六个类型超出窄屏可用宽度时收起，改显自绘下拉', () => {
+  it('四个类型超出可用宽度时收起，改显胶囊菜单', () => {
     // 判断依据是真实宽度，jsdom 里一切尺寸都是 0（视口按宽屏算）：把窄屏导航触发器量成工具行装不下的宽度，
     // 类型切换的可用宽度不足时应收成下拉。
     const original = Element.prototype.getBoundingClientRect
@@ -144,7 +149,7 @@ describe('数据库类型切换', () => {
       renderApp('/databases', { gateway: switchGateway() })
 
       expect(segmentSlot()).toHaveClass('hidden')
-      expect(trigger()).not.toHaveClass('hidden')
+      expect(gooeyControl()).not.toHaveClass('hidden')
     } finally {
       vi.restoreAllMocks()
     }
@@ -157,12 +162,12 @@ describe('数据库类型切换', () => {
     renderApp('/databases', { gateway: switchGateway() })
 
     expect(segmentSlot()).toHaveClass('hidden')
-    expect(trigger()).not.toHaveClass('hidden')
+    expect(gooeyControl()).not.toHaveClass('hidden')
 
     await user.click(trigger())
-    await user.click(await screen.findByRole('menuitemradio', { name: 'Redis' }))
+    await user.click(await screen.findByRole('option', { name: 'Redis' }))
 
     expect(useDatabaseStore.getState().engine).toBe('Redis')
-    expect(trigger()).toHaveTextContent('Redis')
+    expect(gooeyControl()).toHaveTextContent('Redis')
   })
 })

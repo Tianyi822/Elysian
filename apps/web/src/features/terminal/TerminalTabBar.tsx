@@ -4,7 +4,7 @@ import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { useIntrinsicWidth } from '../../app/layout/headerAccessoryWidth'
 import { IconButton } from '../../components/IconButton'
 import { CTL_GROUP, CTL_PRIMARY, CTL_TOOLBAR } from '../../components/formControl'
-import { SelectDropdown } from '../../components/SelectDropdown'
+import { GooeySelect } from '../../components/GooeySelect'
 import { X, ZoomIn, ZoomOut } from '../../components/icons'
 import {
   TERMINAL_FONT_SIZE_MAX,
@@ -33,7 +33,7 @@ const MEMBER_SIZE = 'size-[calc(var(--ctl-height)_-_8px)]'
  * 探针与可见形态共用同一段渲染。
  *
  * 两种形态都常驻 DOM、只切显示，测量与查询因此都不受当前形态影响。
- * 收起后的菜单用 SelectDropdown，不用原生 select。
+ * 收起后的菜单复用 EasyUI GooeySelect，不用原生 select。
  */
 export function TerminalTabBar({
   sessions,
@@ -125,22 +125,15 @@ export function TerminalTabBar({
           expanded ? 'hidden' : 'flex'
         } min-w-0 flex-1 items-center gap-1 overflow-hidden`}
       >
-        <SelectDropdown
+        <GooeySelect
           ariaLabel="终端会话"
-          items={sessions.map((session) => ({
-            value: session.id,
-            label: tabLabel(session, sessions),
-          }))}
+          items={sessions.map((session) => ({ value: session.id, label: tabLabel(session, sessions) }))}
           value={active ? activeId : undefined}
           onSelect={onSelect}
-          valueClassName="truncate font-medium text-fg"
-          // 收起形态触发器做成当前会话那枚选中胶囊，尾部多一个箭头；高度同通知按钮。
-          triggerClassName={`${
-            expanded ? 'hidden' : 'inline-flex'
-          } h-[var(--message-button-size)] min-w-0 max-w-full items-center gap-1.5 rounded-full pl-3 text-sm font-medium transition-colors ${
-            active ? 'bg-nav-selected text-fg' : 'text-fg-muted hover:bg-nav-hover hover:text-fg'
-          }`}
-          contentClassName="select-menu"
+          fallbackLabel="终端会话"
+          disabled={!sessions.length}
+          active={!expanded}
+          className="max-w-full"
         />
         {active ? (
           <span hidden={expanded}>

@@ -2,8 +2,7 @@ import { useRef } from 'react'
 import { HeaderTabs } from '../../app/layout/HeaderTabs'
 import { useHeaderAccessoryWidth, useIntrinsicWidth } from '../../app/layout/headerAccessoryWidth'
 import { useNarrowViewport } from '../../app/layout/narrowViewport'
-import { SelectDropdown } from '../../components/SelectDropdown'
-import { CTL_SELECT } from '../../components/formControl'
+import { GooeySelect } from '../../components/GooeySelect'
 import { LOGS_TABS, useLogsStore } from '../../stores/logsStore'
 
 /**
@@ -38,15 +37,13 @@ export function LogsTabSwitch() {
         <HeaderTabs items={LOGS_TABS} value={tab} onSelect={setTab} groupLabel="日志页签" />
       </div>
 
-      <SelectDropdown
+      <GooeySelect
         ariaLabel="日志页签"
-        align="end"
         items={LOGS_TABS}
         value={tab}
         onSelect={setTab}
-        valueClassName="font-medium text-fg"
-        triggerClassName={`${CTL_SELECT} ${expanded ? 'hidden' : 'inline-flex'}`}
-        contentClassName="select-menu"
+        active={!expanded}
+        className={expanded ? 'hidden' : 'inline-flex'}
       />
     </>
   )

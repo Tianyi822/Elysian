@@ -4,8 +4,7 @@ import type { HeaderTabItem } from '../../app/layout/HeaderTabs'
 import { useHeaderAccessoryWidth, useIntrinsicWidth } from '../../app/layout/headerAccessoryWidth'
 import { useNarrowViewport } from '../../app/layout/narrowViewport'
 import { useGateway } from '../../adapters/GatewayProvider'
-import { SelectDropdown } from '../../components/SelectDropdown'
-import { CTL_SELECT } from '../../components/formControl'
+import { GooeySelect } from '../../components/GooeySelect'
 import { useContainersStore } from '../../stores/containersStore'
 
 /** 容器区视图页签：值与 containers store 的 view 取值一致。 */
@@ -24,7 +23,7 @@ const VIEW_TABS: readonly HeaderTabItem<'grid' | 'images' | 'apps'>[] = [
  * 见 app/layout/headerAccessoryWidth.ts）。摊开所需宽度由隐藏探针量出，探针与可见形态共用同一段渲染。
  *
  * 两种形态都常驻 DOM、只切显示，测量与查询因此都不受当前形态影响。
- * 收起后的菜单用 SelectDropdown，不用原生 select。
+ * 收起后的菜单复用 EasyUI GooeySelect，不用原生 select。
  */
 export function ContainerViewSwitch() {
   const gateway = useGateway()
@@ -61,15 +60,13 @@ export function ContainerViewSwitch() {
         <HeaderTabs items={VIEW_TABS} value={view} onSelect={select} groupLabel="视图切换" />
       </div>
 
-      <SelectDropdown
+      <GooeySelect
         ariaLabel="视图切换"
-        align="end"
         items={VIEW_TABS}
         value={view}
         onSelect={select}
-        valueClassName="font-medium text-fg"
-        triggerClassName={`${CTL_SELECT} ${expanded ? 'hidden' : 'inline-flex'}`}
-        contentClassName="select-menu"
+        active={!expanded}
+        className={expanded ? 'hidden' : 'inline-flex'}
       />
     </>
   )

@@ -7,7 +7,7 @@ import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { useNarrowViewport } from '../../app/layout/narrowViewport'
 import { PillNavigation } from '../../components/easyui/PillNavigation'
 import { RefreshButton } from '../../components/RefreshState'
-import { SelectDropdown } from '../../components/SelectDropdown'
+import { GooeySelect } from '../../components/GooeySelect'
 import { CTL_TOOLBAR } from '../../components/formControl'
 import './dashboard.css'
 
@@ -48,13 +48,11 @@ export function FilterBar({
         ) : null}
         <span className={`shrink-0 text-sm text-fg-muted ${labelSlot}`}>时间范围</span>
         <div className={dropdownSlot}>
-          <SelectDropdown
+          <GooeySelect
             ariaLabel="时间范围"
-            label="时间"
             items={RANGES.map((value) => ({ value, label: TIME_RANGE_LABELS[value] }))}
             value={range}
             onSelect={onRangeChange}
-            contentClassName="select-menu"
           />
         </div>
         <PillNavigation

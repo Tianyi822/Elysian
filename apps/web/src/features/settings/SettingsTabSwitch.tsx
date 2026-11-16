@@ -2,8 +2,7 @@ import { useRef } from 'react'
 import { HeaderTabs } from '../../app/layout/HeaderTabs'
 import { useHeaderAccessoryWidth, useIntrinsicWidth } from '../../app/layout/headerAccessoryWidth'
 import { useNarrowViewport } from '../../app/layout/narrowViewport'
-import { SelectDropdown } from '../../components/SelectDropdown'
-import { CTL_SELECT } from '../../components/formControl'
+import { GooeySelect } from '../../components/GooeySelect'
 import { SETTINGS_TABS, useSettingsTab } from './settingsTabs'
 
 /**
@@ -22,7 +21,8 @@ export function SettingsTabSwitch() {
       <div ref={probeRef} className="flex w-max"><HeaderTabs items={SETTINGS_TABS} value={tab} onSelect={setTab} groupLabel="设置页签" /></div>
     </div>
     <div className={expanded ? 'flex' : 'hidden'}><HeaderTabs items={SETTINGS_TABS} value={tab} onSelect={setTab} groupLabel="设置页签" /></div>
-    <SelectDropdown ariaLabel="设置页签" align="end" items={SETTINGS_TABS} value={tab} onSelect={setTab} valueClassName="font-medium text-fg"
-      triggerClassName={`${CTL_SELECT} ${expanded ? 'hidden' : 'inline-flex'}`} contentClassName="select-menu" />
+    <GooeySelect ariaLabel="设置页签" items={SETTINGS_TABS} value={tab} onSelect={setTab}
+      active={!expanded}
+      className={expanded ? 'hidden' : 'inline-flex'} />
   </>
 }

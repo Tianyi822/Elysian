@@ -5,8 +5,7 @@ import { HeaderTabs } from '../../app/layout/HeaderTabs'
 import type { HeaderTabItem } from '../../app/layout/HeaderTabs'
 import { useHeaderAccessoryWidth, useIntrinsicWidth } from '../../app/layout/headerAccessoryWidth'
 import { useNarrowViewport } from '../../app/layout/narrowViewport'
-import { SelectDropdown } from '../../components/SelectDropdown'
-import { CTL_SELECT } from '../../components/formControl'
+import { GooeySelect } from '../../components/GooeySelect'
 import { useDatabaseStore } from '../../stores/databaseStore'
 
 /** 引擎页签表：值取契约的引擎枚举，文案直接用引擎名。 */
@@ -25,7 +24,7 @@ const ENGINE_TABS: readonly HeaderTabItem<DatabaseEngine>[] = DATABASE_ENGINES.m
  * 都会改变可用宽度）。摊开所需宽度由隐藏探针量出，探针与可见形态共用同一段渲染。
  *
  * 两种形态都常驻 DOM、只切显示，测量与查询因此都不受当前形态影响。
- * 收起后的菜单用 SelectDropdown，不用原生 select。
+ * 收起后的菜单复用 EasyUI GooeySelect，不用原生 select。
  */
 export function DatabaseEngineSwitch() {
   const engine = useDatabaseStore((s) => s.engine)
@@ -54,15 +53,13 @@ export function DatabaseEngineSwitch() {
         <HeaderTabs items={ENGINE_TABS} value={engine} onSelect={setEngine} groupLabel="数据库类型" />
       </div>
 
-      <SelectDropdown
+      <GooeySelect
         ariaLabel="数据库类型"
-        align="end"
         items={ENGINE_TABS}
         value={engine}
         onSelect={setEngine}
-        valueClassName="font-medium text-fg"
-        triggerClassName={`${CTL_SELECT} ${expanded ? 'hidden' : 'inline-flex'}`}
-        contentClassName="select-menu"
+        active={!expanded}
+        className={expanded ? 'hidden' : 'inline-flex'}
       />
     </>
   )
