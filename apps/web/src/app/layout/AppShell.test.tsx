@@ -64,8 +64,8 @@ describe('模板外壳', () => {
     expect(await screen.findByRole('group', { name: '视图切换' })).toBeInTheDocument()
     expect(screen.getByRole('heading', { level: 1, name: 'Docker' })).toHaveClass('sr-only')
     expect(screen.getByRole('link', { name: 'Docker' })).toHaveAttribute('aria-current', 'page')
-    expect(screen.getByRole('link', { name: 'Docker' })).toHaveClass('nav-link', 'bg-nav-selected')
-    expect(screen.getByRole('link', { name: '仪表盘' })).not.toHaveClass('bg-nav-selected')
+    expect(screen.getByRole('link', { name: 'Docker' }).querySelector('[data-sidebar-active]')).toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '仪表盘' }).querySelector('[data-sidebar-active]')).not.toBeInTheDocument()
   })
 
   it('点击数据库入口进入数据库卡片页，页签放在内容区', async () => {
@@ -359,7 +359,7 @@ describe('模板外壳', () => {
     }
 
     await user.click(screen.getByRole('button', { name: '关闭主导航' }))
-    const labels = within(screen.getByRole('navigation', { name: '主导航' }))
+    const labels = within(await screen.findByRole('navigation', { name: '主导航' }))
       .getAllByRole('link')
       .map((link) => link.textContent)
     expect(labels[0]).toBe('仪表盘')
@@ -367,13 +367,13 @@ describe('模板外壳', () => {
     expect(labels[2]).toBe('安全')
   })
 
-  it('桌面侧边栏收展保留按钮焦点，按压与定位由不同元素承载', async () => {
+  it('官方底部折叠按钮持续挂载，收展保留焦点和键盘激活', async () => {
     const user = userEvent.setup()
     renderApp('/')
 
     const collapse = screen.getByRole('button', { name: '收起侧边栏' })
-    expect(collapse.parentElement).toHaveClass('desktop-navigation-toggle')
-    expect(collapse).not.toHaveClass('desktop-navigation-toggle')
+    expect(collapse).toHaveAttribute('data-sidebar-toggle')
+    expect(collapse).toHaveAttribute('aria-expanded', 'true')
     await user.click(collapse)
     expect(screen.getByRole('button', { name: '展开侧边栏' })).toBe(collapse)
     expect(collapse).toHaveFocus()
@@ -385,6 +385,36 @@ describe('模板外壳', () => {
     expect(screen.getByRole('button', { name: '展开侧边栏' })).toBe(collapse)
     await user.click(collapse)
     expect(screen.getByRole('button', { name: '收起侧边栏' })).toBe(collapse)
+  })
+
+  it('Cmd/Ctrl+B 复用桌面折叠状态，不拦截文本编辑的快捷键', async () => {
+    const user = userEvent.setup()
+    vi.stubGlobal('matchMedia', (query: string) => ({ matches: query === '(min-width: 768px)', media: query,
+      addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {},
+    }))
+    try {
+      renderApp('/security')
+      const desktop = screen.getByRole('complementary', { name: '桌面主导航' })
+      fireEvent.keyDown(window, { key: 'b', metaKey: true })
+      expect(desktop).toHaveAttribute('data-collapsed')
+      fireEvent.keyDown(window, { key: 'b', ctrlKey: true })
+      expect(desktop).not.toHaveAttribute('data-collapsed')
+      const search = await screen.findByRole('searchbox', { name: '搜索端口、来源或备注' })
+      await user.click(search)
+      await user.keyboard('{Meta>}b{/Meta}')
+      expect(desktop).not.toHaveAttribute('data-collapsed')
+    } finally { vi.unstubAllGlobals() }
+  })
+
+  it('窄屏快捷键打开抽屉，Escape 关闭并归还焦点', async () => {
+    const user = userEvent.setup()
+    renderApp('/')
+    screen.getByRole('button', { name: '打开主导航' }).focus()
+    fireEvent.keyDown(window, { key: 'b', ctrlKey: true })
+    expect(screen.getByRole('dialog', { name: '主导航' })).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '主导航' })).not.toBeInTheDocument())
+    await waitFor(() => expect(screen.getByRole('button', { name: '打开主导航' })).toHaveFocus())
   })
 })
 

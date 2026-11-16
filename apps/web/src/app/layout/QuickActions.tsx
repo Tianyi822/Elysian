@@ -25,16 +25,16 @@ function ActionItem({
 }) {
   return (
     /* 按钮外壳放在行容器上：主操作与行尾图标视觉上同属一枚控件，点击区域各自独立。 */
-    <div className="flex min-h-10 w-full items-center gap-1 rounded-lg py-2 pl-3 pr-1.5 text-nav-muted transition-colors hover:bg-nav-hover hover:text-nav-fg">
+    <div className="flex h-9 w-full items-center gap-1 rounded-[8px] pl-2.5 pr-1 text-sidebar-muted transition-colors hover:bg-sidebar-hover hover:text-sidebar-fg">
       <Button unstyled
         type="button"
         onClick={onClick}
         className="flex min-w-0 flex-1 items-center gap-3 text-left"
       >
-        <span className="inline-flex size-6 shrink-0 items-center justify-center">
-          <Icon aria-hidden size={17} />
+        <span className="inline-flex size-5 shrink-0 items-center justify-center">
+          <Icon aria-hidden size={18} />
         </span>
-        <span className="min-w-0 truncate text-sm font-medium">{label}</span>
+        <span className="min-w-0 truncate text-sm">{label}</span>
       </Button>
       {trailing}
     </div>
@@ -46,7 +46,7 @@ function OperatorMark() {
   return (
     <span
       aria-hidden
-      className="inline-flex size-6 shrink-0 items-center justify-center rounded-full bg-nav-selected text-nav-fg"
+      className="inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-sidebar-active text-sidebar-fg"
     >
       <UserRound size={14} />
     </span>
@@ -56,9 +56,9 @@ function OperatorMark() {
 /** 与主题行同一套行高、图标槽与字号，放在切换主题下方。身份本身不是按钮，登出挂在行尾。 */
 function OperatorRow({ username, trailing }: { username: string; trailing?: ReactNode }) {
   return (
-    <div className="flex min-h-10 w-full items-center gap-3 py-2 pl-3 pr-1.5 text-nav-muted">
+    <div className="flex h-9 w-full items-center gap-3 pl-2.5 pr-1 text-sidebar-muted">
       <OperatorMark />
-      <span title={username} className="min-w-0 flex-1 truncate text-sm font-medium">{username}</span>
+      <span title={username} className="min-w-0 flex-1 truncate text-sm">{username}</span>
       {trailing}
     </div>
   )
@@ -85,7 +85,7 @@ function CollapsedTrigger({
     <Button unstyled
       type="button"
       aria-label={label}
-      className="flex min-h-10 w-10 items-center justify-center rounded-lg text-nav-muted transition-colors hover:bg-nav-hover hover:text-nav-fg"
+      className="flex h-9 w-10 items-center justify-center rounded-[8px] text-sidebar-muted transition-colors hover:bg-sidebar-hover hover:text-sidebar-fg"
     >
       {children}
     </Button>
@@ -130,7 +130,7 @@ function CollapsedTrigger({
                   setOpen(false)
                   action.onSelect()
                 }}
-                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm text-nav-fg transition-colors hover:bg-nav-hover"
+                className="flex w-full items-center gap-2.5 rounded-lg px-2.5 py-2 text-left text-sm text-sidebar-fg transition-colors hover:bg-sidebar-hover"
               >
                 <action.icon aria-hidden size={15} className="shrink-0" />
                 <span className="min-w-0 truncate">{action.label}</span>
@@ -167,7 +167,7 @@ export function QuickActions({ collapsed = false }: { collapsed?: boolean }) {
     <section aria-label="快捷操作">
       {collapsed ? (
         /* 折叠态一个位置只留一枚图标：主题与身份各成一次点击，动作在浮层里带文字列出。 */
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-0.5">
           <CollapsedTrigger label="主题设置" actions={themeActions}>
             {theme === 'dark' ? <Sun aria-hidden size={17} /> : <Moon aria-hidden size={17} />}
           </CollapsedTrigger>
@@ -179,7 +179,7 @@ export function QuickActions({ collapsed = false }: { collapsed?: boolean }) {
           </CollapsedTrigger>
         </div>
       ) : (
-        <div className="flex flex-col gap-1">
+        <div className="flex flex-col gap-0.5">
           {/* 主题变化本身就是可见反馈，不再发通知。 */}
           <ActionItem
             label={toggleLabel}
@@ -191,7 +191,7 @@ export function QuickActions({ collapsed = false }: { collapsed?: boolean }) {
                 <IconButton
                   label="跟随系统主题"
                   variant="ghost"
-                  className="text-nav-muted hover:bg-nav-hover hover:text-nav-fg"
+                  className="size-6 text-sidebar-muted hover:bg-sidebar-hover hover:text-sidebar-fg"
                   onPress={() => followSystemTheme()}
                 >
                   <Monitor aria-hidden size={15} />
@@ -206,7 +206,7 @@ export function QuickActions({ collapsed = false }: { collapsed?: boolean }) {
                 <IconButton
                   label="退出登录"
                   variant="ghost"
-                  className="text-nav-muted hover:bg-nav-hover hover:text-nav-fg"
+                  className="size-6 text-sidebar-muted hover:bg-sidebar-hover hover:text-sidebar-fg"
                   disabled={loggingOut}
                   onPress={doLogout}
                 >

@@ -68,6 +68,17 @@ for (const theme of ['dark', 'light'] as const) {
       }
     })
 
+    it('收纳导航实底从画布上分离，标签、次要文字与选中行达标', () => {
+      expect(ratio(color('gooey-bg'), color('bg')), 'gooey-bg / bg').toBeGreaterThan(1.15)
+      expect(color('gooey-bg')).not.toEqual(color('surface'))
+      expect(color('gooey-active')).not.toEqual(color('gooey-bg'))
+      for (const fg of ['gooey-fg', 'gooey-muted']) {
+        expect(ratio(color(fg), color('gooey-bg')), `${fg} / gooey-bg`).toBeGreaterThanOrEqual(4.5)
+      }
+      expect(ratio(color('gooey-fg'), color('gooey-active'))).toBeGreaterThanOrEqual(4.5)
+      expect(ratio(color('gooey-indicator'), color('gooey-active'))).toBeGreaterThanOrEqual(3)
+    })
+
     it('透明卡片在画布及嵌套表面上保持文字与必要控件对比度', () => {
       const glass = block.match(/--t-panel-glass: rgb\((\d+) (\d+) (\d+) \/ (\d+)%\)/)!
       const tint: Rgb = [Number(glass[1]), Number(glass[2]), Number(glass[3])]

@@ -1,8 +1,10 @@
-import { forwardRef, useEffect, useLayoutEffect, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
-import { NavLink } from 'react-router'
-import type { NavLinkProps } from 'react-router'
-import * as Tooltip from '@radix-ui/react-tooltip'
-import { GripVertical } from '../../components/icons'
+import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react'
+import { NavLink, useLocation } from 'react-router'
+import * as Dialog from '@radix-ui/react-dialog'
+import { motion, useReducedMotion } from 'framer-motion'
+import { SidebarPanel } from '../../components/easyui/Sidebar'
+import { Bot, GripVertical, PanelLeftClose } from '../../components/icons'
+import { Button } from '../../components/Button'
 import { IconButton } from '../../components/IconButton'
 import { NAV_ITEMS, PINNED_NAV_PATH } from '../navigation'
 import {
@@ -17,17 +19,6 @@ import {
 } from '../navigationOrder'
 import { QuickActions } from './QuickActions'
 import { SystemLoadBadge } from '../../components/SystemLoadBadge'
-
-// Radix Slot 会合并 className；将路由回调留在内部，避免回调被转成字符串。
-const SidebarLink = forwardRef<HTMLAnchorElement, NavLinkProps & { collapsed: boolean; pinned: boolean; dragging: boolean }>(
-  function SidebarLink({ collapsed, pinned, dragging, ...props }, ref) {
-    return <NavLink {...props} ref={ref} className={({ isActive }) => [
-      'nav-link relative flex min-h-10 items-center gap-3 rounded-lg px-3 py-2 text-sm no-underline transition-colors',
-      collapsed ? 'w-10 justify-center px-0' : pinned ? 'w-full' : 'w-full pr-9',
-      isActive ? 'bg-nav-selected font-semibold text-nav-fg' : dragging ? 'bg-nav-hover text-nav-fg' : 'text-nav-muted group-hover:bg-nav-hover group-hover:text-nav-fg',
-    ].join(' ')} />
-  },
-)
 
 type DragSession = {
   pointerId: number
@@ -52,12 +43,20 @@ function measureSlots(list: HTMLElement): { tops: number[]; stride: number } | n
 export function Sidebar({
   onNavigate,
   collapsed = false,
+  onToggle,
+  drawer = false,
 }: {
   onNavigate?: () => void
   collapsed?: boolean
+  onToggle?: () => void
+  drawer?: boolean
 }) {
   const paths = useNavOrder()
-  const items = orderNavItems(NAV_ITEMS, paths)
+  const items = useMemo(() => orderNavItems(NAV_ITEMS, paths), [paths])
+  const sections = useMemo(() => [{ items: items.map(item => ({ id: item.to, label: item.label, icon: <item.icon aria-hidden /> })) }], [items])
+  const { pathname } = useLocation()
+  const activeId = NAV_ITEMS.find(item => item.end ? pathname === item.to : pathname.startsWith(item.to))?.to ?? ''
+  const reduced = useReducedMotion()
   const listRef = useRef<HTMLElement>(null)
   const pathsRef = useRef(paths)
   const dragRef = useRef<DragSession | null>(null)
@@ -67,6 +66,9 @@ export function Sidebar({
   pathsRef.current = paths
 
   const dragging = drag !== null
+  useEffect(() => {
+    if (collapsed) { dragRef.current = null; setDrag(null) }
+  }, [collapsed])
   useEffect(() => {
     if (!dragging) return
     const previousCursor = document.body.style.cursor
@@ -106,13 +108,16 @@ export function Sidebar({
     }
     const onUp = (event: PointerEvent) => finish(event, true)
     const onCancel = (event: PointerEvent) => finish(event, false)
+    const cancel = () => { dragRef.current = null; setDrag(null) }
     window.addEventListener('pointermove', onMove, { passive: false })
     window.addEventListener('pointerup', onUp)
     window.addEventListener('pointercancel', onCancel)
+    window.addEventListener('blur', cancel)
     return () => {
       window.removeEventListener('pointermove', onMove)
       window.removeEventListener('pointerup', onUp)
       window.removeEventListener('pointercancel', onCancel)
+      window.removeEventListener('blur', cancel)
     }
   }, [])
 
@@ -163,95 +168,54 @@ export function Sidebar({
     commitNavOrder(next)
   }
 
-  return (
-    <div className="flex h-full flex-col">
-      <nav
-        ref={listRef}
-        aria-label="主导航"
-        className="flex min-h-0 flex-1 flex-col gap-1 overflow-x-hidden overflow-y-auto p-3"
-      >
-        {items.map((item, index) => {
-          const pinned = item.to === PINNED_NAV_PATH
-          const draggingThis = drag?.originIndex === index
-          const shift =
-            drag !== null
-              ? translateForSlot(index, drag.originIndex, drag.currentIndex, drag.offsetY, drag.stride)
-              : 0
-          const navLink = (
-            <SidebarLink
-              to={item.to}
-              end={item.end}
-              draggable={false}
-              onClick={onNavigate}
-              collapsed={collapsed}
-              pinned={pinned}
-              dragging={draggingThis}
-            >
-              <item.icon aria-hidden size={17} className="shrink-0" />
-              <span className={`whitespace-nowrap ${collapsed ? 'sr-only' : ''}`}>{item.label}</span>
-            </SidebarLink>
-          )
-          return (
-            <div
-              key={item.to}
-              data-nav-item={item.to}
-              data-nav-index={index}
-              className={[
-                'group relative',
-                collapsed ? 'w-10' : 'w-full',
-                draggingThis ? 'z-10' : '',
-                drag && !draggingThis
-                  ? 'transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none'
-                  : '',
-              ].join(' ')}
-              style={shift !== 0 ? { transform: `translateY(${shift}px)` } : undefined}
-              onPointerEnter={() => setHoveredTo(item.to)}
-              onPointerLeave={() => setHoveredTo((current) => (current === item.to ? null : current))}
-            >
-              {/* 展开态标签文字就在旁边，提示是重复，因此只有折叠态挂浮层内容。
-                  Root 与 Trigger 常驻：换挂载点会让整条链接连 DOM 一起重建，收展的 200ms 里
-                  每项都要重新首帧绘制，键盘焦点也会从当前项掉回 body。 */}
-              <Tooltip.Root>
-                <Tooltip.Trigger asChild>{navLink}</Tooltip.Trigger>
-                {collapsed && <Tooltip.Portal>
-                  <Tooltip.Content side="right" sideOffset={10} className="z-[80] rounded-lg border border-control-line bg-surface-raised px-3 py-1.5 text-xs text-fg shadow-lg">
-                    {item.label}
-                  </Tooltip.Content>
-                </Tooltip.Portal>}
-              </Tooltip.Root>
-              {collapsed || pinned ? null : (
-                <span
-                  data-dragging={draggingThis ? '' : undefined}
-                  className={`absolute top-1/2 right-1.5 -translate-y-1/2 has-[:focus-visible]:opacity-100 data-[dragging]:opacity-100 ${
-                    hoveredTo === item.to ? 'opacity-100' : 'opacity-0'
-                  }`}
-                >
-                  <IconButton
-                    label={`拖拽排序：${item.label}`}
-                    variant="ghost"
-                    className="cursor-grab touch-none text-nav-muted hover:bg-nav-hover hover:text-nav-fg active:cursor-grabbing"
-                    onPointerDown={(event) => startDrag(index, event)}
-                    onKeyDown={(event) => {
-                      if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
-                      event.preventDefault()
-                      reorderByKey(index, event.key)
-                    }}
-                  >
-                    <GripVertical aria-hidden size={16} />
-                  </IconButton>
-                </span>
-              )}
-            </div>
-          )
-        })}
-      </nav>
-
-      <div className={`shrink-0 p-3 ${collapsed ? 'items-center' : ''}`}>
-        <div className="mb-2">
-          <SystemLoadBadge navigation collapsed={collapsed} />
-        </div>
-        <QuickActions collapsed={collapsed} />
-      </div>
-    </div>
-  )
+  return <SidebarPanel
+    collapsed={collapsed}
+    onToggle={onToggle}
+    navRef={listRef}
+    dragging={dragging}
+    sections={sections}
+    activeId={activeId}
+    // React Router owns the navigation; the official panel only closes the drawer.
+    onActiveChange={() => {}}
+    onNavigate={onNavigate}
+    header={<div className={`flex items-center ${collapsed ? 'gap-0' : 'gap-2'}`}>
+      <span className="grid size-6 shrink-0 place-items-center rounded-full bg-sidebar-fg text-sidebar"><Bot aria-hidden size={16} /></span>
+      <motion.span initial={false} animate={{ opacity: collapsed ? 0 : 1, width: collapsed ? 0 : 'auto' }}
+        transition={{ duration: reduced ? 0 : 0.15 }} aria-hidden={collapsed || undefined}
+        className="overflow-hidden whitespace-nowrap text-sm font-semibold text-sidebar-fg">Elysian</motion.span>
+    </div>}
+    headerAction={drawer ? <Dialog.Close asChild><Button unstyled type="button" aria-label="关闭主导航"
+      className="grid size-7 shrink-0 place-items-center rounded-[8px] text-sidebar-muted hover:bg-sidebar-hover hover:text-sidebar-fg focus-visible:ring-2 focus-visible:ring-focus">
+      <PanelLeftClose aria-hidden size={18} />
+    </Button></Dialog.Close> : undefined}
+    footer={<><SystemLoadBadge navigation collapsed={collapsed} /><QuickActions collapsed={collapsed} /></>}
+    renderLink={(item, props) => <NavLink {...props} to={item.id} end={NAV_ITEMS.find(nav => nav.to === item.id)?.end} draggable={false} />}
+    itemAttributes={item => {
+      const index = items.findIndex(nav => nav.to === item.id)
+      const draggingThis = drag?.originIndex === index
+      const shift = drag ? translateForSlot(index, drag.originIndex, drag.currentIndex, drag.offsetY, drag.stride) : 0
+      return {
+        'data-nav-item': item.id,
+        'data-nav-index': index,
+        className: `group relative w-full ${draggingThis ? 'z-10' : ''} ${drag && !draggingThis ? 'transition-transform duration-200 ease-[cubic-bezier(0.22,1,0.36,1)] motion-reduce:transition-none' : ''}`,
+        style: shift !== 0 ? { transform: `translateY(${shift}px)` } : undefined,
+        onPointerEnter: () => setHoveredTo(item.id),
+        onPointerLeave: () => setHoveredTo(current => current === item.id ? null : current),
+      }
+    }}
+    itemAction={item => item.id === PINNED_NAV_PATH ? null : <span
+      data-sidebar-reorder data-dragging={drag?.originIndex === items.findIndex(nav => nav.to === item.id) ? '' : undefined}
+      className={`absolute top-1/2 right-1 -translate-y-1/2 has-[:focus-visible]:opacity-100 data-[dragging]:opacity-100 ${hoveredTo === item.id ? 'opacity-100' : 'opacity-0'}`}>
+      <IconButton label={`拖拽排序：${item.label}`} variant="ghost"
+        className="size-6 cursor-grab touch-none rounded-[6px] text-sidebar-muted hover:bg-sidebar-hover hover:text-sidebar-fg active:cursor-grabbing"
+        onPointerDown={event => startDrag(items.findIndex(nav => nav.to === item.id), event)}
+        onKeyDown={event => {
+          if (event.key !== 'ArrowUp' && event.key !== 'ArrowDown') return
+          event.preventDefault()
+          reorderByKey(items.findIndex(nav => nav.to === item.id), event.key)
+        }}>
+        <GripVertical aria-hidden size={14} />
+      </IconButton>
+    </span>}
+  />
 }

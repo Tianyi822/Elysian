@@ -1,10 +1,8 @@
 import { Suspense, useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
-import { Bot, PanelLeftClose, PanelLeftOpen } from '../../components/icons'
 import { Outlet, useLocation, useMatches } from 'react-router'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { subscribeWhileVisible } from '../../adapters/subscribeWhileVisible'
-import { IconButton } from '../../components/IconButton'
 import { MessageCenter } from '../../components/MessageCenter'
 import { PanelUpdateMonitor } from '../../features/settings/PanelUpdateMonitor'
 import { useEventStreamStore } from '../../stores/eventStreamStore'
@@ -18,7 +16,8 @@ import { Sidebar } from './Sidebar'
 import { ShellPageFallback, ShellLayoutContext, type ShellLayout } from './ShellLayoutContext'
 import { LoadingState } from '../../components/states/StateViews'
 import './headerControls.css'
-import './sidebar.css'
+import { Sidebar as EasyUISidebar, SidebarDrawer, SidebarTrigger } from '../../components/easyui/Sidebar'
+import { mediaQuery, observeMediaQuery } from '../../utils/mediaQuery'
 
 export function AppShell() {
   const [openDrawer, setOpenDrawer] = useState<'navigation' | 'conversation' | null>(null)
@@ -70,6 +69,22 @@ export function AppShell() {
     if (isAgentChat) setAgentSidebarCollapsed(globalSidebarCollapsed)
     else setAgentSidebarCollapsed(false)
   }, [location.pathname, isAgentChat, globalSidebarCollapsed])
+  // The official shortcut shares the same state as the visible toggle. Text
+  // editors and terminals retain their native Cmd/Ctrl+B key handling.
+  useEffect(() => {
+    const onKey = (event: KeyboardEvent) => {
+      if (event.defaultPrevented || event.repeat || !(event.metaKey || event.ctrlKey) || event.altKey || event.key.toLowerCase() !== 'b') return
+      if (event.target instanceof Element && event.target.closest('input,textarea,[contenteditable="true"],[role="textbox"],.xterm,.terminal')) return
+      event.preventDefault()
+      if (mediaQuery('(min-width: 768px)')?.matches) setSidebarCollapsed(!sidebarCollapsed)
+      else setNavigationOpen(openDrawerRef.current !== 'navigation')
+    }
+    window.addEventListener('keydown', onKey)
+    const wide = mediaQuery('(min-width: 768px)')
+    const stop = observeMediaQuery(wide, () => { if (wide?.matches) closeNavigation() })
+    return () => { window.removeEventListener('keydown', onKey); stop() }
+  }, [sidebarCollapsed, setSidebarCollapsed, setNavigationOpen, closeNavigation])
+
   const pageTitle =
     NAV_ITEMS.find((item) =>
       item.end ? location.pathname === item.to : location.pathname.startsWith(item.to),
@@ -99,91 +114,32 @@ export function AppShell() {
 
   return (
     <ShellLayoutContext.Provider value={layout}>
-      <PanelUpdateMonitor />
-      <div className="app-canvas flex h-dvh overflow-hidden text-fg">
-        <aside
-          aria-label="桌面主导航"
-          data-collapsed={sidebarCollapsed || undefined}
-          className={`glass-navigation desktop-navigation hidden shrink-0 flex-col md:flex ${
-            sidebarCollapsed ? 'w-16' : 'w-60'
-          }`}
-        >
-          <div className="flex h-full min-h-0 w-60 shrink-0 flex-col">
-            {/* 品牌区与收展入口固定在导航顶部；导航与内容之间不再画分割线。
-                内部始终保持展开宽度，外层裁切；收展按钮以位移跟随边缘，字标只淡入淡出。 */}
-            <div className="flex h-[var(--shell-header-height)] shrink-0 items-center justify-between pl-6 pr-3">
-              <span className="brand-wordmark desktop-navigation-brand inline-flex items-center gap-2">
-                <Bot aria-hidden size={24} className="shrink-0 text-nav-fg" />
-                <span>Elysian</span>
-              </span>
-              <span className="desktop-navigation-toggle ml-auto mr-1 inline-flex shrink-0">
-                <IconButton
-                  onPress={() => setSidebarCollapsed(!sidebarCollapsed)}
-                  label={sidebarCollapsed ? '展开侧边栏' : '收起侧边栏'}
-                  tooltip={false}
-                  variant="ghost"
-                  className="size-7 shrink-0 rounded-lg text-nav-muted hover:bg-nav-hover hover:text-nav-fg"
-                >
-                  {sidebarCollapsed ? <PanelLeftOpen aria-hidden size={17} /> : <PanelLeftClose aria-hidden size={17} />}
-                </IconButton>
-              </span>
-            </div>
-            <div className="min-h-0 flex-1">
-              <Sidebar collapsed={sidebarCollapsed} />
-            </div>
-          </div>
-        </aside>
+      <Dialog.Root open={layout.navigationOpen} onOpenChange={setNavigationOpen}>
+        <PanelUpdateMonitor />
+        <div className="app-canvas flex h-dvh overflow-hidden text-fg">
+          <EasyUISidebar collapsed={sidebarCollapsed}>
+            <Sidebar collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed(!sidebarCollapsed)} />
+          </EasyUISidebar>
 
-        <div className="flex min-w-0 flex-1 flex-col">
-          <Dialog.Root open={layout.navigationOpen} onOpenChange={setNavigationOpen}>
+          <div className="flex min-w-0 flex-1 flex-col">
             {hideHeader && (
               <Dialog.Trigger asChild>
                 <span ref={headerActionsRef} className="nav-float-trigger fixed left-3 top-0 z-30 flex h-[var(--shell-header-height)] items-center md:hidden">
-                  <IconButton label="打开主导航" tooltip={false}>
-                    <PanelLeftOpen aria-hidden size={16} />
-                  </IconButton>
+                  <SidebarTrigger />
                 </span>
               </Dialog.Trigger>
             )}
 
-            <Dialog.Portal>
-              <Dialog.Overlay className="fixed inset-0 z-40 bg-overlay motion-reduce:animate-none data-[state=open]:animate-drawer-overlay-in data-[state=closed]:animate-drawer-overlay-out" />
-              <Dialog.Content
-                aria-describedby={undefined}
-                onCloseAutoFocus={(event) => {
-                  // Trigger 的包裹元素用于宽度测量，焦点归还给里面真正可操作的按钮。
-                  event.preventDefault()
-                  if (!openDrawerRef.current) headerActionsRef.current?.querySelector('button')?.focus()
-                }}
-                className="glass-navigation fixed inset-y-0 left-0 z-50 flex w-[min(18rem,calc(100vw-2rem))] flex-col shadow-xl will-change-transform motion-reduce:animate-none data-[state=open]:animate-drawer-panel-in data-[state=closed]:animate-drawer-panel-out"
-              >
-                {/* 抽屉与桌面导航共用品牌区高度，标题左缘同样对齐下方图标。 */}
-                <div className="flex h-[var(--shell-header-height)] items-center justify-between pl-6 pr-3">
-                  <Dialog.Title className="sr-only">主导航</Dialog.Title>
-                  <span className="brand-wordmark inline-flex items-center gap-2">
-                    <Bot aria-hidden size={24} className="shrink-0 text-nav-fg" />
-                    <span>Elysian</span>
-                  </span>
-                  <Dialog.Close asChild>
-                    <span>
-                      {/* 标题「主导航」已在旁边，悬停提示反而跟随焦点常驻，视觉提示关掉。 */}
-                      <IconButton
-                        label="关闭主导航"
-                        tooltip={false}
-                        variant="ghost"
-                        className="size-7 text-nav-muted hover:bg-nav-hover hover:text-nav-fg"
-                      >
-                        {/* 抽屉向左收起，用面板折叠图标比 X 更贴合动作语义。 */}
-                        <PanelLeftClose aria-hidden size={16} />
-                      </IconButton>
-                    </span>
-                  </Dialog.Close>
-                </div>
-                <div className="min-h-0 flex-1">
-                  <Sidebar onNavigate={closeNavigation} />
-                </div>
-              </Dialog.Content>
-            </Dialog.Portal>
+            <SidebarDrawer open={layout.navigationOpen} onClose={closeNavigation}
+              onCloseAutoFocus={event => {
+                event.preventDefault()
+                if (openDrawerRef.current) return
+                if (mediaQuery('(min-width: 768px)')?.matches) {
+                  document.querySelector<HTMLElement>('[data-easyui="sidebar"] [aria-current="page"]')?.focus()
+                } else headerActionsRef.current?.querySelector('button')?.focus()
+              }}>
+              <Sidebar drawer onNavigate={closeNavigation} />
+            </SidebarDrawer>
 
             <div className="relative flex min-h-0 flex-1">
               <main
@@ -201,9 +157,7 @@ export function AppShell() {
                   >
                     <Dialog.Trigger asChild>
                       <span ref={headerActionsRef} className="shrink-0 md:hidden">
-                        <IconButton label="打开主导航" tooltip={false} className="size-10">
-                          <PanelLeftOpen aria-hidden size={18} />
-                        </IconButton>
+                        <SidebarTrigger />
                       </span>
                     </Dialog.Trigger>
                     <HeaderAccessoryWidthContext.Provider value={accessoryWidth}>
@@ -217,9 +171,9 @@ export function AppShell() {
               </main>
               <MessageCenter />
             </div>
-          </Dialog.Root>
+          </div>
         </div>
-      </div>
+      </Dialog.Root>
     </ShellLayoutContext.Provider>
   )
 }

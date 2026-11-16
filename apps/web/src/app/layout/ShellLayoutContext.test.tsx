@@ -1,5 +1,5 @@
 import * as Tooltip from '@radix-ui/react-tooltip'
-import { act, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen } from '@testing-library/react'
 import { createMemoryRouter, RouterProvider } from 'react-router'
 import { afterEach, describe, expect, it } from 'vitest'
 import { GatewayProvider } from '../../adapters/GatewayProvider'
@@ -35,19 +35,19 @@ afterEach(() => { useEventStreamStore.getState().disconnect() })
 describe('业务页与外壳布局接缝', () => {
   it('聊天页不折叠主导航，继承进入前收展，聊天内改动离开后还原', async () => {
     const router = renderShell()
-    expect(screen.getByRole('complementary', { name: '桌面主导航' })).toHaveClass('w-60')
+    expect(screen.getByRole('complementary', { name: '桌面主导航' })).not.toHaveAttribute('data-collapsed')
     await act(() => router.navigate('/agent'))
     expect(currentLayout.isAgentChat).toBe(true)
-    expect(screen.getByRole('complementary', { name: '桌面主导航' })).toHaveClass('w-60')
+    expect(screen.getByRole('complementary', { name: '桌面主导航' })).not.toHaveAttribute('data-collapsed')
     act(() => currentLayout.setSidebarCollapsed(true))
     expect(currentLayout.sidebarCollapsed).toBe(true)
     await act(() => router.navigate('/agent?session=another'))
     expect(currentLayout.sidebarCollapsed).toBe(true)
     await act(() => router.navigate('/agent/approvals'))
     expect(currentLayout.isAgentChat).toBe(false)
-    expect(screen.getByRole('complementary', { name: '桌面主导航' })).toHaveClass('w-60')
+    expect(screen.getByRole('complementary', { name: '桌面主导航' })).not.toHaveAttribute('data-collapsed')
     await act(() => router.navigate('/agent'))
-    expect(screen.getByRole('complementary', { name: '桌面主导航' })).toHaveClass('w-60')
+    expect(screen.getByRole('complementary', { name: '桌面主导航' })).not.toHaveAttribute('data-collapsed')
   })
 
   it('聊天里的临时收起不覆盖用户进入前展开的主导航', async () => {
@@ -57,18 +57,18 @@ describe('业务页与外壳布局接缝', () => {
     act(() => currentLayout.setSidebarCollapsed(true))
     await act(() => router.navigate('/'))
     expect(currentLayout.sidebarCollapsed).toBe(false)
-    expect(screen.getByRole('complementary', { name: '桌面主导航' })).toHaveClass('w-60')
+    expect(screen.getByRole('complementary', { name: '桌面主导航' })).not.toHaveAttribute('data-collapsed')
   })
 
   it('用户进入前已收起的主导航在聊天页保持收起', async () => {
     const router = renderShell()
     act(() => currentLayout.setSidebarCollapsed(true))
     await act(() => router.navigate('/agent'))
-    expect(screen.getByRole('complementary', { name: '桌面主导航' })).toHaveClass('w-16')
+    expect(screen.getByRole('complementary', { name: '桌面主导航' })).toHaveAttribute('data-collapsed')
     act(() => currentLayout.setSidebarCollapsed(false))
     await act(() => router.navigate('/'))
     expect(currentLayout.sidebarCollapsed).toBe(true)
-    expect(screen.getByRole('complementary', { name: '桌面主导航' })).toHaveClass('w-16')
+    expect(screen.getByRole('complementary', { name: '桌面主导航' })).toHaveAttribute('data-collapsed')
   })
 
   it('主导航和会话抽屉互斥，旧抽屉关闭事件不会关掉新抽屉', async () => {
@@ -82,7 +82,7 @@ describe('业务页与外壳布局接缝', () => {
     expect(currentLayout.conversationDrawerOpen).toBe(true)
     act(() => currentLayout.closeNavigation())
     expect(currentLayout.conversationDrawerOpen).toBe(true)
-    act(() => currentLayout.openNavigation())
+    fireEvent.keyDown(window, { key: 'b', ctrlKey: true })
     expect(currentLayout.navigationOpen).toBe(true)
     expect(currentLayout.conversationDrawerOpen).toBe(false)
     act(() => currentLayout.closeConversationDrawer())

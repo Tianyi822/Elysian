@@ -8,6 +8,7 @@ Source components copied and adapted under src/components/easyui/:
 - IOSSearchBar.tsx (controlled search pill, focus state and animated quick clear)
 - Badge.tsx (variants, status dot and optional animated content)
 - PillNavigation.tsx (global page tabs, toolbar/form segments and shared-layout selection)
+- Sidebar.tsx (sliding hover/active pills, spring collapse and draggable mobile drawer; revision a64cd82c1adc0b44ec4f495e45b3b4d76f1f0143)
 - GooeyMenu.tsx (collapsed navigation, SVG metaball fusion and spring extrusion; revision a4d68b641d39b0782cc83103cc407760da2fce4b)
 - NotificationBell.tsx (extracted bell trigger, arrival shake and unread dot)
 - LiquidToggle.tsx (controlled SVG blob switch and spring deformation)

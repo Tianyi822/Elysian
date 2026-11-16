@@ -27,6 +27,13 @@
   --color-nav-muted: var(--t-nav-muted);
   --color-nav-hover: var(--t-nav-hover);
   --color-nav-selected: var(--t-nav-selected);
+  --color-sidebar: var(--t-sidebar-bg);
+  --color-sidebar-line: var(--t-sidebar-line);
+  --color-sidebar-fg: var(--t-sidebar-fg);
+  --color-sidebar-muted: var(--t-sidebar-muted);
+  --color-sidebar-subtle: var(--t-sidebar-subtle);
+  --color-sidebar-hover: var(--t-sidebar-hover);
+  --color-sidebar-active: var(--t-sidebar-active);
   --color-overlay: var(--t-overlay);
   --color-overlay-strong: var(--t-overlay-strong);
   --color-chart-secondary: var(--t-chart-secondary);
@@ -83,12 +90,12 @@
   --t-info: #95bdeb;
   --t-focus: #9bb5ff;
 
-  /* EasyUI Gooey Menu: solid liquid surfaces and a blue selected dot. */
-  --t-gooey-bg: #0e0e0e;
-  --t-gooey-fg: #f4f4f4;
-  --t-gooey-muted: #dcdcdc;
-  --t-gooey-active: #232323;
-  --t-gooey-indicator: #3b82f6;
+  /* EasyUI Gooey Menu: 融合表面不能描边，只靠底色从画布上抬起。 */
+  --t-gooey-bg: #242427;
+  --t-gooey-fg: #f2f2f3;
+  --t-gooey-muted: #b1b1ba;
+  --t-gooey-active: #343438;
+  --t-gooey-indicator: #9bb5ff;
 
   --t-code-bg: #18181a;
   --t-code-fg: #e6edf3;
@@ -99,6 +106,16 @@
   --t-code-title: #d4b5fa;
   --t-code-attribute: #9ed8f2;
   --t-code-deletion: #ffa4a4;
+
+  /* EasyUI Sidebar's neutral-950/900/800 palette. */
+  --t-sidebar-bg: #0a0a0a;
+  --t-sidebar-line: #262626;
+  --t-sidebar-fg: #ffffff;
+  --t-sidebar-muted: #a3a3a3;
+  --t-sidebar-subtle: #737373;
+  --t-sidebar-hover: #171717;
+  --t-sidebar-active: #262626;
+  --t-sidebar-overlay: rgb(10 10 10 / 40%);
 
   --t-nav-bg: rgb(24 24 26 / 100%);
   --t-nav-opaque: #18181a;
@@ -165,11 +182,11 @@
   --t-info: #405d8b;
   --t-focus: #2f55bf;
 
-  --t-gooey-bg: #000000;
-  --t-gooey-fg: #f4f4f4;
-  --t-gooey-muted: #dcdcdc;
-  --t-gooey-active: #232323;
-  --t-gooey-indicator: #3b82f6;
+  --t-gooey-bg: #dedee3;
+  --t-gooey-fg: #18181b;
+  --t-gooey-muted: #52525b;
+  --t-gooey-active: #ffffff;
+  --t-gooey-indicator: #2f55bf;
 
   --t-code-bg: #f7f8fa;
   --t-code-fg: #263342;
@@ -180,6 +197,15 @@
   --t-code-title: #70429a;
   --t-code-attribute: #075f80;
   --t-code-deletion: #a32424;
+
+  --t-sidebar-bg: #ffffff;
+  --t-sidebar-line: #e5e5e5;
+  --t-sidebar-fg: #171717;
+  --t-sidebar-muted: #737373;
+  --t-sidebar-subtle: #a3a3a3;
+  --t-sidebar-hover: #f5f5f5;
+  --t-sidebar-active: rgb(229 229 229 / 70%);
+  --t-sidebar-overlay: rgb(10 10 10 / 40%);
 
   --t-nav-bg: rgb(244 244 245 / 100%);
   --t-nav-opaque: #f4f4f5;
@@ -546,31 +572,10 @@
     border-left: 1px solid var(--t-line);
   }
 
-  /* 保留类名以兼容现有外壳；导航与画布均为不透明中性表面。 */
-  .glass-navigation {
-    position: relative;
-    isolation: isolate;
-    color: var(--t-nav-fg);
-    background-color: var(--t-nav-opaque);
-    border-right: 1px solid var(--t-panel-line);
-  }
-  .nav-link[aria-current="page"] {
-    box-shadow: inset 0 0 0 1px var(--t-panel-line);
-  }
-  .nav-link[aria-current="page"] svg { color: var(--t-nav-fg); }
-  .glass-navigation :focus-visible { outline-offset: 2px; }
   .app-canvas {
     position: relative;
     isolation: isolate;
     background-color: var(--t-bg);
-  }
-
-  .brand-wordmark {
-    color: var(--t-nav-fg);
-    font-size: 1.25rem;
-    font-weight: 650;
-    letter-spacing: -0.035em;
-    line-height: 1.2;
   }
 
 }
@@ -928,3 +933,5 @@ select:not(:disabled) {
 .hover-scrollbar:focus-within::-webkit-scrollbar-thumb {
   background-color: var(--color-fg-subtle);
 }
+
+@keyframes sidebar-tip-in { from { opacity: 0; transform: translateX(-4px); } to { opacity: 1; transform: translateX(0); } }
