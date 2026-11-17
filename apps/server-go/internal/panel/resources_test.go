@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	storesqlite "elysian/server/internal/agent/harness/sessionstore/sqlite"
 	"elysian/server/internal/config"
 )
 
@@ -432,7 +433,7 @@ func TestReadActiveAgentRunsNeverMigrates(t *testing.T) {
 		t.Fatal(err)
 	}
 	before, _ := os.ReadFile(path)
-	count, err := readActiveAgentRuns(context.Background(), root)
+	count, err := readActiveAgentRuns(context.Background(), root, storesqlite.Inspector{})
 	after, _ := os.ReadFile(path)
 	if err != nil || count != 2 || string(before) != string(after) {
 		t.Fatalf("只读计数错误或修改了库：%d %v", count, err)
@@ -443,7 +444,7 @@ func TestResourceHelperUpgradeRetainsRecoveryAcrossRollback(t *testing.T) {
 		t.Skip("可信root恢复程序测试只在Go开发容器执行")
 	}
 	root := t.TempDir()
-	store := Store{Root: filepath.Join(root, "home")}
+	store := Store{Root: filepath.Join(root, "home"), Inspector: storesqlite.Inspector{}}
 	id := strings.Repeat("a", 32)
 	worker := filepath.Join(store.tasksDir(), id+".worker")
 	maintenance := filepath.Join(root, "maintenance")
@@ -483,7 +484,7 @@ func TestDispatchRegistersIndependentResourceFinalizer(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Setenv("PATH", dir)
-	h := SystemHost{Store: Store{Root: filepath.Join(dir, "home")}}
+	h := SystemHost{Store: Store{Root: filepath.Join(dir, "home"), Inspector: storesqlite.Inspector{}}}
 	worker := filepath.Join(dir, "task.worker")
 	id := strings.Repeat("b", 32)
 	if err := h.Dispatch(context.Background(), worker, id); err != nil {

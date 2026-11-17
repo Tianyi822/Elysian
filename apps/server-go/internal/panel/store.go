@@ -2,8 +2,6 @@ package panel
 
 import (
 	"crypto/rand"
-	"elysian/server/internal/config"
-	"elysian/server/internal/shared"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -13,6 +11,10 @@ import (
 	"sort"
 	"syscall"
 	"time"
+
+	"elysian/server/internal/agent/harness/sessionstore"
+	"elysian/server/internal/config"
+	"elysian/server/internal/shared"
 )
 
 var idPattern = regexp.MustCompile(`^[a-f0-9]{32}$`)
@@ -22,7 +24,10 @@ var commitPattern = regexp.MustCompile(`^(?:[a-f0-9]{40}|[a-f0-9]{64})$`)
 // buildTagPattern 命名 CI 为固定提交发布的 build-<完整SHA> 预发布标签。
 var buildTagPattern = regexp.MustCompile(`^build-[a-f0-9]{40}$`)
 
-type Store struct{ Root string }
+type Store struct {
+	Root      string
+	Inspector sessionstore.Inspector
+}
 
 func (s Store) updateCheckPath(channel UpdateChannel, source UpdateSource) string {
 	source = normalizeSource(source)

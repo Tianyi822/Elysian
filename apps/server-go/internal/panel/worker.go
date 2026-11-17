@@ -2,7 +2,6 @@ package panel
 
 import (
 	"context"
-	"elysian/server/internal/config"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -10,6 +9,9 @@ import (
 	"path/filepath"
 	"syscall"
 	"time"
+
+	"elysian/server/internal/agent/harness/sessionstore"
+	"elysian/server/internal/config"
 )
 
 type Worker struct {
@@ -405,7 +407,7 @@ func (w Worker) rollback(ctx context.Context, r *taskRecord, start bool) error {
 			}
 		}
 		if r.SnapshotReady {
-			if err := restorePanelData(r.Snapshot, w.Store.Root); err != nil {
+			if err := restorePanelData(r.Snapshot, w.Store.Root, w.Store.Inspector); err != nil {
 				return err
 			}
 		}
@@ -623,10 +625,10 @@ func copyPanelData(root, destination string) error {
 	}
 	return nil
 }
-func restorePanelData(snapshot, root string) error {
+func restorePanelData(snapshot, root string, inspectors ...sessionstore.Inspector) error {
 	// 服务已停止。先持久化工作流冻结标记，再原位保留全部当前 Agent
 	// 事实、配置和工作区；完成回执与未知执行屏障都不得倒退到旧快照。
-	preserveAgent, err := prepareAgentRestore(snapshot, root)
+	preserveAgent, err := prepareAgentRestore(snapshot, root, inspectors...)
 	if err != nil {
 		return err
 	}

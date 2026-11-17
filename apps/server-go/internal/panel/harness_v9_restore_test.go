@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"path/filepath"
 	"testing"
+
+	storesqlite "elysian/server/internal/agent/harness/sessionstore/sqlite"
 )
 
 func TestMaintenancePreservesV9AuthorizationDecisionsAndRevocations(t *testing.T) {
@@ -39,7 +41,7 @@ func TestMaintenancePreservesV9AuthorizationDecisionsAndRevocations(t *testing.T
 	if err := copyPanelData(root, backup); err != nil {
 		t.Fatal(err)
 	}
-	if err := restorePanelData(snapshot, root); err != nil {
+	if err := restorePanelData(snapshot, root, storesqlite.Inspector{}); err != nil {
 		t.Fatal(err)
 	}
 	for _, target := range []string{root, backup} {
@@ -62,7 +64,7 @@ func TestMaintenancePreservesV9AuthorizationDecisionsAndRevocations(t *testing.T
 		}
 		assertRestoreFixture(t, target, "data/agent-records/sessions/session-1.jsonl", currentRecords)
 		assertRestoreFixture(t, target, "config/agent/execution.json", currentConfig)
-		if needed, err := AgentExecutionRecoveryRequired(target); err != nil || !needed {
+		if needed, err := AgentExecutionRecoveryRequired(target, storesqlite.Inspector{}); err != nil || !needed {
 			t.Fatalf("unknown runtime execution was released: %t %v", needed, err)
 		}
 	}
@@ -81,7 +83,7 @@ func TestMaintenanceV9StillRequiresReadableExecutionEvidence(t *testing.T) {
 				statements = append(statements, "CREATE TABLE resource_leases(id TEXT)")
 			}
 			createRestoreDatabase(t, root, statements...)
-			if _, err := preserveAgentFacts(root); err == nil {
+			if _, err := preserveAgentFacts(root, storesqlite.Inspector{}); err == nil {
 				t.Fatal("schema9 accepted without readable execution evidence")
 			}
 		})

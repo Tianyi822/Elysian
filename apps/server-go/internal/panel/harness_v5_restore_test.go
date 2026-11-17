@@ -4,6 +4,8 @@ import (
 	"database/sql"
 	"path/filepath"
 	"testing"
+
+	storesqlite "elysian/server/internal/agent/harness/sessionstore/sqlite"
 )
 
 func TestMaintenancePreservesV5ScopeWikiAndUnknownProbeFacts(t *testing.T) {
@@ -44,10 +46,10 @@ func TestMaintenancePreservesV5ScopeWikiAndUnknownProbeFacts(t *testing.T) {
 	if err = backedUp.Close(); err != nil {
 		t.Fatal(err)
 	}
-	if needed, err := AgentExecutionRecoveryRequired(root); err != nil || !needed {
+	if needed, err := AgentExecutionRecoveryRequired(root, storesqlite.Inspector{}); err != nil || !needed {
 		t.Fatalf("未知probe租约未触发容器核实: %t %v", needed, err)
 	}
-	if err := restorePanelData(snapshot, root); err != nil {
+	if err := restorePanelData(snapshot, root, storesqlite.Inspector{}); err != nil {
 		t.Fatal(err)
 	}
 	assertRestoreFixture(t, root, "config/agent/embeddings.json", "当前embedding修订")
@@ -68,7 +70,7 @@ func TestMaintenancePreservesV5ScopeWikiAndUnknownProbeFacts(t *testing.T) {
 	if err = db.QueryRow("SELECT state,document FROM resource_leases WHERE id='probe'").Scan(&state, &document); err != nil || state != "unknown" || document != `{"source":"mcp-probe","scopeId":"probe-scope","containerId":"retained-container"}` {
 		t.Fatalf("恢复改变未知探测证据: %s %s %v", state, document, err)
 	}
-	if needed, err := AgentExecutionRecoveryRequired(root); err != nil || !needed {
+	if needed, err := AgentExecutionRecoveryRequired(root, storesqlite.Inspector{}); err != nil || !needed {
 		t.Fatalf("恢复误释未知probe租约: %t %v", needed, err)
 	}
 }
@@ -85,7 +87,7 @@ func TestMaintenanceV5RequiresReadableResourceLeases(t *testing.T) {
 				statements = append(statements, "CREATE TABLE resource_leases(state TEXT NOT NULL)", "INSERT INTO resource_leases VALUES('"+kind+"')")
 			}
 			createRestoreDatabase(t, root, statements...)
-			pending, err := preserveAgentFacts(root)
+			pending, err := preserveAgentFacts(root, storesqlite.Inspector{})
 			if kind == "missing" || kind == "malformed" {
 				if err == nil {
 					t.Fatal("不能核实schema5租约时仍允许恢复")

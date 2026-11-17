@@ -3,19 +3,16 @@ package panel
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"io"
-	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
 	"time"
 
+	"elysian/server/internal/agent/harness/sessionstore"
 	"elysian/server/internal/config"
-
-	_ "modernc.org/sqlite"
 )
 
 // agentDataEntry 同时用于删除与复制过滤。Agent 配置、记录和工作区
@@ -45,7 +42,7 @@ type workflowRecoveryFence struct {
 
 // prepareAgentRestore 在任何领域数据恢复前确认整组 Agent 数据可保留。
 // 已完成工作流的回执同样是当前事实，不能因没有未决屏障而倒退。
-func prepareAgentRestore(snapshot, root string) (bool, error) {
+func prepareAgentRestore(snapshot, root string, inspectors ...sessionstore.Inspector) (bool, error) {
 	current, err := inspectAgentEntries(root)
 	if err != nil {
 		return false, err
@@ -54,7 +51,7 @@ func prepareAgentRestore(snapshot, root string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if _, err := preserveAgentFacts(root); err != nil {
+	if _, err := preserveAgentFacts(root, inspectors...); err != nil {
 		return false, err
 	}
 	if _, err := os.Lstat(filepath.Join(root, "data", "harness.sqlite")); os.IsNotExist(err) && backedUp {
@@ -172,63 +169,11 @@ func syncRestoreDirectory(path string) error {
 
 // preserveAgentFacts 报告未决执行屏障或资源租约，供停服后的容器恢复判断使用。
 // 只允许旧版合法库缺少对应表；损坏库与无法核实的执行状态均拒绝恢复。
-func preserveAgentFacts(root string) (bool, error) {
-	path := filepath.Join(root, "data", "harness.sqlite")
-	info, err := os.Lstat(path)
-	if os.IsNotExist(err) {
-		for _, suffix := range []string{"-wal", "-shm", "-journal"} {
-			if _, sidecarErr := os.Lstat(path + suffix); sidecarErr == nil || !os.IsNotExist(sidecarErr) {
-				return false, fmt.Errorf("运行数据库缺失但仍有相关文件，无法确认未决执行屏障，已拒绝恢复")
-			}
-		}
-		return false, nil
+func preserveAgentFacts(root string, inspectors ...sessionstore.Inspector) (bool, error) {
+	if len(inspectors) == 0 || inspectors[0] == nil {
+		return false, fmt.Errorf("必须注入 Agent 只读检查器")
 	}
-	if err != nil {
-		return false, fmt.Errorf("无法读取运行数据库，已拒绝恢复：%w", err)
-	}
-	if !info.Mode().IsRegular() {
-		return false, fmt.Errorf("运行数据库不是普通文件，无法确认未决执行屏障，已拒绝恢复")
-	}
-	dsn := (&url.URL{Scheme: "file", Path: path, RawQuery: "mode=ro"}).String()
-	db, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		return false, fmt.Errorf("无法打开运行数据库，已拒绝恢复：%w", err)
-	}
-	defer db.Close()
-	db.SetMaxOpenConns(1)
 	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
 	defer cancel()
-	var version int
-	if err := db.QueryRowContext(ctx, "PRAGMA user_version").Scan(&version); err != nil {
-		return false, fmt.Errorf("无法确认运行数据库版本，已拒绝恢复：%w", err)
-	}
-	if version < 1 {
-		return false, fmt.Errorf("运行数据库版本无效，已拒绝恢复")
-	}
-	var integrity string
-	if err := db.QueryRowContext(ctx, "PRAGMA quick_check").Scan(&integrity); err != nil || integrity != "ok" {
-		return false, fmt.Errorf("运行数据库完整性检查未通过，已拒绝恢复")
-	}
-	var hasTable bool
-	if err := db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='execution_barriers')").Scan(&hasTable); err != nil {
-		return false, fmt.Errorf("无法确认执行屏障表，已拒绝恢复：%w", err)
-	}
-	if !hasTable {
-		if version == 1 || version == 2 {
-			return false, nil
-		}
-		return false, fmt.Errorf("运行数据库缺少执行屏障表，无法确认未决执行，已拒绝恢复")
-	}
-	var pending bool
-	if err := db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM execution_barriers WHERE state IN ('dispatched','unknown'))").Scan(&pending); err != nil {
-		return false, fmt.Errorf("无法读取未决执行屏障，已拒绝恢复：%w", err)
-	}
-	if version >= 5 {
-		var pendingLease bool
-		if err := db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM resource_leases WHERE state IN ('held','unknown'))").Scan(&pendingLease); err != nil {
-			return false, fmt.Errorf("无法核实运行数据库中的资源租约，已拒绝恢复：%w", err)
-		}
-		pending = pending || pendingLease
-	}
-	return pending, nil
+	return inspectors[0].PreserveFacts(ctx, filepath.Join(root, "data", "harness.sqlite"))
 }

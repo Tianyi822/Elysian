@@ -5,7 +5,6 @@ import (
 	"bytes"
 	"compress/gzip"
 	"context"
-	"elysian/server/internal/config"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +15,9 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	storesqlite "elysian/server/internal/agent/harness/sessionstore/sqlite"
+	"elysian/server/internal/config"
 )
 
 type fakeHost struct {
@@ -138,7 +140,7 @@ func setupWorker(t *testing.T, kind string) (Worker, taskRecord, *fakeHost) {
 	if err := os.Symlink(filepath.Dir(old), filepath.Join(install, "current")); err != nil {
 		t.Fatal(err)
 	}
-	s := Store{Root: filepath.Join(root, "data-home")}
+	s := Store{Root: filepath.Join(root, "data-home"), Inspector: storesqlite.Inspector{}}
 	p := config.DefaultPanelNetwork()
 	if err := config.AtomicJSON(s.networkPath(), p); err != nil {
 		t.Fatal(err)

@@ -2,12 +2,14 @@ package panel
 
 import (
 	"context"
-	"elysian/server/internal/config"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	storesqlite "elysian/server/internal/agent/harness/sessionstore/sqlite"
+	"elysian/server/internal/config"
 )
 
 // CLI 链接归属与维护事务补注册的回归测试：归属语义与 scripts/install.sh 的
@@ -40,7 +42,7 @@ func cliLinkFixture(t *testing.T, commit string) (string, string) {
 
 func cliLinkWorker(t *testing.T, root, cli string, verify func(context.Context, string, string) error) (Worker, *taskRecord) {
 	t.Helper()
-	s := Store{Root: filepath.Join(t.TempDir(), "store")}
+	s := Store{Root: filepath.Join(t.TempDir(), "store"), Inspector: storesqlite.Inspector{}}
 	p := config.DefaultPanelNetwork()
 	r := &taskRecord{Task: Task{ID: strings.Repeat("a", 32), Kind: "update", State: "running", TargetCommit: "deadbeef", OldPorts: p, NewPorts: p, CreatedAt: time.Now().UTC()}}
 	if err := s.lock(func() error { return s.save(*r) }); err != nil {

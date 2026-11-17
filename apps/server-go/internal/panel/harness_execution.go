@@ -10,11 +10,12 @@ import (
 	"time"
 
 	"elysian/server/internal/agent/execution"
+	"elysian/server/internal/agent/harness/sessionstore"
 )
 
 // AgentExecutionRecoveryRequired 供启动与维护共用。历史配置包含全部修订，
 // 停用并不证明旧容器已停止；完全未配置执行能力的安装不要求 Docker。
-func AgentExecutionRecoveryRequired(root string) (bool, error) {
+func AgentExecutionRecoveryRequired(root string, inspectors ...sessionstore.Inspector) (bool, error) {
 	var executionConfig struct {
 		Schema   int               `json:"schema"`
 		Profiles []json.RawMessage `json:"profiles"`
@@ -48,7 +49,7 @@ func AgentExecutionRecoveryRequired(root string) (bool, error) {
 			return true, nil
 		}
 	}
-	return preserveAgentFacts(root)
+	return preserveAgentFacts(root, inspectors...)
 }
 
 func readAgentRecoveryConfig(path string, target any) (bool, error) {
@@ -72,7 +73,7 @@ func readAgentRecoveryConfig(path string, target any) (bool, error) {
 }
 
 func (h SystemHost) recoverAgentExecution(ctx context.Context) error {
-	required, err := AgentExecutionRecoveryRequired(h.Store.Root)
+	required, err := AgentExecutionRecoveryRequired(h.Store.Root, h.Store.Inspector)
 	if err != nil {
 		return err
 	}

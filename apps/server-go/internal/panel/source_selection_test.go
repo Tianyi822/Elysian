@@ -9,6 +9,7 @@ import (
 	"strings"
 	"testing"
 
+	storesqlite "elysian/server/internal/agent/harness/sessionstore/sqlite"
 	"elysian/server/internal/config"
 )
 
@@ -140,7 +141,7 @@ func TestDefaultSourceFailureDoesNotFallBack(t *testing.T) {
 		t.Fatal("默认来源必须仅为 GitHub")
 	}
 	source := &failingSource{}
-	manager := Manager{Store: Store{Root: t.TempDir()}, Source: source}
+	manager := Manager{Store: Store{Root: t.TempDir(), Inspector: storesqlite.Inspector{}}, Source: source}
 	for _, choice := range []UpdateSource{"", SourceAuto, SourceGitHub} {
 		if _, err := manager.CheckFrom(context.Background(), ChannelCommit, choice); err == nil || err.Error() != "GitHub 不可达" {
 			t.Fatalf("未保留 GitHub 失败：%v", err)

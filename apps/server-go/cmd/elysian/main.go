@@ -18,6 +18,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"path/filepath"
 	"runtime"
 	"strconv"
 	"sync/atomic"
@@ -25,6 +26,7 @@ import (
 	"time"
 
 	"elysian/server/internal/agent/execution"
+	"elysian/server/internal/agent/harness/sessionstore/sqlite"
 	"elysian/server/internal/agent/harness/worker"
 	"elysian/server/internal/app"
 	"elysian/server/internal/applog"
@@ -36,7 +38,6 @@ import (
 	"elysian/server/internal/panel"
 	"elysian/server/internal/paths"
 	"elysian/server/internal/shared"
-	"path/filepath"
 )
 
 // shutdownTimeout 优雅关闭时限：存量请求收尾，超时强制退出。
@@ -120,14 +121,14 @@ func run() (runErr error) {
 			if err != nil {
 				return err
 			}
-			host := panel.SystemHost{Store: panel.Store{Root: paths.ElysianHome}, DockerSocket: cfg.DockerSocket, MissingServiceOK: os.Args[1] == "maintenance-install-check"}
+			host := panel.SystemHost{Store: panel.Store{Root: paths.ElysianHome, Inspector: sqlite.Inspector{}}, DockerSocket: cfg.DockerSocket, MissingServiceOK: os.Args[1] == "maintenance-install-check"}
 			if os.Args[1] == "maintenance-install-check" {
 				beforeDependencies, err := installCheckBeforeDependencies(os.Args[2:])
 				if err != nil {
 					return err
 				}
 				host.BeforePlatformDependencies = beforeDependencies
-				return panel.CheckInstall(context.Background(), panel.Store{Root: paths.ElysianHome}, host, ports)
+				return panel.CheckInstall(context.Background(), panel.Store{Root: paths.ElysianHome, Inspector: sqlite.Inspector{}}, host, ports)
 			}
 			if os.Args[1] == "maintenance-bootstrap-save" || os.Args[1] == "maintenance-bootstrap-restore" {
 				if len(os.Args) != 3 {
@@ -142,12 +143,12 @@ func run() (runErr error) {
 				return config.AtomicJSON(filepath.Join(paths.ConfigDir, "panel-network.json"), ports)
 			}
 			if os.Args[1] == "maintenance-bootstrap" {
-				return panel.Bootstrap(context.Background(), panel.SystemHost{Store: panel.Store{Root: paths.ElysianHome}, DockerSocket: cfg.DockerSocket}, ports)
+				return panel.Bootstrap(context.Background(), panel.SystemHost{Store: panel.Store{Root: paths.ElysianHome, Inspector: sqlite.Inspector{}}, DockerSocket: cfg.DockerSocket}, ports)
 			}
 			fmt.Printf("%d %d\n", ports.FrontendPort, ports.BackendPort)
 			return nil
 		case "maintenance-worker", "maintenance-recover", "maintenance-finalize", "maintenance-resource-version":
-			return panel.RunCLI(context.Background(), os.Args[1], os.Args[2:], paths.ElysianHome, cfg.DockerSocket)
+			return panel.RunCLI(context.Background(), os.Args[1], os.Args[2:], paths.ElysianHome, cfg.DockerSocket, sqlite.Inspector{})
 		case "resetpwd":
 			os.Exit(auth.RunResetPasswordCLI(os.Stdin, os.Stdout))
 		case "__sqlite-worker":

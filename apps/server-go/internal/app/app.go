@@ -25,10 +25,9 @@ import (
 	"runtime/debug"
 	"strings"
 
-	"github.com/go-chi/chi/v5"
-
 	execconfig "elysian/server/internal/agent/execution/config"
 	"elysian/server/internal/agent/harness"
+	"elysian/server/internal/agent/harness/sessionstore/sqlite"
 	"elysian/server/internal/agent/kardia"
 	"elysian/server/internal/agent/tools"
 	toolapps "elysian/server/internal/agent/tools/containerapps"
@@ -63,6 +62,8 @@ import (
 	"elysian/server/internal/terminals"
 	"elysian/server/internal/websites"
 	"elysian/server/web"
+
+	"github.com/go-chi/chi/v5"
 )
 
 // New 装配完整 HTTP Runtime，调用方退出时必须调用 Close 回收后台任务资源。
@@ -159,7 +160,7 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 	platformDeps.AgentFacade = platform.NewAgentFacade(platformDeps)
 	platformRouter := platform.NewRouter(platformDeps)
 
-	panelStore := panel.Store{Root: paths.ElysianHome}
+	panelStore := panel.Store{Root: paths.ElysianHome, Inspector: sqlite.Inspector{}}
 	panelManager := panel.Manager{Store: panelStore, Host: panel.SystemHost{Store: panelStore, DockerSocket: cfg.DockerSocket}, Source: panel.DefaultSource(), Ports: cfg.PanelPorts(), Enabled: cfg.BareMetal}
 	containerAppsRegistry := &containerapps.Registry{MountRoot: cfg.MountRoot}
 	appBuilds := containerapps.NewProductionBuildManager(containerapps.BuildDeps{Engine: stack.Engine, Policy: docker.CheckRegistryHost, Registry: containerAppsRegistry})

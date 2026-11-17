@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"elysian/server/internal/agent/harness/model"
+	storesqlite "elysian/server/internal/agent/harness/sessionstore/sqlite"
 
 	_ "modernc.org/sqlite"
 )
@@ -157,7 +158,7 @@ func TestMaintenancePreservesCurrentAgentSessionsMemoryAndModelRevisions(t *test
 		t.Fatal(err)
 	}
 	writeRestoreFixture(t, w.Store.Root, "data/agent-records/sessions/session-backup.jsonl", `{"seq":"2","kind":"message"}`+"\n")
-	if err := restorePanelData(record.Snapshot, w.Store.Root); err != nil {
+	if err := restorePanelData(record.Snapshot, w.Store.Root, storesqlite.Inspector{}); err != nil {
 		t.Fatal(err)
 	}
 	assertRestoreFixture(t, w.Store.Root, "data/agent-records/sessions/session-backup.jsonl", `{"seq":"2","kind":"message"}`+"\n")

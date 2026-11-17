@@ -2,8 +2,6 @@ package panel
 
 import (
 	"context"
-	"elysian/server/internal/config"
-	"elysian/server/internal/shared"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -14,6 +12,10 @@ import (
 	"syscall"
 	"testing"
 	"time"
+
+	storesqlite "elysian/server/internal/agent/harness/sessionstore/sqlite"
+	"elysian/server/internal/config"
+	"elysian/server/internal/shared"
 )
 
 func TestReleaseResolvesTagAndPinsDownloadAndHistory(t *testing.T) {
@@ -291,7 +293,7 @@ func TestSubmitDispatchSurvivesClientAbort(t *testing.T) {
 }
 
 func TestMutationGateWaitsAreBounded(t *testing.T) {
-	s := Store{Root: t.TempDir()}
+	s := Store{Root: t.TempDir(), Inspector: storesqlite.Inspector{}}
 	if err := os.MkdirAll(s.tasksDir(), 0700); err != nil {
 		t.Fatal(err)
 	}

@@ -14,6 +14,7 @@ import (
 	execconfig "elysian/server/internal/agent/execution/config"
 	"elysian/server/internal/agent/harness"
 	"elysian/server/internal/agent/harness/model"
+	"elysian/server/internal/agent/harness/sessionstore/sqlite"
 	"elysian/server/internal/agent/harness/skills"
 	"elysian/server/internal/agent/harness/toolbridge"
 	"elysian/server/internal/agent/harness/workspace"
@@ -116,7 +117,12 @@ func assembleProductionHarness(cfg *config.Config, views seam.DockerViews, optio
 	}
 	register(bridge.Close)
 	profiles, profileErr := model.Open(options.Paths.AgentModels)
-	deps := harness.Deps{Path: options.Paths.HarnessSqlite, EmbeddingConfigPath: options.Paths.AgentEmbeddings, Tools: bridge, Profiles: profiles, WorkflowRecoveryFence: panel.WorkflowRecoveryFencePath(options.Home)}
+	store, err := sqlite.Open(sqlite.Options{Path: options.Paths.HarnessSqlite})
+	if err != nil {
+		return nil, nil, err
+	}
+	register(store.Close)
+	deps := harness.Deps{Store: store, EmbeddingConfigPath: options.Paths.AgentEmbeddings, Tools: bridge, Profiles: profiles, WorkflowRecoveryFence: panel.WorkflowRecoveryFencePath(options.Home)}
 	deps.CancelTask = options.CancelTask
 	deps.InspectTask = options.InspectTask
 	deps.LookupTask = options.LookupTask
@@ -192,7 +198,7 @@ func assembleProductionHarness(cfg *config.Config, views seam.DockerViews, optio
 	} else {
 		extensions.ExecutionReason = joinDiagnostic(extensions.ExecutionReason, "无法定位容器执行二进制")
 	}
-	needsRecovery, recoveryError := panel.AgentExecutionRecoveryRequired(options.Home)
+	needsRecovery, recoveryError := panel.AgentExecutionRecoveryRequired(options.Home, sqlite.Inspector{})
 	executionSocket := cfg.DockerSocket
 	if executionSocket == "" {
 		executionSocket = "/var/run/docker.sock"
@@ -226,7 +232,7 @@ func assembleProductionHarness(cfg *config.Config, views seam.DockerViews, optio
 			return &harness.Error{Status: 503, Code: "execution-recovery", Message: "受管执行容器恢复尚未确认，派发已暂停"}
 		}
 		if cfg.BareMetal {
-			store := panel.Store{Root: options.Home}
+			store := panel.Store{Root: options.Home, Inspector: sqlite.Inspector{}}
 			info, err := (panel.Manager{Store: store, Host: panel.SystemHost{Store: store, DockerSocket: cfg.DockerSocket}, Enabled: true}).Info()
 			if err == nil && info.ActiveTask != nil && info.ActiveTask.Kind == "update" {
 				return &harness.Error{Status: 409, Code: "panel-update-active", Message: "面板更新中断了任务，进度已保存，请在更新结束后手动继续"}

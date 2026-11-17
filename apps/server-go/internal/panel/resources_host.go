@@ -3,7 +3,6 @@ package panel
 import (
 	"context"
 	"crypto/sha256"
-	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
@@ -12,7 +11,6 @@ import (
 	"math"
 	"net"
 	"net/http"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,6 +20,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"elysian/server/internal/agent/harness/sessionstore"
 )
 
 func (h SystemHost) ObserveResources(ctx context.Context) (resourceObservation, error) {
@@ -71,7 +71,7 @@ func (h SystemHost) ObserveResources(ctx context.Context) (resourceObservation, 
 		}
 		diskObserved = true
 	}
-	out.ActiveAgentRuns, err = readActiveAgentRuns(ctx, h.Store.Root)
+	out.ActiveAgentRuns, err = readActiveAgentRuns(ctx, h.Store.Root, h.Store.Inspector)
 	return out, err
 }
 func parseResourceMemory(raw string) (ResourceMemory, error) {
@@ -96,35 +96,11 @@ func parseResourceMemory(raw string) (ResourceMemory, error) {
 	}
 	return ResourceMemory{TotalBytes: total, AvailableBytes: available, RequiredBytes: requiredBuildMemory, SwapTotalBytes: values["SwapTotal"], SwapFreeBytes: values["SwapFree"]}, nil
 }
-func readActiveAgentRuns(ctx context.Context, root string) (int, error) {
-	path := filepath.Join(root, "data", "harness.sqlite")
-	info, err := os.Lstat(path)
-	if os.IsNotExist(err) {
-		return 0, nil
+func readActiveAgentRuns(ctx context.Context, root string, inspectors ...sessionstore.Inspector) (int, error) {
+	if len(inspectors) == 0 || inspectors[0] == nil {
+		return 0, fmt.Errorf("必须注入 Agent 只读检查器")
 	}
-	if err != nil || !info.Mode().IsRegular() {
-		return 0, fmt.Errorf("无法只读核对 Agent 活动运行")
-	}
-	dsn := (&url.URL{Scheme: "file", Path: path, RawQuery: "mode=ro"}).String()
-	db, err := sql.Open("sqlite", dsn)
-	if err != nil {
-		return 0, err
-	}
-	defer db.Close()
-	db.SetMaxOpenConns(1)
-	var exists bool
-	if err = db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM sqlite_schema WHERE type='table' AND name='runs')").Scan(&exists); err != nil {
-		return 0, fmt.Errorf("无法只读核对 Agent 活动运行：%w", err)
-	}
-	if !exists {
-		return 0, nil
-	}
-	var n int
-	err = db.QueryRowContext(ctx, "SELECT COUNT(*) FROM runs WHERE state NOT IN ('succeeded','failed','cancelled','interrupted') AND json_extract(document,'$.sessionId') IS NOT NULL AND json_extract(document,'$.sessionId') != ''").Scan(&n)
-	if err != nil {
-		return 0, fmt.Errorf("无法只读核对 Agent 活动运行：%w", err)
-	}
-	return n, nil
+	return inspectors[0].ActiveRuns(ctx, filepath.Join(root, "data", "harness.sqlite"))
 }
 
 var resourceServicePattern = regexp.MustCompile(`^[a-zA-Z0-9_.@:-]+\.service$`)

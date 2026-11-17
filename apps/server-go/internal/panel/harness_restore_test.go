@@ -9,6 +9,8 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	storesqlite "elysian/server/internal/agent/harness/sessionstore/sqlite"
 )
 
 func writeRestoreFixture(t *testing.T, root, name, value string) {
@@ -82,7 +84,7 @@ func TestMaintenancePreservesPendingAgentFactsDuringRestore(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			if err := restorePanelData(snapshot, root); err != nil {
+			if err := restorePanelData(snapshot, root, storesqlite.Inspector{}); err != nil {
 				t.Fatal(err)
 			}
 			for _, name := range agentFiles {
@@ -111,7 +113,7 @@ func TestMaintenancePreservesCompletedWorkflowAfterBarrierConfirmed(t *testing.T
 	writeRestoreFixture(t, root, "config/agent/models.json", "新修订")
 	writeRestoreFixture(t, snapshot, "config/agent/models.json", "旧修订")
 	createRestoreDatabase(t, snapshot, "PRAGMA user_version=2", "CREATE TABLE messages(content TEXT)", "INSERT INTO messages VALUES('备份时的事实')")
-	if err := restorePanelData(snapshot, root); err != nil {
+	if err := restorePanelData(snapshot, root, storesqlite.Inspector{}); err != nil {
 		t.Fatal(err)
 	}
 	assertRestoreFixture(t, root, "config/agent/models.json", "新修订")
@@ -129,7 +131,7 @@ func TestMaintenancePreservesCompletedWorkflowAfterBarrierConfirmed(t *testing.T
 		t.Fatalf("新数据库不能降级为备份版本：%d %v", version, err)
 	}
 	assertWorkflowRecoveryFence(t, root)
-	if pending, err := preserveAgentFacts(root); err != nil || pending {
+	if pending, err := preserveAgentFacts(root, storesqlite.Inspector{}); err != nil || pending {
 		t.Fatalf("保留当前 Agent 数据不应改变未决屏障判断：%t %v", pending, err)
 	}
 }
@@ -161,7 +163,7 @@ func TestMaintenanceRefusesSnapshotAgentDataWhenCurrentDatabaseMissing(t *testin
 			writeRestoreFixture(t, snapshot, name, "备份中的 Agent 事实")
 			writeRestoreFixture(t, root, "config/panel-network.json", "当前端口")
 			writeRestoreFixture(t, snapshot, "config/panel-network.json", "旧端口")
-			if err := restorePanelData(snapshot, root); err == nil || !strings.Contains(err.Error(), "拒绝恢复") {
+			if err := restorePanelData(snapshot, root, storesqlite.Inspector{}); err == nil || !strings.Contains(err.Error(), "拒绝恢复") {
 				t.Fatalf("当前运行库缺失时不能载入旧 Agent 数据：%v", err)
 			}
 			assertRestoreFixture(t, root, "config/panel-network.json", "当前端口")
@@ -173,7 +175,7 @@ func TestMaintenanceWithoutAgentDataRestoresNormally(t *testing.T) {
 	root, snapshot := t.TempDir(), t.TempDir()
 	writeRestoreFixture(t, root, "config/panel-network.json", "当前端口")
 	writeRestoreFixture(t, snapshot, "config/panel-network.json", "旧端口")
-	if err := restorePanelData(snapshot, root); err != nil {
+	if err := restorePanelData(snapshot, root, storesqlite.Inspector{}); err != nil {
 		t.Fatal(err)
 	}
 	assertRestoreFixture(t, root, "config/panel-network.json", "旧端口")
@@ -188,7 +190,7 @@ func TestMaintenanceRejectsInvalidAgentDirectories(t *testing.T) {
 			root, snapshot := t.TempDir(), t.TempDir()
 			createRestoreDatabase(t, root, "PRAGMA user_version=5", "CREATE TABLE execution_barriers(state TEXT NOT NULL)", "CREATE TABLE resource_leases(state TEXT NOT NULL)")
 			writeRestoreFixture(t, root, name, "普通文件不能冒充 Agent 目录")
-			if err := restorePanelData(snapshot, root); err == nil || !strings.Contains(err.Error(), "拒绝恢复") {
+			if err := restorePanelData(snapshot, root, storesqlite.Inspector{}); err == nil || !strings.Contains(err.Error(), "拒绝恢复") {
 				t.Fatalf("Agent 数据目录类型错误必须拒绝恢复：%v", err)
 			}
 		})
@@ -200,11 +202,11 @@ func TestMaintenanceRepeatedRestoreRetainsWorkflowRecoveryFence(t *testing.T) {
 	createRestoreDatabase(t, root, "PRAGMA user_version=4", "CREATE TABLE execution_barriers(state TEXT NOT NULL)",
 		"CREATE TABLE workflow_instances(state TEXT NOT NULL)", "INSERT INTO workflow_instances VALUES('running')")
 	writeRestoreFixture(t, snapshot, "config/panel-network.json", "旧端口")
-	if err := restorePanelData(snapshot, root); err != nil {
+	if err := restorePanelData(snapshot, root, storesqlite.Inspector{}); err != nil {
 		t.Fatal(err)
 	}
 	first := assertWorkflowRecoveryFence(t, root)
-	if err := restorePanelData(snapshot, root); err != nil {
+	if err := restorePanelData(snapshot, root, storesqlite.Inspector{}); err != nil {
 		t.Fatal(err)
 	}
 	if next := assertWorkflowRecoveryFence(t, root); next != first {
@@ -252,7 +254,7 @@ func TestMaintenanceInvalidRecoveryFenceStopsBeforeRestore(t *testing.T) {
 			fixture.setup(t, root)
 			writeRestoreFixture(t, root, "config/panel-network.json", "当前端口")
 			writeRestoreFixture(t, snapshot, "config/panel-network.json", "旧端口")
-			if err := restorePanelData(snapshot, root); err == nil || !strings.Contains(err.Error(), "拒绝恢复") {
+			if err := restorePanelData(snapshot, root, storesqlite.Inspector{}); err == nil || !strings.Contains(err.Error(), "拒绝恢复") {
 				t.Fatalf("无法保证冻结标记时不能开始恢复：%v", err)
 			}
 			assertRestoreFixture(t, root, "config/panel-network.json", "当前端口")
@@ -289,7 +291,7 @@ func TestMaintenanceRefusesRestoreWhenBarrierCannotBeDetermined(t *testing.T) {
 			fixture.setup(t, root)
 			writeRestoreFixture(t, root, "config/panel-network.json", "当前配置")
 			writeRestoreFixture(t, snapshot, "config/panel-network.json", "旧配置")
-			if err := restorePanelData(snapshot, root); err == nil || !strings.Contains(err.Error(), "拒绝恢复") {
+			if err := restorePanelData(snapshot, root, storesqlite.Inspector{}); err == nil || !strings.Contains(err.Error(), "拒绝恢复") {
 				t.Fatalf("无法确认屏障时必须拒绝恢复：%v", err)
 			}
 			assertRestoreFixture(t, root, "config/panel-network.json", "当前配置")
@@ -306,12 +308,12 @@ func TestMaintenanceRestoreFailureLeavesPendingAgentFactsInPlace(t *testing.T) {
 	if err := os.Symlink("other.txt", filepath.Join(snapshot, "data/link.txt")); err != nil {
 		t.Fatal(err)
 	}
-	if err := restorePanelData(snapshot, root); err == nil {
+	if err := restorePanelData(snapshot, root, storesqlite.Inspector{}); err == nil {
 		t.Fatal("包含符号链接的备份应该失败")
 	}
 	assertRestoreFixture(t, root, "config/agent/models.json", "当前修订")
 	assertRestoreFixture(t, root, "data/agent-workspaces/task.7.tar", "当前工作区")
-	if preserve, err := preserveAgentFacts(root); err != nil || !preserve {
+	if preserve, err := preserveAgentFacts(root, storesqlite.Inspector{}); err != nil || !preserve {
 		t.Fatalf("失败后未决执行屏障必须仍然有效：%v", err)
 	}
 	assertWorkflowRecoveryFence(t, root)

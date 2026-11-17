@@ -12,6 +12,7 @@ import (
 	"sync/atomic"
 	"testing"
 
+	storesqlite "elysian/server/internal/agent/harness/sessionstore/sqlite"
 	"elysian/server/internal/config"
 )
 
@@ -35,7 +36,7 @@ func installPreflightFixture(t *testing.T) (SystemHost, config.PanelNetwork) {
 	}
 	defer b.Close()
 	ports := config.PanelNetwork{FrontendPort: a.Addr().(*net.TCPAddr).Port, BackendPort: b.Addr().(*net.TCPAddr).Port}
-	return SystemHost{Store: Store{Root: t.TempDir()}, DockerSocket: filepath.Join(dir, "docker.sock"), MissingServiceOK: true}, ports
+	return SystemHost{Store: Store{Root: t.TempDir(), Inspector: storesqlite.Inspector{}}, DockerSocket: filepath.Join(dir, "docker.sock"), MissingServiceOK: true}, ports
 }
 
 func TestInstallPreflightDefersStaleDockerSocketOnlyBeforeDependencies(t *testing.T) {
