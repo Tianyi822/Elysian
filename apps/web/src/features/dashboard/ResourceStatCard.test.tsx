@@ -1,11 +1,49 @@
-import { render, screen, fireEvent } from '@testing-library/react'
+import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
-import { ResourceStatCard } from './ResourceStatCard'
+import { ResourceStatCard, sampleResourceTrend } from './ResourceStatCard'
 import type { ResourceSamplePoint } from '../../adapters/mock/resourceMetrics'
 
 const base: ResourceSamplePoint = { ts: 1000, cpu: 10, memory: 20, networkIo: 0, networkRx: 0, networkTx: 0, diskIo: 0, diskRead: 0, diskWrite: 0 }
 
 describe('EasyUI 统计卡资源适配', () => {
+  it.each([0, 45, 100])('恒定内存 %s%% 始终使用 0–100%% 纵轴', memory => {
+    const { container } = render(<ResourceStatCard metricKey="memory" points={[{ ...base, memory }, { ...base, ts: 6000, memory }]} />)
+    const latest = container.querySelector('[data-trend-latest]')!
+    expect(Number(latest.getAttribute('cy'))).toBeCloseTo(8 + (1 - memory / 100) * 38)
+  })
+
+  it('恒定的非零 IO 保留零基线，不误显示为零流量', () => {
+    const { container } = render(<ResourceStatCard metricKey="networkIo" points={[{ ...base, networkRx: 10 }, { ...base, ts: 6000, networkRx: 10 }]} />)
+    const markers = container.querySelectorAll('[data-trend-latest]')
+    expect(Number(markers[0]!.getAttribute('cy'))).toBe(8)
+    expect(Number(markers[1]!.getAttribute('cy'))).toBe(46)
+  })
+
+  it('追加和淘汰采样后保留原 SVG 和曲线节点，固定内存不发生纵向跳动', async () => {
+    const start = [{ ...base, ts: 0, memory: 45 }, { ...base, ts: 300_000, memory: 45 }]
+    const { container, rerender } = render(<ResourceStatCard metricKey="memory" points={start} />)
+    const svg = container.querySelector('svg')
+    const line = container.querySelector('[data-trend-line]')!
+    rerender(<ResourceStatCard metricKey="memory" points={[...start, { ...base, ts: 305_000, memory: 45 }]} />)
+    expect(container.querySelector('svg')).toBe(svg)
+    expect(container.querySelector('[data-trend-line]')).toBe(line)
+    await waitFor(() => expect(line.getAttribute('d')).toContain('28.90'))
+    rerender(<ResourceStatCard metricKey="memory" points={[start[1]!, { ...base, ts: 310_000, memory: 45 }]} />)
+    expect(container.querySelector('[data-trend-line]')).toBe(line)
+    expect(Number(container.querySelector('[data-trend-latest]')!.getAttribute('cy'))).toBeCloseTo(28.9)
+  })
+
+  it('长窗抽样保留原始首尾、时间身份与数据值，滑窗中间点保持稳定', () => {
+    const points = Array.from({ length: 1000 }, (_, index) => ({ ...base, ts: index * 60_000, memory: index / 20 }))
+    const first = sampleResourceTrend(points, 1000 * 60_000)
+    const next = sampleResourceTrend([...points.slice(1), { ...base, ts: 1000 * 60_000 }], 1000 * 60_000)
+    expect(first.length).toBeLessThanOrEqual(64)
+    expect(first[0]).toBe(points[0])
+    expect(first.at(-1)).toBe(points.at(-1))
+    expect(first.every(point => points.includes(point))).toBe(true)
+    expect(next.filter(point => first.includes(point)).length).toBeGreaterThan(55)
+  })
+
   it('历史游标可用键盘浏览；退出后立即恢复最新真实读数', () => {
     render(<ResourceStatCard metricKey="cpu" points={[{ ...base, ts: 1000, cpu: 10 }, { ...base, ts: 9000, cpu: 87 }]} />)
     const card = screen.getByRole('group', { name: /CPU 使用率历史采样/ })

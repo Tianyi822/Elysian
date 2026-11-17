@@ -11,6 +11,7 @@ export function DashboardPage() {
   const status = useDashboardStore((state) => state.status)
   const resources = useDashboardStore((state) => state.resources)
   const range = useDashboardStore((state) => state.range)
+  const resourcesRange = useDashboardStore((state) => state.resourcesRange)
   const refreshing = useDashboardStore((state) => state.refreshing)
   const errorMessage = useDashboardStore((state) => state.errorMessage)
   const load = useDashboardStore((state) => state.load)
@@ -33,7 +34,7 @@ export function DashboardPage() {
       />
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 md:px-6 md:pb-6">
         {resources ? resources.length > 0 ? (
-          <ResourceStatsSection resources={resources} refreshing={refreshing} />
+          <ResourceStatsSection resources={resources} refreshing={refreshing} range={resourcesRange ?? range} />
         ) : (
           <EmptyState title="暂无资源数据" description="当前时间范围没有可展示的采样。可以切换时间范围或刷新重试。" />
         ) : status === 'error' ? (

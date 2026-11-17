@@ -11,6 +11,7 @@ import React, {
   useCallback,
   useEffect,
   useId,
+  useMemo,
   useRef,
   useState,
 } from "react";
@@ -35,6 +36,7 @@ import {
   useElementWidth,
 } from "./chart-primitives";
 import { monotonePath, pctText } from "./dashboard-chart-utils";
+import { useTrendAnimation } from "./useTrendAnimation";
 
 /* -------------------------------------------------------------------------- */
 /*  StatCard / StatGrid                                                       */
@@ -77,6 +79,11 @@ export interface StatCardProps {
   /** Directional IO series share the same sample indices and time axis. */
   series?: readonly StatCardSeries[];
   renderDetails?: (activeIndex: number | null) => ReactNode;
+  /** Fixed resource percentage scale; throughput can use a zero-based scale. */
+  valueDomain?: readonly [number, number];
+  zeroBaseline?: boolean;
+  /** A rolling real-time window, including any unsampled space at its start. */
+  timeWindowMs?: number;
 }
 
 export function StatCard({
@@ -89,7 +96,7 @@ export function StatCard({
   goodWhen = "up",
   period = "vs previous period",
   format = defaultFormat,
-  color = CHART_COLORS[0],
+  color = CHART_COLORS[0]!,
   animated = true,
   className = "",
   valueClassName = "text-fg",
@@ -98,6 +105,9 @@ export function StatCard({
   labelId,
   series,
   renderDetails,
+  valueDomain,
+  zeroBaseline = false,
+  timeWindowMs,
 }: StatCardProps) {
   const reduce = useReducedMotion();
   const anim = animated && !reduce;
@@ -105,26 +115,39 @@ export function StatCard({
   const [boxRef, width] = useElementWidth<HTMLDivElement>(220);
   const svgRef = useRef<SVGSVGElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
-  const [active, setActive] = useState<number | null>(null);
-  useDismissOutside(cardRef, active !== null, useCallback(() => setActive(null), []));
+  const [selected, setSelected] = useState<number | null>(null);
+  const selectedIndex = selected === null ? -1 : trendTimes ? trendTimes.indexOf(selected) : selected;
+  const active = selectedIndex >= 0 && selectedIndex < trend.length ? selectedIndex : null;
+  const setActive = useCallback((index: number | null) => setSelected(index === null ? null : trendTimes?.[index] ?? index), [trendTimes]);
+  useDismissOutside(cardRef, active !== null, useCallback(() => setSelected(null), []));
 
   const n = trend.length;
-  const H = 52, padX = 0, padT = 8, padB = 6;
-  const plotSeries = series?.length ? series : [{ label, values: trend, color }];
-  const values = plotSeries.flatMap(item => [...item.values]);
-  const min = values.length ? Math.min(...values) : 0;
-  const span = (values.length ? Math.max(...values) : 1) - min || 1;
-  const stepX = n > 1 ? (width - padX * 2) / (n - 1) : 0;
-  const startTime = trendTimes?.[0];
-  const duration = startTime !== undefined ? (trendTimes?.[n - 1] ?? startTime) - startTime : 0;
-  const plots = plotSeries.map(item => {
-    const pts = item.values.map((v, i) => [padX + (duration > 0 ? ((trendTimes?.[i] ?? startTime!) - startTime!) / duration * (width - padX * 2) : i * stepX), padT + (1 - (v - min) / span) * (H - padT - padB)] as [number, number]);
+  const H = 52, padT = 8, padB = 6;
+  const target = useMemo(() => {
+    const plotSeries = series?.length ? series : [{ label, values: trend, color }];
+    const values = plotSeries.flatMap(item => [...item.values]);
+    const min = valueDomain?.[0] ?? (zeroBaseline ? 0 : values.length ? Math.min(...values) : 0);
+    const max = valueDomain?.[1] ?? (values.length ? Math.max(...values) : 1);
+    const span = max - min || 1;
+    const end = trendTimes?.[n - 1] ?? Math.max(n - 1, 0);
+    const start = timeWindowMs && trendTimes ? end - timeWindowMs : trendTimes?.[0] ?? 0;
+    return { width, start, end, windowMs: timeWindowMs, plots: plotSeries.map(item => ({
+      label: item.label, color: item.color, points: item.values.map((v, index) => {
+        const time = trendTimes?.[index] ?? index;
+        return { time, x: end > start ? (time - start) / (end - start) * width : width,
+          y: padT + (1 - (v - min) / span) * (H - padT - padB) };
+      }),
+    })) };
+  }, [series, label, trend, color, valueDomain, zeroBaseline, timeWindowMs, trendTimes, n, width]);
+  const frame = useTrendAnimation(target, reduce);
+  const plots = frame.plots.map(item => {
+    const pts = item.points.map(point => [point.x, point.y] as [number, number]);
     const line = monotonePath(pts);
     const last = pts.at(-1);
     const area = pts.length > 1 ? `${line}L${last![0].toFixed(2)} ${H}L${pts[0]![0].toFixed(2)} ${H}Z` : "";
     return { ...item, pts, line, area };
   });
-  const pts = plots[0]?.pts ?? [];
+  const pts = target.plots[0]?.points.map(point => [point.x, point.y] as [number, number]) ?? [];
 
   const pct =
     delta ??
@@ -169,7 +192,7 @@ export function StatCard({
       curY.set(py);
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [active, width, curX, curY, reduce]);
+  }, [active, target, width, curX, curY, reduce]);
 
   const move = (e: React.PointerEvent) => {
     if (n < 2 || !svgRef.current) return;
@@ -181,8 +204,8 @@ export function StatCard({
   };
   const onKey = (e: React.KeyboardEvent) => {
     if (n === 0) return;
-    if (e.key === "ArrowRight") setActive((a) => clamp((a ?? n - 2) + 1, 0, n - 1));
-    else if (e.key === "ArrowLeft") setActive((a) => clamp((a ?? n - 1) - 1, 0, n - 1));
+    if (e.key === "ArrowRight") setActive(clamp((active ?? n - 2) + 1, 0, n - 1));
+    else if (e.key === "ArrowLeft") setActive(clamp((active ?? n - 1) - 1, 0, n - 1));
     else if (e.key === "Escape") setActive(null);
     else return;
     e.preventDefault();
@@ -232,7 +255,7 @@ export function StatCard({
       {renderDetails?.(active)}
 
       <div ref={boxRef} className="mt-auto pt-3" style={{ height: H + 12 }}>
-        {n > 1 && (
+        {n > 0 && (
           <svg
             ref={svgRef}
             width={width}
@@ -241,6 +264,7 @@ export function StatCard({
             aria-label={series?.length ? `${label}趋势：${series.map(item => item.label).join('、')}` : `${label}趋势，从 ${format(trend[0]!)} 到 ${format(trend[n - 1]!)}`}
             className="block overflow-visible"
           >
+            <defs><clipPath id={`${uid}-clip`}><rect x={0} y={0} width={width} height={H} /></clipPath></defs>
             {plots.map((plot, index) => (
               <g key={plot.label}>
                 <defs>
@@ -249,18 +273,18 @@ export function StatCard({
                     <stop offset="1" stopColor={plot.color} stopOpacity="0" />
                   </linearGradient>
                 </defs>
-                <motion.path key={`area-${plot.pts.length}`} initial={false} animate={{ d: plot.area }} transition={{ duration: reduce ? 0 : 0.28 }} fill={`url(#${uid}-g-${index})`} />
-                <motion.path key={`line-${plot.pts.length}`} initial={false} animate={{ d: plot.line }} transition={{ duration: reduce ? 0 : 0.28 }} fill="none" stroke={plot.color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
+                <path data-trend-area d={plot.area} clipPath={`url(#${uid}-clip)`} fill={`url(#${uid}-g-${index})`} />
+                <path data-trend-line d={plot.line} clipPath={`url(#${uid}-clip)`} fill="none" stroke={plot.color} strokeWidth={2} strokeLinecap="round" strokeLinejoin="round" />
               </g>
             ))}
             {/* latest point */}
             <g style={{ opacity: active === null ? 1 : 0, transition: reduce ? 'none' : 'opacity .15s' }}>
-              {plots.map(plot => <circle key={plot.label} cx={plot.pts[n - 1]![0]} cy={plot.pts[n - 1]![1]} r={3.5} fill={plot.color} />)}
+              {plots.map(plot => <circle data-trend-latest key={plot.label} cx={plot.pts.at(-1)?.[0]} cy={plot.pts.at(-1)?.[1]} r={3.5} fill={plot.color} />)}
             </g>
             {/* scrubber */}
             <motion.g initial={false} animate={{ opacity: active === null ? 0 : 1 }} transition={{ duration: reduce ? 0 : 0.12 }}>
               <motion.line y1={0} y2={H} x1={curX} x2={curX} className="stroke-control-line" strokeDasharray="2 3" />
-              {plots.map((plot, index) => <motion.circle key={plot.label} cx={curX} cy={index === 0 ? curY : (active === null ? 0 : plot.pts[active]?.[1] ?? 0)} r={4.5} fill={plot.color} className="stroke-surface" strokeWidth={2} />)}
+              {target.plots.map((plot, index) => <motion.circle key={plot.label} cx={curX} cy={index === 0 ? curY : (active === null ? 0 : plot.points[active]?.y ?? 0)} r={4.5} fill={plot.color} className="stroke-surface" strokeWidth={2} />)}
             </motion.g>
           </svg>
         )}
