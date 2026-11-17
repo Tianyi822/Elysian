@@ -106,7 +106,7 @@ func agentManager(t *testing.T, client agentTestClient, change func(*Deps)) (*Ma
 		t.Fatal(err)
 	}
 	invoker := &agentTestTools{}
-	deps := Deps{Path: filepath.Join(t.TempDir(), "harness.sqlite"), Tools: invoker, Profiles: profiles, ModelClient: client, Spawn: func(context.Context) (worker.Process, error) { return &agentTestProcess{}, nil }, AgentLimits: DefaultAgentLimits()}
+	deps := Deps{LegacyAgentPolicies: true, Path: filepath.Join(t.TempDir(), "harness.sqlite"), Tools: invoker, Profiles: profiles, ModelClient: client, Spawn: func(context.Context) (worker.Process, error) { return &agentTestProcess{}, nil }, AgentLimits: DefaultAgentLimits()}
 	deps.Limits = DefaultLimits()
 	deps.Limits.Concurrency = 1
 	if change != nil {

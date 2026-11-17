@@ -270,7 +270,7 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		if o.Access != nil && o.Execution != nil {
 			seconds := run.Limits.CallTimeoutSeconds
 			remaining := run.Limits.RunTimeoutSeconds - int(run.ActiveMilliseconds/1000)
-			if remaining < seconds {
+			if !continuousRun(run) && remaining < seconds {
 				seconds = remaining
 			}
 			if seconds < 1 {
@@ -537,13 +537,27 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 			return m.store.event(dbCtx, tx, r, "access/automatic", "", nil, map[string]string{"operationId": o.ID, "source": decisionSource})
 		})
 		if err == nil {
-			err = m.store.recordsFault()
+			m.mu.Unlock()
+			err = m.store.waitRecords(ctx)
+			m.mu.Lock()
 		}
 		if err != nil {
-			m.storageFailedLocked()
 			m.mu.Unlock()
+			if continuousRun(run) && m.store.recordsFault() != nil {
+				return a.suspendForRecovery(StateWaitingStorage, &Failure{Code: "record-storage-unavailable", Message: "操作授权已保存，等待记录副本恢复后按原身份继续"}, "")
+			}
 			return storageFailure(err)
 		}
+	}
+	m.mu.Unlock()
+	syncErr := m.store.waitRecords(ctx)
+	m.mu.Lock()
+	if syncErr != nil {
+		m.mu.Unlock()
+		if continuousRun(run) {
+			return a.suspendForRecovery(StateWaitingStorage, &Failure{Code: "record-storage-unavailable", Message: "操作检查点已保存，等待记录同步恢复"}, "")
+		}
+		return storageFailure(syncErr)
 	}
 
 	if o.Access != nil {
@@ -573,6 +587,11 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 	barrier.ScopeID, barrier.NodeID = run.ScopeID, run.NodeID
 	resourceWaiting := false
 	_, err = m.store.change(dbCtx, run.ID, "operation-dispatch", func(tx *sql.Tx, r *Run) error {
+		if continuousRun(*r) {
+			if err := validateOperationIdentity(dbCtx, tx, o); err != nil {
+				return err
+			}
+		}
 		if err := recordWikiRunArtifact(dbCtx, tx, *r, "operation", o.ID); err != nil {
 			return err
 		}
@@ -854,7 +873,7 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 				r.Recovery.Status, r.Recovery.Message = "exhausted", "只读查询重试结束，已将具体原因交回模型"
 			}
 		}
-		if r.Usage.ResultBytes+len(call.Result) > r.Limits.RunResultBytes {
+		if !continuousRun(*r) && r.Usage.ResultBytes+len(call.Result) > r.Limits.RunResultBytes {
 			call.Result = nil
 			call.Status = StateFailed
 			call.Error = &Failure{Code: "result-budget", Message: "运行结果总量达到上限"}

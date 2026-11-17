@@ -432,6 +432,12 @@ func (m *Manager) submitAgent(ctx context.Context, targetID string, input AgentI
 	limits := m.deps.AgentLimits
 	// 仅新接受的普通聊天取消累计次数上限；批次、工作流和已接受快照沿用原策略。
 	limits.MaxSteps, limits.MaxModelRequests = 0, 0
+	budgetPolicy, recoveryPolicy := resourceBudgetPolicy, evidenceRecoveryPolicy
+	if !m.deps.LegacyAgentPolicies {
+		budgetPolicy, recoveryPolicy = continuousBudgetPolicy, continuousRecoveryPolicy
+		limits.TokenBudget, limits.RunResultBytes, limits.RunTimeoutSeconds = 0, 0, 0
+		limits.ModelTimeoutSeconds = 1800
+	}
 	if strings.TrimSpace(input.Content) == "" || len(input.Content) > limits.UserBytes {
 		return Run{}, false, bad("invalid-content", "用户输入为空或超过长度限制")
 	}
@@ -538,8 +544,8 @@ func (m *Manager) submitAgent(ctx context.Context, targetID string, input AgentI
 	}
 	public := profile.Public()
 	run := Run{ID: m.deps.NewID(), TaskID: task.ID, SessionID: sessionID, RequestID: input.RequestID, Input: input.Content, Model: &public, Status: StateQueued, CreatedAt: now, Limits: limits, LastSeq: "0", Phase: "queued", MemoryStatus: "stale"}
-	run.BudgetPolicy = resourceBudgetPolicy
-	run.RecoveryPolicy = evidenceRecoveryPolicy
+	run.BudgetPolicy = budgetPolicy
+	run.RecoveryPolicy = recoveryPolicy
 	env, err := m.environment(ctx, sessionID)
 	if err != nil {
 		return Run{}, false, storageFailure(err)
@@ -553,6 +559,9 @@ func (m *Manager) submitAgent(ctx context.Context, targetID string, input AgentI
 	}
 	snapshot.PermissionMode, _ = normalizePermissionMode(input.PermissionMode)
 	snapshot.Tools = append(snapshot.Tools, userInputCapability(), planCapability())
+	if budgetPolicy == continuousBudgetPolicy {
+		snapshot.Tools = append(snapshot.Tools, taskHistoryCapability())
+	}
 	snapshot.PolicyVersion = PermissionPolicyVersion
 	if err = finalizeLoading(&snapshot, run, input.ReasoningLevel, env); err != nil {
 		return Run{}, false, err
@@ -563,7 +572,7 @@ func (m *Manager) submitAgent(ctx context.Context, targetID string, input AgentI
 		return Run{}, false, err
 	}
 	snapshot.Digest = ""
-	snapshot.RecoveryPolicy = evidenceRecoveryPolicy
+	snapshot.RecoveryPolicy = recoveryPolicy
 	snapshot.Digest = digestJSON(snapshot)
 	run.DriverVersion = "v2"
 	run.WikiStrategy = wikiDisabledStrategy
@@ -581,7 +590,7 @@ func (m *Manager) submitAgent(ctx context.Context, targetID string, input AgentI
 }
 
 func publicMemoryStatus(run *Run) string {
-	if run.Status == StateQueued || run.Status == StateRunning || run.Status == StateWaitingInput || run.Status == StateWaitingApproval || run.Status == StateWaitingResource || run.Status == StateWaitingTask || run.Status == StateWaitingRecovery {
+	if run.Status == StateQueued || run.Status == StateRunning || run.Status == StateWaitingInput || run.Status == StateWaitingApproval || run.Status == StateWaitingResource || run.Status == StateWaitingTask || run.Status == StateWaitingRecovery || run.Status == StateWaitingModel || run.Status == StateWaitingStorage {
 		run.MemoryStatus = "stale"
 	}
 	return run.MemoryStatus

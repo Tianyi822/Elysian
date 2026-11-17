@@ -19,16 +19,25 @@ import (
 
 // store 只由面板进程持有。状态和事实事件始终在同一事务提交。
 type store struct {
-	db             *sql.DB
-	lock           *os.File
-	now            func() time.Time
-	recordsRoot    string
-	recordsMu      sync.Mutex
-	recordsStateMu sync.RWMutex
-	recordsErr     error
-	writeErr       error
-	diagnosticsMu  sync.Mutex
-	diagnostics    map[string]bool
+	db               *sql.DB
+	lock             *os.File
+	now              func() time.Time
+	recordsRoot      string
+	recordsMu        sync.Mutex
+	writeMu          sync.Mutex
+	recordHookMu     sync.RWMutex
+	recordsStateMu   sync.RWMutex
+	readErr          error
+	recordsErr       error
+	writeErr         error
+	recordsPermanent bool
+	recordWake       chan struct{}
+	recordStop       chan struct{}
+	recordDone       chan struct{}
+	recordAsync      bool
+	freezeContinuous bool
+	diagnosticsMu    sync.Mutex
+	diagnostics      map[string]bool
 	// recordHook injects append/fsync crash points in tests only.
 	recordHook func(string) error
 	// beforeWrite 只供故障注入测试；生产恒 nil。
@@ -36,6 +45,7 @@ type store struct {
 	// failNextCommit 非空时使下一次提交按失败返回，只供故障注入测试；生产恒 nil。
 	failNextCommit   error
 	failNextRollback error
+	failAfterCommit  error
 }
 
 const schema = `
@@ -61,6 +71,9 @@ PRAGMA user_version=1;`
 func openStore(path string, now func() time.Time) (*store, error) {
 	if path == "" || !filepath.IsAbs(path) {
 		return nil, errors.New("运行数据库必须使用绝对路径")
+	}
+	if err := checkStoreInitialization(path); err != nil {
+		return nil, err
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0700); err != nil {
 		return nil, fmt.Errorf("创建运行数据目录失败：%w", err)
@@ -109,6 +122,10 @@ func openStore(path string, now func() time.Time) (*store, error) {
 		s.close()
 		return nil, fmt.Errorf("初始化运行数据库失败：%w", err)
 	}
+	if err = s.validateExistingDatabase(); err != nil {
+		s.close()
+		return nil, err
+	}
 	err = migrateStore(s.db)
 	if err != nil {
 		s.close()
@@ -118,14 +135,14 @@ func openStore(path string, now func() time.Time) (*store, error) {
 		err = s.reconcileRecords(true)
 	}
 	if err != nil {
-		s.close()
-		return nil, fmt.Errorf("恢复 Agent JSONL 记录失败：%w", err)
+		s.failRecords(err)
 	}
 	return s, nil
 }
 
 func (s *store) close() error {
 	var errs []error
+	s.stopRecordWorker()
 	if s.db != nil {
 		_, err := s.db.Exec("PRAGMA wal_checkpoint(TRUNCATE)")
 		errs = append(errs, err, s.db.Close())
@@ -142,6 +159,9 @@ func (s *store) close() error {
 // 已回滚、数据库不引用任何候选；Commit 失败则提交结果未确认，数据库可能已经
 // 引用候选版本，错误以 unconfirmedCommit 包装返回，清理路径必须保留候选。
 func (s *store) write(ctx context.Context, op string, fn func(*sql.Tx) error) (writeErr error) {
+	if err := ctx.Err(); err != nil {
+		return err
+	}
 	if scope, ok := ctx.Value(storeReadKey{}).(*storeReadScope); ok && scope.store == s {
 		return errors.New("只读作用域禁止写入")
 	}
@@ -149,7 +169,7 @@ func (s *store) write(ctx context.Context, op string, fn func(*sql.Tx) error) (w
 	defer func() {
 		s.diagnose(op, stage, writeErr)
 		beginFailed := stage == "write-begin" && writeErr != nil && !errors.Is(writeErr, context.Canceled) && !errors.Is(writeErr, context.DeadlineExceeded)
-		if beginFailed || commitUnconfirmed(writeErr) || sqliteCode(writeErr) != 0 {
+		if beginFailed || commitUnconfirmed(writeErr) || sqliteCode(writeErr) != 0 && !(sqliteCode(writeErr)&255 == 9 && ctx.Err() != nil) {
 			s.recordsStateMu.Lock()
 			s.writeErr = errors.New("运行状态写入失败，已停止派发任务")
 			s.recordsStateMu.Unlock()
@@ -160,10 +180,10 @@ func (s *store) write(ctx context.Context, op string, fn func(*sql.Tx) error) (w
 			return err
 		}
 	}
-	s.recordsMu.Lock()
-	defer s.recordsMu.Unlock()
+	s.writeMu.Lock()
+	defer s.writeMu.Unlock()
 	stage = "write-begin"
-	tx, err := s.db.BeginTx(ctx, nil)
+	tx, err := s.db.BeginTx(context.WithoutCancel(ctx), nil)
 	if err != nil {
 		return err
 	}
@@ -191,10 +211,16 @@ func (s *store) write(ctx context.Context, op string, fn func(*sql.Tx) error) (w
 	if err = tx.Commit(); err != nil {
 		return &unconfirmedCommit{op: op, err: err}
 	}
+	if s.failAfterCommit != nil {
+		err, s.failAfterCommit = s.failAfterCommit, nil
+		return &unconfirmedCommit{op: op, err: err}
+	}
 	// A committed SQLite transaction remains successful when its JSONL copy
 	// fails. Freeze new dispatch at the external-call gates, but keep accepting
 	// in-flight receipts into SQLite and its outbox for recovery at restart.
-	if s.recordsFault() == nil {
+	if s.recordAsync {
+		s.wakeRecordWorker()
+	} else if s.recordsFault() == nil {
 		if err = s.reconcileRecords(false); err != nil {
 			s.failRecords(err)
 		}
@@ -241,9 +267,13 @@ func readRun(ctx context.Context, q interface {
 	return r, err
 }
 func saveRun(ctx context.Context, tx *sql.Tx, r *Run) error {
+	if terminal(r.Status) {
+		r.Wait = nil
+	}
 	copy := *r
 	copy.Task = nil
 	copy.Continuation = nil
+	copy.CurrentReport = nil
 	b, err := json.Marshal(copy)
 	if err != nil {
 		return err
@@ -356,6 +386,19 @@ func (s *store) create(ctx context.Context, t Task, r Run, input string) error {
 }
 
 func saveCall(ctx context.Context, tx *sql.Tx, c Call) error {
+	if terminal(c.Status) {
+		var original sql.NullString
+		err := tx.QueryRowContext(ctx, "SELECT json_extract(document,'$.modelContent') FROM calls WHERE id=?", c.ID).Scan(&original)
+		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+			return err
+		}
+		if original.Valid && original.String != "" {
+			c.ModelContent = original.String
+		} else if c.ModelContent == "" {
+			c.ModelContent = toolFactContent(projectToolExecution(Run{}, nil, &c, nil), &c)
+		}
+	}
+
 	b, err := json.Marshal(c)
 	if err != nil {
 		return err
@@ -386,7 +429,13 @@ func (s *store) queued(ctx context.Context) ([]string, error) {
 
 func (s *store) recover(ctx context.Context) error {
 	return s.write(ctx, "recover", func(tx *sql.Tx) error {
+		if err := s.freezeContinuousRuns(ctx, tx); err != nil {
+			return err
+		}
 		if err := recoverOperations(ctx, tx, s.now()); err != nil {
+			return err
+		}
+		if err := s.thawContinuousRuns(ctx, tx); err != nil {
 			return err
 		}
 		if err := s.recoverRuntimePreparations(ctx, tx); err != nil {
@@ -416,6 +465,11 @@ func (s *store) recover(ctx context.Context) error {
 		}
 		for i := range runs {
 			r := &runs[i]
+			if recovered, recoverErr := s.recoverContinuous(ctx, tx, r); recoverErr != nil {
+				return recoverErr
+			} else if recovered {
+				continue
+			}
 			r.Status = StateInterrupted
 			if r.SessionID != "" {
 				r.MemoryStatus = "stale"

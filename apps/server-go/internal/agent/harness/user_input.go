@@ -247,7 +247,7 @@ func (m *Manager) AnswerUserInput(ctx context.Context, runID, inputID string, in
 		q.Status, q.AnswerRequestID, q.Answers, q.EndedAt = "answered", input.RequestID, input.Answers, stamp(m.deps.Now())
 		call.Status, call.EndedAt = StateSucceeded, q.EndedAt
 		call.Result, _ = json.Marshal(map[string]any{"questions": q.Questions, "answers": q.Answers})
-		if len(call.Result) > r.Limits.ResultBytes || r.Usage.ResultBytes+len(call.Result) > r.Limits.RunResultBytes {
+		if len(call.Result) > r.Limits.ResultBytes || !continuousRun(*r) && r.Usage.ResultBytes+len(call.Result) > r.Limits.RunResultBytes {
 			return bad("result-limit", "回答超过本轮结果容量限制")
 		}
 		r.Usage.ResultBytes += len(call.Result)

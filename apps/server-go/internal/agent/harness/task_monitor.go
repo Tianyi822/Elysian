@@ -35,6 +35,7 @@ func (m *Manager) taskMonitorLoop() {
 		case <-m.ctx.Done():
 			return
 		case <-ticker.C:
+			m.promoteContinuousWaiters()
 			m.monitorTasks()
 			m.retryReconciliations()
 		}
@@ -199,7 +200,7 @@ func (m *Manager) settleDomainTask(expected Operation, status tools.TaskStatus) 
 			status.Error = "任务结果超过容量限制"
 			status.ErrorCode = "result-too-large"
 		}
-		if r.Usage.ResultBytes-previousBytes+len(result) > r.Limits.RunResultBytes {
+		if !continuousRun(*r) && r.Usage.ResultBytes-previousBytes+len(result) > r.Limits.RunResultBytes {
 			result = []byte(`null`)
 			status.Failed = true
 			status.Error = "运行结果总量达到上限"
@@ -273,7 +274,7 @@ func (m *Manager) settleDomainTask(expected Operation, status tools.TaskStatus) 
 			return err
 		}
 		r.Resume = &RecoveryCursor{ResponseID: o.ModelRequestID, CallIndex: o.CallIndex + 1}
-		if !terminal(r.Status) && r.CancelRequestedAt == "" {
+		if !terminal(r.Status) && !r.PolicyFrozen && r.CancelRequestedAt == "" {
 			if unknown {
 				if evidenceRecoveryRun(*r) {
 					beginRecovery(r, &o, m.deps.Now())

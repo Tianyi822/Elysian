@@ -19,6 +19,9 @@ import (
 
 func readRecordLines(t *testing.T, s *store, owner recordOwner) ([]recordLine, []byte) {
 	t.Helper()
+	if err := s.reconcileRecords(false); err != nil {
+		t.Fatal(err)
+	}
 	path, err := s.recordPath(owner)
 	if err != nil {
 		t.Fatal(err)
@@ -220,10 +223,17 @@ func TestAgentRecordsPermissionsTamperingAndSymlinks(t *testing.T) {
 				t.Fatal(err)
 			}
 			opened, err := openStore(path, s.now)
-			if err == nil {
-				opened.close()
-				t.Fatal("unverifiable JSONL must block startup")
+			if err != nil {
+				t.Fatal(err)
 			}
+			if opened.recordsFault() == nil {
+				opened.close()
+				t.Fatal("unverifiable JSONL must freeze dispatch while retaining readable history")
+			}
+			if _, err := opened.get(context.Background(), r.ID); err != nil {
+				t.Fatal(err)
+			}
+			opened.close()
 		})
 	}
 }
@@ -331,11 +341,12 @@ func TestAgentRecordsFaultPreservesOtherInflightReceipts(t *testing.T) {
 		}
 	}
 	m.mu.Lock()
-	m.store.recordHook = func(string) error { return errors.New("disk full") }
+	m.store.setRecordHook(func(string) error { return errors.New("disk full") })
 	_, err := m.store.change(context.Background(), first.ID, "replica-fault", func(tx *sql.Tx, r *Run) error {
 		return m.store.event(context.Background(), tx, r, "test/fact", "", nil, nil)
 	})
 	m.mu.Unlock()
+	runtimeEventually(t, func() bool { return m.store.recordsFault() != nil })
 	if err != nil || m.store.recordsFault() == nil {
 		t.Fatalf("committed fault injection failed: %v", err)
 	}
@@ -387,7 +398,7 @@ func TestAgentRecordsFaultBlocksExternalCallAfterCatalogCheck(t *testing.T) {
 		t.Fatal("catalog check did not start")
 	}
 	m.mu.Lock()
-	m.store.recordHook = func(string) error { return errors.New("disk full") }
+	m.store.setRecordHook(func(string) error { return errors.New("disk full") })
 	_, err := m.store.change(context.Background(), w.ActiveRunID, "fault-during-check", func(tx *sql.Tx, r *Run) error {
 		return m.store.event(context.Background(), tx, r, "test/fault", "", nil, nil)
 	})

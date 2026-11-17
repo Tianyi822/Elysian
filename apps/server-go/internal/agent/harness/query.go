@@ -159,7 +159,7 @@ func (s *store) events(ctx context.Context, id, after string, n int) (Page[Event
 	})
 }
 func validState(s string) bool {
-	if s == StateWaitingInput || s == StateWaitingApproval || s == StateWaitingResource || s == StateWaitingTask || s == StateWaitingRecovery || s == StateRecoveryRequired {
+	if s == StateWaitingInput || s == StateWaitingApproval || s == StateWaitingResource || s == StateWaitingTask || s == StateWaitingRecovery || s == StateWaitingModel || s == StateWaitingStorage || s == StateRecoveryRequired {
 		return true
 	}
 	switch s {
@@ -175,6 +175,9 @@ func bad(code, message string) error { return &Error{Status: 400, Code: code, Me
 func storageFailure(err error) error {
 	if err == nil {
 		return nil
+	}
+	if commitUnconfirmed(err) {
+		return &Error{Status: 503, Code: "storage-commit-unconfirmed", Message: "保存结果尚未确认，已暂停执行；请使用原请求标识核实，不能重复提交操作"}
 	}
 	if _, ok := err.(*Error); ok {
 		return err

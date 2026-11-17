@@ -55,7 +55,7 @@ func (m *Manager) runProbe(ctx context.Context, e *Extensions, server mcp.Server
 	defer stop()
 	defer cancel()
 	var catalog mcp.Catalog
-	probeErr := m.store.recordsFault()
+	probeErr := m.store.waitRecords(pctx)
 	if probeErr == nil {
 		catalog, probeErr = m.executeProbe(pctx, e, server, lease)
 	}

@@ -80,6 +80,35 @@ func (s *store) saveTerminalResult(ctx context.Context, tx *sql.Tx, r *Run) erro
 	return s.appendMessage(ctx, tx, &message)
 }
 
+// CurrentReport is a read projection. Historical terminal reports remain immutable.
+type CurrentReport struct {
+	EvidenceVersion string `json:"evidenceVersion"`
+	AsOf            string `json:"asOf"`
+	*RunReport
+}
+
+func projectCurrentReport(ctx context.Context, q reportReader, r *Run) error {
+	if !evidenceRecoveryRun(*r) || !terminal(r.Status) {
+		return nil
+	}
+	latest := *r
+	latest.Report = nil
+	report, err := buildRunReport(ctx, q, latest)
+	if err != nil {
+		return err
+	}
+	var seq int64
+	if err = q.QueryRowContext(ctx, "SELECT COALESCE(MAX(seq),0) FROM run_events WHERE run_id=?", r.ID).Scan(&seq); err != nil {
+		return err
+	}
+	var asOf string
+	if err = q.QueryRowContext(ctx, "SELECT COALESCE(json_extract(document,'$.at'),'') FROM run_events WHERE run_id=? ORDER BY seq DESC LIMIT 1", r.ID).Scan(&asOf); err != nil {
+		return err
+	}
+	r.CurrentReport = &CurrentReport{EvidenceVersion: fmt.Sprintf("%s:%d:%s", r.ID, seq, digestJSON(report)), AsOf: asOf, RunReport: report}
+	return nil
+}
+
 type ReportStep struct {
 	CallID   string   `json:"callId"`
 	Tool     string   `json:"tool"`
@@ -88,6 +117,8 @@ type ReportStep struct {
 	Error    *Failure `json:"error,omitempty"`
 }
 type RunReport struct {
+	Objective   string       `json:"objective,omitempty"`
+	Stage       string       `json:"stage,omitempty"`
 	Outcome     string       `json:"outcome"`
 	Reason      string       `json:"reason"`
 	Completed   int          `json:"completed"`
@@ -116,8 +147,23 @@ func buildRunReport(ctx context.Context, q reportReader, r Run) (*RunReport, err
 		byCall[ops[i].CallID] = &ops[i]
 	}
 	report := &RunReport{Outcome: "本轮任务未全部完成，进度已保存。", Reason: "未取得可确认的结束原因", Steps: []ReportStep{}, Remaining: []string{}, Analysis: r.FailureAnalysis}
+	if continuousRun(r) {
+		report.Objective = r.Input
+		if task, err := readTask(ctx, q, r.TaskID); err != nil {
+			return nil, err
+		} else if task.Goal != "" {
+			report.Objective = task.Goal
+			if r.Input != "" && r.Input != task.Goal {
+				report.Objective += "；本轮补充：" + r.Input
+			}
+		}
+		report.Stage = reportStage(r.Phase)
+	}
 	if r.Error != nil {
 		report.Reason = r.Error.Message
+	}
+	if r.Status == StateSucceeded {
+		report.Outcome, report.Reason = "任务已完成。", "已确认结束，执行事实已保存"
 	}
 	if r.Status == StateCancelled {
 		report.Outcome = "本轮任务已停止，已取得的执行事实已保存。"
@@ -126,7 +172,7 @@ func buildRunReport(ctx context.Context, q reportReader, r Run) (*RunReport, err
 		}
 	}
 	for _, call := range calls {
-		if call.Tool == toolSearchName || call.Tool == planTool || call.Tool == userInputTool {
+		if call.Tool == toolSearchName || call.Tool == planTool || call.Tool == userInputTool || call.Tool == taskHistoryTool {
 			continue
 		}
 		fact := projectToolExecution(r, byCall[call.ID], &call, nil)
@@ -156,8 +202,45 @@ func buildRunReport(ctx context.Context, q reportReader, r Run) (*RunReport, err
 	}
 	return report, nil
 }
+
+func reportStage(phase string) string {
+	switch phase {
+	case "queued":
+		return "等待执行"
+	case "inference", "model", "thinking":
+		return "模型分析与方案执行"
+	case "executing", "tool", "calling":
+		return "工具执行"
+	case StateWaitingModel:
+		return "等待模型通道恢复"
+	case StateWaitingStorage:
+		return "等待记录同步恢复"
+	case StateWaitingApproval:
+		return "等待操作确认"
+	case StateWaitingInput:
+		return "等待用户补充"
+	case StateWaitingTask:
+		return "等待后台操作结束"
+	case StateWaitingResource:
+		return "等待资源释放"
+	case StateWaitingRecovery, "recovering":
+		return "核实执行结果"
+	case "memory", "checkpoint", "consolidating":
+		return "整理执行上下文"
+	case "policy-frozen":
+		return "兼容版本保护"
+	default:
+		return "任务结果核对与收尾"
+	}
+}
 func (r *RunReport) text() string {
 	text := r.Outcome + "\n\n问题：" + r.Reason + fmt.Sprintf("\n\n执行情况：%d 项调用已确认成功，%d 项失败，%d 项结果未确认。", r.Completed, r.Failed, r.Unconfirmed)
+	if r.Objective != "" {
+		text = "目标：" + r.Objective + "\n\n" + text
+	}
+	if r.Stage != "" {
+		text += "\n停止阶段：" + r.Stage
+	}
 	if len(r.Steps) > 0 {
 		text += "\n\n处理记录："
 		for _, s := range r.Steps {

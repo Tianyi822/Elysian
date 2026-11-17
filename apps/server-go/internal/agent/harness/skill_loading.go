@@ -42,6 +42,10 @@ func skillInstructionTokens(result json.RawMessage) int {
 
 // 与原始调用事实独立读取完整正文；被替换轮次不能贡献正文或脚本执行身份。
 func (m *Manager) effectiveSkills(ctx context.Context, run Run) ([]loadedSkill, error) {
+	return storeRead(ctx, m.store, "effective-skills", func(ctx context.Context) ([]loadedSkill, error) { return m.effectiveSkillsRead(ctx, run) })
+}
+
+func (m *Manager) effectiveSkillsRead(ctx context.Context, run Run) ([]loadedSkill, error) {
 	if run.Snapshot == nil {
 		return nil, nil
 	}
@@ -53,7 +57,7 @@ func (m *Manager) effectiveSkills(ctx context.Context, run Run) ([]loadedSkill, 
 	if run.Selection != nil {
 		replacement = run.Selection.ReplaceMessageID
 	}
-	rows, err := m.store.db.QueryContext(ctx, `SELECT ci.document,c.document FROM context_items ci JOIN runs r ON r.id=ci.run_id JOIN calls c ON c.id=json_extract(ci.document,'$.callId') WHERE ci.task_id=? AND (?=0 OR r.run_number<=?) AND `+visibleRunSQL+` AND r.id NOT IN (SELECT run_id FROM messages WHERE id=? AND role='user') AND c.state='succeeded' ORDER BY ci.rowid`, run.TaskID, run.RunNumber, run.RunNumber, replacement)
+	rows, err := m.store.reader(ctx).QueryContext(ctx, `SELECT ci.document,c.document FROM context_items ci JOIN runs r ON r.id=ci.run_id JOIN calls c ON c.id=json_extract(ci.document,'$.callId') WHERE ci.task_id=? AND (?=0 OR r.run_number<=?) AND `+visibleRunSQL+` AND r.id NOT IN (SELECT run_id FROM messages WHERE id=? AND role='user') AND c.state='succeeded' ORDER BY ci.rowid`, run.TaskID, run.RunNumber, run.RunNumber, replacement)
 	if err != nil {
 		return nil, storageFailure(err)
 	}
@@ -209,7 +213,7 @@ func (m *Manager) executeSkillLoadV2(ctx context.Context, s CapabilitySnapshot, 
 		if used+needed > s.LoadingBudget.SkillBodyTokens {
 			return skillLoadFailure("skill-body-budget", fmt.Sprintf("完整技能正文估算需要 %d token，已使用 %d，预算为 %d；未加载且未截断", needed, used, s.LoadingBudget.SkillBodyTokens))
 		}
-		if len(raw) > limit || run.Usage.ResultBytes+len(raw) > run.Limits.RunResultBytes {
+		if len(raw) > limit || !continuousRun(run) && run.Usage.ResultBytes+len(raw) > run.Limits.RunResultBytes {
 			return skillLoadFailure("skill-result-budget", "完整技能正文超过工具结果字节限额，未加载且未截断")
 		}
 		return CapabilityResult{Value: raw, Context: &ContextItem{Source: "skill-load", Ref: o.Capability.Ref, Path: args.Path, Digest: contentDigest(body)}}, nil

@@ -9,6 +9,11 @@ import (
 )
 
 const resourceBudgetPolicy = "resource-budget/v1"
+const continuousBudgetPolicy = "resource-budget/v2"
+
+func continuousRun(r Run) bool {
+	return r.BudgetPolicy == continuousBudgetPolicy && r.SessionID != "" && r.WorkflowID == "" && r.DriverVersion == "v2"
+}
 
 // 新普通聊天显式返回零次数限额；批次与旧快照保留既有的可选字段形状。
 func (l Limits) MarshalJSON() ([]byte, error) {
@@ -41,11 +46,11 @@ func resourceBudgetRun(r Run) bool {
 }
 
 func callLimitReached(r Run) bool {
-	return !(resourceBudgetRun(r) && r.Limits.MaxSteps == 0) && r.Usage.Calls >= r.Limits.MaxSteps
+	return !continuousRun(r) && !(resourceBudgetRun(r) && r.Limits.MaxSteps == 0) && r.Usage.Calls >= r.Limits.MaxSteps
 }
 
 func modelLimitReached(r Run, additional, reserve int) bool {
-	return !(resourceBudgetRun(r) && r.Limits.MaxModelRequests == 0) && r.Usage.ModelRequests+additional > r.Limits.MaxModelRequests-reserve
+	return !continuousRun(r) && !(resourceBudgetRun(r) && r.Limits.MaxModelRequests == 0) && r.Usage.ModelRequests+additional > r.Limits.MaxModelRequests-reserve
 }
 
 func toolTokenBudget(r Run) error {

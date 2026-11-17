@@ -9,12 +9,14 @@ import (
 )
 
 const (
-	StateQueued      = "queued"
-	StateRunning     = "running"
-	StateSucceeded   = "succeeded"
-	StateFailed      = "failed"
-	StateCancelled   = "cancelled"
-	StateInterrupted = "interrupted"
+	StateWaitingModel   = "waiting-model"
+	StateWaitingStorage = "waiting-storage"
+	StateQueued         = "queued"
+	StateRunning        = "running"
+	StateSucceeded      = "succeeded"
+	StateFailed         = "failed"
+	StateCancelled      = "cancelled"
+	StateInterrupted    = "interrupted"
 )
 
 // Step 是经过白名单校验的一个顺序工具步骤。
@@ -53,15 +55,23 @@ type Failure struct {
 
 // Run 的取消请求与终态分开：提出取消不表示执行已停止。
 type Run struct {
-	Report          *RunReport    `json:"report,omitempty"`
-	FailureAnalysis string        `json:"failureAnalysis,omitempty"`
-	RecoveryPolicy  string        `json:"recoveryPolicy,omitempty"`
-	Recovery        *RunRecovery  `json:"recovery,omitempty"`
-	BudgetPolicy    string        `json:"budgetPolicy,omitempty"`
-	BudgetStop      *BudgetStop   `json:"budgetStop,omitempty"`
-	Continuation    *Continuation `json:"continuation,omitempty"` // 只读投影，不作为持久授权。
-	WikiStrategy    string        `json:"wikiStrategy,omitempty"`
-	Plan            *RunPlan      `json:"plan,omitempty"`
+	WorkerRestarts   int               `json:"workerRestarts,omitempty"`
+	WorkerProgress   int               `json:"workerProgress,omitempty"`
+	PolicyFrozen     bool              `json:"policyFrozen,omitempty"`
+	PolicyCheckpoint *PolicyCheckpoint `json:"policyCheckpoint,omitempty"`
+	Diagnosis        *RunDiagnosis     `json:"diagnosis,omitempty"`
+	CompletionChecks int               `json:"completionChecks,omitempty"`
+	Wait             *RunWait          `json:"wait,omitempty"`
+	CurrentReport    *CurrentReport    `json:"currentReport,omitempty"`
+	Report           *RunReport        `json:"report,omitempty"`
+	FailureAnalysis  string            `json:"failureAnalysis,omitempty"`
+	RecoveryPolicy   string            `json:"recoveryPolicy,omitempty"`
+	Recovery         *RunRecovery      `json:"recovery,omitempty"`
+	BudgetPolicy     string            `json:"budgetPolicy,omitempty"`
+	BudgetStop       *BudgetStop       `json:"budgetStop,omitempty"`
+	Continuation     *Continuation     `json:"continuation,omitempty"` // 只读投影，不作为持久授权。
+	WikiStrategy     string            `json:"wikiStrategy,omitempty"`
+	Plan             *RunPlan          `json:"plan,omitempty"`
 
 	SupersededByRunID        string `json:"supersededByRunId,omitempty"`
 	ScopeID                  string `json:"scopeId,omitempty"`
@@ -110,6 +120,7 @@ type Run struct {
 
 // Call 的 ID 由运行内核持久分配，不使用工具注册表的进程内计数器。
 type Call struct {
+	ModelContent        string                   `json:"modelContent,omitempty"`
 	Evidence            *tools.ExecutionEvidence `json:"evidence,omitempty"`
 	Attempts            []ToolAttempt            `json:"attempts,omitempty"`
 	ReservedResultBytes int                      `json:"reservedResultBytes,omitempty"`
@@ -224,6 +235,7 @@ func DefaultAgentLimits() Limits {
 }
 
 type RuntimeInfo struct {
+	StorageHealth     *StorageHealth       `json:"storageHealth,omitempty"`
 	Wiki              RuntimeCapability    `json:"wiki"`
 	Embedding         RuntimeCapability    `json:"embedding"`
 	WorkflowV2        RuntimeCapability    `json:"workflowV2"`

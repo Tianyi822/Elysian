@@ -129,6 +129,8 @@ type WorkingMemory struct {
 }
 
 type ModelRequestRecord struct {
+	LogicalID          string                  `json:"logicalId,omitempty"`
+	Attempt            int                     `json:"attempt,omitempty"`
 	CorrectionKey      string                  `json:"correctionKey,omitempty"`
 	ToolNames          []string                `json:"toolNames,omitempty"`
 	EstimatedBreakdown *model.ContextBreakdown `json:"estimatedBreakdown,omitempty"`

@@ -9,6 +9,7 @@ import (
 	"io"
 	"sort"
 	"strconv"
+	"strings"
 
 	"elysian/server/internal/agent/harness/model"
 )
@@ -54,24 +55,24 @@ func attachmentRefIDs(run Run) []string {
 }
 
 // attachmentImageMetasLocked 按引用顺序读取附件元数据（不含 content BLOB）；
-// 读不到的 id 静默跳过（附件随会话存活，正常路径不会缺失，此处只做旧数据容错）。
+// 读取失败必须传播，避免丢失用户输入后继续执行。
 // 调用方必须持有 Manager.mu。
-func (a *agentExecution) attachmentImageMetasLocked(ctx context.Context, run Run) []attachmentImageMeta {
+func (a *agentExecution) attachmentImageMetasLocked(ctx context.Context, run Run) ([]attachmentImageMeta, error) {
 	ids := attachmentRefIDs(run)
 	if len(ids) == 0 {
-		return nil
+		return nil, nil
 	}
 	placeholders, args := attachmentPlaceholders(ids)
-	rows, err := a.manager.store.db.QueryContext(ctx, "SELECT id,mime_type,bytes FROM agent_attachments WHERE id IN ("+placeholders+")", args...)
+	rows, err := a.manager.store.reader(ctx).QueryContext(ctx, "SELECT id,mime_type,bytes FROM agent_attachments WHERE id IN ("+placeholders+")", args...)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	defer rows.Close()
 	byID := make(map[string]attachmentImageMeta, len(ids))
 	for rows.Next() {
 		var meta attachmentImageMeta
 		if err = rows.Scan(&meta.ID, &meta.MimeType, &meta.Bytes); err != nil {
-			return nil
+			return nil, err
 		}
 		byID[meta.ID] = meta
 	}
@@ -81,23 +82,29 @@ func (a *agentExecution) attachmentImageMetasLocked(ctx context.Context, run Run
 			metas = append(metas, meta)
 		}
 	}
-	return metas
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(metas) != len(ids) {
+		return nil, bad("attachment-missing", "任务图片附件缺失，请核实原输入后继续")
+	}
+	return metas, nil
 }
 
 // attachmentImagePartsLocked 只载入选中附件（预算分配后的元数据）的字节并组装为
 // 图片输入；调用方必须持有 Manager.mu。
-func (a *agentExecution) attachmentImagePartsLocked(ctx context.Context, metas []attachmentImageMeta) []model.ImagePart {
+func (a *agentExecution) attachmentImagePartsLocked(ctx context.Context, metas []attachmentImageMeta) ([]model.ImagePart, error) {
 	if len(metas) == 0 {
-		return nil
+		return nil, nil
 	}
 	ids := make([]string, 0, len(metas))
 	for _, meta := range metas {
 		ids = append(ids, meta.ID)
 	}
 	placeholders, args := attachmentPlaceholders(ids)
-	rows, err := a.manager.store.db.QueryContext(ctx, "SELECT id,content FROM agent_attachments WHERE id IN ("+placeholders+")", args...)
+	rows, err := a.manager.store.reader(ctx).QueryContext(ctx, "SELECT id,content FROM agent_attachments WHERE id IN ("+placeholders+")", args...)
 	if err != nil {
-		return nil
+		return nil, err
 	}
 	defer rows.Close()
 	content := make(map[string][]byte, len(ids))
@@ -105,7 +112,7 @@ func (a *agentExecution) attachmentImagePartsLocked(ctx context.Context, metas [
 		var id string
 		var data []byte
 		if err = rows.Scan(&id, &data); err != nil {
-			return nil
+			return nil, err
 		}
 		content[id] = data
 	}
@@ -115,22 +122,35 @@ func (a *agentExecution) attachmentImagePartsLocked(ctx context.Context, metas [
 			parts = append(parts, model.ImagePart{MimeType: meta.MimeType, Data: data})
 		}
 	}
-	return parts
+	if err = rows.Err(); err != nil {
+		return nil, err
+	}
+	if len(parts) != len(metas) {
+		return nil, bad("attachment-missing", "任务图片附件缺失，请核实原输入后继续")
+	}
+	return parts, nil
 }
 
 // planRunImages 按模型能力分配图片重放：本轮优先挂 header，历史按最近优先在剩余
 // 预算内重挂，超预算的历史图片降级为文字注记；模型无图能力时一律不挂 Images。
 // 分配只读元数据，字节在轮次入选后才按需载入，预算判死的轮次不搬 BLOB。
-func (a *agentExecution) planRunImages(ctx context.Context, runs []Run) map[string]runImagePlan {
+func (a *agentExecution) planRunImages(ctx context.Context, runs []Run) (map[string]runImagePlan, error) {
 	a.currentImages = nil
 	support := a.run.Model != nil && a.run.Model.Capabilities.Image
 	if !support {
-		return nil
+		return nil, nil
 	}
 	budget := imageReplayBudgetBytes
-	if metas := a.attachmentImageMetasLocked(ctx, a.run); len(metas) > 0 {
+	metas, err := a.attachmentImageMetasLocked(ctx, a.run)
+	if err != nil {
+		return nil, err
+	}
+	if len(metas) > 0 {
 		// 本轮附件必挂 header：提交校验保证其合计不超过 8 MiB 重放预算。
-		a.currentImages = a.attachmentImagePartsLocked(ctx, metas)
+		a.currentImages, err = a.attachmentImagePartsLocked(ctx, metas)
+		if err != nil {
+			return nil, err
+		}
 		for _, part := range a.currentImages {
 			budget -= len(part.Data)
 		}
@@ -146,7 +166,11 @@ func (a *agentExecution) planRunImages(ctx context.Context, runs []Run) map[stri
 	for _, run := range history {
 		var plan runImagePlan
 		var kept []attachmentImageMeta
-		for _, meta := range a.attachmentImageMetasLocked(ctx, run) {
+		metas, err := a.attachmentImageMetasLocked(ctx, run)
+		if err != nil {
+			return nil, err
+		}
+		for _, meta := range metas {
 			if meta.Bytes <= budget {
 				budget -= meta.Bytes
 				kept = append(kept, meta)
@@ -155,11 +179,14 @@ func (a *agentExecution) planRunImages(ctx context.Context, runs []Run) map[stri
 			}
 		}
 		if len(kept) > 0 || plan.dropped > 0 {
-			plan.images = a.attachmentImagePartsLocked(ctx, kept)
+			plan.images, err = a.attachmentImagePartsLocked(ctx, kept)
+			if err != nil {
+				return nil, err
+			}
 			plans[run.ID] = plan
 		}
 	}
-	return plans
+	return plans, nil
 }
 
 func cursorAfter(a, b MemoryCursor) bool {
@@ -199,27 +226,46 @@ func readDocuments[T any](ctx context.Context, db interface {
 // 不复制工具结果到模型记录或记忆。数据库读取只在父进程发生。
 // loadImages 为 false 时（记忆整理与工作流收尾）不读附件字节也不挂图：
 // 这些请求本就剥离全部 Images，历史图片只需保留文字注记语义。
+type contextFactsResult struct {
+	memory WorkingMemory
+	groups []factGroup
+	shared []model.Message
+}
+
 func (a *agentExecution) contextFacts(ctx context.Context, loadImages bool) (WorkingMemory, []factGroup, []model.Message, error) {
 	m := a.manager
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	result, err := storeRead(ctx, m.store, "context-facts", func(ctx context.Context) (contextFactsResult, error) {
+		memory, groups, shared, err := a.contextFactsRead(ctx, loadImages)
+		return contextFactsResult{memory, groups, shared}, err
+	})
+	if err != nil {
+		// Preserve SQLite codes until the read scope has cleaned up and retried.
+		err = m.contextStoreErrorLocked(err)
+	}
+	return result.memory, result.groups, result.shared, err
+}
+
+func (a *agentExecution) contextFactsRead(ctx context.Context, loadImages bool) (WorkingMemory, []factGroup, []model.Message, error) {
+	m := a.manager
 	if m.closed || m.storageError || ctx.Err() != nil {
 		return WorkingMemory{}, nil, nil, context.Canceled
 	}
 	memory, err := m.store.memory(ctx, a.run.TaskID, 0)
 	if err != nil {
-		return memory, nil, nil, m.contextStoreErrorLocked(err)
+		return memory, nil, nil, err
 	}
-	invalid, err := wikiArtifactInvalid(ctx, m.store.db, "memory", a.run.TaskID+":"+strconv.Itoa(memory.Revision))
+	invalid, err := wikiArtifactInvalid(ctx, m.store.reader(ctx), "memory", a.run.TaskID+":"+strconv.Itoa(memory.Revision))
 	if err != nil {
 		return memory, nil, nil, err
 	}
 	if invalid {
 		memory = WorkingMemory{TaskID: memory.TaskID, Revision: memory.Revision, Objective: a.run.Task.Goal, Constraints: []string{}, Facts: []MemoryFact{}, Todos: []string{}, OpenQuestions: []string{}}
 	}
-	runs, err := readDocuments[Run](ctx, m.store.db, "SELECT document FROM runs WHERE task_id=? AND run_number>=? AND run_number<=? ORDER BY run_number", a.run.TaskID, memory.Coverage.RunNumber, a.run.RunNumber)
+	runs, err := readDocuments[Run](ctx, m.store.reader(ctx), "SELECT document FROM runs WHERE task_id=? AND run_number>=? AND run_number<=? ORDER BY run_number", a.run.TaskID, memory.Coverage.RunNumber, a.run.RunNumber)
 	if err != nil {
-		return memory, nil, nil, m.contextStoreErrorLocked(err)
+		return memory, nil, nil, err
 	}
 	// 最新计划独立于记忆覆盖游标，压力整理后仍带入下一次推理；计划位于尾部当前状态消息。
 	// 同时刷新本 Run 的用量：主动压缩要按剩余 token 预算判断有效容量，不能使用入队时的旧快照。
@@ -227,11 +273,16 @@ func (a *agentExecution) contextFacts(ctx context.Context, loadImages bool) (Wor
 		if run.ID == a.run.ID {
 			a.run.Plan = run.Plan
 			a.run.Usage = run.Usage
+			a.run.Diagnosis = run.Diagnosis
+			a.run.CompletionChecks = run.CompletionChecks
 		}
 	}
 	var imagePlans map[string]runImagePlan
 	if loadImages {
-		imagePlans = a.planRunImages(ctx, runs)
+		imagePlans, err = a.planRunImages(ctx, runs)
+		if err != nil {
+			return memory, nil, nil, err
+		}
 	} else {
 		a.currentImages = nil
 	}
@@ -241,7 +292,7 @@ func (a *agentExecution) contextFacts(ctx context.Context, loadImages bool) (Wor
 		if run.SupersededByRunID != "" {
 			continue
 		}
-		invalid, e := wikiArtifactInvalid(ctx, m.store.db, "run", run.ID)
+		invalid, e := wikiArtifactInvalid(ctx, m.store.reader(ctx), "run", run.ID)
 		if e != nil {
 			return memory, nil, nil, e
 		}
@@ -290,21 +341,28 @@ func (a *agentExecution) contextFacts(ctx context.Context, loadImages bool) (Wor
 			breakdown.Other += estimateContextText(content[beforeImages:])
 			groups = append(groups, factGroup{cursor: inputCursor, refs: []EvidenceRef{ref}, messages: []model.Message{{Role: "user", Content: content, Images: msgImages, EstimatedBreakdown: &breakdown}}})
 		}
-		records, err := readDocuments[ModelRequestRecord](ctx, m.store.db, "SELECT document FROM model_requests WHERE run_id=? ORDER BY request_index", run.ID)
-		if err != nil {
-			return memory, nil, nil, m.contextStoreErrorLocked(err)
+
+		coverage := int64(0)
+		if continuousRun(a.run) && run.RunNumber == memory.Coverage.RunNumber {
+			coverage, _ = numberCursor(memory.Coverage.EventSeq)
 		}
-		calls, err := readDocuments[Call](ctx, m.store.db, "SELECT document FROM calls WHERE run_id=? ORDER BY step_index", run.ID)
+		records, err := readDocuments[ModelRequestRecord](ctx, m.store.reader(ctx), "SELECT document FROM model_requests WHERE run_id=? AND CAST(COALESCE(json_extract(document,'$.eventSeq'),0) AS INTEGER)>? ORDER BY request_index", run.ID, coverage)
 		if err != nil {
-			return memory, nil, nil, m.contextStoreErrorLocked(err)
+			return memory, nil, nil, err
 		}
-		operations, err := readDocuments[Operation](ctx, m.store.db, "SELECT json_remove(document,'$.pendingResult') FROM operations WHERE run_id=? ORDER BY rowid", run.ID)
+		calls, err := readDocuments[Call](ctx, m.store.reader(ctx), `SELECT document FROM calls WHERE run_id=? AND (?=0 OR json_extract(document,'$.modelRequestId') IN (SELECT id FROM model_requests WHERE run_id=? AND CAST(COALESCE(json_extract(document,'$.eventSeq'),0) AS INTEGER)>?)
+ OR id IN (SELECT json_extract(document,'$.callId') FROM run_events WHERE run_id=? AND seq>? AND json_extract(document,'$.type')='recovery/recovered')) ORDER BY step_index`, run.ID, coverage, run.ID, coverage, run.ID, coverage)
 		if err != nil {
-			return memory, nil, nil, m.contextStoreErrorLocked(err)
+			return memory, nil, nil, err
 		}
-		approvals, err := readDocuments[Approval](ctx, m.store.db, "SELECT json_remove(document,'$.operation') FROM approvals WHERE run_id=? ORDER BY rowid", run.ID)
+		operations, err := readDocuments[Operation](ctx, m.store.reader(ctx), `SELECT json_remove(document,'$.pendingResult') FROM operations WHERE run_id=? AND (?=0 OR json_extract(document,'$.modelRequestId') IN (SELECT id FROM model_requests WHERE run_id=? AND CAST(COALESCE(json_extract(document,'$.eventSeq'),0) AS INTEGER)>?)
+ OR json_extract(document,'$.callId') IN (SELECT json_extract(document,'$.callId') FROM run_events WHERE run_id=? AND seq>? AND json_extract(document,'$.type')='recovery/recovered')) ORDER BY rowid`, run.ID, coverage, run.ID, coverage, run.ID, coverage)
 		if err != nil {
-			return memory, nil, nil, m.contextStoreErrorLocked(err)
+			return memory, nil, nil, err
+		}
+		approvals, err := readDocuments[Approval](ctx, m.store.reader(ctx), "SELECT json_remove(document,'$.operation') FROM approvals WHERE run_id=? ORDER BY rowid", run.ID)
+		if err != nil {
+			return memory, nil, nil, err
 		}
 		operationByCall := map[string]*Operation{}
 		for i := range operations {
@@ -315,9 +373,9 @@ func (a *agentExecution) contextFacts(ctx context.Context, loadImages bool) (Wor
 		for i := range approvals {
 			approvalByID[approvals[i].ID] = &approvals[i]
 		}
-		items, readErr := readDocuments[ContextItem](ctx, m.store.db, "SELECT document FROM context_items WHERE run_id=? ORDER BY rowid", run.ID)
+		items, readErr := readDocuments[ContextItem](ctx, m.store.reader(ctx), "SELECT document FROM context_items WHERE run_id=? ORDER BY rowid", run.ID)
 		if readErr != nil {
-			return memory, nil, nil, m.contextStoreErrorLocked(readErr)
+			return memory, nil, nil, readErr
 		}
 		materialSources := map[string]string{}
 		skillBodies := map[string]bool{}
@@ -327,13 +385,16 @@ func (a *agentExecution) contextFacts(ctx context.Context, loadImages bool) (Wor
 				skillBodies[item.CallID] = true
 			}
 		}
-		events, err := readDocuments[Event](ctx, m.store.db, "SELECT document FROM run_events WHERE run_id=? ORDER BY seq", run.ID)
+		events, err := readDocuments[Event](ctx, m.store.reader(ctx), "SELECT document FROM run_events WHERE run_id=? AND seq>? ORDER BY seq", run.ID, coverage)
 		if err != nil {
-			return memory, nil, nil, m.contextStoreErrorLocked(err)
+			return memory, nil, nil, err
 		}
 		callSeq := map[string]string{}
 		for _, event := range events {
 			if event.CallID != "" {
+				if continuousRun(a.run) && (callSeq[event.CallID] != "" || event.Type == "call/started" || event.Type == "operation/task-accepted" || strings.HasPrefix(event.Type, "recovery/")) {
+					continue
+				}
 				callSeq[event.CallID] = event.Seq
 			}
 		}
@@ -368,6 +429,9 @@ func (a *agentExecution) contextFacts(ctx context.Context, loadImages bool) (Wor
 				}
 				fact := projectToolExecution(run, op, found, approval)
 				content := toolFactContent(fact, found)
+				if continuousRun(a.run) && found != nil && found.ModelContent != "" {
+					content = found.ModelContent
+				}
 				if found != nil && terminal(found.Status) {
 					if seq := callSeq[found.ID]; seq != "" {
 						group.refs = append(group.refs, EvidenceRef{RunID: run.ID, EventSeq: seq})
@@ -410,6 +474,25 @@ func (a *agentExecution) contextFacts(ctx context.Context, loadImages bool) (Wor
 			group.messages = append(group.messages, results...)
 			groups = append(groups, group)
 		}
+
+		if continuousRun(a.run) {
+			for _, event := range events {
+				if event.Type != "recovery/recovered" {
+					continue
+				}
+				cursor := MemoryCursor{RunNumber: run.RunNumber, EventSeq: event.Seq}
+				if !cursorAfter(cursor, memory.Coverage) {
+					continue
+				}
+				for _, call := range calls {
+					if call.ID == event.CallID {
+						fact := projectToolExecution(run, operationByCall[call.ModelRequestID+":"+call.ModelCallID], &call, nil)
+						ref := EvidenceRef{RunID: run.ID, EventSeq: event.Seq}
+						groups = append(groups, factGroup{cursor: cursor, refs: []EvidenceRef{ref}, messages: []model.Message{otherContextMessage("user", "追加核实证据（保留原工具消息）："+refKey(ref)+"\n"+toolFactContent(fact, &call))}})
+					}
+				}
+			}
+		}
 		for _, item := range items {
 			cursor := MemoryCursor{RunNumber: run.RunNumber, EventSeq: item.EventSeq}
 			if !cursorAfter(cursor, memory.Coverage) {
@@ -431,7 +514,7 @@ func (a *agentExecution) contextFacts(ctx context.Context, loadImages bool) (Wor
 	if a.run.WorkflowID != "" {
 		workflowGroups, err := m.workflowContextFacts(ctx, a.run)
 		if err != nil {
-			return memory, nil, nil, m.contextStoreErrorLocked(err)
+			return memory, nil, nil, err
 		}
 		if a.workflowOutput != nil {
 			workflowGroups = append(workflowGroups, a.workflowOutput.fact(a.run))
@@ -450,14 +533,14 @@ func (a *agentExecution) contextFacts(ctx context.Context, loadImages bool) (Wor
 	}
 	sort.SliceStable(groups, func(i, j int) bool { return cursorAfter(groups[j].cursor, groups[i].cursor) })
 	// 读取时固定接受输入时的 Session 边界，排除其他任务的工具/记忆。
-	messages, err := readDocuments[Message](ctx, m.store.db, "SELECT m.document FROM messages m JOIN runs r ON r.id=m.run_id WHERE m.session_id=? AND m.task_id<>? AND m.seq<=? AND "+visibleRunSQL+" ORDER BY m.seq DESC LIMIT 64", a.run.SessionID, a.run.TaskID, a.run.HistorySeq)
+	messages, err := readDocuments[Message](ctx, m.store.reader(ctx), "SELECT m.document FROM messages m JOIN runs r ON r.id=m.run_id WHERE m.session_id=? AND m.task_id<>? AND m.seq<=? AND "+visibleRunSQL+" ORDER BY m.seq DESC LIMIT 64", a.run.SessionID, a.run.TaskID, a.run.HistorySeq)
 	if err != nil {
-		return memory, nil, nil, m.contextStoreErrorLocked(err)
+		return memory, nil, nil, err
 	}
 	var shared []model.Message
 	a.sharedWikiRefs = nil
 	for i := len(messages) - 1; i >= 0; i-- {
-		invalid, e := wikiArtifactInvalid(ctx, m.store.db, "message", messages[i].ID)
+		invalid, e := wikiArtifactInvalid(ctx, m.store.reader(ctx), "message", messages[i].ID)
 		if e != nil {
 			return memory, nil, nil, e
 		}
@@ -467,7 +550,7 @@ func (a *agentExecution) contextFacts(ctx context.Context, loadImages bool) (Wor
 		if a.run.ScopeID != "" {
 			continue
 		} // 分支只继承父快照，不读取兄弟公开输出。
-		refs, e := wikiArtifactRefs(ctx, m.store.db, "message", messages[i].ID)
+		refs, e := wikiArtifactRefs(ctx, m.store.reader(ctx), "message", messages[i].ID)
 		if e != nil {
 			return memory, nil, nil, e
 		}
@@ -574,7 +657,7 @@ func (a *agentExecution) effectiveContextTokens() int {
 		return 0
 	}
 	capacity := a.run.Model.ContextTokens
-	if remaining := a.run.Limits.TokenBudget - a.run.Usage.Tokens; remaining < capacity {
+	if remaining := a.run.Limits.TokenBudget - a.run.Usage.Tokens; !continuousRun(a.run) && remaining < capacity {
 		capacity = remaining
 	}
 	if capacity < 1 {
@@ -591,6 +674,9 @@ func (a *agentExecution) contextPressure(request model.Request) bool {
 	// Run 预算成为约束时，准入只按提示词估算记账，不预留 MaxTokens；此时把输出上限算进
 	// 压力会把「输出上限大于剩余预算」的普通多轮请求误判成满容量。模型容量成为约束时，
 	// 输出仍占用模型上下文，按 estimate+MaxTokens 判断。
+	if continuousRun(a.run) {
+		return int64(estimateRequestTokens(request))*100 >= int64(max(1, capacity-request.MaxTokens))*autoCompactPercent
+	}
 	if remaining := a.run.Limits.TokenBudget - a.run.Usage.Tokens; remaining < a.run.Model.ContextTokens {
 		return int64(estimateRequestTokens(request))*100 >= int64(capacity)*autoCompactPercent
 	}
@@ -618,7 +704,7 @@ func (a *agentExecution) canProactivelyCompact(request, checkpoint model.Request
 	}
 	// 有供应商用量时预留输出上限；缺失时按完整记忆字节与响应封装开销预留。
 	outputReserve := max(checkpoint.MaxTokens, a.run.Limits.MemoryBytes+1024)
-	return a.run.Usage.Tokens+estimateRequestTokens(checkpoint)+outputReserve+estimateRequestTokens(request) <= a.run.Limits.TokenBudget
+	return continuousRun(a.run) || a.run.Usage.Tokens+estimateRequestTokens(checkpoint)+outputReserve+estimateRequestTokens(request) <= a.run.Limits.TokenBudget
 }
 
 // compactableFacts 判定待整理事实是否包含模型答复或工具结果。只有本轮用户输入时不做主动整理：
@@ -725,6 +811,12 @@ func (a *agentExecution) currentStateMessage(visibleTools []model.Tool) (model.M
 		text = prefix + a.run.Input
 		breakdown.Messages = estimateContextText(a.run.Input)
 		breakdown.Other = estimateContextText(prefix)
+	}
+	if a.run.Diagnosis != nil {
+		text += "\n诊断状态（禁止重复已隔离方法）：" + diagnosisText(a.run.Diagnosis)
+	}
+	if a.run.CompletionChecks > 0 {
+		text += "\n结束核对发现计划未完成；继续处理待办，取得证据后更新计划；无法完成时说明具体阻塞，不能宣称全部完成。"
 	}
 	if a.run.Plan != nil {
 		plan, _ := json.Marshal(a.run.Plan)
@@ -848,7 +940,7 @@ func (a *agentExecution) buildContext(ctx context.Context) (model.Request, []Evi
 		for {
 			request.Messages = compose()
 			if a.fits(request) {
-				if fallback != nil && a.run.Usage.Tokens+estimateRequestTokens(request) > a.run.Limits.TokenBudget {
+				if !continuousRun(a.run) && fallback != nil && a.run.Usage.Tokens+estimateRequestTokens(request) > a.run.Limits.TokenBudget {
 					return a.restoreContextFallback(fallback)
 				}
 				a.manager.mu.Lock()
@@ -950,7 +1042,9 @@ func (a *agentExecution) loadedInstructions(ctx context.Context, factRefs []Evid
 	m := a.manager
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	items, err := readDocuments[ContextItem](ctx, m.store.db, "SELECT context_items.document FROM context_items JOIN runs ON context_items.run_id=runs.id WHERE context_items.task_id=? AND runs.run_number<=? ORDER BY context_items.rowid", a.run.TaskID, a.run.RunNumber)
+	items, err := storeRead(ctx, m.store, "loaded-instructions", func(ctx context.Context) ([]ContextItem, error) {
+		return readDocuments[ContextItem](ctx, m.store.reader(ctx), "SELECT context_items.document FROM context_items JOIN runs ON context_items.run_id=runs.id WHERE context_items.task_id=? AND runs.run_number<=? ORDER BY context_items.rowid", a.run.TaskID, a.run.RunNumber)
+	})
 	if err != nil {
 		return nil, nil, nil, storageFailure(err)
 	}
@@ -1169,8 +1263,13 @@ func (a *agentExecution) consolidatePrepared(ctx context.Context, final bool, pr
 }
 
 func (m *Manager) contextStoreErrorLocked(err error) error {
+	if transientStorageRead(err) {
+		return &Error{Status: 503, Code: "storage-read-transient", Message: "运行记录暂时无法读取，正在等待存储恢复"}
+	}
 	if _, ok := err.(*Error); !ok && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 		m.storageFailedLocked()
 	}
 	return storageFailure(err)
 }
+
+func diagnosisText(value *RunDiagnosis) string { b, _ := json.Marshal(value); return string(b) }

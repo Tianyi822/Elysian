@@ -125,7 +125,7 @@ func TestRuntimeAccessRecordsFaultBlocksDecisionsAndDispatch(t *testing.T) {
 			run := submitDemand(t, m, session, "record-fault-"+stage)
 			a := waitingApproval(t, m, run.ID)
 			m.mu.Lock()
-			m.store.recordHook = func(string) error { return errors.New("record disk unavailable") }
+			m.store.setRecordHook(func(string) error { return errors.New("record disk unavailable") })
 			if stage == "before-decision" {
 				_, err := m.store.change(ctx, run.ID, "test-record-failure", func(tx *sql.Tx, r *Run) error {
 					return m.store.event(ctx, tx, r, "test/replica-failed", "", nil, nil)
@@ -146,6 +146,7 @@ func TestRuntimeAccessRecordsFaultBlocksDecisionsAndDispatch(t *testing.T) {
 			} else if err != nil {
 				t.Fatal("committed decision receipt was discarded after replica failure", err)
 			}
+			runtimeEventually(t, func() bool { return m.store.recordsFault() != nil })
 			if m.store.recordsFault() == nil || m.Info().Available || calls.Load() != 0 {
 				t.Fatalf("record failure did not freeze dispatch: fault=%v calls=%d", m.store.recordsFault(), calls.Load())
 			}

@@ -221,12 +221,12 @@ func TestAutomaticRuntimeAuthorizationReplicaFailureBlocksDispatch(t *testing.T)
 	m.mu.Lock()
 	m.store.beforeWrite = func(op string) error {
 		if op == "access-auto-decision" {
-			m.store.recordHook = func(stage string) error {
+			m.store.setRecordHook(func(stage string) error {
 				if stage == "append" {
 					return errors.New("injected auto authorization replica failure")
 				}
 				return nil
-			}
+			})
 		}
 		return nil
 	}

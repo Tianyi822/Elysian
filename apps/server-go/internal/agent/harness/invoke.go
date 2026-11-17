@@ -106,7 +106,7 @@ func (m *Manager) invoke(ctx context.Context, run Run, index int, name string, a
 			}
 			response <- result
 		}()
-		if result.err = m.store.recordsFault(); result.err != nil {
+		if result.err = m.store.waitRecords(callCtx); result.err != nil {
 			return
 		}
 		if m.deps.Tools == nil || !m.deps.Tools.Available() {
@@ -205,7 +205,7 @@ func (m *Manager) invoke(ctx context.Context, run Run, index int, name string, a
 		if r.Status != StateRunning {
 			return context.Canceled
 		}
-		if r.Usage.ResultBytes+len(value) > r.Limits.RunResultBytes {
+		if !continuousRun(*r) && r.Usage.ResultBytes+len(value) > r.Limits.RunResultBytes {
 			call.Status = StateFailed
 			call.Result = nil
 			value = nil

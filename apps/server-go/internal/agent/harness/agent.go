@@ -102,7 +102,7 @@ func (a *agentExecution) begin(ctx context.Context) (func(), error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	execution := m.executionLocked(a.run.ID)
-	if m.closed || execution == nil || execution.finishing || m.blocked != "" || m.store.recordsFault() != nil || ctx.Err() != nil {
+	if m.closed || execution == nil || execution.finishing || m.blocked != "" || ctx.Err() != nil {
 		return nil, context.Canceled
 	}
 	if a.busy || a.finalized {
@@ -158,6 +158,7 @@ func (a *agentExecution) NextModel(ctx context.Context) (worker.ModelResponse, e
 	if err := a.checkRecoveryProgress(ctx); err != nil {
 		return worker.ModelResponse{}, err
 	}
+inferenceLoop:
 	record, err := a.requestInference(ctx)
 	if err != nil {
 		return worker.ModelResponse{}, err
@@ -195,6 +196,16 @@ func (a *agentExecution) NextModel(ctx context.Context) (worker.ModelResponse, e
 				out.ToolCalls = append(out.ToolCalls, worker.AgentToolCall{ID: call.ID, Name: call.Name, Args: call.Arguments})
 				continue
 			}
+			if call.Name == taskHistoryTool {
+				if !continuousRun(a.run) {
+					return out, bad("tool-denied", "该运行不支持任务历史检索")
+				}
+				if err := a.validateVisibleProposal(record, taskHistoryTool); err != nil {
+					return out, err
+				}
+				out.ToolCalls = append(out.ToolCalls, worker.AgentToolCall{ID: call.ID, Name: call.Name, Args: call.Arguments})
+				continue
+			}
 			if call.Name == planTool {
 				if err := a.validatePlanAccess(record); err != nil {
 					return out, err
@@ -213,6 +224,13 @@ func (a *agentExecution) NextModel(ctx context.Context) (worker.ModelResponse, e
 	} else {
 		if response.FinishReason != "stop" || strings.TrimSpace(response.Content) == "" {
 			return out, bad("model-incomplete", "模型未返回完整最终答复")
+		}
+		ready, checkErr := a.completionReady(ctx)
+		if checkErr != nil {
+			return out, checkErr
+		}
+		if !ready {
+			goto inferenceLoop
 		}
 		out.Final = true
 	}
@@ -252,6 +270,8 @@ func (a *agentExecution) ExecuteAgent(ctx context.Context, responseID string, in
 	var err error
 	if a.userInputError != "" || name == userInputTool {
 		err = a.executeUserInput(ctx, index, proposal, a.userInputError)
+	} else if name == taskHistoryTool {
+		err = a.executeTaskHistory(ctx, index, proposal)
 	} else if name == planTool {
 		err = a.executePlan(ctx, index, proposal)
 	} else if a.run.DriverVersion == "v2" {
@@ -353,6 +373,7 @@ type modelOutcome struct {
 func (a *agentExecution) requestModel(ctx context.Context, purpose string, request model.Request, refs []EvidenceRef, revision int) (ModelRequestRecord, error) {
 	// token 估算优先使用官方分词器/官方 usage 校准；网络调用必须在持有 Manager.mu 之前完成，
 	// 失败与超时静默回退本地估算，不阻断推理。图片请求不参与比例反推（官方 prompt 含图片 token）。
+	request.Continuous = continuousRun(a.run)
 	estimate := a.estimatePromptTokens(ctx, request)
 	localPayloadBytes, localImageTokens := requestEstimateParts(request)
 	m := a.manager
@@ -405,11 +426,19 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 		m.mu.Unlock()
 		return empty, bad("result-budget", "本轮工具结果容量已用完")
 	}
-	if modelLimitReached(run, 1, a.modelRequestReserve(purpose)) || run.Usage.Tokens+estimate > run.Limits.TokenBudget || purpose == "failure-summary" && run.Usage.Tokens+estimate+request.MaxTokens > run.Limits.TokenBudget {
+	if !continuousRun(run) && (modelLimitReached(run, 1, a.modelRequestReserve(purpose)) || run.Usage.Tokens+estimate > run.Limits.TokenBudget || purpose == "failure-summary" && run.Usage.Tokens+estimate+request.MaxTokens > run.Limits.TokenBudget) {
 		m.mu.Unlock()
 		return empty, bad("model-budget", "模型请求次数或 token 预算已耗尽")
 	}
 	record := ModelRequestRecord{ID: m.deps.NewID(), RunID: run.ID, Index: run.Usage.ModelRequests, Purpose: purpose, Status: StateRunning, StartedAt: stamp(m.deps.Now()), ContextRefs: refs, MemoryRevision: revision, EstimatedTokens: estimate, HistorySeq: run.HistorySeq}
+	if continuousRun(run) {
+		record.LogicalID = record.ID
+		record.Attempt = 1
+		if run.Wait != nil && run.Wait.RequestID != "" {
+			record.LogicalID = run.Wait.RequestID
+			record.Attempt = run.Wait.Attempts + 1
+		}
+	}
 	if purpose == "inference" && request.EstimatedBreakdown != nil {
 		breakdown := *request.EstimatedBreakdown
 		record.EstimatedBreakdown = &breakdown
@@ -489,7 +518,8 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 			}
 			resultCh <- result
 		}()
-		if result.err = m.store.recordsFault(); result.err != nil {
+		if result.err = m.store.waitRecords(callCtx); result.err != nil {
+			result.err = &Error{Status: 503, Code: "record-storage-unavailable", Message: "记录副本同步未完成，尚未发出模型请求"}
 			return
 		}
 		result.response, result.err = m.deps.ModelClient.Complete(callCtx, profile, request)
@@ -556,7 +586,27 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 		// 已确认响应的 prompt_tokens 是官方实测：反推本地字节估算比例，供后续请求与压缩边界使用。
 		a.manager.notePromptUsage(a.run.Model, localPayloadBytes, *result.response.Usage.PromptTokens)
 	}
+	if result.err == nil && purpose == "inference" && continuousRun(run) {
+		for _, call := range result.response.ToolCalls {
+			if blockedProposal(run, call.Name, call.Arguments) {
+				result.err = bad("method-blocked", "该方法按相同参数已连续失败，整批未执行；请读取相关新证据或更换方法")
+				break
+			}
+		}
+	}
 	if result.err == nil && purpose == "inference" && evidenceRecoveryRun(run) && result.response.FinishReason == "tool_calls" {
+
+		if continuousRun(run) {
+			if identityErr := a.validateOperationBatch(callCtx, result.response.ToolCalls); identityErr != nil {
+				var conflict *Error
+				if errors.As(identityErr, &conflict) {
+					result.err = bad("model-tool-schema-invalid", conflict.Message+"；本批操作均未执行，请修正请求身份后重新提议")
+					record.CorrectionKey = model.ToolCorrectionFingerprint(result.response.ToolCalls)
+				} else {
+					result.err = identityErr
+				}
+			}
+		}
 		for _, call := range result.response.ToolCalls {
 			for _, tool := range request.Tools {
 				if call.Name != planTool && call.Name != userInputTool && tool.Name == call.Name && mcp.Validate(tool.Parameters, call.Arguments) != nil {
@@ -684,11 +734,11 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 		if workflow.Usage.Tokens > workflow.Limits.Tokens {
 			return record, bad("workflow-budget", "模型累计 token 用量超过工作流实例预算")
 		}
-		if current.Usage.ActualTokens != nil && *current.Usage.ActualTokens > current.Limits.TokenBudget {
+		if !continuousRun(current) && current.Usage.ActualTokens != nil && *current.Usage.ActualTokens > current.Limits.TokenBudget {
 			return record, bad("workflow-step-budget", "已确认的模型 token 用量超过步骤运行预算")
 		}
 	}
-	if current.Usage.Tokens > current.Limits.TokenBudget && len(record.Response.ToolCalls) > 0 {
+	if !continuousRun(current) && current.Usage.Tokens > current.Limits.TokenBudget && len(record.Response.ToolCalls) > 0 {
 		return record, bad("model-budget", "模型累计 token 用量超过预算")
 	}
 	return record, nil

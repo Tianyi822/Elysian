@@ -30,7 +30,7 @@ func loadingBudget(run Run, level string) LoadingBudget {
 }
 
 func residentCapability(c Capability) bool {
-	return c.Source == toolDiscoverySource || c.Source == userInputSource || c.Source == planSource
+	return c.Source == toolDiscoverySource || c.Source == userInputSource || c.Source == planSource || c.Source == taskHistorySource
 }
 func definitionTokens(c Capability) int {
 	return estimateContextText(c.Name) + estimateContextText(c.Description) + estimateContextText(string(c.Parameters)) + 8

@@ -55,6 +55,15 @@ func storeRead[T any](ctx context.Context, s *store, op string, read func(contex
 	if scope, ok := ctx.Value(storeReadKey{}).(*storeReadScope); ok && scope.store == s {
 		return read(ctx)
 	}
+	defer func() {
+		var public *Error
+		if errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) || errors.As(err, &public) {
+			return
+		}
+		s.recordsStateMu.Lock()
+		s.readErr = err
+		s.recordsStateMu.Unlock()
+	}()
 	for attempt := 0; attempt < 2; attempt++ {
 		if err = ctx.Err(); err != nil {
 			return value, err
@@ -128,4 +137,9 @@ func (s *store) diagnose(op, stage string, err error) {
 	s.diagnostics[key] = true
 	stats := s.db.Stats()
 	log.Printf("Agent 存储故障 operation=%s stage=%s error_type=%T sqlite_code=%d open=%d in_use=%d idle=%d wait_count=%d", op, stage, cause, code, stats.OpenConnections, stats.InUse, stats.Idle, stats.WaitCount)
+}
+
+func storeReadError(ctx context.Context, s *store, op string, read func(context.Context) error) error {
+	_, err := storeRead(ctx, s, op, func(ctx context.Context) (struct{}, error) { return struct{}{}, read(ctx) })
+	return err
 }

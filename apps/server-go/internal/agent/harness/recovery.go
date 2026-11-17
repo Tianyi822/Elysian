@@ -13,6 +13,12 @@ import (
 )
 
 const evidenceRecoveryPolicy = "evidence-recovery/v1"
+const continuousRecoveryPolicy = "evidence-recovery/v2"
+
+func supportedRecoveryPolicy(policy string) bool {
+	return policy == evidenceRecoveryPolicy || policy == continuousRecoveryPolicy
+}
+
 const recoveryWindow = 2 * time.Minute
 
 type RunRecovery struct {
@@ -32,7 +38,7 @@ type ToolAttempt struct {
 }
 
 func evidenceRecoveryRun(r Run) bool {
-	return r.RecoveryPolicy == evidenceRecoveryPolicy && r.SessionID != "" && r.WorkflowID == "" && r.DriverVersion == "v2"
+	return supportedRecoveryPolicy(r.RecoveryPolicy) && r.SessionID != "" && r.WorkflowID == "" && r.DriverVersion == "v2"
 }
 
 func businessFailure(b *tools.BusinessError) *Failure {
@@ -49,7 +55,7 @@ func businessFailure(b *tools.BusinessError) *Failure {
 // can continue only when the host has captured all effects in a workspace
 // version; writable host/network grants require separate verification.
 func classifyRecoveryResult(s CapabilitySnapshot, o Operation, result CapabilityResult) CapabilityResult {
-	if s.RecoveryPolicy != evidenceRecoveryPolicy || result.BusinessError == nil {
+	if !supportedRecoveryPolicy(s.RecoveryPolicy) || result.BusinessError == nil {
 		return result
 	}
 	failure := *result.BusinessError
@@ -94,7 +100,7 @@ func (m *Manager) executeRegistryWithRetry(ctx context.Context, s CapabilitySnap
 	for attempt := 1; ; attempt++ {
 		value, err := m.toolRuntime.Execute(ctx, o.Capability.Name, args)
 		b, safe := tools.AsBusinessError(err)
-		if s.RecoveryPolicy != evidenceRecoveryPolicy || !o.Capability.ReadOnly || o.Capability.Metadata.Async || !safe || !b.Retryable || ctx.Err() != nil {
+		if !supportedRecoveryPolicy(s.RecoveryPolicy) || !o.Capability.ReadOnly || o.Capability.Metadata.Async || !safe || !b.Retryable || ctx.Err() != nil {
 			return value, err
 		}
 		m.mu.Lock()
@@ -178,9 +184,22 @@ func (a *agentExecution) checkRecoveryProgress(ctx context.Context) error {
 	m := a.manager
 	m.mu.Lock()
 	defer m.mu.Unlock()
+
+	if continuousRun(a.run) {
+		var failed bool
+		if err := m.store.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM calls WHERE run_id=? AND state='failed')", a.run.ID).Scan(&failed); err != nil {
+			return m.contextStoreErrorLocked(err)
+		}
+		if !failed {
+			return nil
+		}
+	}
 	calls, err := readDocuments[Call](ctx, m.store.db, "SELECT document FROM calls WHERE run_id=? ORDER BY step_index", a.run.ID)
 	if err != nil {
 		return m.contextStoreErrorLocked(err)
+	}
+	if continuousRun(a.run) {
+		return a.continuousProgress(ctx, calls)
 	}
 	counts, seen := map[string]int{}, map[string]bool{}
 	for _, c := range calls {
@@ -262,7 +281,7 @@ func (m *Manager) recoveryObservation(expected Operation) (bool, error) {
 		if err != nil {
 			return errors.New("恢复核实截止时间无效")
 		}
-		if !now.Before(deadline) && r.Status == StateWaitingRecovery {
+		if !continuousRun(*r) && !now.Before(deadline) && r.Status == StateWaitingRecovery {
 			o.Recovery.Status, o.Recovery.Message = "unresolved", "自动核实已超过两分钟，仍缺少可信结束证据；请核实实际状态后继续"
 			r.Recovery = o.Recovery
 			r.Status, r.Phase, r.EndReason, r.EndedAt = StateInterrupted, "completed", "outcome-unknown", stamp(now)
@@ -279,6 +298,10 @@ func (m *Manager) recoveryObservation(expected Operation) (bool, error) {
 		}
 		o.Recovery.Checks++
 		delay := time.Duration(min(15, 1<<min(o.Recovery.Checks, 4))) * time.Second
+		if continuousRun(*r) && !now.Before(deadline) {
+			delay = 2 * time.Minute
+			o.Recovery.Message = "仍缺少可信结束证据，已保留保护并每两分钟核实；不会重复派发原操作"
+		}
 		o.Recovery.NextCheckAt = stamp(now.Add(delay))
 		if r.Status == StateWaitingRecovery {
 			r.Recovery = o.Recovery

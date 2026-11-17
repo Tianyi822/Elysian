@@ -39,13 +39,20 @@ func (m *Manager) maintenanceLoop() {
 
 func (m *Manager) interruptForMaintenanceLocked() {
 	ctx := context.Background()
-	runs, err := readDocuments[Run](ctx, m.store.db, "SELECT document FROM runs WHERE session_id<>'' AND workflow_id='' AND state IN ('queued','running','waiting-input','waiting-approval','waiting-resource','waiting-task','waiting-recovery','recovery-required')")
+	runs, err := readDocuments[Run](ctx, m.store.db, "SELECT document FROM runs WHERE session_id<>'' AND workflow_id='' AND state IN ('queued','running','waiting-input','waiting-approval','waiting-resource','waiting-task','waiting-recovery','waiting-model','waiting-storage','recovery-required')")
 	if err != nil {
 		m.storageFailedLocked()
 		return
 	}
 	for _, run := range runs {
 		execution := m.executionLocked(run.ID)
+		if continuousRun(run) {
+			if execution != nil {
+				execution.maintenance = true
+				execution.cancel()
+			}
+			continue
+		}
 		if execution != nil && execution.maintenance {
 			continue
 		}

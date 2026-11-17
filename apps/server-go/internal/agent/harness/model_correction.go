@@ -3,7 +3,9 @@ package harness
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
+	"strings"
 	"time"
 
 	"elysian/server/internal/agent/harness/model"
@@ -23,46 +25,38 @@ func (a *agentExecution) pendingToolCorrection(ctx context.Context) (bool, error
 	m := a.manager
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	records, err := readDocuments[ModelRequestRecord](ctx, m.store.db, "SELECT document FROM model_requests WHERE run_id=? ORDER BY request_index", a.run.ID)
+
+	records, err := storeRead(ctx, m.store, "pending-tool-correction", func(ctx context.Context) ([]ModelRequestRecord, error) {
+		return readDocuments[ModelRequestRecord](ctx, m.store.reader(ctx), "SELECT json_remove(document,'$.response','$.reasoning','$.content') FROM model_requests WHERE run_id=? AND json_extract(document,'$.purpose')='inference' ORDER BY request_index DESC LIMIT 1", a.run.ID)
+	})
 	if err != nil {
 		return false, m.contextStoreErrorLocked(err)
 	}
-	count, latest := 0, false
-	for _, record := range records {
-		if record.Purpose != "inference" {
-			continue
-		}
-		latest = record.Status == StateFailed && record.Error != nil && record.Error.Code == model.ToolNotLoadedCode
-		if latest {
-			count++
-		}
+	if len(records) == 0 || records[0].Status != StateFailed || records[0].Error == nil || records[0].Error.Code != model.ToolNotLoadedCode {
+		return false, nil
+	}
+	count, err := a.correctionCount(ctx, records[0], model.ToolNotLoadedCode, evidenceRecoveryRun(a.run))
+	if err != nil {
+		return false, m.contextStoreErrorLocked(err)
 	}
 	if evidenceRecoveryRun(a.run) {
-		if !latest {
-			return false, nil
-		}
-		var last ModelRequestRecord
-		for _, record := range records {
-			if record.Purpose == "inference" {
-				last = record
-			}
-		}
-		count = 0
-		for _, record := range records {
-			if record.Purpose == "inference" && record.Error != nil && record.Error.Code == model.ToolNotLoadedCode && correctionIdentity(record) == correctionIdentity(last) {
-				count++
-			}
-		}
 		return count < 3, nil
 	}
-	return latest && count == 1, nil
+	return count == 1, nil
 }
 
 func (a *agentExecution) requestInference(ctx context.Context) (ModelRequestRecord, error) {
 	transientAttempts := 0
 	for {
+		if continuousRun(a.run) && a.manager.store.recordsFault() != nil {
+			return ModelRequestRecord{}, a.suspendForRecovery(StateWaitingStorage, &Failure{Code: "record-storage-unavailable", Message: "记录副本暂时无法同步，已保存检查点并暂停新派发，恢复后自动继续"}, "")
+		}
 		request, refs, revision, err := a.buildContext(ctx)
 		if err != nil {
+			var failure *Error
+			if continuousRun(a.run) && errors.As(err, &failure) && failure.Code == "storage-read-transient" {
+				return ModelRequestRecord{}, a.suspendForRecovery(StateWaitingStorage, &Failure{Code: failure.Code, Message: failure.Message}, "")
+			}
 			return ModelRequestRecord{}, err
 		}
 		record, err := a.requestModel(ctx, "inference", request, refs, revision)
@@ -93,7 +87,23 @@ func (a *agentExecution) requestInference(ctx context.Context) (ModelRequestReco
 					}
 					continue
 				}
+				if continuousRun(a.run) {
+					if e := a.diagnoseModelFailure(ctx, record.CorrectionKey, failure.Message); e != nil {
+						return record, e
+					}
+					continue
+				}
 				return record, bad("no-progress", "相同工具参数在没有新证据的情况下连续校验失败三次，已停止重复纠正；"+failure.Message)
+			}
+			if continuousRun(a.run) && code == "record-storage-unavailable" {
+				return record, a.suspendForRecovery(StateWaitingStorage, record.Error, record.ID)
+			}
+			if continuousRun(a.run) && (transientModelFailure(code) || record.Error != nil && record.Error.Retryable) {
+				reason := record.Error
+				if reason == nil {
+					reason = &Failure{Code: code, Message: failure.Message}
+				}
+				return record, a.suspendForRecovery(StateWaitingModel, reason, record.ID)
 			}
 			if (transientModelFailure(code) || record.Error != nil && record.Error.Retryable) && transientAttempts < 2 {
 				transientAttempts++
@@ -115,6 +125,12 @@ func (a *agentExecution) requestInference(ctx context.Context) (ModelRequestReco
 				continue
 			}
 		}
+		if continuousRun(a.run) && errors.As(err, &failure) && failure.Code == "method-blocked" {
+			if e := a.diagnoseModelFailure(ctx, record.CorrectionKey, failure.Message); e != nil {
+				return record, e
+			}
+			continue
+		}
 		if !errors.As(err, &failure) || failure.Code != model.ToolNotLoadedCode {
 			return record, err
 		}
@@ -123,6 +139,12 @@ func (a *agentExecution) requestInference(ctx context.Context) (ModelRequestReco
 			return record, readErr
 		}
 		if !correct {
+			if continuousRun(a.run) {
+				if e := a.diagnoseModelFailure(ctx, record.CorrectionKey, failure.Message); e != nil {
+					return record, e
+				}
+				continue
+			}
 			if evidenceRecoveryRun(a.run) {
 				return record, bad("no-progress", "相同未加载工具提议在没有新目录证据的情况下失败三次，已停止重复纠正；"+failure.Message)
 			}
@@ -150,7 +172,7 @@ func (a *agentExecution) noteModelRecovery(ctx context.Context, id, status, mess
 		if err != nil {
 			return err
 		}
-		if r.Recovery == nil || r.Recovery.Status != "correcting" || r.Recovery.Tool != "模型响应" {
+		if r.Wait == nil && (r.Recovery == nil || r.Recovery.Status != "correcting" || r.Recovery.Tool != "模型响应") {
 			return nil
 		}
 	}
@@ -159,8 +181,12 @@ func (a *agentExecution) noteModelRecovery(ctx context.Context, id, status, mess
 			return context.Canceled
 		}
 		if status == "recovered" {
-			if r.Recovery == nil || r.Recovery.Status != "correcting" || r.Recovery.Tool != "模型响应" {
+			if r.Wait == nil && (r.Recovery == nil || r.Recovery.Status != "correcting" || r.Recovery.Tool != "模型响应") {
 				return nil
+			}
+			r.Wait = nil
+			if r.Recovery == nil {
+				r.Recovery = &RunRecovery{Tool: "模型响应"}
 			}
 			r.Recovery.Status, r.Recovery.Message = status, message
 		} else {
@@ -179,25 +205,23 @@ func transientModelFailure(code string) bool {
 	return false
 }
 
-func correctionIdentity(r ModelRequestRecord) string {
-	return r.CorrectionKey + ":" + digestJSON(r.ToolNames)
-}
-
 func (a *agentExecution) schemaCorrectionCount(ctx context.Context, latest ModelRequestRecord) (int, error) {
 	m := a.manager
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	records, err := readDocuments[ModelRequestRecord](ctx, m.store.db, "SELECT document FROM model_requests WHERE run_id=? AND json_extract(document,'$.purpose')='inference' ORDER BY request_index DESC", a.run.ID)
-	if err != nil {
-		return 0, m.contextStoreErrorLocked(err)
-	}
-	count := 0
-	for _, r := range records {
-		if r.Error != nil && r.Error.Code == "model-tool-schema-invalid" && correctionIdentity(r) == correctionIdentity(latest) {
-			count++
-		}
-	}
-	return count, nil
+
+	return a.correctionCount(ctx, latest, "model-tool-schema-invalid", true)
+}
+
+func (a *agentExecution) correctionCount(ctx context.Context, latest ModelRequestRecord, code string, match bool) (int, error) {
+	names, _ := json.Marshal(latest.ToolNames)
+	return storeRead(ctx, a.manager.store, "correction-count", func(ctx context.Context) (int, error) {
+		var count int
+		err := a.manager.store.reader(ctx).QueryRowContext(ctx, `SELECT COUNT(*) FROM model_requests WHERE run_id=?
+ AND json_extract(document,'$.purpose')='inference' AND json_extract(document,'$.error.code')=?
+ AND (?=0 OR (COALESCE(json_extract(document,'$.correctionKey'),'')=? AND COALESCE(json_extract(document,'$.toolNames'),'null')=?))`, a.run.ID, code, match, latest.CorrectionKey, string(names)).Scan(&count)
+		return count, err
+	})
 }
 
 // Failure analysis uses only bounded public facts, no tools or raw provider
@@ -207,7 +231,7 @@ func (a *agentExecution) summarizeFailure(ctx context.Context, cause error) {
 		return
 	}
 	var failure *Error
-	if !errors.As(cause, &failure) || budgetStopFor(a.run, failure.Code) != nil {
+	if !errors.As(cause, &failure) || budgetStopFor(a.run, failure.Code) != nil || continuousRun(a.run) && (strings.HasPrefix(failure.Code, "storage-") || strings.HasPrefix(failure.Code, "record-storage") || transientModelFailure(failure.Code) || failure.Code == "model-unavailable" || failure.Code == "model-auth-failed" || failure.Code == "model-http-failed" || failure.Code == "model-unresponsive") {
 		return
 	}
 	m := a.manager
@@ -239,8 +263,11 @@ func (a *agentExecution) summarizeFailure(ctx context.Context, cause error) {
 	if err != nil {
 		return
 	}
-	request := model.Request{ToolChoice: "none", MaxTokens: min(1024, a.outputLimit("")), Messages: []model.Message{{Role: "system", Content: "根据给定执行事实，用简洁中文解释失败步骤、已知原因、尝试过程、剩余目标和下一步。事实不足明确说明，不猜测根因，不声称未知操作成功，不请求或执行工具，不输出隐藏推理。"}, {Role: "user", Content: report.text()}}}
-	if estimateRequestTokens(request)+request.MaxTokens+r.Usage.Tokens > r.Limits.TokenBudget {
+	request := model.Request{ToolChoice: "none", MaxTokens: min(2048, a.outputLimit("")), Messages: []model.Message{{Role: "system", Content: "根据给定执行事实，用简洁中文解释失败步骤、已知原因、尝试过程、剩余目标和下一步。事实不足明确说明，不猜测根因，不声称未知操作成功，不请求或执行工具，不输出隐藏推理。"}, {Role: "user", Content: report.text()}}}
+	if estimateRequestTokens(request) > 8192 {
+		return
+	}
+	if !continuousRun(r) && estimateRequestTokens(request)+request.MaxTokens+r.Usage.Tokens > r.Limits.TokenBudget {
 		return
 	}
 	summaryCtx, cancel := context.WithTimeout(ctx, 10*time.Second)

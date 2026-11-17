@@ -216,7 +216,11 @@ type recordOwner struct{ kind, id string }
 func installRecordTriggers(tx *sql.Tx, spec recordSpec) error {
 	for _, action := range []string{"insert", "update"} {
 		trigger := fmt.Sprintf("agent_record_%s_%s", spec.table, action)
-		statement := fmt.Sprintf("CREATE TRIGGER %s AFTER %s ON %s BEGIN %s; END", trigger, strings.ToUpper(action), spec.table, recordInsertSQL(spec, "NEW", action, ""))
+		condition := ""
+		if action == "update" {
+			condition = " WHEN " + recordDocument(spec.table, "NEW") + " IS NOT " + recordDocument(spec.table, "OLD")
+		}
+		statement := fmt.Sprintf("CREATE TRIGGER %s AFTER %s ON %s%s BEGIN %s; END", trigger, strings.ToUpper(action), spec.table, condition, recordInsertSQL(spec, "NEW", action, ""))
 		if _, err := tx.Exec(statement); err != nil {
 			return fmt.Errorf("安装 %s 记录触发器失败：%w", spec.table, err)
 		}
@@ -248,6 +252,10 @@ func (s *store) recordsFault() error {
 func (s *store) failRecords(err error) error {
 	s.diagnose("records", "jsonl-persist", err)
 	s.recordsStateMu.Lock()
+	var integrity *recordIntegrityError
+	if errors.As(err, &integrity) {
+		s.recordsPermanent = true
+	}
 	if s.recordsErr == nil {
 		s.recordsErr = fmt.Errorf("Agent JSONL 记录副本不可用，派发已暂停：%w", err)
 	}
@@ -265,7 +273,7 @@ func recordDirectory(path string) error {
 		return err
 	}
 	if !info.IsDir() || info.Mode()&os.ModeSymlink != 0 {
-		return errors.New("记录目录必须是真实目录")
+		return recordIntegrity("记录目录必须是真实目录")
 	}
 	return os.Chmod(path, 0700)
 }
@@ -321,7 +329,7 @@ func openRecordFile(path string) (*os.File, bool, error) {
 	if statErr == nil {
 		info, err := os.Lstat(path)
 		if err != nil || !info.Mode().IsRegular() {
-			return nil, false, errors.New("记录文件必须是普通文件")
+			return nil, false, recordIntegrity("记录文件必须是普通文件")
 		}
 	}
 	fd, err := syscall.Open(path, syscall.O_CREAT|syscall.O_RDWR|syscall.O_NOFOLLOW|syscall.O_CLOEXEC, 0600)
@@ -332,7 +340,7 @@ func openRecordFile(path string) (*os.File, bool, error) {
 	info, err := f.Stat()
 	if err != nil || !info.Mode().IsRegular() {
 		f.Close()
-		return nil, false, errors.New("记录文件必须是普通文件")
+		return nil, false, recordIntegrity("记录文件必须是普通文件")
 	}
 	if err := f.Chmod(0600); err != nil {
 		f.Close()
@@ -370,7 +378,7 @@ func (s *store) cleanupRecords() error {
 		}
 		if info, err := os.Lstat(path); err == nil {
 			if !info.Mode().IsRegular() {
-				return errors.New("待清理的记录文件不是普通文件")
+				return recordIntegrity("待清理的记录文件不是普通文件")
 			}
 			if err := os.Remove(path); err != nil {
 				return err
@@ -381,6 +389,9 @@ func (s *store) cleanupRecords() error {
 		if err := syncRecordDir(filepath.Dir(path)); err != nil {
 			return err
 		}
+		if _, err := s.db.Exec("DELETE FROM agent_record_watermarks WHERE owner_kind=? AND owner_id=?", owner.kind, owner.id); err != nil {
+			return err
+		}
 		if _, err := s.db.Exec("DELETE FROM agent_record_cleanup WHERE owner_kind=? AND owner_id=?", owner.kind, owner.id); err != nil {
 			return err
 		}
@@ -389,6 +400,8 @@ func (s *store) cleanupRecords() error {
 }
 
 func (s *store) reconcileRecords(all bool) error {
+	s.recordsMu.Lock()
+	defer s.recordsMu.Unlock()
 	if err := s.cleanupRecords(); err != nil {
 		return err
 	}
@@ -435,81 +448,67 @@ func (s *store) reconcileRecordOwner(owner recordOwner, verifyAll bool) error {
 			return err
 		}
 	}
-	rows, err := s.db.Query(`SELECT seq,fact_type,fact_key,action,document FROM agent_record_outbox
- WHERE owner_kind=? AND owner_id=? AND seq>? ORDER BY seq`, owner.kind, owner.id, lastSeq)
-	if err != nil {
-		return err
-	}
 	reader := bufio.NewReader(f)
 	appending := false
-	for rows.Next() {
-		var line recordLine
-		var sequence int64
-		var raw string
-		if err := rows.Scan(&sequence, &line.Type, &line.Key, &line.Action, &raw); err != nil {
-			rows.Close()
-			return err
-		}
-		encoded, err := json.Marshal(json.RawMessage(raw))
+	for {
+		batch, err := s.recordBatch(owner, lastSeq)
 		if err != nil {
-			rows.Close()
 			return err
 		}
-		line.Version, line.Owner, line.OwnerID, line.Document = 1, owner.kind, owner.id, encoded
-		line.Sequence = strconv.FormatInt(sequence, 10)
-		digest := sha256.Sum256(encoded)
-		line.Digest = hex.EncodeToString(digest[:])
-		b, err := json.Marshal(line)
-		if err != nil {
-			rows.Close()
-			return err
+		if len(batch) == 0 {
+			break
 		}
-		b = append(b, '\n')
-		if !appending {
-			actual := make([]byte, len(b))
-			n, readErr := io.ReadFull(reader, actual)
-			actual = actual[:n]
-			switch {
-			case readErr == nil && bytes.Equal(actual, b):
+		for _, entry := range batch {
+			line, sequence, raw := entry.line, entry.sequence, entry.raw
+			encoded, err := json.Marshal(json.RawMessage(raw))
+			if err != nil {
+				return err
+			}
+			line.Version, line.Owner, line.OwnerID, line.Document = 1, owner.kind, owner.id, encoded
+			line.Sequence = strconv.FormatInt(sequence, 10)
+			digest := sha256.Sum256(encoded)
+			line.Digest = hex.EncodeToString(digest[:])
+			b, err := json.Marshal(line)
+			if err != nil {
+				return err
+			}
+			b = append(b, '\n')
+			if !appending {
+				actual := make([]byte, len(b))
+				n, readErr := io.ReadFull(reader, actual)
+				actual = actual[:n]
+				switch {
+				case readErr == nil && bytes.Equal(actual, b):
+					offset += int64(len(b))
+				case (errors.Is(readErr, io.EOF) || errors.Is(readErr, io.ErrUnexpectedEOF)) && len(actual) < len(b) && bytes.HasPrefix(b, actual):
+					// An interrupted append may leave only a prefix of the next
+					// committed line. The authoritative outbox supplies the rest.
+					if err := f.Truncate(offset); err != nil {
+						return err
+					}
+					if _, err := f.Seek(offset, io.SeekStart); err != nil {
+						return err
+					}
+					appending = true
+				default:
+					return recordIntegrity("记录文件与已提交的数据库事实不一致")
+				}
+			}
+			if appending {
+				if err := s.recordStage("append"); err != nil {
+					return err
+				}
+				if _, err := f.Write(b); err != nil {
+					return err
+				}
 				offset += int64(len(b))
-			case (errors.Is(readErr, io.EOF) || errors.Is(readErr, io.ErrUnexpectedEOF)) && len(actual) < len(b) && bytes.HasPrefix(b, actual):
-				// An interrupted append may leave only a prefix of the next
-				// committed line. The authoritative outbox supplies the rest.
-				if err := f.Truncate(offset); err != nil {
-					rows.Close()
-					return err
-				}
-				if _, err := f.Seek(offset, io.SeekStart); err != nil {
-					rows.Close()
-					return err
-				}
-				appending = true
-			default:
-				rows.Close()
-				return errors.New("记录文件与已提交的数据库事实不一致")
 			}
+			lastSeq = sequence
 		}
-		if appending {
-			if err := s.recordStage("append"); err != nil {
-				rows.Close()
-				return err
-			}
-			if _, err := f.Write(b); err != nil {
-				rows.Close()
-				return err
-			}
-			offset += int64(len(b))
-		}
-		lastSeq = sequence
 	}
-	if err := rows.Err(); err != nil {
-		rows.Close()
-		return err
-	}
-	rows.Close()
 	if !appending {
 		if _, err := reader.ReadByte(); err == nil {
-			return errors.New("记录文件含有数据库外的额外内容")
+			return recordIntegrity("记录文件含有数据库外的额外内容")
 		} else if !errors.Is(err, io.EOF) {
 			return err
 		}
@@ -530,8 +529,10 @@ func (s *store) reconcileRecordOwner(owner recordOwner, verifyAll bool) error {
 		return err
 	}
 	defer tx.Rollback()
-	_, err = tx.Exec(`INSERT INTO agent_record_watermarks(owner_kind,owner_id,last_seq,file_bytes) VALUES(?,?,?,?)
- ON CONFLICT(owner_kind,owner_id) DO UPDATE SET last_seq=excluded.last_seq,file_bytes=excluded.file_bytes`, owner.kind, owner.id, lastSeq, offset)
+	_, err = tx.Exec(`INSERT INTO agent_record_watermarks(owner_kind,owner_id,last_seq,file_bytes)
+ SELECT ?,?,?,? WHERE EXISTS(SELECT 1 FROM agent_record_outbox WHERE owner_kind=? AND owner_id=?)
+ AND NOT EXISTS(SELECT 1 FROM agent_record_cleanup WHERE owner_kind=? AND owner_id=?)
+ ON CONFLICT(owner_kind,owner_id) DO UPDATE SET last_seq=excluded.last_seq,file_bytes=excluded.file_bytes`, owner.kind, owner.id, lastSeq, offset, owner.kind, owner.id, owner.kind, owner.id)
 	if err != nil {
 		return err
 	}
@@ -542,9 +543,17 @@ func (s *store) reconcileRecordOwner(owner recordOwner, verifyAll bool) error {
 	return tx.Commit()
 }
 
+func (s *store) setRecordHook(hook func(string) error) {
+	s.recordHookMu.Lock()
+	defer s.recordHookMu.Unlock()
+	s.recordHook = hook
+}
 func (s *store) recordStage(stage string) error {
-	if s.recordHook != nil {
-		return s.recordHook(stage)
+	s.recordHookMu.RLock()
+	hook := s.recordHook
+	s.recordHookMu.RUnlock()
+	if hook != nil {
+		return hook(stage)
 	}
 	return nil
 }
@@ -561,4 +570,33 @@ func purgeRecordOwner(ctx context.Context, tx *sql.Tx, owner recordOwner) error 
 	}
 	_, err := tx.ExecContext(ctx, "DELETE FROM agent_record_watermarks WHERE owner_kind=? AND owner_id=?", owner.kind, owner.id)
 	return err
+}
+
+// recordBatch releases the sole SQLite connection before JSONL reads/writes.
+type recordEntry struct {
+	line     recordLine
+	sequence int64
+	raw      string
+}
+
+func (s *store) recordBatch(owner recordOwner, after int64) ([]recordEntry, error) {
+	rows, err := s.db.Query(`SELECT seq,fact_type,fact_key,action,document FROM agent_record_outbox WHERE owner_kind=? AND owner_id=? AND seq>? ORDER BY seq LIMIT 64`, owner.kind, owner.id, after)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var batch []recordEntry
+	size := 0
+	for rows.Next() {
+		var e recordEntry
+		if err := rows.Scan(&e.sequence, &e.line.Type, &e.line.Key, &e.line.Action, &e.raw); err != nil {
+			return nil, err
+		}
+		if len(batch) > 0 && size+len(e.raw) > 262144 {
+			break
+		}
+		batch = append(batch, e)
+		size += len(e.raw)
+	}
+	return batch, rows.Err()
 }

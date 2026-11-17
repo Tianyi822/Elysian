@@ -3,6 +3,7 @@ package model
 import (
 	"encoding/json"
 	"io"
+	"math"
 	"net/http"
 	"regexp"
 	"strconv"
@@ -16,16 +17,7 @@ var upstreamRequestID = regexp.MustCompile(`\(request_id: ([0-9a-fA-F]{8}-[0-9a-
 func responseError(response *http.Response) error {
 	err := responseStatusError(response.StatusCode)
 	if typed, ok := err.(*Error); ok && typed.Retryable {
-		value := response.Header.Get("Retry-After")
-		seconds, parseErr := strconv.Atoi(value)
-		if parseErr != nil {
-			if at, e := http.ParseTime(value); e == nil {
-				seconds = int(time.Until(at).Seconds())
-			}
-		}
-		if seconds > 0 {
-			typed.RetryAfterSeconds = min(seconds, 30)
-		}
+		typed.RetryAfterSeconds = retryAfterSeconds(response.Header.Get("Retry-After"), time.Now())
 	}
 	if err == nil || (response.StatusCode != 400 && response.StatusCode != 422) {
 		return err
@@ -55,6 +47,17 @@ func responseError(response *http.Response) error {
 		return problem(502, "model-thinking-continuation-required", diagnostic)
 	}
 	return err
+}
+
+func retryAfterSeconds(value string, now time.Time) int {
+	seconds, err := strconv.Atoi(value)
+	if err != nil {
+		if at, e := http.ParseTime(value); e == nil {
+			seconds = int(math.Ceil(at.Sub(now).Seconds()))
+		}
+	}
+	// Preserve the server's full delay while keeping duration arithmetic safe.
+	return min(max(0, seconds), int((1<<63-1)/int64(time.Second)))
 }
 
 func httpStatusText(status int) string {

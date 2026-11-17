@@ -13,7 +13,7 @@ import (
 // v8 保存可恢复的用户澄清请求。
 // v9 保存运行时授权，并为独立 MCP 探测补齐独立 JSONL 归属。
 // v10 保存强制删除后的域任务取消清单。
-const schemaVersion = 10
+const schemaVersion = 11
 
 const capabilitySchema = `
 CREATE TABLE workspace_cleanup (task_id TEXT PRIMARY KEY);
@@ -200,7 +200,20 @@ func migrateStore(db *sql.DB) error {
 			return err
 		}
 	}
-	if _, err = tx.Exec("PRAGMA user_version=10"); err != nil {
+	if version < 11 {
+		for _, spec := range recordSpecs {
+			if _, err = tx.Exec("DROP TRIGGER IF EXISTS agent_record_" + spec.table + "_update"); err != nil {
+				return err
+			}
+			condition := " WHEN " + recordDocument(spec.table, "NEW") + " IS NOT " + recordDocument(spec.table, "OLD")
+			statement := "CREATE TRIGGER agent_record_" + spec.table + "_update AFTER UPDATE ON " + spec.table + condition + " BEGIN " + recordInsertSQL(spec, "NEW", "update", "") + "; END"
+			if _, err = tx.Exec(statement); err != nil {
+				return err
+			}
+		}
+	}
+
+	if _, err = tx.Exec("PRAGMA user_version=11"); err != nil {
 		return err
 	}
 	return tx.Commit()

@@ -80,20 +80,24 @@ func TestProbeRecordsFailureFreezesDispatchAndRebuildsCommittedDecisions(t *test
 			m, e, server := probeManager(t, func(context.Context, mcp.Server) (mcp.Duplex, error) { opens.Add(1); return newProbeDuplex(), nil })
 			attachProbeRuntime(t, e, server.Stdio.Image)
 			ctx := context.Background()
+			if err := m.store.waitRecords(ctx); err != nil {
+				t.Fatal(err)
+			}
 			fail := func(string) error { return errors.New("injected probe replica failure") }
 			if stage == "request" {
-				m.mu.Lock()
-				m.store.recordHook = fail
-				m.mu.Unlock()
+				m.store.setRecordHook(fail)
 			}
 			p, err := m.RequestProbeAccess(ctx, e, server, "probe-fault-"+stage)
 			if err != nil {
 				t.Fatal(err)
 			}
 			if stage == "decision" {
-				m.mu.Lock()
-				m.store.recordHook = fail
-				m.mu.Unlock()
+				if err := m.store.waitRecords(ctx); err != nil {
+					t.Fatal(err)
+				}
+				m.store.setRecordHook(fail)
+			} else {
+				runtimeEventually(t, func() bool { return m.store.recordsFault() != nil })
 			}
 			_, err = m.DecideProbeAccess(ctx, e, p.ID, ProbeAccessDecision{RequestID: "probe-fault-decision", ExpectedVersion: p.Version, ExpectedDigest: p.Digest, Decision: "allow-once"})
 			if stage == "request" {

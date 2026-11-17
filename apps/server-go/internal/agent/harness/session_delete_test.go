@@ -43,6 +43,9 @@ func TestForceDeleteRunningModelIgnoresLateResultAndKeepsOtherSessions(t *testin
 	defer close(release)
 	run := submitAgentTest(t, m, session, "delete-model", "等待模型")
 	awaitDeleteSignal(t, started)
+	m.mu.Lock()
+	originalProcess := m.workers[0].process
+	m.mu.Unlock()
 	if err := m.DeleteSession(context.Background(), session.ID); err != nil {
 		t.Fatal(err)
 	}
@@ -50,7 +53,12 @@ func TestForceDeleteRunningModelIgnoresLateResultAndKeepsOtherSessions(t *testin
 	if _, err := m.Get(context.Background(), run.ID); !isNotFound(err) {
 		t.Fatalf("运行未删除：%v", err)
 	}
-	runtimeEventually(t, func() bool { info := m.Info(); return info.Agent.Available && info.Worker == "ready" })
+	runtimeEventually(t, func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		// The cancelled process can still report ready before its recycle begins.
+		return m.workerState == "ready" && m.workers[0].process != nil && m.workers[0].process != originalProcess
+	})
 	other, err := m.CreateSession(context.Background(), CreateSessionInput{ModelProfileID: session.ModelProfileID, ModelRevision: session.ModelRevision})
 	if err != nil {
 		t.Fatal(err)
@@ -316,7 +324,7 @@ func TestForceDeleteSchema9MigrationPreservesHistory(t *testing.T) {
 	if err := s.db.QueryRow("SELECT COUNT(*) FROM session_task_cleanup").Scan(&count); err != nil || count != 0 {
 		t.Fatal("清理清单迁移失败", err)
 	}
-	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != 10 {
+	if err := s.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != schemaVersion {
 		t.Fatalf("版本：%d %v", version, err)
 	}
 }

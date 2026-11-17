@@ -106,7 +106,7 @@ func TestMissingTaskVerificationRetriesDurableIntentWithoutRevivingHistory(t *te
 				return nil
 			}
 			if stage == "copy" {
-				m.store.recordHook = func(string) error { return injected }
+				m.store.setRecordHook(func(string) error { return injected })
 			}
 			if _, err := m.VerifyRecovery(m.ctx, o.RunID); err == nil {
 				t.Fatal("injected verification failure ignored")

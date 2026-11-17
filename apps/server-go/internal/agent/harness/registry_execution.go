@@ -40,6 +40,9 @@ func (m *Manager) initializeToolRuntime() error {
 }
 
 func (m *Manager) authorizeDispatch(ctx context.Context, s CapabilitySnapshot, o Operation) (context.Context, error) {
+	if err := m.store.waitRecords(ctx); err != nil {
+		return nil, err
+	}
 	args, err := jsonvalue.Object([]byte(o.ArgumentsJSON))
 	if err != nil {
 		return nil, err
@@ -221,6 +224,10 @@ func (m *Manager) registerRunCatalog(ctx context.Context, s CapabilitySnapshot) 
 			if err := m.deps.Catalog.Check(ctx, s, o); err != nil {
 				return nil, err
 			}
+			if err := m.store.waitRecords(ctx); err != nil {
+				return CapabilityResult{BusinessError: &Failure{Code: "record-storage-unavailable", Message: "执行前记录副本同步失败，该操作未派发", Evidence: &tools.ExecutionEvidence{Execution: "not-started", Changes: "none", Recovery: "correct", Stage: "dispatch-gate"}}}, nil
+			}
+
 			if err := tools.Revalidate(ctx); err != nil {
 				return nil, err
 			}
@@ -257,7 +264,7 @@ func (m *Manager) executeRegistryOperation(ctx context.Context, s CapabilitySnap
 	}
 	value, err := m.executeRegistryWithRetry(ctx, s, o, args)
 	if err != nil {
-		if business, ok := tools.AsBusinessError(err); ok && ctx.Err() == nil && (recoverableBusinessError(o.Capability, business) || s.RecoveryPolicy == evidenceRecoveryPolicy && (business.NotDispatched || o.Capability.Source == "builtin" && business.NoBusinessEffect)) {
+		if business, ok := tools.AsBusinessError(err); ok && ctx.Err() == nil && (recoverableBusinessError(o.Capability, business) || supportedRecoveryPolicy(s.RecoveryPolicy) && (business.NotDispatched || o.Capability.Source == "builtin" && business.NoBusinessEffect)) {
 			return CapabilityResult{BusinessError: businessFailure(business)}, nil
 		}
 		// 仅内置网页工具定义的安全业务错误可继续交给模型，不透传底层错误。

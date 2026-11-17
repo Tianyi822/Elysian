@@ -25,6 +25,7 @@ type ToolInvoker interface {
 }
 
 type Deps struct {
+	LegacyAgentPolicies   bool // compatibility builds and legacy-policy regression fixtures only
 	VerifyTask            func(context.Context, tools.TaskVerification) (tools.TaskReference, error)
 	InspectTask           func(context.Context, tools.TaskReference) (tools.TaskStatus, error)
 	CancelTask            func(context.Context, tools.TaskReference) error
@@ -105,6 +106,9 @@ func New(deps Deps) (*Manager, error) {
 	if err := validateLimits(deps.Limits); err != nil {
 		return nil, err
 	}
+	if continuousPolicies == "freeze" {
+		deps.LegacyAgentPolicies = true
+	}
 	if deps.AgentLimits == (Limits{}) {
 		deps.AgentLimits = DefaultAgentLimits()
 	}
@@ -124,6 +128,12 @@ func New(deps Deps) (*Manager, error) {
 	if err != nil {
 		return nil, err
 	}
+	fence, fenceErr := readWorkflowRecoveryFence(deps.WorkflowRecoveryFence)
+	if fenceErr != nil {
+		s.close()
+		return nil, fenceErr
+	}
+	s.freezeContinuous = deps.LegacyAgentPolicies || continuousPolicies == "freeze" || fence
 	if err = s.recover(context.Background()); err == nil {
 		err = (&Manager{store: s, deps: deps}).recoverWorkflows(context.Background())
 	}
@@ -133,9 +143,7 @@ func New(deps Deps) (*Manager, error) {
 	if err == nil {
 		err = (&Manager{store: s, deps: deps}).recoverWikiJobs(context.Background())
 	}
-	if err == nil {
-		err = s.recordsFault()
-	}
+
 	if err != nil {
 		_ = s.close()
 		return nil, fmt.Errorf("恢复运行记录失败：%w", err)
@@ -154,6 +162,7 @@ func New(deps Deps) (*Manager, error) {
 	}
 	m.taskCancelWake = make(chan struct{}, 1)
 	m.taskCleanupDone = make(chan struct{})
+	s.startRecordWorker(m.signal)
 	go m.loop()
 	go m.taskCleanupLoop()
 	m.maintenanceDone = make(chan struct{})
@@ -268,7 +277,8 @@ func (m *Manager) availableLocked() error {
 func (m *Manager) Info() RuntimeInfo {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	i := RuntimeInfo{Worker: m.workerState, Storage: "ready", Limits: m.deps.Limits, Tools: []tools.PublicSchema{}}
+	health := m.store.health()
+	i := RuntimeInfo{StorageHealth: &health, Worker: m.workerState, Storage: "ready", Limits: m.deps.Limits, Tools: []tools.PublicSchema{}}
 	if m.storageError || m.store.recordsFault() != nil {
 		i.Storage = "unavailable"
 	}
@@ -416,6 +426,9 @@ func (m *Manager) Get(ctx context.Context, id string) (Run, error) {
 		r, err := m.store.get(ctx, id)
 		if err == nil {
 			r.Continuation, err = continuation(ctx, m.store.reader(ctx), r)
+			if err == nil {
+				err = projectCurrentReport(ctx, m.store.reader(ctx), &r)
+			}
 		}
 		return r, err
 	})
@@ -481,7 +494,7 @@ func (m *Manager) Cancel(ctx context.Context, id string) (Run, error) {
 			return nil
 		}
 		r.CancelRequestedAt = stamp(m.deps.Now())
-		if r.Status == StateQueued || r.Status == StateWaitingInput || r.Status == StateWaitingApproval || r.Status == StateWaitingResource || r.Status == StateWaitingTask || r.Status == StateWaitingRecovery || r.Status == StateRecoveryRequired {
+		if r.Status == StateQueued || r.Status == StateWaitingInput || r.Status == StateWaitingApproval || r.Status == StateWaitingResource || r.Status == StateWaitingTask || r.Status == StateWaitingRecovery || r.Status == StateWaitingModel || r.Status == StateWaitingStorage || r.Status == StateRecoveryRequired {
 			r.Status = StateCancelled
 			r.EndReason = "cancelled"
 			r.EndedAt = r.CancelRequestedAt
@@ -750,6 +763,16 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 		}
 		r.Task = taskSnapshot
 		if m.store.recordsFault() != nil {
+			if continuousRun(r) {
+				m.mu.Unlock()
+				err := (&agentExecution{manager: m, run: r}).suspendForRecovery(StateWaitingStorage, &Failure{Code: "record-storage-unavailable", Message: "启动检查点已保存，记录副本暂时无法同步，恢复后自动继续"}, "")
+				if !errors.Is(err, worker.ErrSuspended) {
+					m.mu.Lock()
+					m.storageFailedLocked()
+					m.mu.Unlock()
+				}
+				continue
+			}
 			m.finishLocked(r.ID, StateInterrupted, "record-storage-unavailable", "JSONL 记录副本不可用，未启动执行")
 			m.mu.Unlock()
 			continue
@@ -759,6 +782,10 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 			remaining = time.Duration(r.WorkflowActiveReserved) * time.Millisecond
 		}
 		runCtx, cancel := context.WithTimeout(m.ctx, remaining)
+		if continuousRun(r) {
+			cancel()
+			runCtx, cancel = context.WithCancel(m.ctx)
+		}
 		activeStart := m.deps.Now()
 		execution := &executionState{deletedDone: make(chan struct{}), runID: r.ID, rootID: executionRoot(r), cancel: cancel}
 		m.executions[r.ID] = execution
@@ -842,8 +869,69 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 			if getErr != nil {
 				m.storageFailedLocked()
 			} else {
+				if continuousRun(current) && !terminal(current.Status) && !current.PolicyFrozen && current.CancelRequestedAt == "" && current.SupersededByRunID == "" && !execution.unresponsive && (m.ctx.Err() != nil || execution.maintenance || errors.As(err, &interrupted)) {
+					var recoverErr error
+					_, recoverErr = m.store.change(context.Background(), current.ID, "continuous-worker-checkpoint", func(tx *sql.Tx, r *Run) error {
+						if terminal(r.Status) || r.PolicyFrozen || r.CancelRequestedAt != "" || r.SupersededByRunID != "" {
+							return nil
+						}
+						unknown, e := unsettledRun(context.Background(), tx, r.ID)
+						if e != nil {
+							return e
+						}
+						if unknown {
+							return nil
+						}
+						if m.ctx.Err() == nil && !execution.maintenance && errors.As(err, &interrupted) {
+							if r.WorkerProgress != r.Usage.Calls {
+								r.WorkerRestarts = 0
+								r.WorkerProgress = r.Usage.Calls
+							}
+							if r.WorkerRestarts >= 3 {
+								return bad("no-progress", "执行进程已连续恢复三次，仍未取得新的工具执行事实；已保留检查点并停止重复重启，请检查进程故障后继续")
+							}
+							r.WorkerRestarts++
+						}
+						if e := interruptModelRequests(context.Background(), tx, r.ID, m.deps.Now()); e != nil {
+							return e
+						}
+						r.Status, r.Phase = StateQueued, "recovering"
+						return m.store.event(context.Background(), tx, r, "recovery/worker-checkpoint", "", nil, nil)
+					})
+					if recoverErr == nil {
+						latest, e := m.store.get(context.Background(), current.ID)
+						if e == nil && latest.Status == StateQueued {
+							m.mu.Unlock()
+							closeCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
+							closeErr := p.Close(closeCtx)
+							stop()
+							m.mu.Lock()
+							if closeErr != nil {
+								m.executionUnresponsiveLocked(execution, "执行进程未确认回收，已停止派发以保护原检查点")
+								m.finishLocked(r.ID, StateInterrupted, "worker-stop-unconfirmed", "执行进程未确认回收，检查点已保存，须先核实原进程")
+								m.mu.Unlock()
+								continue
+							}
+							delete(m.executions, r.ID)
+							m.refreshLegacyLocked()
+							m.signal()
+							slot.process = nil
+							m.setWorkerStateLocked(slot, "starting")
+							m.mu.Unlock()
+							continue
+						}
+					}
+					if recoverErr != nil {
+						var failure *Error
+						if errors.As(recoverErr, &failure) {
+							err = recoverErr
+						} else {
+							m.storageFailedLocked()
+						}
+					}
+				}
 				state, reason, message := StateSucceeded, "completed", ""
-				if (current.Status == StateWaitingInput || current.Status == StateWaitingApproval || current.Status == StateWaitingResource || current.Status == StateWaitingTask || current.Status == StateWaitingRecovery || current.Status == StateQueued || current.Status == StateRecoveryRequired) && (errors.Is(err, worker.ErrSuspended) || stoppedDuringShutdown) && current.CancelRequestedAt == "" && !execution.unresponsive && !execution.maintenance {
+				if (current.Status == StateWaitingInput || current.Status == StateWaitingApproval || current.Status == StateWaitingResource || current.Status == StateWaitingTask || current.Status == StateWaitingRecovery || current.Status == StateWaitingModel || current.Status == StateWaitingStorage || current.Status == StateQueued || current.Status == StateRecoveryRequired) && (errors.Is(err, worker.ErrSuspended) || stoppedDuringShutdown) && current.CancelRequestedAt == "" && !execution.unresponsive && !execution.maintenance {
 					delete(m.executions, r.ID)
 					m.refreshLegacyLocked()
 					m.signal()

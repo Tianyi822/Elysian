@@ -45,6 +45,8 @@ type ChatCacheHitUsage struct {
 }
 
 type ChatTimelineSnapshot struct {
+	Wait             *RunWait            `json:"wait,omitempty"`
+	CurrentReport    *CurrentReport      `json:"currentReport,omitempty"`
 	BlockingRecovery []BlockingRecovery  `json:"blockingRecovery"`
 	Recovery         *RunRecovery        `json:"recovery,omitempty"`
 	RecoveryPolicy   string              `json:"recoveryPolicy,omitempty"`
@@ -93,7 +95,7 @@ func (m *Manager) ChatSnapshot(ctx context.Context, id string) (ChatOutput, erro
 			return ChatOutput{}, err
 		}
 		// 工具结果仅在展开详情时经 Calls 读取，避免每 100ms 重传大结果。
-		calls, err := readDocuments[Call](ctx, m.store.reader(ctx), "SELECT json_remove(document,'$.result','$.args','$.argumentsJson') FROM calls WHERE run_id=? ORDER BY step_index", id)
+		calls, err := readDocuments[Call](ctx, m.store.reader(ctx), "SELECT json_remove(document,'$.result','$.args','$.argumentsJson','$.modelContent') FROM calls WHERE run_id=? ORDER BY step_index", id)
 		if err != nil {
 			return ChatOutput{}, err
 		}
@@ -111,6 +113,13 @@ func (m *Manager) ChatSnapshot(ctx context.Context, id string) (ChatOutput, erro
 		timeline.Continuation, err = continuation(ctx, m.store.reader(ctx), run)
 		if err != nil {
 			return ChatOutput{}, err
+		}
+		if err = projectCurrentReport(ctx, m.store.reader(ctx), &run); err != nil {
+			return ChatOutput{}, err
+		}
+		timeline.CurrentReport = run.CurrentReport
+		if !terminal(run.Status) {
+			timeline.Wait = run.Wait
 		}
 		timeline.TerminalResult, err = m.store.terminalResult(ctx, m.store.reader(ctx), run)
 		if err != nil {

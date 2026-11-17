@@ -164,6 +164,7 @@ type Tool struct {
 }
 
 type Request struct {
+	Continuous     bool `json:"-"`
 	ReasoningLevel string
 	// OnReasoning 接收供应商显式返回的可展示思考文本增量，不用于派发工具。
 	OnReasoning func(string) `json:"-"`

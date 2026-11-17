@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"sync"
 	"time"
 )
 
@@ -26,7 +27,11 @@ func responseLimit(maxTokens int) int {
 	return MaxResponseBytes + maxTokens*responseBytesPerToken
 }
 
-type httpClient struct{ client *http.Client }
+type httpClient struct {
+	client         *http.Client
+	continuousOnce sync.Once
+	continuous     *httpClient
+}
 
 // NewClient 复制传入客户端，强制禁止重定向与 Cookie；请求只发送一次，不重试。
 // nil 使用两分钟总时限；父进程仍应设置每次调用的 context 时限。
@@ -46,6 +51,9 @@ func (c *httpClient) Complete(ctx context.Context, p Profile, input Request) (Re
 	}
 	if err := validateProfile(p); err != nil {
 		return Response{}, err
+	}
+	if input.Continuous {
+		c = c.continuousClient()
 	}
 	adapter, err := resolveProtocol(p.APIFormat)
 	if err != nil {

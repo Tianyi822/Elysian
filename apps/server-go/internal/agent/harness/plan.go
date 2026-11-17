@@ -135,7 +135,7 @@ func (a *agentExecution) executePlan(ctx context.Context, index int, proposal mo
 			if err := ensureResultBudget(ctx, tx, *r, len(call.Result)); err != nil {
 				return err
 			}
-			if len(call.Result) > r.Limits.ResultBytes || r.Usage.ResultBytes+len(call.Result) > r.Limits.RunResultBytes {
+			if len(call.Result) > r.Limits.ResultBytes || !continuousRun(*r) && r.Usage.ResultBytes+len(call.Result) > r.Limits.RunResultBytes {
 				return bad("result-limit", "计划超过本轮结果容量限制")
 			}
 			r.Usage.ResultBytes += len(call.Result)

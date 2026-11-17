@@ -277,35 +277,38 @@ func (m *Manager) runAuthorizedProbe(ctx context.Context, cancel context.CancelF
 	defer func() { m.mu.Lock(); delete(m.probeCancels, lease.ID); m.mu.Unlock() }()
 	prepared := false
 	var lastReport time.Time
-	err := e.Executor.EnsureRuntime(ctx, *lease.Probe.Environment, func(p execution.RuntimeProgress) error {
-		if p.State != "ready" && time.Since(lastReport) < 250*time.Millisecond {
-			return ctx.Err()
-		}
-		lastReport = time.Now()
-		m.mu.Lock()
-		defer m.mu.Unlock()
-		if err := m.store.recordsFault(); err != nil {
-			return err
-		}
-		err := m.store.write(ctx, "probe-runtime-progress", func(tx *sql.Tx) error {
-			stored, err := readProbeLease(ctx, tx, lease.ID)
+	err := m.store.waitRecords(ctx)
+	if err == nil {
+		err = e.Executor.EnsureRuntime(ctx, *lease.Probe.Environment, func(p execution.RuntimeProgress) error {
+			if p.State != "ready" && time.Since(lastReport) < 250*time.Millisecond {
+				return ctx.Err()
+			}
+			lastReport = time.Now()
+			m.mu.Lock()
+			defer m.mu.Unlock()
+			if err := m.store.recordsFault(); err != nil {
+				return err
+			}
+			err := m.store.write(ctx, "probe-runtime-progress", func(tx *sql.Tx) error {
+				stored, err := readProbeLease(ctx, tx, lease.ID)
+				if err != nil {
+					return err
+				}
+				if stored.Probe.State == "cancelled" {
+					return context.Canceled
+				}
+				lease.Probe.Progress = &p
+				if p.State == "ready" {
+					lease.Probe.State = "running"
+				}
+				return saveResourceLease(ctx, tx, lease)
+			})
 			if err != nil {
 				return err
 			}
-			if stored.Probe.State == "cancelled" {
-				return context.Canceled
-			}
-			lease.Probe.Progress = &p
-			if p.State == "ready" {
-				lease.Probe.State = "running"
-			}
-			return saveResourceLease(ctx, tx, lease)
+			return m.store.recordsFault()
 		})
-		if err != nil {
-			return err
-		}
-		return m.store.recordsFault()
-	})
+	}
 	var catalog mcp.Catalog
 	if err == nil {
 		prepared = true

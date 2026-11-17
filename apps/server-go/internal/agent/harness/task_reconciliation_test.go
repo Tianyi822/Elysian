@@ -50,7 +50,7 @@ func TestTaskReconciliationCrashPointsResumeSameDecision(t *testing.T) {
 				return nil
 			}
 			if stage == "intent-copy" {
-				m.store.recordHook = func(string) error { return injected }
+				m.store.setRecordHook(func(string) error { return injected })
 			}
 			resolver := func(_ context.Context, intent tools.TaskReconciliation) error {
 				attempts++
@@ -67,7 +67,7 @@ func TestTaskReconciliationCrashPointsResumeSameDecision(t *testing.T) {
 				domainDecision = &copy
 				effects++
 				if stage == "completion-copy" {
-					m.store.recordHook = func(string) error { return injected }
+					m.store.setRecordHook(func(string) error { return injected })
 				}
 				return nil
 			}

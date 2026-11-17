@@ -147,7 +147,7 @@ func workflowGateDigest(w WorkflowInstance, step WorkflowStepDefinition, input s
 	}{w.ID, w.DefinitionRevision, step, input, w.Snapshot.Digest})
 }
 func (m *Manager) workflowContextFacts(ctx context.Context, r Run) ([]factGroup, error) {
-	attempts, err := readDocuments[WorkflowAttempt](ctx, m.store.db, "SELECT document FROM workflow_attempts WHERE workflow_id=? AND state='succeeded' ORDER BY rowid", r.WorkflowID)
+	attempts, err := readDocuments[WorkflowAttempt](ctx, m.store.reader(ctx), "SELECT document FROM workflow_attempts WHERE workflow_id=? AND state='succeeded' ORDER BY rowid", r.WorkflowID)
 	if err != nil {
 		return nil, err
 	}
@@ -162,7 +162,7 @@ func (m *Manager) workflowContextFacts(ctx context.Context, r Run) ([]factGroup,
 			continue
 		}
 		var raw string
-		if e := m.store.db.QueryRowContext(ctx, "SELECT document FROM workflow_nodes WHERE id=?", a.NodeID).Scan(&raw); e != nil {
+		if e := m.store.reader(ctx).QueryRowContext(ctx, "SELECT document FROM workflow_nodes WHERE id=?", a.NodeID).Scan(&raw); e != nil {
 			return nil, e
 		}
 		var node WorkflowNodeExecution
@@ -176,7 +176,7 @@ func (m *Manager) workflowContextFacts(ctx context.Context, r Run) ([]factGroup,
 		if r.ScopeID != "" && a.ScopeID != r.ScopeID {
 			continue
 		}
-		invalid, e := wikiArtifactInvalid(ctx, m.store.db, "run", a.RunID)
+		invalid, e := wikiArtifactInvalid(ctx, m.store.reader(ctx), "run", a.RunID)
 		if e != nil {
 			return nil, e
 		}
@@ -186,7 +186,7 @@ func (m *Manager) workflowContextFacts(ctx context.Context, r Run) ([]factGroup,
 		if a.RunNumber >= r.RunNumber {
 			continue
 		}
-		value, e := workflowOutput(ctx, m.store.db, a)
+		value, e := workflowOutput(ctx, m.store.reader(ctx), a)
 		if e != nil {
 			return nil, e
 		}
