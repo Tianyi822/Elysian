@@ -2,9 +2,11 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"time"
+
+	"elysian/server/internal/agent/harness/sessionstore"
+	hstate "elysian/server/internal/agent/harness/state"
 )
 
 func updateMaintenanceError(err error) bool {
@@ -39,14 +41,14 @@ func (m *Manager) maintenanceLoop() {
 
 func (m *Manager) interruptForMaintenanceLocked() {
 	ctx := context.Background()
-	runs, err := readDocuments[Run](ctx, m.store.db, "SELECT document FROM runs WHERE session_id<>'' AND workflow_id='' AND state IN ('queued','running','waiting-input','waiting-approval','waiting-resource','waiting-task','waiting-recovery','waiting-model','waiting-storage','recovery-required')")
+	runs, err := readView(ctx, m.store).MaintenanceRuns(ctx)
 	if err != nil {
 		m.storageFailedLocked()
 		return
 	}
 	for _, run := range runs {
 		execution := m.executionLocked(run.ID)
-		if continuousRun(run) {
+		if hstate.ContinuousRun(run) {
 			if execution != nil {
 				execution.maintenance = true
 				execution.cancel()
@@ -57,8 +59,8 @@ func (m *Manager) interruptForMaintenanceLocked() {
 			continue
 		}
 		// 与中断事实一同持久保存精确取消身份；只取消旧任务，绝不重投旧操作。
-		err = m.store.write(ctx, "maintenance-task-cancellation", func(tx *sql.Tx) error {
-			operations, err := readDocuments[Operation](ctx, tx, "SELECT document FROM operations WHERE run_id=? AND state IN ('dispatched','unknown','waiting-task')", run.ID)
+		err = writeStore(m.store, ctx, "maintenance-task-cancellation", func(tx sessionstore.Tx) error {
+			operations, err := tx.MaintenanceOperations(ctx, run.ID)
 			if err != nil {
 				return err
 			}

@@ -5,23 +5,12 @@ import (
 	"math"
 
 	"elysian/server/internal/agent/harness/model"
+	"elysian/server/internal/agent/harness/state"
 )
 
 const contextImageTokens = 1024
 
-// ASCII 约四字一 token，其他 Unicode 约一字一 token。仅用于组成展示，
-// 既有准入预算仍由 estimateRequest 的保守字节估算负责。
-func estimateContextText(text string) int {
-	ascii, other := 0, 0
-	for _, r := range text {
-		if r < 128 {
-			ascii++
-		} else {
-			other++
-		}
-	}
-	return (ascii+3)/4 + other
-}
+var estimateContextText = state.EstimateContextText
 
 func addContextBreakdown(dst *model.ContextBreakdown, src model.ContextBreakdown) {
 	dst.Messages += src.Messages

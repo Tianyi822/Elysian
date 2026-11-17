@@ -2,24 +2,25 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"os"
 	"path/filepath"
 	"testing"
 
 	"elysian/server/internal/agent/harness/model"
+	"elysian/server/internal/agent/harness/sessionstore"
+	"elysian/server/internal/agent/harness/state"
 )
 
 func TestWikiMaintenanceFenceInterruptsQueuedAndRunningJobsAtomically(t *testing.T) {
 	ctx := context.Background()
 	s, path := openRuntimeTestStore(t)
 	fence := filepath.Join(t.TempDir(), "agent-workflow-recovery.json")
-	m := &Manager{store: s, deps: Deps{Path: path, Now: s.now, NewID: randomID, WorkflowRecoveryFence: fence}}
+	m := &Manager{store: s, deps: Deps{Store: s, EmbeddingConfigPath: filepath.Join(filepath.Dir(filepath.Dir(path)), "config", "agent", "embeddings.json"), Now: s.now, NewID: state.RandomID, WorkflowRecoveryFence: fence}}
 	response := model.Response{FinishReason: "stop", Content: "保存的供应商响应"}
 	for _, kind := range []string{"extraction", "embedding"} {
 		for _, state := range []string{StateQueued, StateRunning, StateSucceeded} {
 			job := WikiJob{ID: kind + "-" + state, Kind: kind, OriginKind: "fixture", OriginID: state, Status: state, Input: "固定快照", Response: &response, CreatedAt: stamp(s.now()), CandidateIDs: []string{}, Sources: []WikiRef{}}
-			if err := s.write(ctx, "test-wiki-maintenance", func(tx *sql.Tx) error { return saveWikiJob(ctx, tx, job) }); err != nil {
+			if err := s.write(ctx, "test-wiki-maintenance", func(tx sessionstore.Tx) error { return saveWikiJob(ctx, tx, job) }); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -92,7 +93,7 @@ func TestWikiEvidenceRejectsFabricatedExcerptAndEvent(t *testing.T) {
 		}
 	}
 	page, err := m.CreateWikiPage(ctx, space.ID, WikiPageInput{Slug: "verified", Title: "检查证据", Markdown: "候选正文", Evidence: []WikiEvidence{{Kind: "run", RunID: run.ID, EventSeq: finished.LastSeq, Text: "检查已完成"}}})
-	if err != nil || page.Evidence[0].Digest != wikiDigest("run", "检查已完成") {
+	if err != nil || page.Evidence[0].Digest != state.WikiDigest("run", "检查已完成") {
 		t.Fatalf("真实摘录被拒绝：%+v %v", page, err)
 	}
 }

@@ -14,6 +14,7 @@ import (
 	execconfig "elysian/server/internal/agent/execution/config"
 	"elysian/server/internal/agent/harness/model"
 	"elysian/server/internal/agent/harness/skills"
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/harness/worker"
 	"elysian/server/internal/agent/harness/workspace"
 )
@@ -308,7 +309,7 @@ func waitWorkflowDockerStep(t *testing.T, m *Manager, id, step, status string) W
 		if w.Status == status && (step == "" || w.CurrentStepID == step) {
 			return w
 		}
-		if w.Status == StateRecoveryRequired || terminal(w.Status) || w.CurrentStepID == "skip" {
+		if w.Status == StateRecoveryRequired || hstate.Terminal(w.Status) || w.CurrentStepID == "skip" {
 			t.Fatalf("工作流未到达预期阶段 %s/%s：%+v", step, status, w)
 		}
 		select {

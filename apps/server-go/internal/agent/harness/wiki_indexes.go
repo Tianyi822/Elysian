@@ -6,6 +6,8 @@ import (
 	"math"
 	"sort"
 	"time"
+
+	"elysian/server/internal/agent/harness/state"
 )
 
 // WikiIndexInput 与 WikiIndexStatus 保留为共享契约类型：索引重建入口已随整理管线
@@ -79,7 +81,7 @@ func (m *Manager) wikiHybridSearchLocked(ctx context.Context, pages []WikiPage, 
 			byID[p.ID] = p
 		}
 	}
-	rows, err := m.store.db.QueryContext(ctx, "SELECT page_id,page_revision,digest,vector FROM wiki_embedding_indexes WHERE profile_id=? AND profile_revision=?", profile.ID, profile.Revision)
+	rows, err := readView(ctx, m.store).WikiEmbeddingMatches(ctx, profile.ID, profile.Revision)
 	if err != nil {
 		return text
 	}
@@ -89,12 +91,10 @@ func (m *Manager) wikiHybridSearchLocked(ctx context.Context, pages []WikiPage, 
 		score  float64
 	}
 	items := []item{}
-	for rows.Next() {
+	for _, record := range rows {
 		var id, digest, raw string
 		var revision int
-		if rows.Scan(&id, &revision, &digest, &raw) != nil {
-			continue
-		}
+		id, revision, digest, raw = record.PageID, record.Revision, record.Digest, record.Vector
 		page, ok := byID[id]
 		if !ok || page.Revision != revision || page.Digest != digest {
 			continue
@@ -110,8 +110,7 @@ func (m *Manager) wikiHybridSearchLocked(ctx context.Context, pages []WikiPage, 
 		}
 		items = append(items, item{page: page, vector: vector})
 	}
-	err = rows.Err()
-	rows.Close()
+
 	if err != nil || len(items) == 0 {
 		text.Reason = "Embedding 索引尚未就绪，使用 SQLite 中文双字全文回落"
 		return text
@@ -130,16 +129,16 @@ func (m *Manager) wikiHybridSearchLocked(ctx context.Context, pages []WikiPage, 
 	}
 	validItems := items[:0]
 	for _, item := range items {
-		refs := mergeWikiRefs(item.page.Sources, []WikiRef{{PageID: item.page.ID, Revision: item.page.Revision, Digest: item.page.Digest}})
-		if validateWikiSources(ctx, m.store.db, refs) == nil {
+		refs := state.MergeWikiRefs(item.page.Sources, []WikiRef{{PageID: item.page.ID, Revision: item.page.Revision, Digest: item.page.Digest}})
+		if validateWikiSources(ctx, m.store, refs) == nil {
 			validItems = append(validItems, item)
 		}
 	}
 	items = validItems
 	validText := []WikiSearchHit{}
 	for _, hit := range text.Items {
-		refs := mergeWikiRefs(hit.Page.Sources, []WikiRef{{PageID: hit.Page.ID, Revision: hit.Page.Revision, Digest: hit.Page.Digest}})
-		if validateWikiSources(ctx, m.store.db, refs) == nil {
+		refs := state.MergeWikiRefs(hit.Page.Sources, []WikiRef{{PageID: hit.Page.ID, Revision: hit.Page.Revision, Digest: hit.Page.Digest}})
+		if validateWikiSources(ctx, m.store, refs) == nil {
 			validText = append(validText, hit)
 		}
 	}

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"elysian/server/internal/agent/harness/model"
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/harness/worker"
 )
 
@@ -34,8 +35,8 @@ func TestToolExecutionFactsPreserveDispatchUncertainty(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			run := Run{Status: StateCancelled}
-			fact := projectToolExecution(run, tc.op, tc.call, nil)
-			content := toolFactContent(fact, tc.call)
+			fact := hstate.ProjectToolExecution(run, tc.op, tc.call, nil)
+			content := hstate.ToolFactContent(fact, tc.call)
 			if fact.Status != tc.status || !strings.Contains(content, tc.code) {
 				t.Fatalf("执行事实不符：%+v %s", fact, content)
 			}

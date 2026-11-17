@@ -2,13 +2,13 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"strings"
 	"testing"
 	"time"
 
+	"elysian/server/internal/agent/harness/sessionstore"
 	"elysian/server/internal/agent/tools"
 )
 
@@ -19,7 +19,7 @@ func TestBlockedTimelineTracksLiveSourcesThroughHistoricalVerification(t *testin
 	old := createRuntimeTestRun(t, s, "old-orphan", runtimeStoreTestTime)
 	op := Operation{ID: "old-orphan-op", RunID: old.ID, TaskID: old.TaskID, Status: "unknown", CallID: "old-call", DispatchID: "original-dispatch", ArgumentsJSON: `{"name":"mysql84","requestId":"` + strings.Repeat("a", 64) + `"}`, Capability: Capability{Name: "docker_container_create_service", Source: "builtin", Metadata: tools.Metadata{Async: true, Version: "3"}}, Task: &tools.TaskReference{Domain: "docker-container-operation", RequestID: strings.Repeat("a", 64)}}
 	waiter := Operation{ID: "blocked-op", RunID: blocked.ID, TaskID: blocked.TaskID, Status: StateWaitingResource, ResourceWait: &ResourceWait{Resource: "external:*", RunID: old.ID, OperationID: op.ID, Unknown: true}}
-	err := s.write(ctx, "blocked-history-fixture", func(tx *sql.Tx) error {
+	err := s.write(ctx, "blocked-history-fixture", func(tx sessionstore.Tx) error {
 		old.Status, old.EndReason, old.Error = StateInterrupted, "outcome-unknown", &Failure{Code: "outcome-unknown", Message: "原操作结果未知"}
 		if err := saveRun(ctx, tx, &old); err != nil {
 			return err
@@ -51,7 +51,7 @@ func TestBlockedTimelineTracksLiveSourcesThroughHistoricalVerification(t *testin
 	verifies := 0
 	m.deps.VerifyTask = func(_ context.Context, v tools.TaskVerification) (tools.TaskReference, error) {
 		verifies++
-		persisted, err := readOperation(ctx, s.db, op.ID)
+		persisted, err := readOperation(ctx, s, op.ID)
 		if err != nil || persisted.Recovery == nil {
 			t.Fatal("verification intent was not durable")
 		}
@@ -75,7 +75,7 @@ func TestBlockedTimelineTracksLiveSourcesThroughHistoricalVerification(t *testin
 	}
 	// A second unknown may appear after the first wait was recorded.
 	other := createRuntimeTestRun(t, s, "second-unknown", runtimeStoreTestTime)
-	if err := s.write(ctx, "second-fence", func(tx *sql.Tx) error {
+	if err := s.write(ctx, "second-fence", func(tx sessionstore.Tx) error {
 		if err := saveOperation(ctx, tx, Operation{ID: "second-operation", RunID: other.ID, TaskID: other.TaskID, Status: "unknown"}); err != nil {
 			return err
 		}
@@ -97,7 +97,7 @@ func TestBlockedTimelineTracksLiveSourcesThroughHistoricalVerification(t *testin
 	if len(snapshot.Timeline.BlockingRecovery) != 1 || snapshot.Timeline.BlockingRecovery[0].OperationID != "second-operation" || snapshot.Timeline.BlockingRecovery[0].Verifiable || snapshot.Timeline.Continuation.Allowed {
 		t.Fatal("remaining fence hidden or continuation falsely allowed")
 	}
-	if err := s.write(ctx, "resolve-second", func(tx *sql.Tx) error {
+	if err := s.write(ctx, "resolve-second", func(tx sessionstore.Tx) error {
 		return saveBarrier(ctx, tx, ExecutionBarrier{ID: "second-barrier", RunID: other.ID, OperationID: "second-operation", Status: "reconciled"})
 	}); err != nil {
 		t.Fatal(err)
@@ -113,7 +113,7 @@ func TestBlockedTimelineTracksLiveSourcesThroughHistoricalVerification(t *testin
 	if !strings.Contains(string(raw), `"blockingRecovery":[]`) {
 		t.Fatal("empty blockers omitted or null")
 	}
-	stored, _ := readOperation(ctx, s.db, waiter.ID)
+	stored, _ := readOperation(ctx, s, waiter.ID)
 	if stored.ResourceWait == nil || !stored.ResourceWait.Unknown {
 		t.Fatal("historical wait was rewritten")
 	}
@@ -140,7 +140,7 @@ func TestRunVerificationPreflightsAllUnresolvedOperations(t *testing.T) {
 	if err := m.settleDomainTask(op, tools.TaskStatus{Outcome: tools.TaskUnknown}); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.store.write(m.ctx, "unsupported-orphan", func(tx *sql.Tx) error {
+	if err := fixture(m).write(m.ctx, "unsupported-orphan", func(tx sessionstore.Tx) error {
 		return saveOperation(m.ctx, tx, Operation{ID: "unsupported", RunID: op.RunID, TaskID: op.TaskID, CallIndex: op.CallIndex + 1, Status: "unknown"})
 	}); err != nil {
 		t.Fatal(err)
@@ -165,7 +165,7 @@ func TestCurrentBlockingRecoveryKeepsGlobalAndScopedProtectionAligned(t *testing
 	waiter := Operation{ID: "scoped-waiter", RunID: blocked.ID, TaskID: blocked.TaskID, Status: StateWaitingResource,
 		Capability: Capability{Source: "builtin", ReadOnly: true}, ResourceClaims: []ResourceClaim{claim},
 		ResourceWait: &ResourceWait{Unknown: true, Resource: "docker-container:local:target", RunID: owner.ID, OperationID: "scope-source"}}
-	if err := s.write(ctx, "scoped-blockers", func(tx *sql.Tx) error {
+	if err := s.write(ctx, "scoped-blockers", func(tx sessionstore.Tx) error {
 		for _, op := range []Operation{waiter, {ID: "scope-source", RunID: owner.ID, TaskID: owner.TaskID, Status: "unknown"}, {ID: "unrelated-source", RunID: other.ID, TaskID: other.TaskID, Status: "unknown"}} {
 			if err := saveOperation(ctx, tx, op); err != nil {
 				return err
@@ -178,14 +178,14 @@ func TestCurrentBlockingRecoveryKeepsGlobalAndScopedProtectionAligned(t *testing
 	}); err != nil {
 		t.Fatal(err)
 	}
-	items, err := currentBlockingRecovery(ctx, s.db, blocked.ID)
+	items, err := currentBlockingRecovery(ctx, s, blocked.ID)
 	if err != nil || len(items) != 1 || items[0].OperationID != "scope-source" {
 		t.Fatalf("scoped read exposed unrelated global protection: %+v %v", items, err)
 	}
 	// Old external waiters could store the concrete resource. They still obey
 	// the global fence when their originally recorded source has been settled.
 	waiter.Capability.ReadOnly = false
-	if err := s.write(ctx, "legacy-concrete-global-wait", func(tx *sql.Tx) error {
+	if err := s.write(ctx, "legacy-concrete-global-wait", func(tx sessionstore.Tx) error {
 		if err := saveOperation(ctx, tx, waiter); err != nil {
 			return err
 		}
@@ -193,12 +193,12 @@ func TestCurrentBlockingRecoveryKeepsGlobalAndScopedProtectionAligned(t *testing
 	}); err != nil {
 		t.Fatal(err)
 	}
-	items, err = currentBlockingRecovery(ctx, s.db, blocked.ID)
-	state, stateErr := continuation(ctx, s.db, blocked)
+	items, err = currentBlockingRecovery(ctx, s, blocked.ID)
+	state, stateErr := continuation(ctx, s, blocked)
 	if err != nil || stateErr != nil || len(items) != 1 || items[0].OperationID != "unrelated-source" || state.Allowed {
 		t.Fatalf("legacy global waiter lost remaining protection: %+v %+v %v %v", items, state, err, stateErr)
 	}
-	if err := s.write(ctx, "independent-probe", func(tx *sql.Tx) error {
+	if err := s.write(ctx, "independent-probe", func(tx sessionstore.Tx) error {
 		return saveResourceLease(ctx, tx, ResourceLease{ID: "probe-lease", Source: "mcp-probe", State: "unknown"})
 	}); err != nil {
 		t.Fatal(err)

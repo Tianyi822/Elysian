@@ -113,7 +113,7 @@ func TestEnabledExtensionsEndToEndSearchLoadMCPCallAndSkillBody(t *testing.T) {
 	if err != nil || len(items) != 1 || items[0].Path != "SKILL.md" || items[0].Digest == "" || items[0].Source != "skill-load" {
 		t.Fatalf("技能读取未生成固定加载身份: %+v %v", items, err)
 	}
-	calls, err := m.store.calls(ctx, run.ID, "", 50)
+	calls, err := fixture(m).calls(ctx, run.ID, "", 50)
 	if err != nil || len(calls.Items) != 4 {
 		t.Fatalf("调用记录不完整: %+v %v", calls, err)
 	}

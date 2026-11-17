@@ -11,6 +11,7 @@ import (
 
 	"elysian/server/internal/agent/execution"
 	execconfig "elysian/server/internal/agent/execution/config"
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/harness/workspace"
 	"elysian/server/internal/agent/jsonvalue"
 	"elysian/server/internal/agent/tools"
@@ -49,7 +50,7 @@ func demandScriptParameters() json.RawMessage {
 func (e *Extensions) prepareDemandOperation(ctx context.Context, s CapabilitySnapshot, o Operation) (Operation, error) {
 	// Once prepared, preserve the exact proposed image and root identity through approval and restart.
 	if o.Access != nil {
-		if accessDigest(o) != o.Access.Digest {
+		if hstate.AccessDigest(o) != o.Access.Digest {
 			return o, bad("access-changed", "运行时授权请求内容已变化")
 		}
 		return o, nil
@@ -205,7 +206,7 @@ func (e *Extensions) prepareDemandOperation(ctx context.Context, s CapabilitySna
 	a.Resources = append(a.Resources, grant.Resources...)
 	o.Access = a
 	a.ScopeKey = accessScopeKey(o)
-	a.Digest = accessDigest(o)
+	a.Digest = hstate.AccessDigest(o)
 	return o, nil
 }
 func accessScopeKey(o Operation) string {
@@ -223,7 +224,7 @@ func accessScopeKey(o Operation) string {
 	a.Directories = append([]execconfig.Directory{}, a.Directories...)
 	sort.Slice(a.Directories, func(i, j int) bool { return a.Directories[i].Path < a.Directories[j].Path })
 	a.Network = append([]execconfig.NetworkEndpoint{}, a.Network...)
-	sort.Slice(a.Network, func(i, j int) bool { return digestJSON(a.Network[i]) < digestJSON(a.Network[j]) })
+	sort.Slice(a.Network, func(i, j int) bool { return hstate.DigestJSON(a.Network[i]) < hstate.DigestJSON(a.Network[j]) })
 	a.PrivateCIDRs = append([]string{}, a.PrivateCIDRs...)
 	sort.Strings(a.PrivateCIDRs)
 	argsDigest := ""
@@ -248,7 +249,7 @@ func accessScopeKey(o Operation) string {
 		value.TimeoutSeconds = 0
 		profile = &value
 	}
-	return digestJSON(struct {
+	return hstate.DigestJSON(struct {
 		Profile            *execconfig.Profile
 		Tool               string
 		Ref                RevisionRef
@@ -257,20 +258,7 @@ func accessScopeKey(o Operation) string {
 		FileRoot           *FileRootIdentity
 	}{profile, tool, ref, catalog, argsDigest, a, o.FileRoot})
 }
-func accessDigest(o Operation) string {
-	if o.Access == nil {
-		return ""
-	}
-	a := *o.Access
-	a.Digest = ""
-	return digestJSON(struct {
-		ID, RunID, Arguments, Snapshot string
-		Capability                     Capability
-		Execution                      *ExecutionPlan
-		FileRoot                       *FileRootIdentity
-		Access                         AccessRequest
-	}{o.ID, o.RunID, o.ArgumentsJSON, o.SnapshotDigest, o.Capability, o.Execution, o.FileRoot, a})
-}
+
 func accessSnapshot(s CapabilitySnapshot, o Operation) CapabilitySnapshot {
 	if s.AuthorizationMode != AuthorizationOnDemand || o.Access == nil {
 		return s
@@ -288,7 +276,7 @@ func RuntimeExecutionAuthorization(ctx context.Context, dispatchID string) (*exe
 	if o.Access == nil {
 		return nil, nil
 	}
-	if o.DispatchID != dispatchID || o.Authorization == nil || o.Authorization.Digest != o.Access.Digest || accessDigest(o) != o.Access.Digest {
+	if o.DispatchID != dispatchID || o.Authorization == nil || o.Authorization.Digest != o.Access.Digest || hstate.AccessDigest(o) != o.Access.Digest {
 		return nil, errors.New("运行时执行缺少匹配的已确认授权")
 	}
 	if o.Execution == nil {

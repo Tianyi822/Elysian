@@ -3,18 +3,9 @@ package harness
 import (
 	"context"
 	"encoding/json"
-	"sort"
-	"strings"
+
+	"elysian/server/internal/agent/harness/state"
 )
-
-const onDemandToolsV2 = "on-demand/v2"
-
-type LoadingBudget struct {
-	Estimator            string `json:"estimator"`
-	SkillIndexTokens     int    `json:"skillIndexTokens"`
-	ToolDefinitionTokens int    `json:"toolDefinitionTokens"`
-	SkillBodyTokens      int    `json:"skillBodyTokens"`
-}
 
 // loadingBudget 以模型声明容量减去输出上限后的输入空间（token）按固定比例切分。
 // 工具定义与技能材料的计量仍用 estimateContextText 的 local-text/v1 本地近似：
@@ -29,12 +20,8 @@ func loadingBudget(run Run, level string) LoadingBudget {
 	return LoadingBudget{Estimator: "local-text/v1", SkillIndexTokens: min(2048, input/16), ToolDefinitionTokens: min(8192, input/8), SkillBodyTokens: min(16384, input/4)}
 }
 
-func residentCapability(c Capability) bool {
-	return c.Source == toolDiscoverySource || c.Source == userInputSource || c.Source == planSource || c.Source == taskHistorySource
-}
-func definitionTokens(c Capability) int {
-	return estimateContextText(c.Name) + estimateContextText(c.Description) + estimateContextText(string(c.Parameters)) + 8
-}
+var residentCapability = state.ResidentCapability
+var definitionTokens = state.DefinitionTokens
 
 // 只给新快照写入 v2；恢复路径不重算、不补写旧快照。
 func finalizeLoading(s *CapabilitySnapshot, run Run, level string, original Environment) error {
@@ -82,7 +69,7 @@ func configureLoadingBudget(s *CapabilitySnapshot, run Run, level string) error 
 	if err := validateSnapshotLimits(*s); err != nil {
 		return err
 	}
-	s.Digest = digestJSON(*s)
+	s.Digest = state.DigestJSON(*s)
 	return nil
 }
 
@@ -98,69 +85,6 @@ func exactMCPTrust(env Environment, c Capability) bool {
 	return false
 }
 
-func (s CapabilitySnapshot) residentDefinitionTokens() int {
-	count := 0
-	for _, c := range s.Tools {
-		if residentCapability(c) || contains(s.EagerTools, c.Name) {
-			count += definitionTokens(c)
-		}
-	}
-	return count
-}
-
-// 目录仅用于排序，未展示项仍在不可变目录中，可被搜索。
-func (s CapabilitySnapshot) skillIndex(input string) json.RawMessage {
-	if s.ToolLoading != onDemandToolsV2 || s.LoadingBudget == nil {
-		raw, _ := json.Marshal(s.SkillSummaries)
-		return raw
-	}
-	type entry struct {
-		Name        string `json:"name"`
-		Revision    int    `json:"revision"`
-		Description string `json:"description"`
-	}
-	type candidate struct {
-		entry entry
-		score int
-		id    string
-	}
-	candidates := []candidate{}
-	terms := searchTerms(strings.ToLower(input))
-	for _, skill := range s.SkillSummaries {
-		score := 0
-		for _, term := range terms {
-			if strings.Contains(strings.ToLower(skill.Name), term) {
-				score += 20
-			}
-			if strings.Contains(strings.ToLower(skill.Description), term) {
-				score += 4
-			}
-		}
-		description := []rune(skill.Description)
-		if len(description) > 160 {
-			description = description[:160]
-		}
-		candidates = append(candidates, candidate{entry{skill.Name, skill.Ref.Revision, string(description)}, score, skill.Ref.ID})
-	}
-	sort.Slice(candidates, func(i, j int) bool {
-		if candidates[i].score != candidates[j].score {
-			return candidates[i].score > candidates[j].score
-		}
-		return candidates[i].id < candidates[j].id
-	})
-	entries := []entry{}
-	raw := json.RawMessage(`[]`)
-	for _, c := range candidates {
-		next, _ := json.Marshal(append(entries, c.entry))
-		if estimateContextText(string(next)) > s.LoadingBudget.SkillIndexTokens {
-			continue
-		}
-		entries = append(entries, c.entry)
-		raw = next
-	}
-	return raw
-}
-
 type loadedToolState struct {
 	Retained []string // 搜索回执中的保留顺序，用于下一次搜索的预算淘汰。
 	Order    []string // 定义首次加载顺序；淘汰后重新加载追加到尾部。
@@ -168,25 +92,20 @@ type loadedToolState struct {
 
 // loadedToolsV2 从同一次读取恢复可见集合和定义顺序。
 func (m *Manager) loadedToolsV2(ctx context.Context, runID string, s CapabilitySnapshot) (loadedToolState, error) {
-	rows, err := m.store.db.QueryContext(ctx, `SELECT c.document FROM calls c JOIN operations o ON o.id=json_extract(c.document,'$.operationId') WHERE c.run_id=? AND o.run_id=? AND c.state='succeeded' AND o.state='completed' AND json_extract(o.document,'$.capability.source')=? AND json_extract(o.document,'$.capability.name')=? AND json_extract(o.document,'$.snapshotDigest')=? ORDER BY c.rowid`, runID, runID, toolDiscoverySource, toolSearchName, s.Digest)
+	rows, err := readView(ctx, m.store).ToolLoadHistory(ctx, runID, toolDiscoverySource, toolSearchName, s.Digest)
 	if err != nil {
 		return loadedToolState{}, storageFailure(err)
 	}
-	defer rows.Close()
+
 	var calls []Call
-	for rows.Next() {
+	for _, record := range rows {
 		var raw []byte
 		var call Call
-		if err = rows.Scan(&raw); err != nil {
-			return loadedToolState{}, storageFailure(err)
-		}
+		raw = record.Document
 		if err = json.Unmarshal(raw, &call); err != nil {
 			return loadedToolState{}, storageFailure(err)
 		}
 		calls = append(calls, call)
-	}
-	if err := rows.Err(); err != nil {
-		return loadedToolState{}, storageFailure(err)
 	}
 	return projectLoadedTools(s, calls), nil
 }
@@ -204,7 +123,7 @@ func projectLoadedTools(s CapabilitySnapshot, calls []Call) loadedToolState {
 			continue
 		}
 		current := make(map[string]bool, len(result.Retained))
-		total := s.residentDefinitionTokens()
+		total := s.ResidentDefinitionTokens()
 		valid := true
 		for _, name := range result.Retained {
 			c, ok := byName[name]
@@ -264,7 +183,7 @@ func searchToolsWithBudget(s CapabilitySnapshot, args json.RawMessage, previous 
 	for _, c := range s.Tools {
 		byName[c.Name] = c
 	}
-	budget := s.LoadingBudget.ToolDefinitionTokens - s.residentDefinitionTokens()
+	budget := s.LoadingBudget.ToolDefinitionTokens - s.ResidentDefinitionTokens()
 	seen := map[string]bool{}
 	for _, match := range result.Matches {
 		c := byName[match.Name]
@@ -322,3 +241,5 @@ func prepareWorkflowRunLoading(run *Run) {
 	}
 	run.Snapshot = &copy
 }
+
+const onDemandToolsV2 = state.OnDemandToolsV2

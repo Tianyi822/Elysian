@@ -2,32 +2,18 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"strings"
 
 	"elysian/server/internal/agent/harness/model"
+	"elysian/server/internal/agent/harness/sessionstore"
+	"elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/mcp"
 	"elysian/server/internal/agent/tools"
 )
 
 const planTool = "update_plan"
-const planSource = "task-plan"
-
-type PlanStep struct {
-	ID     string `json:"id"`
-	Title  string `json:"title"`
-	Status string `json:"status"`
-}
-
-// RunPlan 是模型确认的步骤快照，不代表外部操作已获授权或执行成功。
-type RunPlan struct {
-	SourceRunID string     `json:"sourceRunId,omitempty"`
-	Revision    int        `json:"revision"`
-	UpdatedAt   string     `json:"updatedAt"`
-	Steps       []PlanStep `json:"steps"`
-}
 
 func planCapability() Capability {
 	return Capability{Name: planTool, Source: planSource, ReadOnly: true,
@@ -78,7 +64,7 @@ func (a *agentExecution) executePlan(ctx context.Context, index int, proposal mo
 	m := a.manager
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.closed || m.storageError || ctx.Err() != nil || m.store.recordsFault() != nil {
+	if m.closed || m.storageError || ctx.Err() != nil || m.store.DispatchError() != nil {
 		return context.Canceled
 	}
 	if err := a.validatePlanAccess(*a.pending); err != nil {
@@ -89,12 +75,12 @@ func (a *agentExecution) executePlan(ctx context.Context, index int, proposal mo
 			return err
 		}
 	}
-	_, err := m.store.change(ctx, a.run.ID, "update-plan", func(tx *sql.Tx, r *Run) error {
+	_, err := m.store.ChangeRun(ctx, a.run.ID, "update-plan", func(tx sessionstore.Tx, r *Run) error {
 		if r.Status != StateRunning || r.CancelRequestedAt != "" {
 			return context.Canceled
 		}
 		var raw string
-		err := tx.QueryRowContext(ctx, "SELECT document FROM calls WHERE run_id=? AND json_extract(document,'$.modelRequestId')=? AND json_extract(document,'$.modelCallId')=?", r.ID, a.pending.ID, proposal.ID).Scan(&raw)
+		err := tx.PlanInvocation(ctx, r.ID, a.pending.ID, proposal.ID, &raw)
 		if err == nil {
 			var existing Call
 			if err := json.Unmarshal([]byte(raw), &existing); err != nil {
@@ -105,7 +91,7 @@ func (a *agentExecution) executePlan(ctx context.Context, index int, proposal mo
 			}
 			return nil
 		}
-		if !errors.Is(err, sql.ErrNoRows) {
+		if !errors.Is(err, sessionstore.ErrNotFound) {
 			return err
 		}
 		if callLimitReached(*r) {
@@ -135,7 +121,7 @@ func (a *agentExecution) executePlan(ctx context.Context, index int, proposal mo
 			if err := ensureResultBudget(ctx, tx, *r, len(call.Result)); err != nil {
 				return err
 			}
-			if len(call.Result) > r.Limits.ResultBytes || !continuousRun(*r) && r.Usage.ResultBytes+len(call.Result) > r.Limits.RunResultBytes {
+			if len(call.Result) > r.Limits.ResultBytes || !state.ContinuousRun(*r) && r.Usage.ResultBytes+len(call.Result) > r.Limits.RunResultBytes {
 				return bad("result-limit", "计划超过本轮结果容量限制")
 			}
 			r.Usage.ResultBytes += len(call.Result)
@@ -145,7 +131,7 @@ func (a *agentExecution) executePlan(ctx context.Context, index int, proposal mo
 		if err := saveCall(ctx, tx, call); err != nil {
 			return err
 		}
-		return m.store.event(ctx, tx, r, "plan/update", call.ID, &call.StepIndex, nil)
+		return tx.Event(ctx, r, "plan/update", call.ID, &call.StepIndex, nil)
 	})
 	if err != nil {
 		if _, ok := err.(*Error); !ok && !errors.Is(err, context.Canceled) && ctx.Err() == nil {
@@ -155,3 +141,5 @@ func (a *agentExecution) executePlan(ctx context.Context, index int, proposal mo
 	}
 	return nil
 }
+
+const planSource = state.PlanSource

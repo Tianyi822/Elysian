@@ -2,10 +2,10 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"database/sql/driver"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"modernc.org/sqlite"
 )
@@ -47,18 +47,20 @@ func TestContextReadInterruptCleansUpBeforeMappingFailure(t *testing.T) {
 		t.Run(map[int32]string{1: "recovered", 2: "bounded"}[failures], func(t *testing.T) {
 			s, path := openRuntimeTestStore(t)
 			run := continuousStoreRun(t, s, "context-interrupt")
-			task, err := readTask(context.Background(), s.db, run.TaskID)
+			task, err := readTask(context.Background(), s, run.TaskID)
 			if err != nil {
 				t.Fatal(err)
 			}
 			run.Task = &task
-			if err := s.db.Close(); err != nil {
+			if err := s.close(); err != nil {
 				t.Fatal(err)
 			}
 			connector := &interruptedContextConnector{path: path, failures: failures}
-			s.db = sql.OpenDB(connector)
-			s.db.SetMaxOpenConns(1)
-			s.db.SetMaxIdleConns(1)
+			s, err = openFixture(path, func() time.Time { return runtimeStoreTestTime }, connector)
+			if err != nil {
+				t.Fatal(err)
+			}
+			defer s.close()
 			m := &Manager{store: s}
 			a := &agentExecution{manager: m, run: run}
 			_, groups, _, err := a.contextFacts(context.Background(), false)

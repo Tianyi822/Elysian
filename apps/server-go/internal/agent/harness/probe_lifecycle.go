@@ -2,13 +2,14 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"strings"
 	"time"
 
 	"elysian/server/internal/agent/execution"
+	"elysian/server/internal/agent/harness/sessionstore"
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/kardia"
 	"elysian/server/internal/agent/mcp"
 	"elysian/server/internal/agent/tools"
@@ -26,7 +27,7 @@ func (m *Manager) probeServer(ctx context.Context, e *Extensions, server mcp.Ser
 	lease := ResourceLease{ID: "probe-" + m.deps.NewID(), Source: "mcp-probe", ServerID: server.ID, ServerRevision: server.Revision,
 		State: "held", Claims: []ResourceClaim{{Kind: "global", Authority: "external", Key: "*", Access: "write"}}, CreatedAt: stamp(m.deps.Now())}
 	lease.ScopeID = lease.ID
-	err := m.store.write(ctx, "probe-start", func(tx *sql.Tx) error {
+	err := writeStore(m.store, ctx, "probe-start", func(tx sessionstore.Tx) error {
 		if err := saveResourceLease(ctx, tx, lease); err != nil {
 			return err
 		}
@@ -35,7 +36,7 @@ func (m *Manager) probeServer(ctx context.Context, e *Extensions, server mcp.Ser
 			return err
 		}
 		if !available {
-			return &Error{409, "resource-busy", "存在冲突执行或未核实的执行结果，暂不能启动 MCP 探测"}
+			return &Error{Status: 409, Code: "resource-busy", Message: "存在冲突执行或未核实的执行结果，暂不能启动 MCP 探测"}
 		}
 		return nil
 	})
@@ -55,7 +56,7 @@ func (m *Manager) runProbe(ctx context.Context, e *Extensions, server mcp.Server
 	defer stop()
 	defer cancel()
 	var catalog mcp.Catalog
-	probeErr := m.store.waitRecords(pctx)
+	probeErr := waitRecords(m.store, pctx)
 	if probeErr == nil {
 		catalog, probeErr = m.executeProbe(pctx, e, server, lease)
 	}
@@ -73,7 +74,7 @@ func (m *Manager) runProbe(ctx context.Context, e *Extensions, server mcp.Server
 	}
 	m.mu.Lock()
 	settleCtx, settleCancel := context.WithTimeout(context.Background(), 5*time.Second)
-	err := m.store.write(settleCtx, "probe-stop", func(tx *sql.Tx) error {
+	err := writeStore(m.store, settleCtx, "probe-stop", func(tx sessionstore.Tx) error {
 		// A cancellation may have been committed while the external call was
 		// closing. Preserve its request identity so response-loss retries stay
 		// idempotent after the final stop receipt replaces this lease document.
@@ -120,7 +121,7 @@ func (m *Manager) runProbe(ctx context.Context, e *Extensions, server mcp.Server
 		return mcp.Catalog{}, storageFailure(err)
 	}
 	if unknown {
-		return mcp.Catalog{}, &Error{503, "mcp-probe-stop-unconfirmed", "MCP 探测容器停止结果未确认；资源租约保持未知，须核实容器后解除"}
+		return mcp.Catalog{}, &Error{Status: 503, Code: "mcp-probe-stop-unconfirmed", Message: "MCP 探测容器停止结果未确认；资源租约保持未知，须核实容器后解除"}
 	}
 	if probeErr != nil {
 		return mcp.Catalog{}, probeErr
@@ -165,14 +166,14 @@ func (m *Manager) executeProbe(ctx context.Context, e *Extensions, server mcp.Se
 			return checkErr
 		}
 		var raw string
-		if err := m.store.db.QueryRowContext(checkCtx, "SELECT document FROM resource_leases WHERE id=?", lease.ID).Scan(&raw); err != nil {
+		if err := m.store.ProbeLeaseRecord(checkCtx, lease.ID, &raw); err != nil {
 			return err
 		}
 		var stored ResourceLease
 		if err := json.Unmarshal([]byte(raw), &stored); err != nil {
 			return err
 		}
-		if stored.State != "held" || digestJSON(stored) != digestJSON(lease) {
+		if stored.State != "held" || hstate.DigestJSON(stored) != hstate.DigestJSON(lease) {
 			return bad("probe-lease-changed", "MCP 探测授权与持久化租约不符")
 		}
 		return nil
@@ -208,22 +209,22 @@ func (m *Manager) ReconcileProbeLease(ctx context.Context, id, evidence, decisio
 			return lease, err
 		}
 	}
-	err := m.store.write(ctx, "probe-reconcile", func(tx *sql.Tx) error {
+	err := writeStore(m.store, ctx, "probe-reconcile", func(tx sessionstore.Tx) error {
 		var raw string
-		if err := tx.QueryRowContext(ctx, "SELECT document FROM resource_leases WHERE id=?", id).Scan(&raw); err != nil {
+		if err := tx.ProbeLeaseRecord(ctx, id, &raw); err != nil {
 			return err
 		}
 		if err := json.Unmarshal([]byte(raw), &lease); err != nil {
 			return err
 		}
 		if lease.Source != "mcp-probe" || lease.OperationID != "" || lease.RunID != "" {
-			return &Error{409, "lease-reconciliation-denied", "操作租约须通过对应执行屏障核实"}
+			return &Error{Status: 409, Code: "lease-reconciliation-denied", Message: "操作租约须通过对应执行屏障核实"}
 		}
 		if lease.State == "released" && lease.Evidence == evidence && lease.Decision == decision {
 			return nil
 		}
 		if lease.State != "unknown" {
-			return &Error{409, "lease-state-conflict", "只能核实停止结果未知的探测租约"}
+			return &Error{Status: 409, Code: "lease-state-conflict", Message: "只能核实停止结果未知的探测租约"}
 		}
 		lease.State = "released"
 		lease.EndedAt = stamp(m.deps.Now())

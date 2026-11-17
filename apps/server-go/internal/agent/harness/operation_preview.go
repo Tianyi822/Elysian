@@ -29,7 +29,7 @@ func (m *Manager) prepareOperationChanges(ctx context.Context, operation Operati
 	}
 	// Host previews reuse confirmed tool receipts, never a new host read before
 	// dispatch. A matching content digest is required to show a prior baseline.
-	reads, err := readDocuments[Call](ctx, m.store.db, `SELECT c.document FROM calls c JOIN operations o ON o.id=json_extract(c.document,'$.operationId') WHERE c.run_id=? AND c.state='succeeded' AND json_extract(c.document,'$.tool')='file_read' AND json_extract(o.document,'$.capability.source')='builtin' ORDER BY c.rowid DESC LIMIT 64`, operation.RunID)
+	reads, err := readView(ctx, m.store).OperationCalls(ctx, operation.RunID)
 	if err != nil {
 		return nil, storageFailure(err)
 	}

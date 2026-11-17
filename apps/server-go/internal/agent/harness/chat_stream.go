@@ -3,46 +3,12 @@ package harness
 import (
 	"encoding/json"
 	"net/http"
-	"strings"
 	"time"
+
+	hstate "elysian/server/internal/agent/harness/state"
 
 	"github.com/go-chi/chi/v5"
 )
-
-// ChatOutput 是可替换的展示快照，最终消息仍以 Messages 为准。
-type ChatOutput struct {
-	RunID      string                `json:"runId"`
-	ResponseID string                `json:"responseId"`
-	Reasoning  string                `json:"reasoning"`
-	Content    string                `json:"content"`
-	Done       bool                  `json:"done"`
-	Timeline   *ChatTimelineSnapshot `json:"timeline,omitempty"`
-}
-
-func chatOutput(run Run, records []ModelRequestRecord) ChatOutput {
-	out := ChatOutput{RunID: run.ID, Done: terminal(run.Status)}
-	var reasoning []string
-	for _, record := range records {
-		if record.Purpose != "inference" {
-			continue
-		}
-		out.ResponseID, out.Content = record.ID, ""
-		if record.Status == StateRunning || record.Status == StateCancelled {
-			reasoning = append(reasoning, record.Reasoning)
-			out.Content = record.Content
-		} else if record.Response != nil {
-			reasoning = append(reasoning, record.Response.Reasoning)
-			if len(record.Response.ToolCalls) == 0 && record.Response.FinishReason == "stop" {
-				out.Content = record.Response.Content
-			}
-		}
-	}
-	out.Reasoning = strings.TrimSpace(strings.Join(reasoning, "\n\n"))
-	if out.Done && run.Status != StateSucceeded && run.Status != StateCancelled {
-		out.Content = ""
-	}
-	return out
-}
 
 // 短连接只读流：合并 100ms 内的变化，重连发送当前快照，不重放模型请求。
 // 每 30 秒重连；装配层绑定登录撤销与被动复验，写入超时及页面离开也会回收连接。
@@ -51,7 +17,7 @@ func streamChatOutput(_ runtimeService, agent agentRuntimeService, w http.Respon
 		return
 	}
 	id := chi.URLParam(req, "id")
-	read := func() (ChatOutput, error) {
+	read := func() (hstate.ChatOutput, error) {
 		return agent.ChatSnapshot(req.Context(), id)
 	}
 	output, err := read()

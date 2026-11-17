@@ -2,25 +2,14 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"time"
 
+	"elysian/server/internal/agent/harness/sessionstore"
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/tools"
 )
-
-func readBarrier(ctx context.Context, q interface {
-	QueryRowContext(context.Context, string, ...any) *sql.Row
-}, id string) (ExecutionBarrier, error) {
-	var b ExecutionBarrier
-	var raw string
-	if err := q.QueryRowContext(ctx, "SELECT document FROM execution_barriers WHERE id=?", id).Scan(&raw); err != nil {
-		return b, err
-	}
-	err := json.Unmarshal([]byte(raw), &b)
-	return b, err
-}
 
 // Reconcile persists intent before calling the injected domain resolver outside
 // the manager lock and SQLite transaction. Repeated requests and startup retries
@@ -40,7 +29,7 @@ func (m *Manager) Reconcile(ctx context.Context, id, evidence, decision string) 
 		m.mu.Unlock()
 		return b, bad("invalid-reconciliation", "必须提供外部核实证据及 confirmed-completed 或 confirmed-stopped 决定")
 	}
-	err := m.store.write(ctx, "reconciliation-intent", func(tx *sql.Tx) error {
+	err := writeStore(m.store, ctx, "reconciliation-intent", func(tx sessionstore.Tx) error {
 		var err error
 		b, err = readBarrier(ctx, tx, id)
 		if err != nil {
@@ -50,14 +39,14 @@ func (m *Manager) Reconcile(ctx context.Context, id, evidence, decision string) 
 			if b.Decision == decision && b.Evidence == evidence {
 				return nil
 			}
-			return &Error{409, "decision-conflict", "该屏障已有不同核实决定"}
+			return &Error{Status: 409, Code: "decision-conflict", Message: "该屏障已有不同核实决定"}
 		}
 		if b.Status != "unknown" {
-			return &Error{409, "barrier-state-conflict", "只能核实已标记结果未知的操作；在途操作必须先结束确认流程"}
+			return &Error{Status: 409, Code: "barrier-state-conflict", Message: "只能核实已标记结果未知的操作；在途操作必须先结束确认流程"}
 		}
 		b.Decision, b.Evidence = decision, evidence
 		o, err := readOperation(ctx, tx, b.OperationID)
-		if err != nil && !errors.Is(err, sql.ErrNoRows) {
+		if err != nil && !errors.Is(err, sessionstore.ErrNotFound) {
 			return err
 		}
 		if active := m.executionLocked(o.RunID); active != nil {
@@ -74,9 +63,9 @@ func (m *Manager) Reconcile(ctx context.Context, id, evidence, decision string) 
 		}
 		if o.Task != nil {
 			if o.Task.ID == "" || o.Task.RequestID == "" {
-				return &Error{409, "task-identity-unresolved", "须先核实异步任务的完整受理身份"}
+				return &Error{Status: 409, Code: "task-identity-unresolved", Message: "须先核实异步任务的完整受理身份"}
 			}
-			b.Reconciliation = &tools.TaskReconciliation{ID: b.ID, OperationID: o.ID, Task: *o.Task, ArgumentsDigest: digestJSON(o.ArgumentsJSON), Tool: o.Capability.Name, Decision: decision, Evidence: evidence}
+			b.Reconciliation = &tools.TaskReconciliation{ID: b.ID, OperationID: o.ID, Task: *o.Task, ArgumentsDigest: hstate.DigestJSON(o.ArgumentsJSON), Tool: o.Capability.Name, Decision: decision, Evidence: evidence}
 			return saveBarrier(ctx, tx, b)
 		}
 		b.Status, b.ReconciledAt = "reconciled", stamp(m.deps.Now())
@@ -86,7 +75,7 @@ func (m *Manager) Reconcile(ctx context.Context, id, evidence, decision string) 
 		return m.settleReconciledProtection(ctx, tx, b)
 	})
 	if err == nil {
-		err = m.store.recordsFault()
+		err = m.store.DispatchError()
 	}
 	m.mu.Unlock()
 	if err != nil {
@@ -100,16 +89,19 @@ func (m *Manager) Reconcile(ctx context.Context, id, evidence, decision string) 
 }
 
 func (m *Manager) completeTaskReconciliation(ctx context.Context, expected ExecutionBarrier) (ExecutionBarrier, error) {
+	if err := waitRecords(m.store, ctx); err != nil {
+		return expected, storageFailure(err)
+	}
 	m.mu.Lock()
 	if m.closed || m.storageError {
 		m.mu.Unlock()
 		return expected, closedError()
 	}
-	if err := m.store.recordsFault(); err != nil {
+	if err := m.store.DispatchError(); err != nil {
 		m.mu.Unlock()
 		return expected, storageFailure(err)
 	}
-	b, err := readBarrier(ctx, m.store.db, expected.ID)
+	b, err := readBarrier(ctx, m.store, expected.ID)
 	if err != nil {
 		m.mu.Unlock()
 		return b, storageFailure(err)
@@ -118,35 +110,35 @@ func (m *Manager) completeTaskReconciliation(ctx context.Context, expected Execu
 		m.mu.Unlock()
 		return b, nil
 	}
-	if b.Reconciliation == nil || digestJSON(b.Reconciliation) != digestJSON(expected.Reconciliation) {
+	if b.Reconciliation == nil || hstate.DigestJSON(b.Reconciliation) != hstate.DigestJSON(expected.Reconciliation) {
 		m.mu.Unlock()
-		return b, &Error{409, "decision-conflict", "核实决定已变化"}
+		return b, &Error{Status: 409, Code: "decision-conflict", Message: "核实决定已变化"}
 	}
-	o, err := readOperation(ctx, m.store.db, b.OperationID)
+	o, err := readOperation(ctx, m.store, b.OperationID)
 	if err != nil {
 		m.mu.Unlock()
 		return b, storageFailure(err)
 	}
 	if !reconciliationOperationMatches(b.Reconciliation, o) {
 		m.mu.Unlock()
-		return b, &Error{409, "task-identity-changed", "核实任务身份已变化"}
+		return b, &Error{Status: 409, Code: "task-identity-changed", Message: "核实任务身份已变化"}
 	}
 	intent := *b.Reconciliation
 	intent.ArgumentsJSON = o.ArgumentsJSON
 	resolver := m.deps.ReconcileTask
 	m.mu.Unlock()
 	if resolver == nil {
-		return b, &Error{503, "task-reconciliation-unavailable", "域任务核实暂不可用，核实决定已保存，资源保护保留"}
+		return b, &Error{Status: 503, Code: "task-reconciliation-unavailable", Message: "域任务核实暂不可用，核实决定已保存，资源保护保留"}
 	}
 	if err := resolver(ctx, intent); err != nil {
-		return b, &Error{409, "task-reconciliation-pending", "域任务尚未完成核实，核实决定已保存，资源保护保留"}
+		return b, &Error{Status: 409, Code: "task-reconciliation-pending", Message: "域任务尚未完成核实，核实决定已保存，资源保护保留"}
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed || m.storageError {
 		return b, closedError()
 	}
-	err = m.store.write(ctx, "reconciliation-completed", func(tx *sql.Tx) error {
+	err = writeStore(m.store, ctx, "reconciliation-completed", func(tx sessionstore.Tx) error {
 		current, err := readBarrier(ctx, tx, b.ID)
 		if err != nil {
 			return err
@@ -155,15 +147,15 @@ func (m *Manager) completeTaskReconciliation(ctx context.Context, expected Execu
 			b = current
 			return nil
 		}
-		if current.Status != "unknown" || digestJSON(current.Reconciliation) != digestJSON(b.Reconciliation) {
-			return &Error{409, "decision-conflict", "核实决定已变化"}
+		if current.Status != "unknown" || hstate.DigestJSON(current.Reconciliation) != hstate.DigestJSON(b.Reconciliation) {
+			return &Error{Status: 409, Code: "decision-conflict", Message: "核实决定已变化"}
 		}
 		op, err := readOperation(ctx, tx, b.OperationID)
 		if err != nil {
 			return err
 		}
 		if !reconciliationOperationMatches(&intent, op) {
-			return &Error{409, "task-identity-changed", "核实任务身份已变化"}
+			return &Error{Status: 409, Code: "task-identity-changed", Message: "核实任务身份已变化"}
 		}
 		b.Status, b.ReconciledAt = "reconciled", stamp(m.deps.Now())
 		if err := saveBarrier(ctx, tx, b); err != nil {
@@ -178,19 +170,19 @@ func (m *Manager) completeTaskReconciliation(ctx context.Context, expected Execu
 }
 
 func reconciliationOperationMatches(intent *tools.TaskReconciliation, o Operation) bool {
-	return intent != nil && intent.OperationID == o.ID && intent.Tool == o.Capability.Name && intent.ArgumentsDigest == digestJSON(o.ArgumentsJSON) && digestJSON(o.Task) == digestJSON(&intent.Task)
+	return intent != nil && intent.OperationID == o.ID && intent.Tool == o.Capability.Name && intent.ArgumentsDigest == hstate.DigestJSON(o.ArgumentsJSON) && hstate.DigestJSON(o.Task) == hstate.DigestJSON(&intent.Task)
 }
 
-func (m *Manager) settleReconciledProtection(ctx context.Context, tx *sql.Tx, b ExecutionBarrier) error {
+func (m *Manager) settleReconciledProtection(ctx context.Context, tx sessionstore.Tx, b ExecutionBarrier) error {
 	// The unknown receipt is already charged. Reconciliation releases only the
 	// remaining reservation; it must not charge the receipt or workflow twice.
 	o, err := readOperation(ctx, tx, b.OperationID)
-	if err != nil && !errors.Is(err, sql.ErrNoRows) {
+	if err != nil && !errors.Is(err, sessionstore.ErrNotFound) {
 		return err
 	}
 	if o.CallID != "" {
 		var raw string
-		if err := tx.QueryRowContext(ctx, "SELECT document FROM calls WHERE id=?", o.CallID).Scan(&raw); err != nil {
+		if err := tx.LatestInstructionResult(ctx, o.CallID, &raw); err != nil {
 			return err
 		}
 		var call Call
@@ -237,7 +229,7 @@ func (m *Manager) retryReconciliations() {
 		return
 	}
 	m.reconciliationRetryAt = m.deps.Now().Add(5 * time.Second)
-	barriers, err := readDocuments[ExecutionBarrier](m.ctx, m.store.db, "SELECT document FROM execution_barriers WHERE state='unknown' AND json_extract(document,'$.reconciliation') IS NOT NULL ORDER BY rowid LIMIT 16")
+	barriers, err := readView(m.ctx, m.store).PendingReconciliations(m.ctx)
 	m.mu.Unlock()
 	if err != nil {
 		return

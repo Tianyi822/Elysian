@@ -2,11 +2,11 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"testing"
 	"time"
 
+	"elysian/server/internal/agent/harness/sessionstore"
 	"elysian/server/internal/agent/tools"
 )
 
@@ -23,20 +23,20 @@ func TestTaskReconciliationCrashPointsResumeSameDecision(t *testing.T) {
 			}
 			call := calls.Items[0]
 			call.ReservedResultBytes = 1024
-			if err := m.store.write(m.ctx, "reserve-unknown-receipt", func(tx *sql.Tx) error { return saveCall(m.ctx, tx, call) }); err != nil {
+			if err := fixture(m).write(m.ctx, "reserve-unknown-receipt", func(tx sessionstore.Tx) error { return saveCall(m.ctx, tx, call) }); err != nil {
 				t.Fatal(err)
 			}
 			before, _ := m.Get(m.ctx, o.RunID)
 			var domainDecision *tools.TaskReconciliation
 			attempts, effects := 0, 0
 			injected := errors.New("injected reconciliation failure")
-			m.store.beforeWrite = func(op string) error {
+			fixture(m).beforeWrite = func(op string) error {
 				if op == "reconciliation-intent" {
 					if stage == "intent-write" {
 						return injected
 					}
 					if stage == "intent-commit" {
-						m.store.failNextCommit = injected
+						fixture(m).failNextCommit = injected
 					}
 				}
 				if op == "reconciliation-completed" {
@@ -44,13 +44,13 @@ func TestTaskReconciliationCrashPointsResumeSameDecision(t *testing.T) {
 						return injected
 					}
 					if stage == "completion-commit" {
-						m.store.failNextCommit = injected
+						fixture(m).failNextCommit = injected
 					}
 				}
 				return nil
 			}
 			if stage == "intent-copy" {
-				m.store.setRecordHook(func(string) error { return injected })
+				fixture(m).setRecordHook(func(string) error { return injected })
 			}
 			resolver := func(_ context.Context, intent tools.TaskReconciliation) error {
 				attempts++
@@ -67,7 +67,7 @@ func TestTaskReconciliationCrashPointsResumeSameDecision(t *testing.T) {
 				domainDecision = &copy
 				effects++
 				if stage == "completion-copy" {
-					m.store.setRecordHook(func(string) error { return injected })
+					fixture(m).setRecordHook(func(string) error { return injected })
 				}
 				return nil
 			}
@@ -84,8 +84,8 @@ func TestTaskReconciliationCrashPointsResumeSameDecision(t *testing.T) {
 				want = "released" // Both authoritative stores committed; JSONL is repaired on reopen.
 			}
 			assertDomainProtection(t, m, o, want)
-			path := m.store.dbPathForTest(t)
-			if err := m.store.close(); err != nil {
+			path := fixture(m).dbPathForTest(t)
+			if err := fixture(m).close(); err != nil {
 				t.Fatal(err)
 			}
 			reopened, err := openStore(path, func() time.Time { return runtimeStoreTestTime })
@@ -141,8 +141,8 @@ func TestTaskReconciliationRejectsChangedOperationBinding(t *testing.T) {
 			if _, err := m.Reconcile(m.ctx, b.ID, "核实证据", "confirmed-stopped"); err == nil {
 				t.Fatal("expected pending intent")
 			}
-			pending, _ := readBarrier(m.ctx, m.store.db, b.ID)
-			current, _ := readOperation(m.ctx, m.store.db, o.ID)
+			pending, _ := readBarrier(m.ctx, fixture(m), b.ID)
+			current, _ := readOperation(m.ctx, fixture(m), o.ID)
 			switch field {
 			case "arguments":
 				current.ArgumentsJSON = `{"changed":true}`
@@ -151,7 +151,7 @@ func TestTaskReconciliationRejectsChangedOperationBinding(t *testing.T) {
 			case "task":
 				current.Task.ID = "different-task"
 			}
-			if err := m.store.write(m.ctx, "changed-binding", func(tx *sql.Tx) error { return saveOperation(m.ctx, tx, current) }); err != nil {
+			if err := fixture(m).write(m.ctx, "changed-binding", func(tx sessionstore.Tx) error { return saveOperation(m.ctx, tx, current) }); err != nil {
 				t.Fatal(err)
 			}
 			if _, err := m.completeTaskReconciliation(m.ctx, pending); err == nil || attempts != 1 {

@@ -121,7 +121,7 @@ func TestApprovalShutdownBeforeSuspensionAcknowledged(t *testing.T) {
 					}
 					deps := m.deps
 					closed := make(chan error, 1)
-					go func() { closed <- m.Close(context.Background()) }()
+					go func() { closed <- closeFixtureManager(m, context.Background()) }()
 					select {
 					case <-cancelled:
 					case <-time.After(5 * time.Second):
@@ -131,7 +131,7 @@ func TestApprovalShutdownBeforeSuspensionAcknowledged(t *testing.T) {
 					if err := <-closed; err != nil {
 						t.Fatal(err)
 					}
-					persisted, err := openStore(deps.Path, deps.Now)
+					persisted, err := openStore(fixtureDeps(deps).path, deps.Now)
 					if err != nil {
 						t.Fatal(err)
 					}
@@ -141,11 +141,11 @@ func TestApprovalShutdownBeforeSuspensionAcknowledged(t *testing.T) {
 					if readErr != nil || closeErr != nil || before.Status != expected || before.Resume == nil || before.Resume.ResponseID == "" || requests.Load() != 2 || proposals.Load() != 1 || calls.Load() != 0 {
 						t.Fatalf("关机改写了已持久审批边界：%+v read=%v close=%v requests=%d proposals=%d calls=%d", before, readErr, closeErr, requests.Load(), proposals.Load(), calls.Load())
 					}
-					m, err = New(deps)
+					m, err = newFixtureManager(t, deps)
 					if err != nil {
 						t.Fatal(err)
 					}
-					t.Cleanup(func() { _ = m.Close(context.Background()) })
+					t.Cleanup(func() { _ = closeFixtureManager(m, context.Background()) })
 					if decision == "cancelled" {
 						got := runtimeFinished(t, m, runID)
 						if got.Status != StateCancelled || calls.Load() != 0 || requests.Load() != 2 {

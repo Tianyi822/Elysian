@@ -34,7 +34,7 @@ func (m *Manager) observeTaskProgress(expected Operation, progress *tools.TaskPr
 	if m.closed || m.storageError || expected.Task == nil {
 		return
 	}
-	current, err := readOperation(context.Background(), m.store.db, expected.ID)
+	current, err := readOperation(context.Background(), m.store, expected.ID)
 	if err != nil || current.Task == nil || *current.Task != *expected.Task || (current.Status != StateWaitingTask && current.Status != "unknown") {
 		return // 删除或完成期间迟到的观察结果不得复活任务。
 	}

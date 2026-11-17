@@ -85,7 +85,7 @@ func TestContextUsesCurrentToolInventoryAndLatestInputAfterLegacyConversation(t 
 	if got := runtimeFinished(t, m, run.ID); got.Status != StateSucceeded {
 		t.Fatalf("expanded tool conversation failed: %+v", got)
 	}
-	calls, err := m.store.calls(context.Background(), run.ID, "", 50)
+	calls, err := fixture(m).calls(context.Background(), run.ID, "", 50)
 	if err != nil || len(calls.Items) != 2 || calls.Items[0].Tool != toolSearchName || calls.Items[1].Tool != "platform_dependencies" || calls.Items[1].Status != StateSucceeded {
 		t.Fatalf("non-Docker discovery/execution failed: %+v %v", calls, err)
 	}
@@ -97,7 +97,7 @@ func TestToolInventorySummaryIsBoundedToCurrentSnapshot(t *testing.T) {
 		{Name: "database_list", Description: "PRIVATE_DESCRIPTION", Source: "builtin", Metadata: tools.Metadata{Domain: "database"}},
 		{Name: "selected_skill", Source: "skill-load"},
 	}, Materials: []Capability{{Name: "user_selected_prompt", Source: "mcp-prompt"}}}
-	inventory := snapshot.toolInventory()
+	inventory := snapshot.ToolInventory()
 	if inventory.Total != 2 || inventory.Domains["database"] != 1 || inventory.Domains["skill-load"] != 1 || len(inventory.Domains) != 2 {
 		t.Fatalf("inventory counts include hidden material/search: %+v", inventory)
 	}

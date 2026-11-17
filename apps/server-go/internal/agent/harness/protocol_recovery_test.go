@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"elysian/server/internal/agent/harness/model"
+	hstate "elysian/server/internal/agent/harness/state"
 )
 
 func TestNativeDatabasePreflightRejectionContinuesAndReleasesBarrier(t *testing.T) {
@@ -42,7 +43,7 @@ func TestNativeDatabasePreflightRejectionContinuesAndReleasesBarrier(t *testing.
 	var approval Approval
 	runtimeEventually(t, func() bool {
 		current, _ := m.Get(context.Background(), run.ID)
-		if terminal(current.Status) {
+		if hstate.Terminal(current.Status) {
 			t.Fatalf("finished before approval: status=%s reason=%s error=%+v", current.Status, current.EndReason, current.Error)
 		}
 		approvals, _ := m.Approvals(context.Background())
@@ -99,7 +100,7 @@ func TestNativeDatabasePreflightRejectionContinuesAndReleasesBarrier(t *testing.
 	if err != nil || len(barriers) != 1 || barriers[0].Status != "confirmed" {
 		t.Fatalf("屏障未确认：%+v %v", barriers, err)
 	}
-	_, raw := readRecordLines(t, m.store, recordOwner{"session", session.ID})
+	_, raw := readRecordLines(t, fixture(m), recordOwner{"session", session.ID})
 	if !strings.Contains(string(raw), "database-task-rejected") || strings.Contains(string(raw), "outcome-unknown") {
 		t.Fatal("JSONL 未保留真实拒绝原因")
 	}
@@ -178,7 +179,7 @@ func TestRealClientContinuationCorrectsUnloadedToolWithoutPartialExecution(t *te
 	if got.Usage.Tokens < records.Items[0].EstimatedTokens+4096 {
 		t.Fatal("拒绝响应未计入预算")
 	}
-	_, raw := readRecordLines(t, m.store, recordOwner{"session", session.ID})
+	_, raw := readRecordLines(t, fixture(m), recordOwner{"session", session.ID})
 	if !strings.Contains(string(raw), model.ToolNotLoadedCode) {
 		t.Fatal("纠正前失败未保存到 JSONL")
 	}

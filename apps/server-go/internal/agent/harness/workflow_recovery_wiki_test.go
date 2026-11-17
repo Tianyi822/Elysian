@@ -2,11 +2,11 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"path/filepath"
 	"strings"
 	"testing"
 
+	"elysian/server/internal/agent/harness/sessionstore"
 	"elysian/server/internal/agent/harness/workspace"
 )
 
@@ -41,7 +41,7 @@ func TestWorkflowV1RecoveryRejectsWithdrawnRunMemoryAndWorkspace(t *testing.T) {
 				}
 			}
 			m.mu.Lock()
-			err = m.store.write(ctx, "v1-recovery-source-fixture", func(tx *sql.Tx) error {
+			err = fixture(m).write(ctx, "v1-recovery-source-fixture", func(tx sessionstore.Tx) error {
 				id := w.ActiveRunID
 				if kind == "memory" {
 					id = w.TaskID + ":1"
@@ -55,7 +55,7 @@ func TestWorkflowV1RecoveryRejectsWithdrawnRunMemoryAndWorkspace(t *testing.T) {
 						return err
 					}
 				}
-				return saveWorkflowWikiArtifact(ctx, tx, kind, id, w.TaskID, []WikiRef{{page.ID, page.Revision, page.Digest}})
+				return saveWorkflowWikiArtifact(ctx, tx, kind, id, w.TaskID, []WikiRef{{PageID: page.ID, Revision: page.Revision, Digest: page.Digest}})
 			})
 			m.mu.Unlock()
 			if err != nil {

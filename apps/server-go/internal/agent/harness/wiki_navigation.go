@@ -2,42 +2,21 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"sort"
 	"strconv"
 	"time"
 	"unicode/utf8"
 
 	"elysian/server/internal/agent/harness/model"
+	"elysian/server/internal/agent/harness/sessionstore"
+	"elysian/server/internal/agent/harness/state"
 )
 
 const wikiNavigationStrategy = "navigation/v1"
 const wikiDisabledStrategy = "disabled/v1"
 
 type wikiDisabledContextKey struct{}
-
-// 唯一全局空间与新会话绑定在同一事务；旧会话不补写选择。
-func ensureGlobalWikiSpace(ctx context.Context, tx *sql.Tx, now string) (WikiSpace, error) {
-	var raw string
-	err := tx.QueryRowContext(ctx, "SELECT document FROM wiki_spaces WHERE kind='global'").Scan(&raw)
-	if err == nil {
-		var space WikiSpace
-		err = json.Unmarshal([]byte(raw), &space)
-		return space, err
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return WikiSpace{}, err
-	}
-	space := WikiSpace{ID: randomID(), Revision: 1, Name: "全局记忆", Kind: "global", CreatedAt: now}
-	b, _ := json.Marshal(space)
-	if _, err = tx.ExecContext(ctx, "INSERT INTO wiki_spaces(id,name,kind,document) VALUES(?,?,?,?)", space.ID, space.Name, space.Kind, string(b)); err != nil {
-		return WikiSpace{}, err
-	}
-	_, err = tx.ExecContext(ctx, "INSERT INTO wiki_space_revisions(id,revision,document) VALUES(?,?,?)", space.ID, 1, string(b))
-	return space, err
-}
 
 func wikiTextPrefix(s string, limit int) string {
 	if len(s) <= limit {
@@ -113,15 +92,15 @@ func (m *Manager) WikiDirectory(ctx context.Context, space, cursor string, limit
 	if _, err := m.ensureWikiSpaceLocked(ctx, space); err != nil {
 		return WikiDirectory{}, err
 	}
-	n, err := pageSize(limit, 50)
+	n, err := state.PageSize(limit, 50)
 	if err != nil {
 		return WikiDirectory{}, err
 	}
-	offset, err := numberCursor(cursor)
+	offset, err := state.NumberCursor(cursor)
 	if err != nil {
 		return WikiDirectory{}, err
 	}
-	pages, err := readDocuments[WikiPage](ctx, m.store.db, "SELECT document FROM wiki_pages WHERE space_id=? AND status='active' ORDER BY slug,id LIMIT ? OFFSET ?", space, n+1, offset)
+	pages, err := readView(ctx, m.store).WikiDirectory(ctx, space, n+1, offset)
 	if err != nil {
 		return WikiDirectory{}, err
 	}
@@ -138,12 +117,12 @@ func (m *Manager) WikiDirectory(ctx context.Context, space, cursor string, limit
 func (m *Manager) WikiPageRevisions(ctx context.Context, space, id string) ([]WikiPage, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	pages, err := readDocuments[WikiPage](ctx, m.store.db, "SELECT r.document FROM wiki_page_revisions r JOIN wiki_pages p ON p.id=r.page_id WHERE p.space_id=? AND r.page_id=? ORDER BY r.revision DESC", space, id)
+	pages, err := readView(ctx, m.store).WikiPageRevisions(ctx, space, id)
 	if err != nil {
 		return nil, err
 	}
 	if len(pages) == 0 {
-		return nil, &Error{404, "wiki-page-not-found", "Wiki 页面不存在"}
+		return nil, &Error{Status: 404, Code: "wiki-page-not-found", Message: "Wiki 页面不存在"}
 	}
 	for i := range pages {
 		if err = m.markWikiEvidence(ctx, &pages[i]); err != nil {
@@ -155,7 +134,7 @@ func (m *Manager) WikiPageRevisions(ctx context.Context, space, id string) ([]Wi
 
 // 导航只列固定可见修订的标题，不把页面正文自动塞入推理。
 func (a *agentExecution) wikiNavigationLocked(ctx context.Context) ([]model.Message, []WikiRef, error) {
-	pages, err := readDocuments[WikiPage](ctx, a.manager.store.db, `SELECT p.document FROM wiki_visible_pages v JOIN wiki_page_revisions p ON p.page_id=v.page_id AND p.revision=v.revision WHERE v.owner_kind='run' AND v.owner_id=? ORDER BY v.page_id`, a.run.ID)
+	pages, err := readView(ctx, a.manager.store).WikiVisiblePages(ctx, a.run.ID)
 	if err != nil {
 		return nil, nil, err
 	}
@@ -171,8 +150,8 @@ func (a *agentExecution) wikiNavigationLocked(ctx context.Context) ([]model.Mess
 	refs := []WikiRef{}
 	used := 0
 	for _, p := range pages {
-		ref := WikiRef{p.ID, p.Revision, p.Digest}
-		if validateWikiSources(ctx, a.manager.store.db, mergeWikiRefs(p.Sources, []WikiRef{ref})) != nil {
+		ref := WikiRef{PageID: p.ID, Revision: p.Revision, Digest: p.Digest}
+		if validateWikiSources(ctx, a.manager.store, state.MergeWikiRefs(p.Sources, []WikiRef{ref})) != nil {
 			continue
 		}
 		if p.ExpiresAt != "" {
@@ -188,7 +167,7 @@ func (a *agentExecution) wikiNavigationLocked(ctx context.Context) ([]model.Mess
 		}
 		entries = append(entries, item)
 		used += len(raw)
-		refs = mergeWikiRefs(refs, p.Sources, []WikiRef{ref})
+		refs = state.MergeWikiRefs(refs, p.Sources, []WikiRef{ref})
 	}
 	if len(entries) == 0 {
 		return nil, nil, nil
@@ -217,17 +196,17 @@ func (m *Manager) executeWikiNavigation(ctx context.Context, r Run, o Operation)
 	if err := json.Unmarshal([]byte(o.ArgumentsJSON), &in); err != nil {
 		return CapabilityResult{}, err
 	}
-	if err := m.validateWikiRun(ctx, m.store.db, r.ID); err != nil {
+	if err := m.validateWikiRun(ctx, m.store, r.ID); err != nil {
 		return CapabilityResult{}, err
 	}
-	pages, err := readDocuments[WikiPage](ctx, m.store.db, `SELECT p.document FROM wiki_visible_pages v JOIN wiki_page_revisions p ON p.page_id=v.page_id AND p.revision=v.revision WHERE v.owner_kind='run' AND v.owner_id=? ORDER BY v.page_id`, r.ID)
+	pages, err := readView(ctx, m.store).WikiVisiblePages(ctx, r.ID)
 	if err != nil {
 		return CapabilityResult{}, err
 	}
 	visible := []WikiPage{}
 	var source *WikiPage
 	for _, p := range pages {
-		if validateWikiSources(ctx, m.store.db, mergeWikiRefs(p.Sources, []WikiRef{{p.ID, p.Revision, p.Digest}})) != nil {
+		if validateWikiSources(ctx, m.store, state.MergeWikiRefs(p.Sources, []WikiRef{{PageID: p.ID, Revision: p.Revision, Digest: p.Digest}})) != nil {
 			continue
 		}
 		if p.ExpiresAt != "" {
@@ -243,12 +222,14 @@ func (m *Manager) executeWikiNavigation(ctx context.Context, r Run, o Operation)
 		}
 	}
 	outRefs := []WikiRef{}
-	addRef := func(p WikiPage) { outRefs = mergeWikiRefs(outRefs, p.Sources, []WikiRef{{p.ID, p.Revision, p.Digest}}) }
+	addRef := func(p WikiPage) {
+		outRefs = state.MergeWikiRefs(outRefs, p.Sources, []WikiRef{{PageID: p.ID, Revision: p.Revision, Digest: p.Digest}})
+	}
 	var value any
 	switch o.Capability.Name {
 	case "wiki_read":
 		if source == nil {
-			return CapabilityResult{}, &Error{404, "wiki-page-not-visible", "Wiki 页面不在本轮固定可见范围内"}
+			return CapabilityResult{}, &Error{Status: 404, Code: "wiki-page-not-visible", Message: "Wiki 页面不在本轮固定可见范围内"}
 		}
 		if in.Limit == 0 {
 			in.Limit = 4096
@@ -262,13 +243,13 @@ func (m *Manager) executeWikiNavigation(ctx context.Context, r Run, o Operation)
 	case "wiki_search":
 		hits := []WikiSearchHit{}
 		for _, p := range visible {
-			if score := wikiTextScore(in.Query, wikiSearchText(p)); score > 0 {
+			if score := wikiTextScore(in.Query, state.WikiSearchText(p)); score > 0 {
 				hits = append(hits, WikiSearchHit{Page: p, Score: score, Method: "fixed-revision-text"})
 			}
 		}
 		sort.SliceStable(hits, func(i, j int) bool { return hits[i].Score > hits[j].Score })
 		result := m.wikiHybridSearchLocked(ctx, visible, in.Query, WikiSearchResult{Items: hits}, 8)
-		if err := m.validateWikiRun(ctx, m.store.db, r.ID); err != nil {
+		if err := m.validateWikiRun(ctx, m.store, r.ID); err != nil {
 			return CapabilityResult{}, err
 		}
 		summaries := []WikiPageSummary{}
@@ -286,9 +267,9 @@ func (m *Manager) executeWikiNavigation(ctx context.Context, r Run, o Operation)
 		}{summaries, result.Degraded, result.Reason}
 	case "wiki_follow_links":
 		if in.PageID != "" && source == nil {
-			return CapabilityResult{}, &Error{404, "wiki-page-not-visible", "Wiki 页面不在本轮固定可见范围内"}
+			return CapabilityResult{}, &Error{Status: 404, Code: "wiki-page-not-visible", Message: "Wiki 页面不在本轮固定可见范围内"}
 		}
-		offset, e := numberCursor(in.Cursor)
+		offset, e := state.NumberCursor(in.Cursor)
 		if e != nil {
 			return CapabilityResult{}, e
 		}
@@ -324,7 +305,7 @@ func (m *Manager) executeWikiNavigation(ctx context.Context, r Run, o Operation)
 	default:
 		return CapabilityResult{}, bad("wiki-operation-invalid", "未知Wiki工具")
 	}
-	err = m.store.write(ctx, "wiki-operation-sources", func(tx *sql.Tx) error {
+	err = writeStore(m.store, ctx, "wiki-operation-sources", func(tx sessionstore.Tx) error {
 		if err := validateWikiSources(ctx, tx, outRefs); err != nil {
 			return err
 		}

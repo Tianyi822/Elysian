@@ -14,6 +14,8 @@ import (
 	"testing"
 	"time"
 
+	hstate "elysian/server/internal/agent/harness/state"
+
 	"github.com/go-chi/chi/v5"
 )
 
@@ -48,7 +50,7 @@ func paddedImage(t *testing.T, base []byte, size int) []byte {
 func attachmentsTestManager(t *testing.T) *Manager {
 	t.Helper()
 	s, _ := openRuntimeTestStore(t)
-	return &Manager{store: s, deps: Deps{Now: func() time.Time { return runtimeStoreTestTime }, NewID: randomID, AgentLimits: DefaultAgentLimits()}, wake: make(chan struct{}, 1)}
+	return &Manager{store: s, deps: Deps{Now: func() time.Time { return runtimeStoreTestTime }, NewID: hstate.RandomID, AgentLimits: DefaultAgentLimits()}, wake: make(chan struct{}, 1)}
 }
 
 func TestAttachmentProbeFormatAndEdge(t *testing.T) {
@@ -155,28 +157,28 @@ func TestAttachmentDeleteAndOrphanSweep(t *testing.T) {
 		t.Fatalf("回读字节错误：%s %v", mimeType, err)
 	}
 	// 已绑定会话的附件不能单独删除，字节属于会话历史（外键要求会话真实存在）。
-	s := m.store
+	s := fixture(m)
 	if err := s.createSession(ctx, Session{ID: "session-x", Title: "占用", CreatedAt: stamp(runtimeStoreTestTime), LastActivityAt: stamp(runtimeStoreTestTime), LastSeq: "0"}); err != nil {
 		t.Fatal(err)
 	}
-	if _, err = m.store.db.ExecContext(ctx, "UPDATE agent_attachments SET session_id='session-x' WHERE id=?", items[2].ID); err != nil {
+	if _, err = fixture(m).db.ExecContext(ctx, "UPDATE agent_attachments SET session_id='session-x' WHERE id=?", items[2].ID); err != nil {
 		t.Fatal(err)
 	}
 	if err = m.DeleteAttachment(ctx, items[2].ID); err == nil || err.(*Error).Code != "attachment-in-use" {
 		t.Fatalf("已绑定附件被单独删除：%v", err)
 	}
 	// 孤儿清理：未绑定且超过 24 小时的字节被清走，绑定行与新上传保留。
-	if _, err = m.store.db.ExecContext(ctx, "UPDATE agent_attachments SET created_at=? WHERE id=?", stamp(runtimeStoreTestTime.Add(-25*time.Hour)), items[0].ID); err != nil {
+	if _, err = fixture(m).db.ExecContext(ctx, "UPDATE agent_attachments SET created_at=? WHERE id=?", stamp(runtimeStoreTestTime.Add(-25*time.Hour)), items[0].ID); err != nil {
 		t.Fatal(err)
 	}
-	if err = m.store.sweep(ctx, 30); err != nil {
+	if err = fixture(m).sweep(ctx, 30); err != nil {
 		t.Fatal(err)
 	}
 	var orphan, bound int
-	if err = m.store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM agent_attachments WHERE id=?", items[0].ID).Scan(&orphan); err != nil {
+	if err = fixture(m).db.QueryRowContext(ctx, "SELECT COUNT(*) FROM agent_attachments WHERE id=?", items[0].ID).Scan(&orphan); err != nil {
 		t.Fatal(err)
 	}
-	if err = m.store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM agent_attachments WHERE id=?", items[2].ID).Scan(&bound); err != nil {
+	if err = fixture(m).db.QueryRowContext(ctx, "SELECT COUNT(*) FROM agent_attachments WHERE id=?", items[2].ID).Scan(&bound); err != nil {
 		t.Fatal(err)
 	}
 	if orphan != 0 || bound != 1 {

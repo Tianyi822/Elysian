@@ -2,21 +2,15 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"time"
 
 	"elysian/server/internal/agent/execution"
+	"elysian/server/internal/agent/harness/sessionstore"
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/harness/worker"
 )
-
-type RuntimePreparation struct {
-	State   string `json:"state"`
-	Current int64  `json:"current,omitempty"`
-	Total   int64  `json:"total,omitempty"`
-	Error   string `json:"error,omitempty"`
-}
 
 func (m *Manager) prepareAuthorizedRuntime(ctx context.Context, run Run, o Operation) (Operation, error) {
 	e, ok := m.deps.Catalog.(*Extensions)
@@ -43,7 +37,7 @@ func (m *Manager) prepareAuthorizedRuntime(ctx context.Context, run Run, o Opera
 			return nil
 		}
 		o.Preparation = next
-		_, err := m.store.change(context.Background(), run.ID, "runtime-preparation", func(tx *sql.Tx, r *Run) error {
+		_, err := m.store.ChangeRun(context.Background(), run.ID, "runtime-preparation", func(tx sessionstore.Tx, r *Run) error {
 			if r.CancelRequestedAt != "" || r.Status != StateRunning {
 				return context.Canceled
 			}
@@ -55,7 +49,7 @@ func (m *Manager) prepareAuthorizedRuntime(ctx context.Context, run Run, o Opera
 			} else {
 				r.Phase = StateRunning
 			}
-			return m.store.event(context.Background(), tx, r, "runtime/"+p.State, "", nil, map[string]string{"operationId": o.ID})
+			return tx.Event(context.Background(), r, "runtime/"+p.State, "", nil, map[string]string{"operationId": o.ID})
 		})
 		return storageFailure(err)
 	}
@@ -93,14 +87,14 @@ func (m *Manager) prepareAuthorizedRuntime(ctx context.Context, run Run, o Opera
 	if state == "unknown" {
 		o.Preparation.Error = "运行环境准备结果未确认，请先核实镜像状态"
 	}
-	_, saveErr := m.store.change(context.Background(), run.ID, "runtime-preparation-failed", func(tx *sql.Tx, r *Run) error {
+	_, saveErr := m.store.ChangeRun(context.Background(), run.ID, "runtime-preparation-failed", func(tx sessionstore.Tx, r *Run) error {
 		if r.CancelRequestedAt != "" || r.Status != StateRunning {
 			return context.Canceled
 		}
 		if o.ApprovalID != "" {
 			var raw string
 			var previous Approval
-			if err := tx.QueryRow("SELECT document FROM approvals WHERE id=?", o.ApprovalID).Scan(&raw); err != nil {
+			if err := tx.ApprovalRecord(context.Background(), o.ApprovalID, &raw); err != nil {
 				return err
 			}
 			if err := json.Unmarshal([]byte(raw), &previous); err != nil {
@@ -120,7 +114,7 @@ func (m *Manager) prepareAuthorizedRuntime(ctx context.Context, run Run, o Opera
 		if state == "unknown" {
 			o.Access.Reason += "；再次确认仅核实本机镜像，未确认前不会重新下载或执行。"
 		}
-		o.Access.Digest = accessDigest(o)
+		o.Access.Digest = hstate.AccessDigest(o)
 		o.ApprovalID = m.deps.NewID()
 		o.Status, o.Policy, o.DecisionSource = StateWaitingApproval, "approval-required", "human-approval"
 		a := Approval{Kind: "operation", ID: o.ApprovalID, RunID: o.RunID, OperationID: o.ID, Status: "pending", CreatedAt: stamp(m.deps.Now()), ExpiresAt: stamp(m.deps.Now().Add(24 * time.Hour)), Access: o.Access, Operation: o}
@@ -133,7 +127,7 @@ func (m *Manager) prepareAuthorizedRuntime(ctx context.Context, run Run, o Opera
 		if err := saveOperation(context.Background(), tx, o); err != nil {
 			return err
 		}
-		return m.store.event(context.Background(), tx, r, "runtime/"+state, "", nil, map[string]string{"operationId": o.ID})
+		return tx.Event(context.Background(), r, "runtime/"+state, "", nil, map[string]string{"operationId": o.ID})
 	})
 	if saveErr != nil {
 		return o, storageFailure(saveErr)

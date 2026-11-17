@@ -6,6 +6,7 @@ import (
 
 	"elysian/server/internal/agent/harness/workspace"
 	"elysian/server/internal/shared"
+
 	"github.com/go-chi/chi/v5"
 )
 
@@ -14,7 +15,7 @@ func registerCapabilityRoutes(r chi.Router, service runtimeService) {
 		return func(w http.ResponseWriter, req *http.Request) {
 			m, ok := service.(*Manager)
 			if !ok {
-				writeRuntimeError(w, &Error{503, "unavailable", "扩展运行服务不可用"})
+				writeRuntimeError(w, &Error{Status: 503, Code: "unavailable", Message: "扩展运行服务不可用"})
 				return
 			}
 			fn(m, w, req)

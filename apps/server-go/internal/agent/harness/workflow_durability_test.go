@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"elysian/server/internal/agent/harness/model"
+	"elysian/server/internal/agent/harness/sessionstore"
 	"elysian/server/internal/agent/harness/workspace"
 )
 
@@ -113,7 +114,7 @@ func TestWorkflowDurabilityQueuedAndApprovedResumeOnce(t *testing.T) {
 			if state == "queued" {
 				name = "test_read"
 				m.mu.Lock()
-				m.store.beforeWrite = func(op string) error {
+				fixture(m).beforeWrite = func(op string) error {
 					if op == "start" {
 						return errors.New("注入开始事务前存储故障")
 					}
@@ -146,7 +147,7 @@ func TestWorkflowDurabilityQueuedAndApprovedResumeOnce(t *testing.T) {
 					}
 					return nil
 				}
-				m.store.beforeWrite = func(op string) error {
+				fixture(m).beforeWrite = func(op string) error {
 					if op == "approval-decision" {
 						paused.Store(true)
 					}
@@ -164,7 +165,7 @@ func TestWorkflowDurabilityQueuedAndApprovedResumeOnce(t *testing.T) {
 				if w.Status != StateQueued || calls.Load() != 0 {
 					t.Fatalf("审批提交后暂停窗口失效：%+v calls=%d", w, calls.Load())
 				}
-				if err = m.Close(ctx); err != nil {
+				if err = closeFixtureManager(m, ctx); err != nil {
 					t.Fatal(err)
 				}
 				paused.Store(false)
@@ -234,7 +235,7 @@ func TestWorkflowDurabilityResultWorkspaceAndAdvanceAreAtomic(t *testing.T) {
 			workflowIdle(t, m)
 			if fail {
 				m.mu.Lock()
-				_, err = m.store.db.Exec(`CREATE TEMP TRIGGER reject_workflow_advance BEFORE INSERT ON workflow_events WHEN json_extract(NEW.document,'$.type')='workflow/ready' BEGIN SELECT RAISE(ABORT,'注入结果提交后的推进故障'); END;`)
+				_, err = fixture(m).db.Exec(`CREATE TRIGGER reject_workflow_advance BEFORE INSERT ON workflow_events WHEN json_extract(NEW.document,'$.type')='workflow/ready' BEGIN SELECT RAISE(ABORT,'注入结果提交后的推进故障'); END;`)
 				m.mu.Unlock()
 				if err != nil {
 					t.Fatal(err)
@@ -273,7 +274,7 @@ func TestWorkflowDurabilityResultWorkspaceAndAdvanceAreAtomic(t *testing.T) {
 					t.Fatalf("已提交结果缺少工作文件：%+v %v", current, err)
 				}
 				m.mu.Lock()
-				attempt, err := readWorkflowAttempt(ctx, m.store.db, firstRun)
+				attempt, err := readWorkflowAttempt(ctx, fixture(m), firstRun)
 				m.mu.Unlock()
 				if err != nil || attempt.Status != StateSucceeded || attempt.WorkspaceRevision != current.Version.Revision || attempt.OutputCallID == "" {
 					t.Fatalf("完成凭据与文件版本未一起提交：%+v %v", attempt, err)
@@ -300,17 +301,17 @@ func TestWorkflowDurabilityCrashChargesReservationsOnlyOnce(t *testing.T) {
 	w = workflowWait(t, m, w.ID, StateWaitingApproval)
 	workflowIdle(t, m)
 	runID := w.ActiveRunID
-	if err := m.Close(ctx); err != nil {
+	if err := closeFixtureManager(m, ctx); err != nil {
 		t.Fatal(err)
 	}
-	store, err := openStore(m.deps.Path, m.deps.Now)
+	store, err := openStore(fixture(m).path, m.deps.Now)
 	if err != nil {
 		t.Fatal(err)
 	}
 	var reserved int64
 	var before WorkflowUsage
 	// 构造父进程已将时间/模型/工具预算写入，但尚未保存任何完成回执的崩溃点。
-	err = store.write(ctx, "crash-reservation-fixture", func(tx *sql.Tx) error {
+	err = store.write(ctx, "crash-reservation-fixture", func(tx sessionstore.Tx) error {
 		current, err := readWorkflow(ctx, tx, w.ID)
 		if err != nil {
 			return err

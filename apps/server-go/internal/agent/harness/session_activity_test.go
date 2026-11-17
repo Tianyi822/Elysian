@@ -63,7 +63,15 @@ func TestSessionActivityPaginationTruncatesToMillisecondsAndUsesIDTiebreaker(t *
 					}
 					break
 				}
-				decoded, err := decodeSessionActivityCursor(page.NextCursor)
+				var decoded struct {
+					Version    int    `json:"v"`
+					ActivityMS *int64 `json:"ms"`
+					ID         string `json:"id"`
+				}
+				raw, err := base64.RawURLEncoding.DecodeString(page.NextCursor)
+				if err == nil {
+					err = json.Unmarshal(raw, &decoded)
+				}
 				last := page.Items[len(page.Items)-1]
 				at, parseErr := time.Parse(time.RFC3339Nano, last.LastActivityAt)
 				if err != nil || parseErr != nil || decoded.ID != last.ID || decoded.ActivityMS == nil || *decoded.ActivityMS != at.UnixMilli() {
@@ -134,7 +142,7 @@ func TestSessionActivityRejectsInvalidAndMixedCursors(t *testing.T) {
 			}
 		}
 	}
-	cursor := encodeSessionActivityCursor(1, "session")
+	cursor := encode(`{"v":1,"ms":1,"id":"session"}`)
 	if _, err := s.sessions(ctx, cursor, 50); err == nil {
 		t.Fatal("旧数字分页接受活动游标")
 	}
@@ -149,8 +157,8 @@ func TestSessionActivityRejectsInvalidAndMixedCursors(t *testing.T) {
 
 func TestAgentRoutesSessionActivitySortAndCursorValidation(t *testing.T) {
 	m, _ := sessionAPIManager(t)
-	createActivitySession(t, m.store, "first", "2026-10-13T12:00:01Z")
-	createActivitySession(t, m.store, "last", "2026-10-13T12:00:00Z")
+	createActivitySession(t, fixture(m), "first", "2026-10-13T12:00:01Z")
+	createActivitySession(t, fixture(m), "last", "2026-10-13T12:00:00Z")
 	handler := m.Router()
 	response := runtimeRouteRequest(handler, "GET", "/sessions?sort=activity&limit=1", "")
 	var page Page[Session]

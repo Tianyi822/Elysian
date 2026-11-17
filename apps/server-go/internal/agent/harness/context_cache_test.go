@@ -256,9 +256,9 @@ func TestVisibleModelToolsKeepStablePrefixAndLoadOrder(t *testing.T) {
 		userInputCapability(), planCapability(), toolSearchCapability(),
 	}}
 	loaded := map[string]bool{"mcp_a": true}
-	first := snapshot.visibleModelToolsInOrder(loaded, []string{"mcp_a"})
+	first := snapshot.VisibleModelToolsInOrder(loaded, []string{"mcp_a"})
 	loaded["mcp_b"] = true
-	second := snapshot.visibleModelToolsInOrder(loaded, []string{"mcp_a", "mcp_b"})
+	second := snapshot.VisibleModelToolsInOrder(loaded, []string{"mcp_a", "mcp_b"})
 	if len(first) != 6 || len(second) != 7 {
 		t.Fatalf("可见定义数量异常：%v / %v", toolNamesOf(first), toolNamesOf(second))
 	}
@@ -266,12 +266,12 @@ func TestVisibleModelToolsKeepStablePrefixAndLoadOrder(t *testing.T) {
 	if toolNamesOf(second)[6] != "mcp_b" {
 		t.Fatalf("动态定义未追加在尾部：%v", toolNamesOf(second))
 	}
-	fallback := snapshot.visibleModelTools(loaded)
+	fallback := snapshot.VisibleModelTools(loaded)
 	if !reflect.DeepEqual(toolNamesOf(fallback), toolNamesOf(second)) {
 		t.Fatalf("无加载顺序时兜底排序不稳定：%v vs %v", toolNamesOf(fallback), toolNamesOf(second))
 	}
 	hidden := map[string]bool{}
-	for _, tool := range snapshot.visibleModelTools(hidden) {
+	for _, tool := range snapshot.VisibleModelTools(hidden) {
 		if tool.Name == "mcp_a" || tool.Name == "mcp_b" {
 			t.Fatalf("未加载定义泄漏：%s", tool.Name)
 		}

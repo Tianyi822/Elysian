@@ -4,83 +4,25 @@ import (
 	"context"
 	"math"
 
-	"elysian/server/internal/agent/harness/model"
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/tools"
 )
 
-type ChatTimelineEntry struct {
-	Attempts       []ToolAttempt       `json:"attempts,omitempty"`
-	UserInput      *UserInputRequest   `json:"userInput,omitempty"`
-	ID             string              `json:"id"`
-	Kind           string              `json:"kind"`
-	ModelRequestID string              `json:"modelRequestId"`
-	RequestIndex   int                 `json:"requestIndex"`
-	StartedAt      string              `json:"startedAt"`
-	EndedAt        string              `json:"endedAt,omitempty"`
-	Status         string              `json:"status"`
-	Text           string              `json:"text,omitempty"`
-	Incomplete     bool                `json:"incomplete"`
-	Tool           string              `json:"tool,omitempty"`
-	ModelCallID    string              `json:"modelCallId,omitempty"`
-	CallIndex      int                 `json:"callIndex"`
-	ArgumentsJSON  string              `json:"argumentsJson,omitempty"`
-	CallID         string              `json:"callId,omitempty"`
-	Error          *Failure            `json:"error,omitempty"`
-	Truncated      bool                `json:"truncated"`
-	Progress       *tools.TaskProgress `json:"progress,omitempty"`
-	ResourceWait   *ResourceWait       `json:"resourceWait,omitempty"`
-}
-
-type ChatContextUsage struct {
-	ModelRequestID     string                  `json:"modelRequestId"`
-	Model              string                  `json:"model"`
-	TotalTokens        *int                    `json:"totalTokens,omitempty"`
-	ContextTokens      int                     `json:"contextTokens"`
-	EstimatedBreakdown *model.ContextBreakdown `json:"estimatedBreakdown,omitempty"`
-}
-
-type ChatCacheHitUsage struct {
-	InputTokens  int `json:"inputTokens"`
-	CachedTokens int `json:"cachedTokens"`
-}
-
-type ChatTimelineSnapshot struct {
-	Wait             *RunWait            `json:"wait,omitempty"`
-	CurrentReport    *CurrentReport      `json:"currentReport,omitempty"`
-	BlockingRecovery []BlockingRecovery  `json:"blockingRecovery"`
-	Recovery         *RunRecovery        `json:"recovery,omitempty"`
-	RecoveryPolicy   string              `json:"recoveryPolicy,omitempty"`
-	BudgetPolicy     string              `json:"budgetPolicy,omitempty"`
-	BudgetStop       *BudgetStop         `json:"budgetStop,omitempty"`
-	Continuation     *Continuation       `json:"continuation,omitempty"`
-	TerminalResult   *TerminalResult     `json:"terminalResult,omitempty"`
-	Plan             *RunPlan            `json:"plan,omitempty"`
-	RunID            string              `json:"runId"`
-	Status           string              `json:"status"`
-	Done             bool                `json:"done"`
-	Error            *Failure            `json:"error,omitempty"`
-	Usage            Usage               `json:"usage"`
-	ContextUsage     *ChatContextUsage   `json:"contextUsage,omitempty"`
-	CacheHitUsage    *ChatCacheHitUsage  `json:"cacheHitUsage,omitempty"`
-	FinalResponseID  string              `json:"finalResponseId,omitempty"`
-	Entries          []ChatTimelineEntry `json:"entries"`
-}
-
 // ChatSnapshot 在同一把运行锁内读取事实与当前增量，避免终态和请求记录跨拍。
-func (m *Manager) ChatSnapshot(ctx context.Context, id string) (ChatOutput, error) {
+func (m *Manager) ChatSnapshot(ctx context.Context, id string) (hstate.ChatOutput, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
-		return ChatOutput{}, closedError()
+		return hstate.ChatOutput{}, closedError()
 	}
-	value, readErr := storeRead(ctx, m.store, "ChatSnapshot", func(ctx context.Context) (ChatOutput, error) {
-		run, err := m.store.get(ctx, id)
+	value, readErr := storeRead(ctx, m.store, "ChatSnapshot", func(ctx context.Context) (hstate.ChatOutput, error) {
+		run, err := readView(ctx, m.store).Get(ctx, id)
 		if err != nil {
-			return ChatOutput{}, err
+			return hstate.ChatOutput{}, err
 		}
-		records, err := readDocuments[ModelRequestRecord](ctx, m.store.reader(ctx), "SELECT document FROM model_requests WHERE run_id=? ORDER BY request_index", id)
+		records, err := readView(ctx, m.store).SessionModelRequests(ctx, id)
 		if err != nil {
-			return ChatOutput{}, err
+			return hstate.ChatOutput{}, err
 		}
 		if execution := m.executionLocked(id); execution != nil && execution.agent != nil {
 			a := execution.agent
@@ -90,44 +32,44 @@ func (m *Manager) ChatSnapshot(ctx context.Context, id string) (ChatOutput, erro
 				}
 			}
 		}
-		operations, err := readDocuments[Operation](ctx, m.store.reader(ctx), "SELECT json_remove(document,'$.pendingResult') FROM operations WHERE run_id=? ORDER BY rowid", id)
+		operations, err := readView(ctx, m.store).SessionOperations(ctx, id)
 		if err != nil {
-			return ChatOutput{}, err
+			return hstate.ChatOutput{}, err
 		}
 		// 工具结果仅在展开详情时经 Calls 读取，避免每 100ms 重传大结果。
-		calls, err := readDocuments[Call](ctx, m.store.reader(ctx), "SELECT json_remove(document,'$.result','$.args','$.argumentsJson','$.modelContent') FROM calls WHERE run_id=? ORDER BY step_index", id)
+		calls, err := readView(ctx, m.store).SessionCalls(ctx, id)
 		if err != nil {
-			return ChatOutput{}, err
+			return hstate.ChatOutput{}, err
 		}
-		approvals, err := readDocuments[Approval](ctx, m.store.reader(ctx), "SELECT json_remove(document,'$.operation') FROM approvals WHERE run_id=? ORDER BY rowid", id)
+		approvals, err := readView(ctx, m.store).SessionApprovals(ctx, id)
 		if err != nil {
-			return ChatOutput{}, err
+			return hstate.ChatOutput{}, err
 		}
-		out := chatOutput(run, records)
+		out := hstate.ProjectChatOutput(run, records)
 		timeline := projectChatTimeline(run, records, operations, calls, approvals)
 		timeline.BlockingRecovery, err = m.blockingRecovery(ctx, run)
 		if err != nil {
-			return ChatOutput{}, err
+			return hstate.ChatOutput{}, err
 		}
 		timeline.BudgetPolicy, timeline.BudgetStop = run.BudgetPolicy, run.BudgetStop
-		timeline.Continuation, err = continuation(ctx, m.store.reader(ctx), run)
+		timeline.Continuation, err = continuation(ctx, m.store, run)
 		if err != nil {
-			return ChatOutput{}, err
+			return hstate.ChatOutput{}, err
 		}
-		if err = projectCurrentReport(ctx, m.store.reader(ctx), &run); err != nil {
-			return ChatOutput{}, err
+		if err = projectCurrentReport(ctx, m.store, &run); err != nil {
+			return hstate.ChatOutput{}, err
 		}
 		timeline.CurrentReport = run.CurrentReport
-		if !terminal(run.Status) {
+		if !hstate.Terminal(run.Status) {
 			timeline.Wait = run.Wait
 		}
-		timeline.TerminalResult, err = m.store.terminalResult(ctx, m.store.reader(ctx), run)
+		timeline.TerminalResult, err = readView(ctx, m.store).TerminalResult(ctx, run)
 		if err != nil {
-			return ChatOutput{}, err
+			return hstate.ChatOutput{}, err
 		}
-		questions, err := readDocuments[UserInputRequest](ctx, m.store.reader(ctx), "SELECT document FROM user_inputs WHERE run_id=? ORDER BY rowid", id)
+		questions, err := readView(ctx, m.store).SessionUserInputs(ctx, id)
 		if err != nil {
-			return ChatOutput{}, err
+			return hstate.ChatOutput{}, err
 		}
 		for i := range timeline.Entries {
 			entry := &timeline.Entries[i]
@@ -161,8 +103,8 @@ func (m *Manager) ChatSnapshot(ctx context.Context, id string) (ChatOutput, erro
 	return value, storageFailure(readErr)
 }
 
-func projectChatTimeline(run Run, records []ModelRequestRecord, operations []Operation, calls []Call, approvals []Approval) ChatTimelineSnapshot {
-	out := ChatTimelineSnapshot{Recovery: run.Recovery, RecoveryPolicy: run.RecoveryPolicy, Plan: run.Plan, RunID: run.ID, Status: run.Status, Done: terminal(run.Status), Error: run.Error, Usage: run.Usage, ContextUsage: projectChatContextUsage(run, records), CacheHitUsage: projectChatCacheHitUsage(records), Entries: []ChatTimelineEntry{}}
+func projectChatTimeline(run Run, records []ModelRequestRecord, operations []Operation, calls []Call, approvals []Approval) hstate.ChatTimelineSnapshot {
+	out := hstate.ChatTimelineSnapshot{Recovery: run.Recovery, RecoveryPolicy: run.RecoveryPolicy, Plan: run.Plan, RunID: run.ID, Status: run.Status, Done: hstate.Terminal(run.Status), Error: run.Error, Usage: run.Usage, ContextUsage: projectChatContextUsage(run, records), CacheHitUsage: projectChatCacheHitUsage(records), Entries: []hstate.ChatTimelineEntry{}}
 	ops := map[string]Operation{}
 	for _, o := range operations {
 		ops[o.ModelRequestID+":"+o.ModelCallID] = o
@@ -183,7 +125,7 @@ func projectChatTimeline(run Run, records []ModelRequestRecord, operations []Ope
 		if r.Response != nil {
 			thought, content = r.Response.Reasoning, r.Response.Content
 		}
-		base := ChatTimelineEntry{ModelRequestID: r.ID, RequestIndex: r.Index, StartedAt: r.StartedAt, EndedAt: r.EndedAt, Status: r.Status,
+		base := hstate.ChatTimelineEntry{ModelRequestID: r.ID, RequestIndex: r.Index, StartedAt: r.StartedAt, EndedAt: r.EndedAt, Status: r.Status,
 			Incomplete: r.Status != StateRunning && r.Status != StateSucceeded}
 		if r.Response != nil && len(r.Response.ToolCalls) == 0 {
 			base.Incomplete = base.Incomplete || r.Response.FinishReason != "stop"
@@ -205,7 +147,7 @@ func projectChatTimeline(run Run, records []ModelRequestRecord, operations []Ope
 			continue
 		}
 		for i, proposal := range r.Response.ToolCalls {
-			entry := ChatTimelineEntry{ID: r.ID + ":tool:" + proposal.ID, Kind: "tool", ModelRequestID: r.ID, RequestIndex: r.Index,
+			entry := hstate.ChatTimelineEntry{ID: r.ID + ":tool:" + proposal.ID, Kind: "tool", ModelRequestID: r.ID, RequestIndex: r.Index,
 				StartedAt: r.EndedAt, Tool: proposal.Name, ModelCallID: proposal.ID, CallIndex: i, ArgumentsJSON: string(proposal.Arguments), Status: "planned"}
 			operation, hasOperation := ops[r.ID+":"+proposal.ID]
 			call, hasCall := actual[r.ID+":"+proposal.ID]
@@ -223,7 +165,7 @@ func projectChatTimeline(run Run, records []ModelRequestRecord, operations []Ope
 				entry.Attempts = call.Attempts
 			}
 			approval := decisions[operation.ApprovalID]
-			fact := projectToolExecution(run, op, receipt, &approval)
+			fact := hstate.ProjectToolExecution(run, op, receipt, &approval)
 			entry.Status, entry.Error = fact.Status, fact.Error
 			entry.ResourceWait = fact.ResourceWait
 			if fact.StartedAt != "" {
@@ -234,7 +176,7 @@ func projectChatTimeline(run Run, records []ModelRequestRecord, operations []Ope
 		}
 	}
 	if run.Status == StateCancelled {
-		legacy := chatOutput(run, records)
+		legacy := hstate.ProjectChatOutput(run, records)
 		out.FinalResponseID = ""
 		if legacy.Content != "" {
 			out.FinalResponseID = legacy.ResponseID
@@ -243,7 +185,7 @@ func projectChatTimeline(run Run, records []ModelRequestRecord, operations []Ope
 	return out
 }
 
-func projectChatContextUsage(run Run, records []ModelRequestRecord) *ChatContextUsage {
+func projectChatContextUsage(run Run, records []ModelRequestRecord) *hstate.ChatContextUsage {
 	if run.Model == nil {
 		return nil
 	}
@@ -257,7 +199,7 @@ func projectChatContextUsage(run Run, records []ModelRequestRecord) *ChatContext
 	if latest == nil {
 		return nil
 	}
-	out := &ChatContextUsage{ModelRequestID: latest.ID, Model: run.Model.Model, ContextTokens: run.Model.ContextTokens, EstimatedBreakdown: projectContextBreakdown(*latest)}
+	out := &hstate.ChatContextUsage{ModelRequestID: latest.ID, Model: run.Model.Model, ContextTokens: run.Model.ContextTokens, EstimatedBreakdown: projectContextBreakdown(*latest)}
 	usage := latest.Response.Usage
 	const maxSafeTokens int64 = 1<<53 - 1
 	if usage.TotalTokens != nil {
@@ -271,7 +213,7 @@ func projectChatContextUsage(run Run, records []ModelRequestRecord) *ChatContext
 	return out
 }
 
-func projectChatCacheHitUsage(records []ModelRequestRecord) *ChatCacheHitUsage {
+func projectChatCacheHitUsage(records []ModelRequestRecord) *hstate.ChatCacheHitUsage {
 	if len(records) == 0 {
 		return nil
 	}
@@ -280,7 +222,7 @@ func projectChatCacheHitUsage(records []ModelRequestRecord) *ChatCacheHitUsage {
 	if maxTokens > maxSafeTokens {
 		maxTokens = maxSafeTokens
 	}
-	out := &ChatCacheHitUsage{}
+	out := &hstate.ChatCacheHitUsage{}
 	completed := 0
 	for _, record := range records {
 		if record.Status == StateQueued || record.Status == StateRunning {

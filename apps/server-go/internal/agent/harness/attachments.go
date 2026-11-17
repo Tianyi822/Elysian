@@ -3,15 +3,15 @@ package harness
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"errors"
-	"fmt"
 	"image"
+	_ "image/jpeg"
+	_ "image/png"
 	"strings"
 	"time"
 
-	_ "image/jpeg"
-	_ "image/png"
+	"elysian/server/internal/agent/harness/sessionstore"
+	hstate "elysian/server/internal/agent/harness/state"
 )
 
 // 附件只接受 JPEG 与 PNG：按文件头魔数判定，忽略声明 MIME 与扩展名，
@@ -26,14 +26,6 @@ const (
 	maxImageAttachmentFileBytes = 5 * 1024 * 1024
 	maxImageAttachmentSetBytes  = 8 * 1024 * 1024
 )
-
-// imageLimitLabel 把字节限额渲染成中文可读文案：整 MiB 用 MiB，否则按字节。
-func imageLimitLabel(bytes int) string {
-	if bytes > 0 && bytes%1048576 == 0 {
-		return fmt.Sprintf("%d MiB", bytes/1048576)
-	}
-	return fmt.Sprintf("%d 字节", bytes)
-}
 
 // sniffImageMIME 按魔数判定图片格式；无法识别返回空串。
 func sniffImageMIME(data []byte) string {
@@ -86,109 +78,6 @@ type AttachmentUpload struct {
 	Content []byte
 }
 
-type attachmentRow struct {
-	MessageAttachment
-	SessionID string
-}
-
-func attachmentPlaceholders(ids []string) (string, []any) {
-	placeholders := strings.TrimSuffix(strings.Repeat("?,", len(ids)), ",")
-	args := make([]any, 0, len(ids))
-	for _, id := range ids {
-		args = append(args, id)
-	}
-	return placeholders, args
-}
-
-// readAttachmentRows 按引用顺序读取附件行；任一 id 不存在即返回 attachment-invalid。
-func readAttachmentRows(ctx context.Context, q interface {
-	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
-}, refs []AttachmentRef, sessionID string) ([]attachmentRow, error) {
-	placeholders, args := attachmentPlaceholders(func() []string {
-		ids := make([]string, 0, len(refs))
-		for _, ref := range refs {
-			ids = append(ids, ref.ID)
-		}
-		return ids
-	}())
-	rows, err := q.QueryContext(ctx, "SELECT id,session_id,mime_type,bytes,width,height,name FROM agent_attachments WHERE id IN ("+placeholders+")", args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	byID := make(map[string]attachmentRow, len(refs))
-	for rows.Next() {
-		var row attachmentRow
-		var sessionID sql.NullString
-		if err = rows.Scan(&row.ID, &sessionID, &row.MimeType, &row.Bytes, &row.Width, &row.Height, &row.Name); err != nil {
-			return nil, err
-		}
-		row.SessionID = sessionID.String
-		byID[row.ID] = row
-	}
-	if err = rows.Err(); err != nil {
-		return nil, err
-	}
-	out := make([]attachmentRow, 0, len(refs))
-	for _, ref := range refs {
-		row, ok := byID[ref.ID]
-		if !ok || row.SessionID != "" && row.SessionID != sessionID {
-			return nil, bad("attachment-invalid", "附件不存在或已被使用，请重新添加")
-		}
-		out = append(out, row)
-	}
-	return out, nil
-}
-
-// validateAttachmentSet 按 Limits 复检附件集合：张数、单文件字节与总字节。
-// 附件行上传后不可变，提交侧复检无竞态，堵住分批上传攒出超限集合再一次提交的绕过；
-// 张数为 0 表示不限制数量；旧快照总量为 0 表示不设置独立总量限制。
-func validateAttachmentSet(rows []attachmentRow, limits Limits) error {
-	if len(rows) == 0 {
-		return nil
-	}
-	if limits.ImageCountPerMessage > 0 && len(rows) > limits.ImageCountPerMessage {
-		return bad("attachment-too-many", "一条消息最多 "+fmt.Sprint(limits.ImageCountPerMessage)+" 张图片")
-	}
-	total := 0
-	for _, row := range rows {
-		if limits.ImageBytesPerFile > 0 && row.Bytes > limits.ImageBytesPerFile {
-			return bad("attachment-too-large", "单张图片不能超过 "+imageLimitLabel(limits.ImageBytesPerFile)+"。")
-		}
-		total += row.Bytes
-	}
-	if limits.ImageBytesPerMessage > 0 && total > limits.ImageBytesPerMessage {
-		if limits.ImageBytesPerMessage == maxImageAttachmentSetBytes {
-			return bad("attachment-message-too-large", "本条消息附件合计超过 8 MiB，请分批发送。")
-		}
-		return bad("attachment-message-too-large", "图片总大小不能超过 "+imageLimitLabel(limits.ImageBytesPerMessage)+"，请分批发送。")
-	}
-	return nil
-}
-
-// bindAttachments 在事务内把附件行绑定到会话；放行「已绑定本会话」的行以支撑
-// 编辑重发复用原轮 id。核对以调用方事务内 SELECT 结果为准，UPDATE 仅执行置位，
-// 不依赖驱动 RowsAffected 对「值未变化行」的计数口径。
-func bindAttachments(ctx context.Context, tx *sql.Tx, sessionID string, refs []AttachmentRef) error {
-	ids := make([]string, 0, len(refs))
-	for _, ref := range refs {
-		ids = append(ids, ref.ID)
-	}
-	placeholders, idArgs := attachmentPlaceholders(ids)
-	// 参数顺序与 SQL 占位符一致：SET 的会话 id、IN 的引用 id、谓词末尾的会话 id。
-	args := append([]any{sessionID}, idArgs...)
-	args = append(args, sessionID)
-	_, err := tx.ExecContext(ctx, "UPDATE agent_attachments SET session_id=? WHERE id IN ("+placeholders+") AND (session_id IS NULL OR session_id=?)", args...)
-	return err
-}
-
-// sweepOrphanAttachments 清理上传后从未绑定会话且超过保留期的附件字节。
-func (s *store) sweepOrphanAttachments(ctx context.Context, tx *sql.Tx) error {
-	cutoff := stamp(s.now().Add(-orphanAttachmentAge))
-	_, err := tx.ExecContext(ctx, "DELETE FROM agent_attachments WHERE session_id IS NULL AND julianday(created_at)<julianday(?)", cutoff)
-	return err
-}
-
 func (m *Manager) CreateAttachments(ctx context.Context, uploads []AttachmentUpload) ([]MessageAttachment, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
@@ -205,7 +94,7 @@ func (m *Manager) CreateAttachments(ctx context.Context, uploads []AttachmentUpl
 	for _, upload := range uploads {
 		precheck = append(precheck, attachmentRow{MessageAttachment: MessageAttachment{Bytes: len(upload.Content)}})
 	}
-	if err := validateAttachmentSet(precheck, limits); err != nil {
+	if err := hstate.ValidateAttachmentSet(precheck, limits); err != nil {
 		return nil, err
 	}
 	rows := make([]attachmentRow, 0, len(uploads))
@@ -223,10 +112,9 @@ func (m *Manager) CreateAttachments(ctx context.Context, uploads []AttachmentUpl
 		}
 		rows = append(rows, attachmentRow{MessageAttachment: MessageAttachment{ID: m.deps.NewID(), Name: name, MimeType: mimeType, Bytes: len(upload.Content), Width: width, Height: height}})
 	}
-	err := m.store.write(ctx, "create-attachments", func(tx *sql.Tx) error {
+	err := writeStore(m.store, ctx, "create-attachments", func(tx sessionstore.Tx) error {
 		for i := range rows {
-			if _, err := tx.ExecContext(ctx, "INSERT INTO agent_attachments(id,session_id,mime_type,bytes,width,height,name,created_at,content) VALUES(?,NULL,?,?,?,?,?,?,?)",
-				rows[i].ID, rows[i].MimeType, rows[i].Bytes, rows[i].Width, rows[i].Height, rows[i].Name, stamp(m.deps.Now()), uploads[i].Content); err != nil {
+			if _, err := tx.InsertAttachment(ctx, rows[i].ID, rows[i].MimeType, rows[i].Bytes, rows[i].Width, rows[i].Height, rows[i].Name, stamp(m.deps.Now()), uploads[i].Content); err != nil {
 				return err
 			}
 		}
@@ -254,8 +142,8 @@ func (m *Manager) AttachmentContent(ctx context.Context, id string) (string, []b
 	}
 	value, err := storeRead(ctx, m.store, "AttachmentContent", func(ctx context.Context) (attachment, error) {
 		var value attachment
-		err := m.store.reader(ctx).QueryRowContext(ctx, "SELECT mime_type,content FROM agent_attachments WHERE id=?", id).Scan(&value.mimeType, &value.content)
-		if errors.Is(err, sql.ErrNoRows) {
+		err := readView(ctx, m.store).AttachmentContent(ctx, id, &value.mimeType, &value.content)
+		if errors.Is(err, sessionstore.ErrNotFound) {
 			return value, bad("attachment-not-found", "附件不存在")
 		}
 		return value, err
@@ -271,8 +159,8 @@ func (m *Manager) DeleteAttachment(ctx context.Context, id string) error {
 		return closedError()
 	}
 	var deleted int
-	err := m.store.write(ctx, "delete-attachment", func(tx *sql.Tx) error {
-		result, err := tx.ExecContext(ctx, "DELETE FROM agent_attachments WHERE id=? AND session_id IS NULL", id)
+	err := writeStore(m.store, ctx, "delete-attachment", func(tx sessionstore.Tx) error {
+		result, err := tx.RemoveUnboundAttachment(ctx, id)
 		if err != nil {
 			return err
 		}
@@ -288,7 +176,7 @@ func (m *Manager) DeleteAttachment(ctx context.Context, id string) error {
 	}
 	if deleted == 0 {
 		var bound string
-		if err = m.store.db.QueryRowContext(ctx, "SELECT session_id FROM agent_attachments WHERE id=?", id).Scan(&bound); errors.Is(err, sql.ErrNoRows) {
+		if err = readView(ctx, m.store).AttachmentOwner(ctx, id, &bound); errors.Is(err, sessionstore.ErrNotFound) {
 			return bad("attachment-not-found", "附件不存在")
 		} else if err != nil {
 			return storageFailure(err)

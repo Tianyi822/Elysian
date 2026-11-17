@@ -131,7 +131,7 @@ func TestContextUsagePersistsNumbersAndAppearsInTimeline(t *testing.T) {
 	if run.Status != StateSucceeded {
 		t.Fatalf("run=%+v", run.Error)
 	}
-	page, err := m.store.modelRequests(context.Background(), run.ID, "", 50)
+	page, err := fixture(m).modelRequests(context.Background(), run.ID, "", 50)
 	if err != nil {
 		t.Fatal(err)
 	}

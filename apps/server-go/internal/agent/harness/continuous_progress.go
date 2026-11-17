@@ -2,26 +2,14 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"sort"
 	"strings"
 
+	"elysian/server/internal/agent/harness/sessionstore"
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/jsonvalue"
 )
-
-type BlockedMethod struct {
-	Key    string `json:"key"`
-	Tool   string `json:"tool"`
-	Target string `json:"target"`
-	Reason string `json:"reason"`
-}
-type RunDiagnosis struct {
-	Methods     []BlockedMethod `json:"methods"`
-	Rounds      int             `json:"rounds"`
-	LastRequest int             `json:"lastRequest"`
-	Message     string          `json:"message"`
-}
 
 func methodKey(tool string, args json.RawMessage) (string, string) {
 	var input map[string]any
@@ -53,7 +41,7 @@ func (a *agentExecution) continuousProgress(ctx context.Context, calls []Call) e
 		}
 		key, target := methodKey(call.Tool, args)
 		if call.Status == StateSucceeded {
-			evidence := key + ":" + digestJSON(call.Result)
+			evidence := key + ":" + hstate.DigestJSON(call.Result)
 			if !seen[evidence] {
 				for failed, method := range methods {
 					if method.Target == target {
@@ -78,7 +66,7 @@ func (a *agentExecution) continuousProgress(ctx context.Context, calls []Call) e
 	}
 	sortBlockedMethods(blocked)
 	m := a.manager
-	current, err := m.store.get(ctx, a.run.ID)
+	current, err := readView(ctx, m.store).Get(ctx, a.run.ID)
 	if err != nil {
 		return err
 	}
@@ -86,7 +74,7 @@ func (a *agentExecution) continuousProgress(ctx context.Context, calls []Call) e
 		return nil
 	}
 	rounds := 0
-	if current.Diagnosis != nil && digestJSON(current.Diagnosis.Methods) == digestJSON(blocked) {
+	if current.Diagnosis != nil && hstate.DigestJSON(current.Diagnosis.Methods) == hstate.DigestJSON(blocked) {
 		rounds = current.Diagnosis.Rounds
 		if current.Usage.ModelRequests > current.Diagnosis.LastRequest {
 			rounds++
@@ -98,14 +86,14 @@ func (a *agentExecution) continuousProgress(ctx context.Context, calls []Call) e
 	if rounds >= 3 {
 		return bad("no-progress", "已完成三轮诊断，仍未取得相关新证据；已停止重复方法，执行事实与未完成计划已保存")
 	}
-	_, err = m.store.change(ctx, a.run.ID, "diagnosis-checkpoint", func(tx *sql.Tx, r *Run) error {
+	_, err = m.store.ChangeRun(ctx, a.run.ID, "diagnosis-checkpoint", func(tx sessionstore.Tx, r *Run) error {
 		if len(blocked) == 0 {
 			r.Diagnosis = nil
 		} else {
 			r.Diagnosis = &RunDiagnosis{Methods: blocked, Rounds: rounds, LastRequest: r.Usage.ModelRequests, Message: "相同方法已无进展，禁止按原参数重复；请诊断原因、读取相关新事实或更换方案，在现有权限内继续完成目标"}
 		}
 		a.run.Diagnosis = r.Diagnosis
-		return m.store.event(ctx, tx, r, "recovery/diagnosing", "", nil, r.Diagnosis)
+		return tx.Event(ctx, r, "recovery/diagnosing", "", nil, r.Diagnosis)
 	})
 	return err
 }
@@ -114,7 +102,7 @@ func (a *agentExecution) diagnoseModelFailure(ctx context.Context, key, message 
 	m := a.manager
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	_, err := m.store.change(ctx, a.run.ID, "protocol-diagnosis", func(tx *sql.Tx, r *Run) error {
+	_, err := m.store.ChangeRun(ctx, a.run.ID, "protocol-diagnosis", func(tx sessionstore.Tx, r *Run) error {
 		if r.Diagnosis == nil {
 			r.Diagnosis = &RunDiagnosis{Methods: []BlockedMethod{}}
 		}
@@ -125,7 +113,7 @@ func (a *agentExecution) diagnoseModelFailure(ctx context.Context, key, message 
 		r.Diagnosis.LastRequest = r.Usage.ModelRequests
 		r.Diagnosis.Message = "该完整提议已整批拒绝且未执行；停止重复相同提议，检查工具定义、改用相关只读诊断或调整方法。原因：" + message
 		a.run.Diagnosis = r.Diagnosis
-		return m.store.event(ctx, tx, r, "recovery/protocol-diagnosing", "", nil, map[string]any{"key": key, "diagnosis": r.Diagnosis})
+		return tx.Event(ctx, r, "recovery/protocol-diagnosing", "", nil, map[string]any{"key": key, "diagnosis": r.Diagnosis})
 	})
 	return err
 }
@@ -144,17 +132,17 @@ func blockedProposal(r Run, tool string, args json.RawMessage) bool {
 }
 
 func (a *agentExecution) completionReady(ctx context.Context) (bool, error) {
-	if !continuousRun(a.run) {
+	if !hstate.ContinuousRun(a.run) {
 		return true, nil
 	}
 	m := a.manager
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	r, err := m.store.get(ctx, a.run.ID)
+	r, err := readView(ctx, m.store).Get(ctx, a.run.ID)
 	if err != nil {
 		return false, err
 	}
-	unsettled, err := unsettledRun(ctx, m.store.db, r.ID)
+	unsettled, err := unsettledRun(ctx, m.store, r.ID)
 	if err != nil {
 		return false, err
 	}
@@ -175,10 +163,10 @@ func (a *agentExecution) completionReady(ctx context.Context) (bool, error) {
 	if r.CompletionChecks >= 3 {
 		return false, bad("goal-incomplete", "模型多次请求结束，但计划仍有未完成事项："+strings.Join(pending, "；"))
 	}
-	_, err = m.store.change(ctx, r.ID, "completion-check", func(tx *sql.Tx, r *Run) error {
+	_, err = m.store.ChangeRun(ctx, r.ID, "completion-check", func(tx sessionstore.Tx, r *Run) error {
 		r.CompletionChecks++
 		a.run.CompletionChecks = r.CompletionChecks
-		return m.store.event(ctx, tx, r, "recovery/completion-check", "", nil, map[string]any{"remaining": pending})
+		return tx.Event(ctx, r, "recovery/completion-check", "", nil, map[string]any{"remaining": pending})
 	})
 	return false, err
 }

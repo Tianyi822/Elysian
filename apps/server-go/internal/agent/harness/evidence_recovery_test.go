@@ -2,7 +2,6 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -12,6 +11,8 @@ import (
 
 	execconfig "elysian/server/internal/agent/execution/config"
 	"elysian/server/internal/agent/harness/model"
+	"elysian/server/internal/agent/harness/sessionstore"
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/harness/toolbridge"
 	"elysian/server/internal/agent/harness/workspace"
 	"elysian/server/internal/agent/kardia"
@@ -71,13 +72,13 @@ func TestMissingTaskVerificationRetriesDurableIntentWithoutRevivingHistory(t *te
 			if err := m.settleDomainTask(o, tools.TaskStatus{Outcome: tools.TaskUnknown}); err != nil {
 				t.Fatal(err)
 			}
-			o, _ = readOperation(m.ctx, m.store.db, o.ID)
+			o, _ = readOperation(m.ctx, fixture(m), o.ID)
 			o.Task.ID = ""
 			o.Task.Domain = "docker-container-operation"
 			o.DispatchID = "original-dispatch"
 			o.Capability = Capability{Name: "docker_container_create_service", Source: "builtin", Metadata: tools.Metadata{Async: true, Version: "3"}}
 			o.ArgumentsJSON = `{"name":"mysql84","requestId":"original"}`
-			if err := m.store.write(m.ctx, "orphan-fixture", func(tx *sql.Tx) error { return saveOperation(m.ctx, tx, o) }); err != nil {
+			if err := fixture(m).write(m.ctx, "orphan-fixture", func(tx sessionstore.Tx) error { return saveOperation(m.ctx, tx, o) }); err != nil {
 				t.Fatal(err)
 			}
 			before, _ := m.Get(m.ctx, o.RunID)
@@ -99,14 +100,14 @@ func TestMissingTaskVerificationRetriesDurableIntentWithoutRevivingHistory(t *te
 			m.deps.InspectTask = func(context.Context, tools.TaskReference) (tools.TaskStatus, error) {
 				return tools.TaskStatus{Outcome: tools.TaskFailed, Failed: true, ErrorCode: "not-accepted", Error: "原请求未受理，未执行业务变更", Evidence: &tools.ExecutionEvidence{Execution: "not-started", Changes: "none"}}, nil
 			}
-			m.store.beforeWrite = func(op string) error {
+			fixture(m).beforeWrite = func(op string) error {
 				if stage == "intent" && op == "submission-verification-intent" || stage == "binding" && op == "submission-verification-result" {
 					return injected
 				}
 				return nil
 			}
 			if stage == "copy" {
-				m.store.setRecordHook(func(string) error { return injected })
+				fixture(m).setRecordHook(func(string) error { return injected })
 			}
 			if _, err := m.VerifyRecovery(m.ctx, o.RunID); err == nil {
 				t.Fatal("injected verification failure ignored")
@@ -115,8 +116,8 @@ func TestMissingTaskVerificationRetriesDurableIntentWithoutRevivingHistory(t *te
 			if (stage == "intent" || stage == "copy") && effects != 0 {
 				t.Fatal("domain reached before durable healthy intent")
 			}
-			path := m.store.dbPathForTest(t)
-			if err := m.store.close(); err != nil {
+			path := fixture(m).dbPathForTest(t)
+			if err := fixture(m).close(); err != nil {
 				t.Fatal(err)
 			}
 			reopened, err := openStore(path, func() time.Time { return runtimeStoreTestTime })
@@ -287,9 +288,9 @@ func TestIdenticalSchemaFailureIgnoresNewRequestIDsAndStops(t *testing.T) {
 
 func recoveryOutcomeFixture(t *testing.T, suffix string) (*Manager, Operation, ExecutionBarrier) {
 	m, o, b := domainOutcomeFixture(t, suffix)
-	_, task, r := sessionStoreFixture(t, m.store, "recovery-"+suffix, runtimeStoreTestTime)
-	r = acceptSessionTestRun(t, m.store, task, r, true)
-	_, err := m.store.change(context.Background(), o.RunID, "attach-session", func(tx *sql.Tx, original *Run) error {
+	_, task, r := sessionStoreFixture(t, fixture(m), "recovery-"+suffix, runtimeStoreTestTime)
+	r = acceptSessionTestRun(t, fixture(m), task, r, true)
+	_, err := fixture(m).change(context.Background(), o.RunID, "attach-session", func(tx sessionstore.Tx, original *Run) error {
 		original.SessionID = r.SessionID
 		original.DriverVersion = "v2"
 		original.RecoveryPolicy = evidenceRecoveryPolicy
@@ -308,12 +309,12 @@ func TestEvidenceRecoveryWaitsResumesOnceAndNeverRevivesCancelledRun(t *testing.
 			if err := m.settleDomainTask(o, tools.TaskStatus{Outcome: tools.TaskUnknown, ErrorCode: "lost-receipt", Error: "回执中断"}); err != nil {
 				t.Fatal(err)
 			}
-			r, _ := m.store.get(context.Background(), o.RunID)
+			r, _ := fixture(m).get(context.Background(), o.RunID)
 			if r.Status != StateWaitingRecovery || r.Recovery == nil {
 				t.Fatalf("%+v", r)
 			}
 			if cancelled {
-				_, err := m.store.change(context.Background(), r.ID, "cancel-fixture", func(tx *sql.Tx, r *Run) error {
+				_, err := fixture(m).change(context.Background(), r.ID, "cancel-fixture", func(tx sessionstore.Tx, r *Run) error {
 					r.Status = StateCancelled
 					r.CancelRequestedAt = stamp(runtimeStoreTestTime)
 					return saveRun(context.Background(), tx, r)
@@ -322,12 +323,12 @@ func TestEvidenceRecoveryWaitsResumesOnceAndNeverRevivesCancelledRun(t *testing.
 					t.Fatal(err)
 				}
 			}
-			o, _ = readOperation(context.Background(), m.store.db, o.ID)
+			o, _ = readOperation(context.Background(), fixture(m), o.ID)
 			status := tools.TaskStatus{Outcome: tools.TaskSucceeded, Value: map[string]bool{"done": true}}
 			if err := m.settleDomainTask(o, status); err != nil {
 				t.Fatal(err)
 			}
-			after, _ := m.store.get(context.Background(), o.RunID)
+			after, _ := fixture(m).get(context.Background(), o.RunID)
 			want := StateQueued
 			if cancelled {
 				want = StateCancelled
@@ -339,7 +340,7 @@ func TestEvidenceRecoveryWaitsResumesOnceAndNeverRevivesCancelledRun(t *testing.
 			if err := m.settleDomainTask(o, status); err != nil {
 				t.Fatal(err)
 			}
-			after, _ = m.store.get(context.Background(), o.RunID)
+			after, _ = fixture(m).get(context.Background(), o.RunID)
 			if after.Usage.ResultBytes != used {
 				t.Fatal("receipt charged twice")
 			}
@@ -353,12 +354,12 @@ func TestEvidenceRecoveryDeadlinePersistsInterruptionAndProtection(t *testing.T)
 	if err := m.settleDomainTask(o, tools.TaskStatus{Outcome: tools.TaskUnknown}); err != nil {
 		t.Fatal(err)
 	}
-	o, _ = readOperation(context.Background(), m.store.db, o.ID)
+	o, _ = readOperation(context.Background(), fixture(m), o.ID)
 	m.deps.Now = func() time.Time { return runtimeStoreTestTime.Add(2 * time.Minute) }
 	if allowed, err := m.recoveryObservation(o); err != nil || allowed {
 		t.Fatalf("%v %v", allowed, err)
 	}
-	r, _ := m.store.get(context.Background(), o.RunID)
+	r, _ := fixture(m).get(context.Background(), o.RunID)
 	if r.Status != StateInterrupted || r.Recovery == nil || r.Recovery.Status != "unresolved" {
 		t.Fatalf("%+v", r)
 	}
@@ -370,18 +371,18 @@ func TestEvidenceRecoveryRetainsLaterSpecificUnknownCause(t *testing.T) {
 	if err := m.settleDomainTask(o, tools.TaskStatus{Outcome: tools.TaskUnknown}); err != nil {
 		t.Fatal(err)
 	}
-	o, _ = readOperation(m.ctx, m.store.db, o.ID)
+	o, _ = readOperation(m.ctx, fixture(m), o.ID)
 	status := tools.TaskStatus{Outcome: tools.TaskUnknown, ErrorCode: "exec-exited-partial", Error: "命令已结束，已有变更仍待核对", Evidence: &tools.ExecutionEvidence{Execution: "finished", Changes: "unknown", Recovery: "verify"}}
 	if err := m.settleDomainTask(o, status); err != nil {
 		t.Fatal(err)
 	}
-	o, _ = readOperation(m.ctx, m.store.db, o.ID)
+	o, _ = readOperation(m.ctx, fixture(m), o.ID)
 	calls, _ := m.Calls(m.ctx, o.RunID, "", 10)
 	r, _ := m.Get(m.ctx, o.RunID)
 	if o.Error == nil || o.Error.Code != status.ErrorCode || o.Error.Evidence == nil || len(calls.Items) != 1 {
 		t.Fatalf("specific unknown evidence lost: %+v", o.Error)
 	}
-	content := toolFactContent(projectToolExecution(r, &o, &calls.Items[0], nil), &calls.Items[0])
+	content := hstate.ToolFactContent(hstate.ProjectToolExecution(r, &o, &calls.Items[0], nil), &calls.Items[0])
 	if !strings.Contains(content, status.ErrorCode) || !strings.Contains(content, "outcome-unknown") {
 		t.Fatal("model lost specific reason or unknown protection")
 	}
@@ -403,7 +404,7 @@ func TestNoProgressIgnoresRequestIDsAndRepeatedSearch(t *testing.T) {
 	r.DriverVersion = "v2"
 	r.RecoveryPolicy = evidenceRecoveryPolicy
 	m := &Manager{store: s}
-	err := s.write(context.Background(), "failures", func(tx *sql.Tx) error {
+	err := s.write(context.Background(), "failures", func(tx sessionstore.Tx) error {
 		for i := 0; i < 3; i++ {
 			c := Call{ID: string(rune('a' + i)), RunID: r.ID, Tool: "docker_container_create_service", Status: StateFailed, StepIndex: i, Args: map[string]any{"name": "mysql84", "requestId": string(rune('a' + i))}, Error: &Failure{Code: "input-invalid", Message: "缺少库名"}}
 			if err := saveCall(context.Background(), tx, c); err != nil {
@@ -480,7 +481,7 @@ func TestStructuredFailureReportPersistsFactsWithoutParametersOrResults(t *testi
 	s, _ := openRuntimeTestStore(t)
 	session, task, r := sessionStoreFixture(t, s, "structured-report", runtimeStoreTestTime)
 	r = acceptSessionTestRun(t, s, task, r, true)
-	_, err := s.change(context.Background(), r.ID, "report-fixture", func(tx *sql.Tx, current *Run) error {
+	_, err := s.change(context.Background(), r.ID, "report-fixture", func(tx sessionstore.Tx, current *Run) error {
 		current.DriverVersion = "v2"
 		current.RecoveryPolicy = evidenceRecoveryPolicy
 		for i, state := range []string{StateSucceeded, StateFailed, StateInterrupted} {

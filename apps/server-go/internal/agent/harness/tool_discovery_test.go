@@ -2,7 +2,6 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"strings"
@@ -10,6 +9,8 @@ import (
 	"testing"
 
 	"elysian/server/internal/agent/harness/model"
+	"elysian/server/internal/agent/harness/sessionstore"
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/tools"
 )
 
@@ -137,7 +138,7 @@ func TestToolDiscoveryApprovalRestartRestoresVisibilityWithoutReplay(t *testing.
 	if got.Status != StateSucceeded || writes.Load() != 1 || inference.Load() != 3 {
 		t.Fatalf("discovery/approval resume failed: %+v writes=%d inferences=%d", got, writes.Load(), inference.Load())
 	}
-	calls, err := m.store.calls(context.Background(), run.ID, "", 50)
+	calls, err := fixture(m).calls(context.Background(), run.ID, "", 50)
 	if err != nil || len(calls.Items) != 2 || calls.Items[0].Tool != toolSearchName || calls.Items[1].Tool != "test_write" {
 		t.Fatalf("search was replayed or not audited: %+v %v", calls, err)
 	}
@@ -212,7 +213,7 @@ func TestToolDiscoveryRestoresOnlyConfirmedCurrentRunLoadsAndCapsDefinitions(t *
 			change(&call, &op, &result)
 		}
 		call.Result, _ = json.Marshal(result)
-		if err := m.store.write(ctx, "discovery-test", func(tx *sql.Tx) error {
+		if err := fixture(m).write(ctx, "discovery-test", func(tx sessionstore.Tx) error {
 			if err := saveOperation(ctx, tx, op); err != nil {
 				return err
 			}
@@ -252,14 +253,14 @@ func TestToolDiscoveryRestoresOnlyConfirmedCurrentRunLoadsAndCapsDefinitions(t *
 	}
 	legacy := *run.Snapshot
 	legacy.ToolLoading = ""
-	if len(legacy.modelTools()) != len(legacy.Tools) {
+	if len(legacy.ModelTools()) != len(legacy.Tools) {
 		t.Fatal("legacy snapshot no longer exposes its fixed eager definitions")
 	}
 }
 
 func TestToolDiscoveryDoesNotGrantWriteScopeOrTrustExternalTools(t *testing.T) {
 	search := toolSearchCapability()
-	if direct, _ := operationDecision(CapabilitySnapshot{}, Operation{Capability: search}); !direct || externalOperation(Operation{Capability: search}) {
+	if direct, _ := operationDecision(CapabilitySnapshot{}, Operation{Capability: search}); !direct || hstate.ExternalOperation(Operation{Capability: search}) {
 		t.Fatal("internal discovery became an external or approval-gated operation")
 	}
 	claims, _ := operationResourceClaims(CapabilitySnapshot{}, Operation{Capability: search, ArgumentsJSON: `{"query":"database"}`})

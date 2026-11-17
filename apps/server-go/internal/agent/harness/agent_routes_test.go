@@ -2,7 +2,6 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"os"
 	"path/filepath"
@@ -11,6 +10,8 @@ import (
 	"time"
 
 	"elysian/server/internal/agent/harness/model"
+	"elysian/server/internal/agent/harness/sessionstore"
+	hstate "elysian/server/internal/agent/harness/state"
 )
 
 func sessionAPIManager(t *testing.T) (*Manager, model.Profile) {
@@ -25,7 +26,7 @@ func sessionAPIManager(t *testing.T) (*Manager, model.Profile) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m := &Manager{store: s, deps: Deps{Profiles: profiles, AgentLimits: DefaultAgentLimits(), Limits: DefaultLimits(), Now: s.now, NewID: randomID}, workerState: "ready", wake: make(chan struct{}, 1)}
+	m := &Manager{store: s, deps: Deps{Profiles: profiles, AgentLimits: DefaultAgentLimits(), Limits: DefaultLimits(), Now: s.now, NewID: hstate.RandomID}, workerState: "ready", wake: make(chan struct{}, 1)}
 	return m, profile
 }
 
@@ -53,13 +54,13 @@ func TestAgentRoutesCreateContinueQueryAndDeduplicate(t *testing.T) {
 			t.Fatalf("忙碌会话接受输入：%d %s", result.Code, result.Body.String())
 		}
 	}
-	finishSessionTestRun(t, m.store, first.ID, "容器状态已查询", &WorkingMemory{Revision: 1, Objective: first.Input, Coverage: MemoryCursor{RunNumber: 1, EventSeq: first.LastSeq}})
+	finishSessionTestRun(t, fixture(m), first.ID, "容器状态已查询", &WorkingMemory{Revision: 1, Objective: first.Input, Coverage: MemoryCursor{RunNumber: 1, EventSeq: first.LastSeq}})
 	response = runtimeRouteRequest(handler, "POST", "/tasks/"+first.TaskID+"/runs", `{"requestId":"request-second","content":"继续检查"}`)
 	var second Run
 	if response.Code != 202 || json.Unmarshal(response.Body.Bytes(), &second) != nil || second.RunNumber != 2 || second.InitialMemoryRevision != 1 {
 		t.Fatalf("续轮失败：%d %s", response.Code, response.Body.String())
 	}
-	finishSessionTestRun(t, m.store, second.ID, "已完成检查", nil)
+	finishSessionTestRun(t, fixture(m), second.ID, "已完成检查", nil)
 	response = runtimeRouteRequest(handler, "GET", "/tasks/"+first.TaskID, "")
 	var task Task
 	if response.Code != 200 || json.Unmarshal(response.Body.Bytes(), &task) != nil || task.LatestRun == nil || task.LatestRun.ID != second.ID || task.MemoryStatus != "stale" {
@@ -246,8 +247,11 @@ func TestAgentRoutesDeleteSessionForceAndCascade(t *testing.T) {
 		Error string `json:"error"`
 		Code  string `json:"code"`
 	}
-	record, err := m.store.recordPath(recordOwner{kind: "session", id: target})
+	record, err := fixture(m).recordPath(recordOwner{kind: "session", id: target})
 	if err != nil {
+		t.Fatal(err)
+	}
+	if err = fixture(m).waitRecords(ctx); err != nil {
 		t.Fatal(err)
 	}
 	if _, err = os.Stat(record); err != nil {
@@ -267,10 +271,11 @@ func TestAgentRoutesDeleteSessionForceAndCascade(t *testing.T) {
 		{"messages", "session_id=?"},
 	} {
 		var n int
-		if err = m.store.db.QueryRow("SELECT COUNT(*) FROM "+probe.table+" WHERE "+probe.where, target).Scan(&n); err != nil || n != 0 {
+		if err = fixture(m).db.QueryRow("SELECT COUNT(*) FROM "+probe.table+" WHERE "+probe.where, target).Scan(&n); err != nil || n != 0 {
 			t.Fatalf("删除残留 %s：%d %v", probe.table, n, err)
 		}
 	}
+	runtimeEventually(t, func() bool { _, e := os.Stat(record); return os.IsNotExist(e) })
 	if _, err = os.Stat(record); !os.IsNotExist(err) {
 		t.Fatalf("删除未清理会话 JSONL 副本：%v", err)
 	}
@@ -312,16 +317,16 @@ func TestAgentRoutesDeleteSessionUnresolvedLeaseAndBarrier(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		finishSessionTestRun(t, m.store, run.ID, "已答复", nil)
+		finishSessionTestRun(t, fixture(m), run.ID, "已答复", nil)
 		return session, run.ID
 	}
 	leaseSession, leaseRun := terminalSession("unresolved-lease")
-	if err := m.store.write(ctx, "unknown-lease-fixture", func(tx *sql.Tx) error {
+	if err := fixture(m).write(ctx, "unknown-lease-fixture", func(tx sessionstore.Tx) error {
 		return saveResourceLease(ctx, tx, ResourceLease{ID: "unknown-lease", RunID: leaseRun, State: "unknown"})
 	}); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.store.write(ctx, "age-session-fixture", func(tx *sql.Tx) error {
+	if err := fixture(m).write(ctx, "age-session-fixture", func(tx sessionstore.Tx) error {
 		session, err := readSession(ctx, tx, leaseSession.ID)
 		if err != nil {
 			return err
@@ -337,19 +342,19 @@ func TestAgentRoutesDeleteSessionUnresolvedLeaseAndBarrier(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = readSession(ctx, m.store.db, leaseSession.ID); err != nil {
+	if _, err = readSession(ctx, fixture(m), leaseSession.ID); err != nil {
 		t.Fatalf("保留期清理删掉了未决租约会话：%v", err)
 	}
 	if response := runtimeRouteRequest(handler, "DELETE", "/sessions/"+leaseSession.ID, ""); response.Code != 204 {
 		t.Fatalf("未能强制删除未知租约会话：%d %s", response.Code, response.Body.String())
 	}
 	var count int
-	if err = m.store.db.QueryRow("SELECT COUNT(*) FROM resource_leases WHERE run_id=?", leaseRun).Scan(&count); err != nil || count != 0 {
+	if err = fixture(m).db.QueryRow("SELECT COUNT(*) FROM resource_leases WHERE run_id=?", leaseRun).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("租约残留：%d %v", count, err)
 	}
 	// unknown 屏障必须显式清理，避免外键失败。
 	barrierSession, barrierRun := terminalSession("unresolved-barrier")
-	if err = m.store.write(ctx, "unknown-barrier-fixture", func(tx *sql.Tx) error {
+	if err = fixture(m).write(ctx, "unknown-barrier-fixture", func(tx sessionstore.Tx) error {
 		if err := saveOperation(ctx, tx, Operation{ID: "op-barrier-fixture", RunID: barrierRun, Status: "succeeded", CreatedAt: stamp(m.deps.Now())}); err != nil {
 			return err
 		}
@@ -361,10 +366,10 @@ func TestAgentRoutesDeleteSessionUnresolvedLeaseAndBarrier(t *testing.T) {
 	if response.Code != 204 {
 		t.Fatalf("未知屏障删除失败：%d %s", response.Code, response.Body.String())
 	}
-	if _, err = readSession(ctx, m.store.db, barrierSession.ID); !isNotFound(err) {
+	if _, err = readSession(ctx, fixture(m), barrierSession.ID); !isNotFound(err) {
 		t.Fatalf("会话残留：%v", err)
 	}
-	if err = m.store.db.QueryRow("SELECT COUNT(*) FROM execution_barriers WHERE run_id=?", barrierRun).Scan(&count); err != nil || count != 0 {
+	if err = fixture(m).db.QueryRow("SELECT COUNT(*) FROM execution_barriers WHERE run_id=?", barrierRun).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("屏障残留：%d %v", count, err)
 	}
 
@@ -384,12 +389,12 @@ func TestAgentRoutesMemoryCheckpointDoesNotClaimActiveRunIsFullyCovered(t *testi
 	if run.MemoryStatus != "stale" {
 		t.Fatalf("新输入未标待整理：%+v", run)
 	}
-	_, err = m.store.change(ctx, run.ID, "checkpoint", func(tx *sql.Tx, r *Run) error {
+	_, err = fixture(m).change(ctx, run.ID, "checkpoint", func(tx sessionstore.Tx, r *Run) error {
 		if err := saveWorkingMemory(ctx, tx, WorkingMemory{TaskID: r.TaskID, Revision: 1, Objective: r.Input}); err != nil {
 			return err
 		}
 		r.MemoryStatus = "updated"
-		return m.store.event(ctx, tx, r, "memory/updated", "", nil, nil)
+		return fixture(m).event(ctx, tx, r, "memory/updated", "", nil, nil)
 	})
 	if err != nil {
 		t.Fatal(err)
@@ -420,7 +425,7 @@ func TestAgentRoutesPinnedCapableRevisionSurvivesUnsupportedLatestRevision(t *te
 	if err != nil || run.Model == nil || run.Model.Revision != 1 || !run.Model.Capabilities.Tools {
 		t.Fatalf("编辑配置错误阻止了固定旧版Session：%+v %v", run, err)
 	}
-	finishSessionTestRun(t, m.store, run.ID, "完成检查", nil)
+	finishSessionTestRun(t, fixture(m), run.ID, "完成检查", nil)
 	input.Active = false
 	if _, err = m.UpdateModelProfile(profile.ID, 2, input); err != nil {
 		t.Fatal(err)

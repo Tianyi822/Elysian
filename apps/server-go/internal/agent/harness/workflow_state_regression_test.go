@@ -68,7 +68,7 @@ func TestWorkflowStateCancelWaitingAndQueuedClosesAttemptAndSession(t *testing.T
 					t.Fatalf("取消未同步结束原Run：%+v %v", run, err)
 				}
 				m.mu.Lock()
-				attempt, err := readWorkflowAttempt(ctx, m.store.db, runID)
+				attempt, err := readWorkflowAttempt(ctx, fixture(m), runID)
 				m.mu.Unlock()
 				if err != nil || attempt.Status != StateCancelled || attempt.EndedAt != run.EndedAt || attempt.EventSeq == "" || attempt.OutputJSON != "" || attempt.OutputCallID != "" {
 					t.Fatalf("取消未同步结束Attempt或伪造完成凭据：%+v %v", attempt, err)

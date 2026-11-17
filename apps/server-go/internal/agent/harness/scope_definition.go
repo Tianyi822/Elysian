@@ -6,6 +6,7 @@ import (
 	"fmt"
 
 	"elysian/server/internal/agent/harness/model"
+	"elysian/server/internal/agent/harness/state"
 )
 
 // Validate each local graph with the v1 reachability/dominator checker. A
@@ -49,11 +50,11 @@ func validateWorkflowDefinitionV2(d WorkflowDefinition) error {
 				}
 				seen := map[string]bool{}
 				for _, branch := range step.Parallel.Branches {
-					if !workflowStepID.MatchString(branch.ID) || seen[branch.ID] {
+					if !state.WorkflowStepID.MatchString(branch.ID) || seen[branch.ID] {
 						return workflowDefinitionError("parallel 分支标识必须有效且唯一")
 					}
 					seen[branch.ID] = true
-					if err := validateWorkflowBinding(branch.Input, func(ref WorkflowOutputBinding) error {
+					if err := state.ValidateWorkflowBinding(branch.Input, func(ref WorkflowOutputBinding) error {
 						return workflowDefinitionError("分支输入只能引用该复合步骤的 input")
 					}); err != nil {
 						return err
@@ -66,7 +67,7 @@ func validateWorkflowDefinitionV2(d WorkflowDefinition) error {
 				if count != 1 || step.Foreach == nil {
 					return workflowDefinitionError("foreach 必须声明 items 和 body")
 				}
-				if err := validateWorkflowBinding(step.Foreach.Items, func(ref WorkflowOutputBinding) error {
+				if err := state.ValidateWorkflowBinding(step.Foreach.Items, func(ref WorkflowOutputBinding) error {
 					return workflowDefinitionError("foreach items 只能引用该复合步骤的 input")
 				}); err != nil {
 					return err
@@ -96,10 +97,10 @@ func validateWorkflowDefinitionV2(d WorkflowDefinition) error {
 		return validateWorkflowDefinition(clone)
 	}
 	// Validate root schemas and fields without substituting its real input schema.
-	if err := body(workflowBody(d), 0); err != nil {
+	if err := body(state.DefinitionBody(d), 0); err != nil {
 		return err
 	}
-	if err := validateWorkflowJSON(d.InputSchemaJSON, "null"); err != nil {
+	if err := state.ValidateWorkflowJSON(d.InputSchemaJSON, "null"); err != nil {
 		// Schema validity is independent from accepting the placeholder value.
 		if typed, ok := err.(*Error); !ok || typed.Code != "workflow-schema-mismatch" {
 			return err
@@ -161,7 +162,7 @@ func workflowDefinitionClosure(ctx context.Context, q workflowQuery, root Workfl
 		}
 		stack[d.ID] = true
 		defer delete(stack, d.ID)
-		if err := walk(workflowBody(d), depth); err != nil {
+		if err := walk(state.DefinitionBody(d), depth); err != nil {
 			return err
 		}
 		key := fmt.Sprintf("%s@%d", d.ID, d.Revision)
@@ -235,7 +236,7 @@ func (m *Manager) validateWorkflowCapabilities(snapshot CapabilitySnapshot, prof
 		return nil
 	}
 	for _, definition := range definitions {
-		if err := visit(workflowBody(definition)); err != nil {
+		if err := visit(state.DefinitionBody(definition)); err != nil {
 			return err
 		}
 	}

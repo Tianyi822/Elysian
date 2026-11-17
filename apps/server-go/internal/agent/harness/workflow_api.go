@@ -2,11 +2,13 @@ package harness
 
 import (
 	"context"
-	"database/sql"
-	"elysian/server/internal/agent/jsonvalue"
 	"encoding/json"
 	"errors"
 	"strings"
+
+	"elysian/server/internal/agent/harness/sessionstore"
+	"elysian/server/internal/agent/harness/state"
+	"elysian/server/internal/agent/jsonvalue"
 )
 
 func (m *Manager) PutWorkflowDefinition(ctx context.Context, id string, expected int, d WorkflowDefinition) (WorkflowDefinition, error) {
@@ -27,13 +29,13 @@ func (m *Manager) PutWorkflowDefinition(ctx context.Context, id string, expected
 			return d, bad("revision-conflict", "新模板版本必须为零")
 		}
 	}
-	err := m.store.write(ctx, "workflow-definition", func(tx *sql.Tx) error {
+	err := writeStore(m.store, ctx, "workflow-definition", func(tx sessionstore.Tx) error {
 		var current int
-		if err := tx.QueryRowContext(ctx, "SELECT COALESCE(MAX(revision),0) FROM workflow_definitions WHERE id=?", id).Scan(&current); err != nil {
+		if err := tx.WorkflowDefinitionRevision(ctx, id, &current); err != nil {
 			return err
 		}
 		if current != expected {
-			return &Error{409, "revision-conflict", "工作流模板版本已变化"}
+			return &Error{Status: 409, Code: "revision-conflict", Message: "工作流模板版本已变化"}
 		}
 		d.ID = id
 		d.Revision = current + 1
@@ -42,7 +44,7 @@ func (m *Manager) PutWorkflowDefinition(ctx context.Context, id string, expected
 		if err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, "INSERT INTO workflow_definitions(id,revision,document) VALUES(?,?,?)", id, d.Revision, string(raw))
+		_, err = tx.InsertWorkflowDefinition(ctx, id, d.Revision, string(raw))
 		return err
 	})
 	return d, storageFailure(err)
@@ -53,7 +55,7 @@ func (m *Manager) WorkflowDefinition(ctx context.Context, id string, revision in
 	if m.closed {
 		return WorkflowDefinition{}, closedError()
 	}
-	d, e := readWorkflowDefinition(ctx, m.store.db, id, revision)
+	d, e := readWorkflowDefinition(ctx, m.store, id, revision)
 	return d, storageFailure(e)
 }
 func (m *Manager) CreateWorkflow(ctx context.Context, input CreateWorkflowInput) (WorkflowInstance, bool, error) {
@@ -76,28 +78,28 @@ func (m *Manager) CreateWorkflow(ctx context.Context, input CreateWorkflowInput)
 	raw, _ := json.Marshal(fingerprint)
 	canonical := string(raw)
 	var priorID, priorInput string
-	err = m.store.db.QueryRowContext(ctx, "SELECT id,canonical_input FROM workflow_instances WHERE request_id=?", input.RequestID).Scan(&priorID, &priorInput)
+	err = readView(ctx, m.store).WorkflowRequest(ctx, input.RequestID, &priorID, &priorInput)
 	if err == nil {
 		if priorInput != canonical {
-			return w, false, &Error{409, "request-conflict", "相同请求标识对应不同工作流输入"}
+			return w, false, &Error{Status: 409, Code: "request-conflict", Message: "相同请求标识对应不同工作流输入"}
 		}
-		w, e := readWorkflow(ctx, m.store.db, priorID)
+		w, e := readWorkflow(ctx, m.store, priorID)
 		return w, true, storageFailure(e)
 	}
-	if !errors.Is(err, sql.ErrNoRows) {
+	if !errors.Is(err, sessionstore.ErrNotFound) {
 		return w, false, storageFailure(err)
 	}
 	if err = m.agentWritable(); err != nil {
 		return w, false, err
 	}
 	if len(input.InputJSON) > 32768 {
-		return w, false, &Error{413, "input-too-large", "工作流输入不得超过 32 KiB"}
+		return w, false, &Error{Status: 413, Code: "input-too-large", Message: "工作流输入不得超过 32 KiB"}
 	}
-	d, err := readWorkflowDefinition(ctx, m.store.db, input.DefinitionID, input.DefinitionRevision)
+	d, err := readWorkflowDefinition(ctx, m.store, input.DefinitionID, input.DefinitionRevision)
 	if err != nil {
 		return w, false, storageFailure(err)
 	}
-	latest, err := readWorkflowDefinition(ctx, m.store.db, d.ID, 0)
+	latest, err := readWorkflowDefinition(ctx, m.store, d.ID, 0)
 	if err != nil {
 		return w, false, storageFailure(err)
 	}
@@ -107,17 +109,17 @@ func (m *Manager) CreateWorkflow(ctx context.Context, input CreateWorkflowInput)
 	if input.DefinitionRevision < 1 {
 		return w, false, bad("workflow-revision", "必须选择明确的模板修订")
 	}
-	if err = validateWorkflowJSON(d.InputSchemaJSON, input.InputJSON); err != nil {
+	if err = state.ValidateWorkflowJSON(d.InputSchemaJSON, input.InputJSON); err != nil {
 		return w, false, err
 	}
 	definitions := []WorkflowDefinition{d}
 	if d.LanguageVersion == WorkflowV2LanguageVersion {
-		definitions, err = workflowDefinitionClosure(ctx, m.store.db, d)
+		definitions, err = workflowDefinitionClosure(ctx, m.store, d)
 		if err != nil {
 			return w, false, err
 		}
 	}
-	source, err := readSession(ctx, m.store.db, input.SourceSessionID)
+	source, err := readSession(ctx, m.store, input.SourceSessionID)
 	if err != nil {
 		return w, false, storageFailure(err)
 	}
@@ -149,46 +151,46 @@ func (m *Manager) CreateWorkflow(ctx context.Context, input CreateWorkflowInput)
 		languageVersion = "v1"
 	}
 	w = WorkflowInstance{LanguageVersion: languageVersion, ID: m.deps.NewID(), RequestID: input.RequestID, DefinitionID: d.ID, DefinitionRevision: d.Revision, SourceSessionID: source.ID, SessionID: m.deps.NewID(), TaskID: m.deps.NewID(), RootScopeID: m.deps.NewID(), Status: StateReady, CurrentStepID: d.Entry, InputJSON: input.InputJSON, Model: profile.Public(), Snapshot: snapshot, CreatedAt: now, UpdatedAt: now, ReadyAt: now, Limits: DefaultWorkflowLimits(), LastSeq: "0", AllowedActions: []string{}}
-	if workflowV2(w) {
+	if state.WorkflowV2(w) {
 		w.Definitions = definitions
 	}
 	w.Snapshot.Environment.SessionID = w.SessionID
 	w.Snapshot.Digest = ""
-	w.Snapshot.Digest = digestJSON(w.Snapshot)
+	w.Snapshot.Digest = state.DigestJSON(w.Snapshot)
 	session := Session{ID: w.SessionID, Title: d.Name, CreatedAt: now, LastActivityAt: now, ModelProfileID: profile.ID, ModelRevision: profile.Revision, LastSeq: "0", ActiveWorkflowID: w.ID}
 	task := Task{ID: w.TaskID, SessionID: w.SessionID, RequestID: "workflow:" + w.ID, Kind: "workflow", DriverVersion: languageVersion, Goal: d.Goal, CreatedAt: now, Steps: []Step{}}
-	err = m.store.write(ctx, "workflow-accept", func(tx *sql.Tx) error {
+	err = writeStore(m.store, ctx, "workflow-accept", func(tx sessionstore.Tx) error {
 		var count int
-		if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM workflow_instances WHERE state NOT IN ('succeeded','failed','cancelled')").Scan(&count); err != nil {
+		if err := tx.ActiveWorkflowCount(ctx, &count); err != nil {
 			return err
 		}
 		if count >= 32 {
-			return &Error{429, "workflows-full", "非终态工作流已达 32 个上限"}
+			return &Error{Status: 429, Code: "workflows-full", Message: "非终态工作流已达 32 个上限"}
 		}
 		if err := saveSession(ctx, tx, session); err != nil {
 			return err
 		}
 		b, _ := json.Marshal(task)
-		if _, err := tx.ExecContext(ctx, "INSERT INTO tasks(id,request_id,input,document,session_id) VALUES(?,?,?,?,?)", task.ID, task.RequestID, canonical, string(b), session.ID); err != nil {
+		if _, err := tx.InsertWorkflowTask(ctx, task.ID, task.RequestID, canonical, string(b), session.ID); err != nil {
 			return err
 		}
 		b, _ = json.Marshal(w.Snapshot.Environment)
-		if _, err := tx.ExecContext(ctx, "INSERT INTO environments(session_id,revision,document) VALUES(?,?,?)", session.ID, w.Snapshot.Environment.Revision, string(b)); err != nil {
+		if _, err := tx.InsertEnvironment(ctx, session.ID, w.Snapshot.Environment.Revision, string(b)); err != nil {
 			return err
 		}
 		b, _ = json.Marshal(w)
-		if _, err := tx.ExecContext(ctx, "INSERT INTO workflow_instances(id,request_id,canonical_input,session_id,state,ready_at,document) VALUES(?,?,?,?,?,?,?)", w.ID, w.RequestID, canonical, w.SessionID, w.Status, w.ReadyAt, string(b)); err != nil {
+		if _, err := tx.InsertWorkflow(ctx, w.ID, w.RequestID, canonical, w.SessionID, w.Status, w.ReadyAt, string(b)); err != nil {
 			return err
 		}
 		if err := snapshotWikiWorkflow(ctx, tx, w); err != nil {
 			return err
 		}
-		if workflowV2(w) {
+		if state.WorkflowV2(w) {
 			if err := createWorkflowV2Root(ctx, tx, w, d, m.deps.NewID); err != nil {
 				return err
 			}
 		}
-		return m.store.workflowEvent(ctx, tx, &w, "workflow/accepted", "")
+		return tx.WorkflowEvent(ctx, &w, "workflow/accepted", "")
 	})
 	if err == nil {
 		m.signal()
@@ -201,11 +203,11 @@ func (m *Manager) GetWorkflow(ctx context.Context, id string) (WorkflowInstance,
 	if m.closed {
 		return WorkflowInstance{}, closedError()
 	}
-	w, e := readWorkflow(ctx, m.store.db, id)
+	w, e := readWorkflow(ctx, m.store, id)
 	if e == nil {
 		w.AllowedActions = m.workflowAllowedActions(ctx, w)
-		if workflowV2(w) {
-			tree, err := readWorkflowExecutionTree(ctx, m.store.db, w)
+		if state.WorkflowV2(w) {
+			tree, err := readWorkflowExecutionTree(ctx, m.store, w)
 			if err != nil {
 				return w, err
 			}
@@ -218,41 +220,41 @@ func (m *Manager) GetWorkflow(ctx context.Context, id string) (WorkflowInstance,
 	return w, storageFailure(e)
 }
 func (m *Manager) workflowDefinitionForRun(ctx context.Context, r Run) (WorkflowInstance, WorkflowStepDefinition, error) {
-	w, e := readWorkflow(ctx, m.store.db, r.WorkflowID)
+	w, e := readWorkflow(ctx, m.store, r.WorkflowID)
 	if e != nil {
 		return w, WorkflowStepDefinition{}, e
 	}
-	if workflowV2(w) {
-		_, _, step, e := workflowV2StepForRun(ctx, m.store.db, r)
+	if state.WorkflowV2(w) {
+		_, _, step, e := workflowV2StepForRun(ctx, m.store, r)
 		return w, step, e
 	}
-	d, e := readWorkflowDefinition(ctx, m.store.db, w.DefinitionID, w.DefinitionRevision)
+	d, e := readWorkflowDefinition(ctx, m.store, w.DefinitionID, w.DefinitionRevision)
 	if e != nil {
 		return w, WorkflowStepDefinition{}, e
 	}
-	s, e := workflowStep(d, r.WorkflowStepID)
+	s, e := state.WorkflowStep(d, r.WorkflowStepID)
 	return w, s, e
 }
 func (m *Manager) promoteWorkflows(ctx context.Context) error {
-	list, err := readDocuments[WorkflowInstance](ctx, m.store.db, "SELECT document FROM workflow_instances WHERE state='ready' OR (json_extract(document,'$.languageVersion')='workflow/v2' AND state IN ('queued','running','waiting-approval','waiting-resource','waiting-task')) ORDER BY ready_at,rowid")
+	list, err := readView(ctx, m.store).ReadyWorkflows(ctx)
 	if err != nil {
 		return err
 	}
 	for _, w := range list {
-		if workflowV2(w) {
+		if state.WorkflowV2(w) {
 			if err = m.promoteWorkflowV2(ctx, w); err != nil {
 				return err
 			}
 			continue
 		}
 		var count int
-		if err = m.store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM runs WHERE state='queued'").Scan(&count); err != nil {
+		if err = readView(ctx, m.store).QueuedRunCount(ctx, &count); err != nil {
 			return err
 		}
 		if count >= m.deps.Limits.QueueCapacity {
 			return nil
 		}
-		err = m.store.write(ctx, "workflow-queue", func(tx *sql.Tx) error {
+		err = writeStore(m.store, ctx, "workflow-queue", func(tx sessionstore.Tx) error {
 			fresh, e := readWorkflow(ctx, tx, w.ID)
 			if e != nil {
 				return e
@@ -265,7 +267,7 @@ func (m *Manager) promoteWorkflows(ctx context.Context) error {
 			if e != nil {
 				return e
 			}
-			step, e := workflowStep(d, w.CurrentStepID)
+			step, e := state.WorkflowStep(d, w.CurrentStepID)
 			if e != nil {
 				return e
 			}
@@ -273,21 +275,21 @@ func (m *Manager) promoteWorkflows(ctx context.Context) error {
 			if e != nil {
 				return e
 			}
-			input, bindingErr := evaluateWorkflowBinding(step.Input, w.InputJSON, outputs)
+			input, bindingErr := state.EvaluateWorkflowBinding(step.Input, w.InputJSON, outputs)
 			var attempt, number int
-			if e = tx.QueryRowContext(ctx, "SELECT COALESCE(MAX(number),0)+1 FROM workflow_attempts WHERE workflow_id=? AND step_id=?", w.ID, step.ID).Scan(&attempt); e != nil {
+			if e = tx.WorkflowAttemptCount(ctx, w.ID, step.ID, &attempt); e != nil {
 				return e
 			}
 			if attempt > w.Limits.Attempts {
 				w.Status = StateFailed
 				w.EndedAt = stamp(m.deps.Now())
 				w.Error = &Failure{Code: "attempt-budget", Message: "步骤尝试次数已耗尽"}
-				if e = m.store.workflowEvent(ctx, tx, &w, "workflow/failed", w.Error.Message); e != nil {
+				if e = tx.WorkflowEvent(ctx, &w, "workflow/failed", w.Error.Message); e != nil {
 					return e
 				}
-				return m.store.releaseWorkflowSession(ctx, tx, w)
+				return tx.ReleaseWorkflowSession(ctx, w)
 			}
-			if e = tx.QueryRowContext(ctx, "SELECT COALESCE(MAX(run_number),0)+1 FROM runs WHERE task_id=?", w.TaskID).Scan(&number); e != nil {
+			if e = tx.WorkflowRunCount(ctx, w.TaskID, &number); e != nil {
 				return e
 			}
 			session, e := readSession(ctx, tx, w.SessionID)
@@ -319,7 +321,7 @@ func (m *Manager) promoteWorkflows(ctx context.Context) error {
 				run.Error = &Failure{Code: "workflow-binding", Message: "步骤输入引用不存在或无效"}
 			}
 			b, _ := json.Marshal(run)
-			if _, e = tx.ExecContext(ctx, `INSERT INTO runs(id,task_id,state,created_at,document,session_id,request_id,canonical_input,run_number,workflow_id) VALUES(?,?,?,?,?,?,?,?,?,?)`, run.ID, run.TaskID, run.Status, run.CreatedAt, string(b), run.SessionID, run.RequestID, input, number, w.ID); e != nil {
+			if _, e = tx.InsertWorkflowRun(ctx, run.ID, run.TaskID, run.Status, run.CreatedAt, string(b), run.SessionID, run.RequestID, input, number, w.ID); e != nil {
 				return e
 			}
 			if e = snapshotWikiRunSpaces(ctx, tx, run.ID, run.SessionID); e != nil {
@@ -341,15 +343,15 @@ func (m *Manager) promoteWorkflows(ctx context.Context) error {
 				if e = saveWorkflow(ctx, tx, &w); e != nil {
 					return e
 				}
-				if e = m.store.event(ctx, tx, &run, "run/failed", "", nil, run.Error); e != nil {
+				if e = tx.Event(ctx, &run, "run/failed", "", nil, run.Error); e != nil {
 					return e
 				}
-				return m.store.releaseSession(ctx, tx, &run)
+				return tx.ReleaseSession(ctx, &run)
 			}
-			if e = m.store.workflowEvent(ctx, tx, &w, "workflow/queued", ""); e != nil {
+			if e = tx.WorkflowEvent(ctx, &w, "workflow/queued", ""); e != nil {
 				return e
 			}
-			return m.store.event(ctx, tx, &run, "run/queued", "", nil, nil)
+			return tx.Event(ctx, &run, "run/queued", "", nil, nil)
 		})
 		if err != nil {
 			return err
@@ -357,29 +359,7 @@ func (m *Manager) promoteWorkflows(ctx context.Context) error {
 	}
 	return nil
 }
-func (s *store) releaseWorkflowSession(ctx context.Context, tx *sql.Tx, w WorkflowInstance) error {
-	session, err := readSession(ctx, tx, w.SessionID)
-	if err != nil {
-		return err
-	}
-	session.ActiveRunID = w.ActiveRunID
-	if terminal(w.Status) {
-		session.ActiveRunID = ""
-		session.ActiveWorkflowID = ""
-		if workflowV2(w) {
-			var running string
-			err := tx.QueryRowContext(ctx, "SELECT id FROM runs WHERE workflow_id=? AND state='running' ORDER BY rowid LIMIT 1", w.ID).Scan(&running)
-			if err != nil && !errors.Is(err, sql.ErrNoRows) {
-				return err
-			}
-			if running != "" {
-				session.ActiveRunID, session.ActiveWorkflowID = running, w.ID
-			}
-		}
-	}
-	session.LastActivityAt = stamp(s.now())
-	return saveSession(ctx, tx, session)
-}
+
 func workflowDriver(r Run) string {
 	if r.Driver != "" {
 		return r.Driver
@@ -407,18 +387,18 @@ func (m *Manager) checkWorkflowEnvironment(ctx context.Context, w WorkflowInstan
 	}{{"skill", w.Snapshot.Environment.Skills}, {"mcp", w.Snapshot.Environment.Servers}, {"execution-profile", w.Snapshot.Environment.ExecutionProfiles}, {"grant", w.Snapshot.Environment.Grants}} {
 		for _, ref := range group.refs {
 			var count int
-			if err := m.store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM capability_revocations WHERE kind=? AND id=? AND (revision=0 OR revision=?)", group.kind, ref.ID, ref.Revision).Scan(&count); err != nil {
+			if err := readView(ctx, m.store).ExtensionRevoked(ctx, group.kind, ref.ID, ref.Revision, &count); err != nil {
 				return storageFailure(err)
 			}
 			if count > 0 {
-				return &Error{409, "capability-revoked", "流程固定环境包含已撤销授权，不能继续执行"}
+				return &Error{Status: 409, Code: "capability-revoked", Message: "流程固定环境包含已撤销授权，不能继续执行"}
 			}
 		}
 	}
 	return nil
 }
 func (m *Manager) workflowAllowedActions(ctx context.Context, w WorkflowInstance) []string {
-	if workflowV2(w) {
+	if state.WorkflowV2(w) {
 		return m.workflowV2AllowedActions(ctx, w)
 	}
 	out := []string{}
@@ -429,13 +409,13 @@ func (m *Manager) workflowAllowedActions(ctx context.Context, w WorkflowInstance
 		return out
 	}
 	var count int
-	if err := m.store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM execution_barriers WHERE state IN ('dispatched','unknown')").Scan(&count); err != nil || count > 0 {
+	if err := readView(ctx, m.store).UnresolvedBarrierCount(ctx, &count); err != nil || count > 0 {
 		return out
 	}
 	if m.checkWorkflowEnvironment(ctx, w) != nil {
 		return out
 	}
-	if validateWorkflowV1RecoverySources(ctx, m.store.db, w) != nil {
+	if validateWorkflowV1RecoverySources(ctx, m.store, w) != nil {
 		return out
 	}
 	if w.ActiveRunID == "" {
@@ -444,17 +424,17 @@ func (m *Manager) workflowAllowedActions(ctx context.Context, w WorkflowInstance
 		}
 		return out
 	}
-	r, err := readRun(ctx, m.store.db, w.ActiveRunID)
+	r, err := readRun(ctx, m.store, w.ActiveRunID)
 	if err != nil || m.executionLocked(r.ID) != nil {
 		return out
 	}
-	approvals, err := readDocuments[Approval](ctx, m.store.db, "SELECT document FROM approvals WHERE run_id=? ORDER BY rowid", r.ID)
+	approvals, err := readView(ctx, m.store).NodeApprovals(ctx, r.ID)
 	if err != nil {
 		return out
 	}
-	if !terminal(r.Status) {
+	if !state.Terminal(r.Status) {
 		if r.WorkflowFrozenFrom == StateQueued && len(approvals) == 0 {
-			if err = m.store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM operations WHERE run_id=?", r.ID).Scan(&count); err == nil && count == 0 {
+			if err = readView(ctx, m.store).DispatchedOperationCount(ctx, r.ID, &count); err == nil && count == 0 {
 				out = append(out, "continue")
 			}
 		}
@@ -463,7 +443,7 @@ func (m *Manager) workflowAllowedActions(ctx context.Context, w WorkflowInstance
 		}
 		return out
 	}
-	a, err := readWorkflowAttempt(ctx, m.store.db, r.ID)
+	a, err := readWorkflowAttempt(ctx, m.store, r.ID)
 	if err != nil || a.Status == StateSucceeded {
 		return out
 	}
@@ -471,7 +451,7 @@ func (m *Manager) workflowAllowedActions(ctx context.Context, w WorkflowInstance
 		out = append(out, "retry")
 	}
 	if workflowDriver(r) == "agent" || workflowDriver(r) == "operation" {
-		barriers, e := readDocuments[ExecutionBarrier](ctx, m.store.db, "SELECT document FROM execution_barriers WHERE run_id=?", r.ID)
+		barriers, e := readView(ctx, m.store).NodeBarriers(ctx, r.ID)
 		if e != nil {
 			return out
 		}

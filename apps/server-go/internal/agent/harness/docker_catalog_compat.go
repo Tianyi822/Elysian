@@ -3,6 +3,7 @@ package harness
 import (
 	"encoding/json"
 
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/mcp"
 	"elysian/server/internal/agent/tools"
 )
@@ -40,10 +41,10 @@ func legacyDockerContainerCatalogCore(operation Operation, current tools.PublicS
 			return false
 		}
 		frozen := tools.PublicSchema{Name: c.Name, Description: c.Description, Parameters: parameters, Metadata: c.Metadata}
-		if c.Source != "builtin" || c.Name != current.Name || digestJSON(frozen) != c.CatalogDigest {
+		if c.Source != "builtin" || c.Name != current.Name || hstate.DigestJSON(frozen) != c.CatalogDigest {
 			return false
 		}
-		if digestJSON(normalized) == c.CatalogDigest {
+		if hstate.DigestJSON(normalized) == c.CatalogDigest {
 			return true
 		}
 		current = normalized
@@ -76,7 +77,7 @@ func legacyDockerContainerCatalogCore(operation Operation, current tools.PublicS
 		query := tools.Schema{Type: tools.SchemaObject, Required: []string{"id"}, Properties: map[string]tools.Schema{
 			"id": {Type: tools.SchemaString}, "metadata": {Type: tools.SchemaBoolean}, "metrics": {Type: tools.SchemaBoolean},
 		}}
-		if digestJSON(properties["database"]) != digestJSON(query.JSONSchema()) {
+		if hstate.DigestJSON(properties["database"]) != hstate.DigestJSON(query.JSONSchema()) {
 			return false
 		}
 		delete(properties, "database")
@@ -93,7 +94,7 @@ func legacyDockerContainerCatalogCore(operation Operation, current tools.PublicS
 		return false
 	}
 	frozen := tools.PublicSchema{Name: c.Name, Description: c.Description, Parameters: parameters, Metadata: c.Metadata}
-	return digestJSON(frozen) == c.CatalogDigest && digestJSON(current) == c.CatalogDigest
+	return hstate.DigestJSON(frozen) == c.CatalogDigest && hstate.DigestJSON(current) == c.CatalogDigest
 }
 
 // Only the exact reviewed documentation/validation additions are reversible.
@@ -118,7 +119,7 @@ func previousDockerReceiptSchema(current tools.PublicSchema) (tools.PublicSchema
 			return current, false
 		}
 		expected := tools.Schema{Type: tools.SchemaString, Pattern: "^[a-f0-9]{64}$", Description: description}
-		if digestJSON(properties["requestId"]) != digestJSON(expected.JSONSchema()) {
+		if hstate.DigestJSON(properties["requestId"]) != hstate.DigestJSON(expected.JSONSchema()) {
 			return current, false
 		}
 		old := tools.Schema{Type: tools.SchemaString}
@@ -132,7 +133,7 @@ func previousDockerReceiptSchema(current tools.PublicSchema) (tools.PublicSchema
 			return current, false
 		}
 		query := tools.Schema{Type: tools.SchemaObject, Description: "首次检查省略此项，先取得登记摘要和 revision；仅按需读取某个登记的元数据或指标", Required: []string{"id"}, Properties: map[string]tools.Schema{"id": {Type: tools.SchemaString, Description: "基础检查结果 database.databases[].id 中的数据库登记 ID，不是容器 ID"}, "metadata": {Type: tools.SchemaBoolean}, "metrics": {Type: tools.SchemaBoolean}}}
-		if digestJSON(properties["database"]) != digestJSON(query.JSONSchema()) {
+		if hstate.DigestJSON(properties["database"]) != hstate.DigestJSON(query.JSONSchema()) {
 			return current, false
 		}
 		query.Description = ""

@@ -258,7 +258,7 @@ func TestWorkflowV2WikiParallelForeachApprovalWithoutNewExtraction(t *testing.T)
 		t.Fatalf("wrong approval boundary or aggregation: %+v writes=%d", gate, writes.Load())
 	}
 	var jobCount int
-	if err = m.store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM wiki_jobs").Scan(&jobCount); err != nil || jobCount != 0 || rootExtractions.Load() != 0 {
+	if err = fixture(m).db.QueryRowContext(ctx, "SELECT COUNT(*) FROM wiki_jobs").Scan(&jobCount); err != nil || jobCount != 0 || rootExtractions.Load() != 0 {
 		t.Fatalf("child step auto-extracted before root completion: count=%d err=%v calls=%d", jobCount, err, rootExtractions.Load())
 	}
 	// Updating the stored child cannot alter the accepted root's closure.
@@ -299,7 +299,7 @@ func TestWorkflowV2WikiParallelForeachApprovalWithoutNewExtraction(t *testing.T)
 		t.Fatalf("unexpected isolation tree/definition closure: %+v", w.ExecutionTree)
 	}
 	tasks := map[string]bool{seed.TaskID: true}
-	ref := WikiRef{page.ID, page.Revision, page.Digest}
+	ref := WikiRef{PageID: page.ID, Revision: page.Revision, Digest: page.Digest}
 	for _, scope := range w.ExecutionTree.Scopes {
 		if tasks[scope.TaskID] || scope.Status != StateSucceeded {
 			t.Fatalf("scope reused a task: %+v", scope)
@@ -311,7 +311,7 @@ func TestWorkflowV2WikiParallelForeachApprovalWithoutNewExtraction(t *testing.T)
 		}
 		if scope.ParentScopeID != "" {
 			m.mu.Lock()
-			refs, err := wikiArtifactRefs(ctx, m.store.db, "workflow-scope", scope.ID)
+			refs, err := wikiArtifactRefs(ctx, fixture(m), "workflow-scope", scope.ID)
 			m.mu.Unlock()
 			if err != nil || len(refs) != 1 || refs[0] != ref {
 				t.Fatalf("Wiki source not inherited by %s: %+v %v", scope.Path, refs, err)
@@ -325,7 +325,7 @@ func TestWorkflowV2WikiParallelForeachApprovalWithoutNewExtraction(t *testing.T)
 		}
 	}
 	callsMu.Unlock()
-	if err = m.store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM wiki_jobs").Scan(&jobCount); err != nil || jobCount != 0 || rootExtractions.Load() != 0 {
+	if err = fixture(m).db.QueryRowContext(ctx, "SELECT COUNT(*) FROM wiki_jobs").Scan(&jobCount); err != nil || jobCount != 0 || rootExtractions.Load() != 0 {
 		t.Fatalf("退役后工作流仍派生记忆整理: count=%d err=%v calls=%d", jobCount, err, rootExtractions.Load())
 	}
 	if memoryRequests.Load() < 3 {

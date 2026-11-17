@@ -13,6 +13,8 @@ import (
 	"testing"
 	"time"
 
+	"elysian/server/internal/agent/harness/sessionstore"
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/harness/workspace"
 )
 
@@ -147,11 +149,11 @@ func TestWorkflowV2WorkspaceJoinNamespacesChangesAndKeepsParent(t *testing.T) {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() { _ = s.close() })
-	m := &Manager{store: s, deps: Deps{Workspaces: backend, Now: time.Now, NewID: randomID}}
+	m := &Manager{store: s, deps: Deps{Workspaces: backend, Now: time.Now, NewID: hstate.RandomID}}
 	w := WorkflowInstance{TaskID: "parent-task"}
 	rootNode := WorkflowNodeExecution{ID: "composite-node"}
 	children := []WorkflowScope{{TaskID: "child-left", Ordinal: 0}, {TaskID: "child-right", Ordinal: 1}}
-	err = s.write(ctx, "tasks-fixture", func(tx *sql.Tx) error {
+	err = fixtureRawWrite(s, ctx, func(tx *sql.Tx) error {
 		for _, id := range []string{w.TaskID, children[0].TaskID, children[1].TaskID} {
 			if _, e := tx.ExecContext(ctx, "INSERT INTO tasks(id,request_id,input,document,session_id) VALUES(?,?,?,?,?)", id, id, "{}", "{}", ""); e != nil {
 				return e
@@ -164,7 +166,7 @@ func TestWorkflowV2WorkspaceJoinNamespacesChangesAndKeepsParent(t *testing.T) {
 	}
 	parent, err := backend.PrepareWrite(ctx, w.TaskID, 0, "shared.txt", strings.NewReader("parent"))
 	if err == nil {
-		err = s.write(ctx, "workspace-fixture", func(tx *sql.Tx) error { return commitWorkspaceVersion(ctx, tx, parent) })
+		err = s.write(ctx, "workspace-fixture", func(tx sessionstore.Tx) error { return commitWorkspaceVersion(ctx, tx, parent) })
 	}
 	if err != nil {
 		t.Fatal(err)
@@ -172,24 +174,24 @@ func TestWorkflowV2WorkspaceJoinNamespacesChangesAndKeepsParent(t *testing.T) {
 	for _, child := range children {
 		base, e := m.copyWorkflowWorkspace(ctx, parent, child.TaskID)
 		if e == nil {
-			e = s.write(ctx, "fork-workspace-fixture", func(tx *sql.Tx) error { return commitWorkspaceVersion(ctx, tx, base) })
+			e = s.write(ctx, "fork-workspace-fixture", func(tx sessionstore.Tx) error { return commitWorkspaceVersion(ctx, tx, base) })
 		}
 		if e != nil {
 			t.Fatal(e)
 		}
 		version, e := backend.PrepareWrite(ctx, child.TaskID, base.Revision, "shared.txt", strings.NewReader(fmt.Sprintf("branch-%d", child.Ordinal)))
 		if e == nil {
-			e = m.store.write(ctx, "child-workspace-fixture", func(tx *sql.Tx) error { return commitWorkspaceVersion(ctx, tx, version) })
+			e = fixture(m).write(ctx, "child-workspace-fixture", func(tx sessionstore.Tx) error { return commitWorkspaceVersion(ctx, tx, version) })
 		}
 		if e != nil {
 			t.Fatal(e)
 		}
 	}
 	prepared := []workspace.Version{}
-	err = m.store.write(ctx, "join-fixture", func(tx *sql.Tx) error {
+	err = fixture(m).write(ctx, "join-fixture", func(tx sessionstore.Tx) error {
 		return m.joinWorkflowWorkspaces(ctx, tx, parent, rootNode.ID, children, &prepared)
 	})
-	current, readErr := readWorkspaceVersion(ctx, m.store.db, w.TaskID)
+	current, readErr := readWorkspaceVersion(ctx, fixture(m), w.TaskID)
 	if err != nil || readErr != nil || current.Revision <= parent.Revision {
 		t.Fatalf("join 未发布父版本：%+v %v %v", current, err, readErr)
 	}
@@ -334,7 +336,7 @@ func TestWorkflowV2NestedScopesHaveLocalInputsAndOutputNamespaces(t *testing.T) 
 	}})
 	d := workflowV2CompositeDefinition("parallel")
 	nested := workflowV2CompositeDefinition("foreach")
-	d.Steps[0].Parallel.Branches[0].Body = workflowBody(nested)
+	d.Steps[0].Parallel.Branches[0].Body = hstate.DefinitionBody(nested)
 	input := `{"left":[{"n":9007199254740993},{"n":2}],"right":{"n":3}}`
 	w := createWorkflowV2Test(t, m, source, d, input)
 	w = workflowWait(t, m, w.ID, StateSucceeded)
@@ -427,13 +429,13 @@ func TestWorkflowV2BudgetEndsEveryWaitingBranch(t *testing.T) {
 	})
 	workflowIdle(t, m)
 	m.mu.Lock()
-	err := m.store.write(ctx, "exhaust-workflow-time", func(tx *sql.Tx) error {
+	err := fixture(m).write(ctx, "exhaust-workflow-time", func(tx sessionstore.Tx) error {
 		fresh, err := readWorkflow(ctx, tx, w.ID)
 		if err != nil {
 			return err
 		}
 		fresh.Usage.ActiveMilliseconds = fresh.Limits.ActiveMilliseconds
-		return m.store.failWorkflowActiveBudget(ctx, tx, &fresh, nil)
+		return fixture(m).failWorkflowActiveBudget(ctx, tx, &fresh, nil)
 	})
 	m.mu.Unlock()
 	if err != nil {
@@ -471,15 +473,15 @@ func TestWorkflowV2RetentionDeletesScopesBeforeTheirTasks(t *testing.T) {
 	w = workflowWait(t, m, w.ID, StateSucceeded)
 	workflowIdle(t, m)
 	m.mu.Lock()
-	err := m.store.write(ctx, "v2-retention-fixture", func(tx *sql.Tx) error {
-		return m.store.sweepSessions(ctx, tx, stamp(time.Now().Add(time.Hour)))
+	err := fixture(m).write(ctx, "v2-retention-fixture", func(tx sessionstore.Tx) error {
+		return fixture(m).sweepSessions(ctx, tx, stamp(time.Now().Add(time.Hour)))
 	})
 	var scopes, tasks int
 	if err == nil {
-		err = m.store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM workflow_scopes WHERE workflow_id=?", w.ID).Scan(&scopes)
+		err = fixture(m).db.QueryRowContext(ctx, "SELECT COUNT(*) FROM workflow_scopes WHERE workflow_id=?", w.ID).Scan(&scopes)
 	}
 	if err == nil {
-		err = m.store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM tasks WHERE session_id=?", w.SessionID).Scan(&tasks)
+		err = fixture(m).db.QueryRowContext(ctx, "SELECT COUNT(*) FROM tasks WHERE session_id=?", w.SessionID).Scan(&tasks)
 	}
 	m.mu.Unlock()
 	if err != nil || scopes != 0 || tasks != 0 {

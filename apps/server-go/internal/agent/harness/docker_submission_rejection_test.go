@@ -112,7 +112,7 @@ func TestServiceSubmissionCorrectsJSONNumbersAndReauthorizesWithoutUnknownProtec
 			if second.ID == first.ID || second.Operation.RunID != run.ID || !strings.Contains(second.Operation.ArgumentsJSON, "MYSQL_DATABASE=orders") || domain.prepared.Load() != 1 || domain.executed.Load() != 0 {
 				t.Fatalf("correction did not wait for its own approval: prepared=%d executed=%d approval=%+v", domain.prepared.Load(), domain.executed.Load(), second)
 			}
-			rejected, err := readOperation(ctx, m.store.db, first.Operation.ID)
+			rejected, err := readOperation(ctx, fixture(m), first.Operation.ID)
 			if err != nil || rejected.Status != "completed" || rejected.Task != nil || rejected.Error == nil || rejected.Error.Code != "docker-operation-rejected" || rejected.Error.Evidence == nil || rejected.Error.Evidence.Execution != "not-started" {
 				t.Fatalf("preflight rejection retained unknown or task state: operation=%+v error=%v", rejected, err)
 			}
@@ -128,7 +128,7 @@ func TestServiceSubmissionCorrectsJSONNumbersAndReauthorizesWithoutUnknownProtec
 			if finished.Status != StateSucceeded || requests.Load() != 4 || domain.prepared.Load() != 2 || domain.executed.Load() != 1 {
 				t.Fatalf("correction failed or replayed: status=%s error=%+v requests=%d prepared=%d executed=%d", finished.Status, finished.Error, requests.Load(), domain.prepared.Load(), domain.executed.Load())
 			}
-			completed, err := readOperation(ctx, m.store.db, second.Operation.ID)
+			completed, err := readOperation(ctx, fixture(m), second.Operation.ID)
 			if err != nil || completed.Status != "completed" || completed.Error != nil || completed.Task == nil || completed.Task.ID == "" || completed.Task.RequestID != correctedRequest {
 				t.Fatalf("corrected task did not settle: operation=%+v error=%v", completed, err)
 			}

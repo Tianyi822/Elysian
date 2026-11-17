@@ -8,6 +8,7 @@ import (
 	"testing"
 
 	"elysian/server/internal/agent/harness/model"
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/harness/toolbridge"
 	"elysian/server/internal/agent/kardia"
 	"elysian/server/internal/agent/tools"
@@ -60,7 +61,7 @@ func TestNativeDockerSearchFailureCanDiscoverOtherRegistries(t *testing.T) {
 	if len(approvals) != 0 {
 		t.Fatal("只读源发现触发了审批")
 	}
-	_, raw := readRecordLines(t, m.store, recordOwner{"session", session.ID})
+	_, raw := readRecordLines(t, fixture(m), recordOwner{"session", session.ID})
 	if strings.Contains(string(raw), "404 page not found") {
 		t.Fatal("原始上游响应进入记录")
 	}
@@ -141,7 +142,7 @@ func TestDockerConfirmedFailureResumesAndReauthorizesNextRegistry(t *testing.T) 
 				original := second.Operation
 				changed := original
 				changed.ArgumentsJSON = strings.ReplaceAll(changed.ArgumentsJSON, "dockerproxy.net", "docker.1ms.run")
-				if accessDigest(original) == accessDigest(changed) {
+				if hstate.AccessDigest(original) == hstate.AccessDigest(changed) {
 					t.Fatal("镜像源未绑定授权摘要")
 				}
 				if _, err = m.DecideAccess(context.Background(), second.ID, accessInput(second, "once", "second-registry")); err != nil {

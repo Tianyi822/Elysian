@@ -3,6 +3,7 @@ package harness
 import (
 	"encoding/json"
 
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/mcp"
 	"elysian/server/internal/agent/tools"
 )
@@ -19,7 +20,7 @@ func legacyDatabaseDiscoverCatalogCompatible(operation Operation, current tools.
 		return false
 	}
 	frozen := tools.PublicSchema{Name: c.Name, Description: c.Description, Parameters: frozenParameters, Metadata: c.Metadata}
-	if digestJSON(frozen) != c.CatalogDigest || mcp.Validate(c.Parameters, json.RawMessage(operation.ArgumentsJSON)) != nil {
+	if hstate.DigestJSON(frozen) != c.CatalogDigest || mcp.Validate(c.Parameters, json.RawMessage(operation.ArgumentsJSON)) != nil {
 		return false
 	}
 	properties, ok := parameters["properties"].(map[string]any)
@@ -32,7 +33,7 @@ func legacyDatabaseDiscoverCatalogCompatible(operation Operation, current tools.
 	}
 	delete(version, "description")
 	current.Parameters = parameters
-	return digestJSON(frozen) == digestJSON(current)
+	return hstate.DigestJSON(frozen) == hstate.DigestJSON(current)
 }
 
 // 仅剥除 database_create 的六个新增参数说明来核对旧摘要，绝不修改
@@ -48,7 +49,7 @@ func legacyDatabaseCreateCatalogCompatible(operation Operation, current tools.Pu
 		return false
 	}
 	frozen := tools.PublicSchema{Name: c.Name, Description: c.Description, Parameters: frozenParameters, Metadata: c.Metadata}
-	if digestJSON(frozen) != c.CatalogDigest || mcp.Validate(c.Parameters, json.RawMessage(operation.ArgumentsJSON)) != nil {
+	if hstate.DigestJSON(frozen) != c.CatalogDigest || mcp.Validate(c.Parameters, json.RawMessage(operation.ArgumentsJSON)) != nil {
 		return false
 	}
 	properties, ok := parameters["properties"].(map[string]any)
@@ -63,5 +64,5 @@ func legacyDatabaseCreateCatalogCompatible(operation Operation, current tools.Pu
 		delete(field, "description")
 	}
 	current.Parameters = parameters
-	return digestJSON(frozen) == digestJSON(current)
+	return hstate.DigestJSON(frozen) == hstate.DigestJSON(current)
 }

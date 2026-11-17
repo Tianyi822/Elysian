@@ -2,7 +2,6 @@ package harness
 
 import (
 	"context"
-	"elysian/server/internal/agent/tools"
 	"encoding/json"
 	"reflect"
 	"strconv"
@@ -10,6 +9,8 @@ import (
 	"time"
 
 	"elysian/server/internal/agent/harness/model"
+	hstate "elysian/server/internal/agent/harness/state"
+	"elysian/server/internal/agent/tools"
 )
 
 func (m *Manager) modelStoreLocked() (*model.Store, error) {
@@ -124,7 +125,7 @@ func (m *Manager) CreateSession(ctx context.Context, input CreateSessionInput) (
 	if session.Title == "" {
 		session.Title = "新会话"
 	}
-	err = m.store.createSession(ctx, session)
+	err = m.store.CreateSession(ctx, session)
 	return session, storageFailure(err)
 }
 
@@ -145,12 +146,12 @@ func (m *Manager) SwitchSessionModel(ctx context.Context, id string, input Switc
 	if !next.Capabilities.Text || !next.Capabilities.Tools {
 		return Session{}, bad("model-capability", "所选模型必须支持文本与工具调用")
 	}
-	previous, err := readSession(ctx, m.store.db, id)
+	previous, err := readSession(ctx, m.store, id)
 	if err != nil {
 		return Session{}, storageFailure(err)
 	}
 	old, oldErr := profiles.Resolve(previous.ModelProfileID, previous.ModelRevision, true)
-	session, err := m.store.switchModel(ctx, id, input.ModelProfileID, input.ModelRevision)
+	session, err := m.store.SwitchModel(ctx, id, input.ModelProfileID, input.ModelRevision)
 	if err == nil && (previous.ModelProfileID != session.ModelProfileID || previous.ModelRevision != session.ModelRevision) {
 		change := &ModelChange{After: next.Public(), Differences: []string{}, Notices: []string{"模型能力可能变化，请核对文本、工具调用和上下文容量", "切换后的首轮缓存命中率可能下降，实际取决于模型与供应商", "切换可能改变响应速度与调用成本，实际取决于模型与供应商"}}
 		if oldErr == nil {
@@ -191,7 +192,7 @@ func (m *Manager) RenameSession(ctx context.Context, id string, input RenameSess
 	if len(input.Title) > 200 {
 		return Session{}, bad("invalid-title", "会话标题不能超过 200 字节")
 	}
-	session, err := m.store.renameSession(ctx, id, title)
+	session, err := m.store.RenameSession(ctx, id, title)
 	return session, storageFailure(err)
 }
 
@@ -202,7 +203,7 @@ func (m *Manager) DeleteSession(ctx context.Context, id string) error {
 	if m.closed {
 		return closedError()
 	}
-	runs, err := readDocuments[Run](ctx, m.store.db, "SELECT document FROM runs WHERE session_id=?", id)
+	runs, err := readView(ctx, m.store).SessionRuns(ctx, id)
 	if err != nil {
 		return storageFailure(err)
 	}
@@ -212,7 +213,7 @@ func (m *Manager) DeleteSession(ctx context.Context, id string) error {
 			tasks = append(tasks, execution.tasks...)
 		}
 	}
-	if err = m.store.deleteSession(ctx, id, tasks...); err != nil {
+	if err = m.store.DeleteSession(ctx, id, tasks...); err != nil {
 		if commitUnconfirmed(err) {
 			m.storageFailedLocked()
 		}
@@ -254,7 +255,7 @@ func (m *Manager) GetSession(ctx context.Context, id string) (Session, error) {
 		return Session{}, closedError()
 	}
 	value, readErr := storeRead(ctx, m.store, "GetSession", func(ctx context.Context) (Session, error) {
-		session, err := readSession(ctx, m.store.reader(ctx), id)
+		session, err := readSession(ctx, m.store, id)
 		return session, err
 	})
 	return value, storageFailure(readErr)
@@ -266,7 +267,7 @@ func (m *Manager) ListSessions(ctx context.Context, cursor string, limit int) (P
 		return Page[Session]{}, closedError()
 	}
 	value, readErr := storeRead(ctx, m.store, "ListSessions", func(ctx context.Context) (Page[Session], error) {
-		page, err := m.store.sessions(ctx, cursor, limit)
+		page, err := readView(ctx, m.store).Sessions(ctx, cursor, limit)
 		return page, err
 	})
 	return value, storageFailure(readErr)
@@ -278,7 +279,7 @@ func (m *Manager) ListSessionsByActivity(ctx context.Context, cursor string, lim
 		return Page[Session]{}, closedError()
 	}
 	value, readErr := storeRead(ctx, m.store, "ListSessionsByActivity", func(ctx context.Context) (Page[Session], error) {
-		page, err := m.store.sessionsByActivity(ctx, cursor, limit)
+		page, err := readView(ctx, m.store).SessionsByActivity(ctx, cursor, limit)
 		return page, err
 	})
 	return value, storageFailure(readErr)
@@ -290,11 +291,11 @@ func (m *Manager) GetTask(ctx context.Context, id string) (Task, error) {
 		return Task{}, closedError()
 	}
 	value, readErr := storeRead(ctx, m.store, "GetTask", func(ctx context.Context) (Task, error) {
-		task, err := readTask(ctx, m.store.reader(ctx), id)
+		task, err := readTask(ctx, m.store, id)
 		if err != nil {
 			return task, err
 		}
-		last, err := m.store.latestRun(ctx, id)
+		last, err := readView(ctx, m.store).LatestRun(ctx, id)
 		if err != nil {
 			return task, err
 		}
@@ -313,10 +314,10 @@ func (m *Manager) ListTasks(ctx context.Context, sessionID, cursor string, limit
 		return Page[Task]{}, closedError()
 	}
 	value, readErr := storeRead(ctx, m.store, "ListTasks", func(ctx context.Context) (Page[Task], error) {
-		page, err := m.store.tasks(ctx, sessionID, cursor, limit)
+		page, err := readView(ctx, m.store).Tasks(ctx, sessionID, cursor, limit)
 		if err == nil {
 			for i := range page.Items {
-				last, readErr := m.store.latestRun(ctx, page.Items[i].ID)
+				last, readErr := readView(ctx, m.store).LatestRun(ctx, page.Items[i].ID)
 				if readErr != nil {
 					return page, readErr
 				}
@@ -337,15 +338,15 @@ func (m *Manager) Messages(ctx context.Context, id, after string, limit int) (Pa
 		return Page[Message]{}, closedError()
 	}
 	value, readErr := storeRead(ctx, m.store, "Messages", func(ctx context.Context) (Page[Message], error) {
-		page, err := m.store.messages(ctx, id, after, limit)
+		page, err := readView(ctx, m.store).Messages(ctx, id, after, limit)
 		if err == nil {
 			for i := range page.Items {
 				v := &page.Items[i]
-				v.Quarantined, err = wikiArtifactInvalid(ctx, m.store.reader(ctx), "message", v.ID)
+				v.Quarantined, err = wikiArtifactInvalid(ctx, m.store, "message", v.ID)
 				if err != nil {
 					break
 				}
-				v.WikiSources, err = wikiArtifactRefs(ctx, m.store.reader(ctx), "message", v.ID)
+				v.WikiSources, err = wikiArtifactRefs(ctx, m.store, "message", v.ID)
 				if err != nil {
 					break
 				}
@@ -362,18 +363,18 @@ func (m *Manager) Memory(ctx context.Context, id string, revision int) (WorkingM
 		return WorkingMemory{}, closedError()
 	}
 	value, readErr := storeRead(ctx, m.store, "Memory", func(ctx context.Context) (WorkingMemory, error) {
-		memory, err := m.store.memory(ctx, id, revision)
+		memory, err := readView(ctx, m.store).Memory(ctx, id, revision)
 		if err != nil {
 			return memory, err
 		}
-		last, err := m.store.latestRun(ctx, id)
+		last, err := readView(ctx, m.store).LatestRun(ctx, id)
 		if err != nil {
 			return memory, err
 		}
 		if last != nil {
 			memory.MemoryStatus = publicMemoryStatus(last)
 		}
-		invalid, e := wikiArtifactInvalid(ctx, m.store.reader(ctx), "memory", id+":"+strconv.Itoa(memory.Revision))
+		invalid, e := wikiArtifactInvalid(ctx, m.store, "memory", id+":"+strconv.Itoa(memory.Revision))
 		if e != nil {
 			return memory, e
 		}
@@ -391,7 +392,7 @@ func (m *Manager) ModelRequests(ctx context.Context, id, cursor string, limit in
 		return Page[ModelRequestRecord]{}, closedError()
 	}
 	value, readErr := storeRead(ctx, m.store, "ModelRequests", func(ctx context.Context) (Page[ModelRequestRecord], error) {
-		page, err := m.store.modelRequests(ctx, id, cursor, limit)
+		page, err := readView(ctx, m.store).ModelRequests(ctx, id, cursor, limit)
 		if execution := m.executionLocked(id); err == nil && execution != nil && execution.agent != nil {
 			agent := execution.agent
 			for i := range page.Items {
@@ -468,7 +469,7 @@ func (m *Manager) submitAgent(ctx context.Context, targetID string, input AgentI
 	if m.closed {
 		return Run{}, false, closedError()
 	}
-	prior, priorInput, err := m.store.request(ctx, input.RequestID)
+	prior, priorInput, err := readView(ctx, m.store).Request(ctx, input.RequestID)
 	if err != nil {
 		return Run{}, false, storageFailure(err)
 	}
@@ -494,7 +495,7 @@ func (m *Manager) submitAgent(ctx context.Context, targetID string, input AgentI
 	var task Task
 	sessionID := targetID
 	if !newTask {
-		task, err = readTask(ctx, m.store.db, targetID)
+		task, err = readTask(ctx, m.store, targetID)
 		if err != nil {
 			return Run{}, false, storageFailure(err)
 		}
@@ -503,7 +504,7 @@ func (m *Manager) submitAgent(ctx context.Context, targetID string, input AgentI
 			return Run{}, false, bad("invalid-task", "该任务不支持会话续轮")
 		}
 	}
-	session, err := readSession(ctx, m.store.db, sessionID)
+	session, err := readSession(ctx, m.store, sessionID)
 	if err != nil {
 		return Run{}, false, storageFailure(err)
 	}
@@ -524,14 +525,14 @@ func (m *Manager) submitAgent(ctx context.Context, targetID string, input AgentI
 	if len(input.Attachments) > 0 {
 		// 提交侧按 Limits 复检引用集合：逐 id 校验存在与绑定归属（未绑定或已绑定本会话，
 		// 支撑编辑重发复用原轮 id），并按附件行 bytes 复核张数与总字节。
-		rows, readErr := readAttachmentRows(ctx, m.store.db, input.Attachments, sessionID)
+		rows, readErr := readAttachmentRows(ctx, m.store, input.Attachments, sessionID)
 		if readErr != nil {
 			if typed, ok := readErr.(*Error); ok {
 				return Run{}, false, typed
 			}
 			return Run{}, false, storageFailure(readErr)
 		}
-		if err = validateAttachmentSet(rows, limits); err != nil {
+		if err = hstate.ValidateAttachmentSet(rows, limits); err != nil {
 			return Run{}, false, err
 		}
 	}
@@ -573,12 +574,12 @@ func (m *Manager) submitAgent(ctx context.Context, targetID string, input AgentI
 	}
 	snapshot.Digest = ""
 	snapshot.RecoveryPolicy = recoveryPolicy
-	snapshot.Digest = digestJSON(snapshot)
+	snapshot.Digest = hstate.DigestJSON(snapshot)
 	run.DriverVersion = "v2"
 	run.WikiStrategy = wikiDisabledStrategy
 	run.Snapshot = &snapshot
 	run.Selection = &input
-	run, duplicate, err := m.store.acceptAgent(ctx, task, run, canonical, m.deps.NewID(), newTask)
+	run, duplicate, err := m.store.AcceptAgent(ctx, task, run, canonical, m.deps.NewID(), newTask)
 	if err != nil {
 		if _, ok := err.(*Error); !ok && ctx.Err() == nil {
 			m.storageFailedLocked()

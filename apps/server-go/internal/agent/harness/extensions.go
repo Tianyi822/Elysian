@@ -16,6 +16,7 @@ import (
 	"elysian/server/internal/agent/execution"
 	execconfig "elysian/server/internal/agent/execution/config"
 	"elysian/server/internal/agent/harness/skills"
+	"elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/harness/workspace"
 	"elysian/server/internal/agent/jsonvalue"
 	"elysian/server/internal/agent/mcp"
@@ -44,14 +45,9 @@ func capabilityAlias(prefix, id, name string) string {
 	s := sha256.Sum256([]byte(id + "\x00" + name))
 	return prefix + "_" + hex.EncodeToString(s[:12])
 }
-func contains(values []string, value string) bool {
-	for _, v := range values {
-		if v == value {
-			return true
-		}
-	}
-	return false
-}
+
+var contains = state.Contains
+
 func emptyParameters() json.RawMessage {
 	return json.RawMessage(`{"type":"object","properties":{},"additionalProperties":false}`)
 }
@@ -430,7 +426,7 @@ func (e *Extensions) Check(ctx context.Context, s CapabilitySnapshot, o Operatio
 		if err != nil {
 			return err
 		}
-		if digestJSON(prepared.Execution) != digestJSON(o.Execution) {
+		if state.DigestJSON(prepared.Execution) != state.DigestJSON(o.Execution) {
 			return bad("execution-changed", "Bash 执行配置与审批快照不符")
 		}
 		return nil
@@ -447,7 +443,7 @@ func (e *Extensions) Check(ctx context.Context, s CapabilitySnapshot, o Operatio
 			if err != nil {
 				return err
 			}
-			if digestJSON(prepared.Execution) != digestJSON(o.Execution) {
+			if state.DigestJSON(prepared.Execution) != state.DigestJSON(o.Execution) {
 				return bad("execution-changed", "执行配置与审批快照不符")
 			}
 			if e.Executor == nil {
@@ -463,7 +459,7 @@ func (e *Extensions) Check(ctx context.Context, s CapabilitySnapshot, o Operatio
 		if err != nil {
 			return err
 		}
-		if digestJSON(prepared.Execution) != digestJSON(o.Execution) {
+		if state.DigestJSON(prepared.Execution) != state.DigestJSON(o.Execution) {
 			return bad("execution-changed", "MCP stdio 容器配置与审批快照不符")
 		}
 		if server.Stdio != nil {

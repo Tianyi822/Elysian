@@ -12,6 +12,8 @@ import (
 	"time"
 
 	"elysian/server/internal/agent/harness/model"
+	"elysian/server/internal/agent/harness/sessionstore"
+	hstate "elysian/server/internal/agent/harness/state"
 )
 
 func TestChatDoesNotEnqueueWikiExtraction(t *testing.T) {
@@ -37,20 +39,20 @@ func TestChatDoesNotEnqueueWikiExtraction(t *testing.T) {
 		t.Fatalf("主运行失败: %+v", done)
 	}
 	var count int
-	if err = m.store.db.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM wiki_jobs").Scan(&count); err != nil || count != 0 || extractionCalls.Load() != 0 {
+	if err = fixture(m).db.QueryRowContext(context.Background(), "SELECT COUNT(*) FROM wiki_jobs").Scan(&count); err != nil || count != 0 || extractionCalls.Load() != 0 {
 		t.Fatalf("停用后仍整理: count=%d err=%v calls=%d", count, err, extractionCalls.Load())
 	}
 }
 
 func TestWikiBackgroundRecoveryRetainsResponseAndDoesNotReplay(t *testing.T) {
 	s, path := openRuntimeTestStore(t)
-	m := &Manager{store: s, deps: Deps{Path: path, Now: s.now, NewID: randomID}}
+	m := &Manager{store: s, deps: Deps{Store: s, EmbeddingConfigPath: filepath.Join(filepath.Dir(filepath.Dir(path)), "config", "agent", "embeddings.json"), Now: s.now, NewID: hstate.RandomID}}
 	response := model.Response{FinishReason: "stop", Content: "已保存的响应"}
 	ctx := context.Background()
 	for _, kind := range []string{"extraction", "embedding"} {
 		for _, status := range []string{StateQueued, StateRunning} {
 			job := WikiJob{ID: kind + status, Kind: kind, OriginKind: "fixture", OriginID: kind + status, Status: status, CreatedAt: stamp(s.now()), Input: "固定输入", Response: &response, CandidateIDs: []string{}, Sources: []WikiRef{}}
-			if err := s.write(ctx, "test-background-job", func(tx *sql.Tx) error { return saveWikiJob(ctx, tx, job) }); err != nil {
+			if err := s.write(ctx, "test-background-job", func(tx sessionstore.Tx) error { return saveWikiJob(ctx, tx, job) }); err != nil {
 				t.Fatal(err)
 			}
 		}
@@ -76,7 +78,9 @@ func TestEmbeddingProfileCredentialBoundary(t *testing.T) {
 	defer server.Close()
 	m, _, _ := agentManager(t, func(context.Context, model.Profile, model.Request) (model.Response, error) {
 		return finalReply("完成"), nil
-	}, func(deps *Deps) { deps.Path = filepath.Join(t.TempDir(), "data", "harness.sqlite") })
+	}, func(deps *Deps) {
+		deps.EmbeddingConfigPath = filepath.Join(t.TempDir(), "config", "agent", "embeddings.json")
+	})
 	secret := "fixture-embedding-secret"
 	profile, err := m.CreateEmbeddingProfile(context.Background(), EmbeddingProfileInput{Name: "本地测试", BaseURL: server.URL, Model: "embedding", Dimensions: 2, Active: true, Credential: &secret})
 	if err != nil || profile.Credential != "" || !profile.HasCredential {
@@ -133,7 +137,9 @@ func TestWikiHybridQueryAllowsWithdrawalWhileProviderWaits(t *testing.T) {
 	defer close(release)
 	m, _, _ := agentManager(t, func(context.Context, model.Profile, model.Request) (model.Response, error) {
 		return finalReply("完成"), nil
-	}, func(deps *Deps) { deps.Path = filepath.Join(t.TempDir(), "data", "harness.sqlite") })
+	}, func(deps *Deps) {
+		deps.EmbeddingConfigPath = filepath.Join(t.TempDir(), "config", "agent", "embeddings.json")
+	})
 	profile, err := m.CreateEmbeddingProfile(context.Background(), EmbeddingProfileInput{Name: "阻塞测试", BaseURL: server.URL, Model: "embedding", Dimensions: 2, Active: true})
 	if err != nil {
 		t.Fatal(err)
@@ -147,7 +153,7 @@ func TestWikiHybridQueryAllowsWithdrawalWhileProviderWaits(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.mu.Lock()
-	err = m.store.write(context.Background(), "test-index-ready", func(tx *sql.Tx) error {
+	err = fixtureRawWrite(fixture(m), context.Background(), func(tx *sql.Tx) error {
 		_, err := tx.Exec("INSERT INTO wiki_embedding_indexes(page_id,page_revision,digest,profile_id,profile_revision,vector,created_at) VALUES(?,?,?,?,?,?,?)", page.ID, page.Revision, page.Digest, profile.ID, profile.Revision, "[1,0]", wikiNow(m))
 		return err
 	})

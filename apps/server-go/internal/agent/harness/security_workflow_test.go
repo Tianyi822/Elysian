@@ -2,13 +2,13 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"slices"
 	"strings"
 	"testing"
 
 	"elysian/server/internal/agent/harness/model"
+	"elysian/server/internal/agent/harness/sessionstore"
 )
 
 // securityBranchBody 每个分支包含两个 agent 步骤：second 是同任务第 2 条 Run，
@@ -140,7 +140,7 @@ func TestWorkflowV1AcceptResultChargesInstanceResultBudget(t *testing.T) {
 	}
 	// 预算余量只剩 8 字节：单次上限（256 KiB）仍宽裕，累计上限应先拒绝补录。
 	m.mu.Lock()
-	err := m.store.write(ctx, "workflow-result-budget-fixture", func(tx *sql.Tx) error {
+	err := fixture(m).write(ctx, "workflow-result-budget-fixture", func(tx sessionstore.Tx) error {
 		fresh, e := readWorkflow(ctx, tx, w.ID)
 		if e != nil {
 			return e
@@ -163,7 +163,7 @@ func TestWorkflowV1AcceptResultChargesInstanceResultBudget(t *testing.T) {
 	}
 	// 恢复预算余量后补录成功，补录字节计入实例累计预算。
 	m.mu.Lock()
-	err = m.store.write(ctx, "workflow-result-budget-reset", func(tx *sql.Tx) error {
+	err = fixture(m).write(ctx, "workflow-result-budget-reset", func(tx sessionstore.Tx) error {
 		fresh, e := readWorkflow(ctx, tx, w.ID)
 		if e != nil {
 			return e

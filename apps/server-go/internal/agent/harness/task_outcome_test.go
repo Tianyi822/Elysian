@@ -2,7 +2,6 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -10,6 +9,8 @@ import (
 	"testing"
 	"time"
 
+	"elysian/server/internal/agent/harness/sessionstore"
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/tools"
 )
 
@@ -20,7 +21,7 @@ func domainOutcomeFixture(t *testing.T, suffix string) (*Manager, Operation, Exe
 	r := createRuntimeTestRun(t, s, suffix, runtimeStoreTestTime)
 	o := Operation{ID: "op-" + suffix, RunID: r.ID, TaskID: r.TaskID, Status: StateWaitingTask, CallID: "call-" + suffix, Task: &tools.TaskReference{Domain: "test-domain", ID: "task-" + suffix, RequestID: "request-" + suffix}, ResourceClaims: []ResourceClaim{{Kind: "docker-container", Authority: "local", Key: strings.Repeat("c", 64), Access: "write"}}}
 	b := ExecutionBarrier{ID: "barrier-" + suffix, OperationID: o.ID, RunID: r.ID, Status: "dispatched"}
-	_, err := s.change(m.ctx, r.ID, "fixture", func(tx *sql.Tx, r *Run) error {
+	_, err := s.change(m.ctx, r.ID, "fixture", func(tx sessionstore.Tx, r *Run) error {
 		r.Status = StateWaitingTask
 		r.Usage.Calls = 1
 		if err := saveOperation(m.ctx, tx, o); err != nil {
@@ -91,7 +92,7 @@ func TestCancelledSubmissionRetainsLateAcceptanceWithoutRevivingRun(t *testing.T
 				return len(ops) == 2 && ops[1].Status == "completed"
 			})
 			current, _ := m.Get(m.ctx, run.ID)
-			if current.Status != finished.Status || !terminal(current.Status) || current.Usage.Calls != finished.Usage.Calls {
+			if current.Status != finished.Status || !hstate.Terminal(current.Status) || current.Usage.Calls != finished.Usage.Calls {
 				t.Fatalf("late acceptance revived or recharged Run: %+v", current)
 			}
 		})
@@ -140,11 +141,11 @@ func TestDomainUnknownPersistsAllFactsAndLateReceiptDoesNotResume(t *testing.T) 
 			if current.Status != want {
 				t.Fatalf("run=%+v", current)
 			}
-			barrier, err := readBarrier(m.ctx, m.store.db, b.ID)
+			barrier, err := readBarrier(m.ctx, fixture(m), b.ID)
 			if err != nil || barrier.Status != "unknown" {
 				t.Fatalf("barrier=%+v %v", barrier, err)
 			}
-			op, _ := readOperation(m.ctx, m.store.db, o.ID)
+			op, _ := readOperation(m.ctx, fixture(m), o.ID)
 			if op.Status != "unknown" || op.Error == nil || op.Error.Code != status.ErrorCode {
 				t.Fatalf("operation=%+v", op)
 			}
@@ -179,7 +180,7 @@ func TestDomainKnownFailureReleasesLeaseAndKeepsReviewedReason(t *testing.T) {
 		t.Fatal(err)
 	}
 	assertDomainProtection(t, m, o, "released")
-	op, _ := readOperation(m.ctx, m.store.db, o.ID)
+	op, _ := readOperation(m.ctx, fixture(m), o.ID)
 	if op.Error == nil || op.Error.Message != status.Error {
 		t.Fatalf("%+v", op)
 	}
@@ -188,10 +189,10 @@ func TestDomainKnownFailureReleasesLeaseAndKeepsReviewedReason(t *testing.T) {
 func TestDomainUnknownAfterRestartSettlesFirstReceiptOnce(t *testing.T) {
 	m, o, _ := domainOutcomeFixture(t, "restart-before-receipt")
 	o.Status = "dispatched"
-	if err := m.store.write(m.ctx, "fixture-dispatch", func(tx *sql.Tx) error { return saveOperation(m.ctx, tx, o) }); err != nil {
+	if err := fixture(m).write(m.ctx, "fixture-dispatch", func(tx sessionstore.Tx) error { return saveOperation(m.ctx, tx, o) }); err != nil {
 		t.Fatal(err)
 	}
-	if err := m.store.recover(m.ctx); err != nil {
+	if err := fixture(m).recover(m.ctx); err != nil {
 		t.Fatal(err)
 	}
 	m.deps.InspectTask = func(context.Context, tools.TaskReference) (tools.TaskStatus, error) {
@@ -203,13 +204,13 @@ func TestDomainUnknownAfterRestartSettlesFirstReceiptOnce(t *testing.T) {
 	if current.Status != StateInterrupted || len(calls.Items) != 1 || len(calls.Items[0].Result) == 0 || current.Usage.ResultBytes != len(calls.Items[0].Result) {
 		t.Fatalf("recovered dispatch lost first receipt: %+v %+v", current, calls)
 	}
-	entries := runtimeStoreCount(t, m.store, "agent_record_outbox")
+	entries := runtimeStoreCount(t, fixture(m), "agent_record_outbox")
 	m.monitorTasks()
 	again, _ := m.Get(m.ctx, o.RunID)
 	if again.Usage.ResultBytes != current.Usage.ResultBytes {
 		t.Fatal("receipt was charged twice")
 	}
-	if runtimeStoreCount(t, m.store, "agent_record_outbox") != entries {
+	if runtimeStoreCount(t, fixture(m), "agent_record_outbox") != entries {
 		t.Fatal("repeated uncertainty rewrote the durable ledger")
 	}
 	assertDomainProtection(t, m, o, "unknown")
@@ -265,7 +266,7 @@ func TestTaskReconciliationPersistsIntentAndCannotBeReopened(t *testing.T) {
 		t.Fatal("unconfirmed domain released")
 	}
 	assertDomainProtection(t, m, o, "unknown")
-	pending, _ := readBarrier(m.ctx, m.store.db, b.ID)
+	pending, _ := readBarrier(m.ctx, fixture(m), b.ID)
 	if pending.Reconciliation == nil || pending.Status != "unknown" {
 		t.Fatalf("%+v", pending)
 	}
@@ -273,7 +274,7 @@ func TestTaskReconciliationPersistsIntentAndCannotBeReopened(t *testing.T) {
 		t.Fatal("decision overwritten")
 	}
 	// A receipt arriving during reconciliation must not bypass the domain decision.
-	op, _ := readOperation(m.ctx, m.store.db, o.ID)
+	op, _ := readOperation(m.ctx, fixture(m), o.ID)
 	if err := m.settleDomainTask(op, tools.TaskStatus{Outcome: tools.TaskSucceeded}); err != nil {
 		t.Fatal(err)
 	}
@@ -287,7 +288,7 @@ func TestTaskReconciliationPersistsIntentAndCannotBeReopened(t *testing.T) {
 	if err := m.settleDomainTask(op, tools.TaskStatus{Outcome: tools.TaskUnknown}); err != nil {
 		t.Fatal(err)
 	}
-	barrier, _ := readBarrier(m.ctx, m.store.db, b.ID)
+	barrier, _ := readBarrier(m.ctx, fixture(m), b.ID)
 	if barrier.Status != "reconciled" {
 		t.Fatal("late observation reopened protection")
 	}
@@ -302,10 +303,10 @@ func TestUnknownResourceBlockerInterruptsUndispatchedWaiter(t *testing.T) {
 	if err := m.settleDomainTask(owner, tools.TaskStatus{Outcome: tools.TaskUnknown}); err != nil {
 		t.Fatal(err)
 	}
-	r := createRuntimeTestRun(t, m.store, "waiter", runtimeStoreTestTime)
+	r := createRuntimeTestRun(t, fixture(m), "waiter", runtimeStoreTestTime)
 	waiter := Operation{ID: "waiter", RunID: r.ID, TaskID: r.TaskID, Status: StateWaitingResource, ResourceClaims: append([]ResourceClaim{}, owner.ResourceClaims...), Capability: Capability{Source: "builtin", ReadOnly: true}}
 	waiter.ResourceClaims[0].Access = "read"
-	_, err := m.store.change(m.ctx, r.ID, "waiter", func(tx *sql.Tx, r *Run) error {
+	_, err := fixture(m).change(m.ctx, r.ID, "waiter", func(tx sessionstore.Tx, r *Run) error {
 		r.Status = StateWaitingResource
 		if err := saveOperation(m.ctx, tx, waiter); err != nil {
 			return err
@@ -325,15 +326,15 @@ func TestUnknownResourceBlockerInterruptsUndispatchedWaiter(t *testing.T) {
 	if current.Status != StateInterrupted || current.Usage.Calls != 0 {
 		t.Fatalf("%+v", current)
 	}
-	op, _ := readOperation(m.ctx, m.store.db, waiter.ID)
-	fact := projectToolExecution(current, &op, nil, nil)
-	if fact.Status != "not-executed" || fact.ResourceWait == nil || fact.ResourceWait.OperationID != owner.ID || fact.ResourceWait.ElapsedSeconds != 0 || !strings.Contains(toolFactContent(fact, nil), owner.ID) {
+	op, _ := readOperation(m.ctx, fixture(m), waiter.ID)
+	fact := hstate.ProjectToolExecution(current, &op, nil, nil)
+	if fact.Status != "not-executed" || fact.ResourceWait == nil || fact.ResourceWait.OperationID != owner.ID || fact.ResourceWait.ElapsedSeconds != 0 || !strings.Contains(hstate.ToolFactContent(fact, nil), owner.ID) {
 		t.Fatalf("%+v", fact)
 	}
 	assertDomainProtection(t, m, waiter, "released")
 	assertDomainProtection(t, m, owner, "unknown")
 	var n int
-	if err := m.store.db.QueryRow("SELECT COUNT(*) FROM calls WHERE run_id=?", r.ID).Scan(&n); err != nil || n != 0 {
+	if err := fixture(m).db.QueryRow("SELECT COUNT(*) FROM calls WHERE run_id=?", r.ID).Scan(&n); err != nil || n != 0 {
 		t.Fatal("waiter was dispatched")
 	}
 	raw, _ := json.Marshal(fact.ResourceWait)

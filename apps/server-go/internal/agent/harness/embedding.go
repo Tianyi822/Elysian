@@ -20,44 +20,6 @@ import (
 	"elysian/server/internal/agent/harness/model"
 )
 
-// embeddingSchema is deliberately SQLite-only. Vectors are JSON arrays so the
-// page revision and its digest remain the authoritative index key; an optional
-// native vector extension can be added without changing the Wiki contract.
-const embeddingSchema = `
-CREATE TABLE IF NOT EXISTS wiki_embedding_profiles(id TEXT NOT NULL,revision INTEGER NOT NULL,document TEXT NOT NULL,
- PRIMARY KEY(id,revision));
-CREATE TABLE IF NOT EXISTS wiki_embedding_indexes(page_id TEXT NOT NULL,page_revision INTEGER NOT NULL,digest TEXT NOT NULL,
- profile_id TEXT NOT NULL,profile_revision INTEGER NOT NULL,vector TEXT NOT NULL,created_at TEXT NOT NULL,
- PRIMARY KEY(page_id,page_revision,profile_id,profile_revision));
-CREATE INDEX IF NOT EXISTS wiki_embedding_page ON wiki_embedding_indexes(page_id,page_revision);
-CREATE TABLE IF NOT EXISTS wiki_embedding_requests(id TEXT PRIMARY KEY,state TEXT NOT NULL,document TEXT NOT NULL);
-`
-
-type EmbeddingProfile struct {
-	ID            string `json:"id"`
-	Revision      int    `json:"revision"`
-	Name          string `json:"name"`
-	BaseURL       string `json:"baseUrl"`
-	Model         string `json:"model"`
-	Dimensions    int    `json:"dimensions"`
-	Active        bool   `json:"active"`
-	HasCredential bool   `json:"hasCredential"`
-	Credential    string `json:"-"`
-}
-type EmbeddingProfileInput struct {
-	Name       string  `json:"name"`
-	BaseURL    string  `json:"baseUrl"`
-	Model      string  `json:"model"`
-	Dimensions int     `json:"dimensions"`
-	Active     bool    `json:"active"`
-	Credential *string `json:"credential,omitempty"`
-}
-
-func (p EmbeddingProfile) Public() EmbeddingProfile {
-	p.HasCredential = p.HasCredential || p.Credential != ""
-	p.Credential = ""
-	return p
-}
 func validateEmbeddingProfile(p EmbeddingProfile) error {
 	if p.Name == "" || len(p.Name) > 120 || !utf8.ValidString(p.Name) || p.Model == "" || len(p.Model) > 200 || !utf8.ValidString(p.Model) || p.Dimensions < 1 || p.Dimensions > 8192 {
 		return bad("invalid-embedding-profile", "Embedding 配置名称、模型或维度无效")
@@ -163,10 +125,10 @@ func (m *Manager) updateEmbeddingProfile(ctx context.Context, id string, expecte
 		}
 	}
 	if old.ID == "" {
-		return old, &Error{404, "embedding-profile-not-found", "Embedding 配置不存在"}
+		return old, &Error{Status: 404, Code: "embedding-profile-not-found", Message: "Embedding 配置不存在"}
 	}
 	if old.Revision != expected {
-		return old, &Error{409, "revision-conflict", "Embedding 配置已变化，请重新读取"}
+		return old, &Error{Status: 409, Code: "revision-conflict", Message: "Embedding 配置已变化，请重新读取"}
 	}
 	p, err := embeddingFromInput(in, old.Credential, id, old.Revision+1)
 	if err != nil {
@@ -265,7 +227,7 @@ func (m *Manager) embeddingConfigPath() string {
 	if m.deps.EmbeddingConfigPath != "" {
 		return m.deps.EmbeddingConfigPath
 	}
-	return filepath.Join(filepath.Dir(filepath.Dir(m.deps.Path)), "config", "agent", "embeddings.json")
+	return ""
 }
 
 func (m *Manager) readEmbeddingProfiles() ([]EmbeddingProfile, error) {

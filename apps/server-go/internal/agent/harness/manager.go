@@ -2,9 +2,6 @@ package harness
 
 import (
 	"context"
-	"crypto/rand"
-	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -13,6 +10,8 @@ import (
 	"time"
 
 	"elysian/server/internal/agent/harness/model"
+	"elysian/server/internal/agent/harness/sessionstore"
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/harness/worker"
 	"elysian/server/internal/agent/harness/workspace"
 	"elysian/server/internal/agent/tools"
@@ -40,7 +39,7 @@ type Deps struct {
 	ModelCatalog          model.CatalogClient
 	AgentLimits           Limits
 	ModelConfigError      string
-	Path                  string
+	Store                 sessionstore.SessionStore
 	EmbeddingConfigPath   string
 	Tools                 ToolInvoker
 	Limits                Limits
@@ -59,7 +58,8 @@ type Manager struct {
 	probes                sync.WaitGroup
 	probeCancels          map[string]context.CancelFunc
 	mu                    sync.Mutex
-	store                 *store
+	store                 sessionstore.SessionStore
+	storageDone           chan struct{}
 	deps                  Deps
 	ctx                   context.Context
 	cancel                context.CancelFunc
@@ -98,7 +98,7 @@ func New(deps Deps) (*Manager, error) {
 		deps.Now = time.Now
 	}
 	if deps.NewID == nil {
-		deps.NewID = randomID
+		deps.NewID = hstate.RandomID
 	}
 	if deps.Limits == (Limits{}) {
 		deps.Limits = DefaultLimits()
@@ -124,17 +124,16 @@ func New(deps Deps) (*Manager, error) {
 	if deps.Spawn == nil {
 		deps.Spawn = func(ctx context.Context) (worker.Process, error) { return worker.Spawn(ctx, worker.Options{}) }
 	}
-	s, err := openStore(deps.Path, deps.Now)
-	if err != nil {
-		return nil, err
+	s := deps.Store
+	if s == nil {
+		return nil, errors.New("必须注入 Agent SessionStore")
 	}
+	var err error
 	fence, fenceErr := readWorkflowRecoveryFence(deps.WorkflowRecoveryFence)
 	if fenceErr != nil {
-		s.close()
 		return nil, fenceErr
 	}
-	s.freezeContinuous = deps.LegacyAgentPolicies || continuousPolicies == "freeze" || fence
-	if err = s.recover(context.Background()); err == nil {
+	if err = s.Recover(context.Background(), deps.LegacyAgentPolicies || continuousPolicies == "freeze" || fence); err == nil {
 		err = (&Manager{store: s, deps: deps}).recoverWorkflows(context.Background())
 	}
 	if err == nil {
@@ -145,24 +144,22 @@ func New(deps Deps) (*Manager, error) {
 	}
 
 	if err != nil {
-		_ = s.close()
 		return nil, fmt.Errorf("恢复运行记录失败：%w", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
 	m := &Manager{store: s, deps: deps, ctx: ctx, cancel: cancel, wake: make(chan struct{}, 1), done: make(chan struct{}), taskDone: make(chan struct{}), closeDone: make(chan struct{}), workerState: "starting", executions: make(map[string]*executionState)}
 	if err = m.initializeToolRuntime(); err != nil {
 		cancel()
-		_ = s.close()
 		return nil, err
 	}
 	if err = m.restoreExecutionRevocations(ctx); err != nil {
 		cancel()
-		_ = s.close()
 		return nil, fmt.Errorf("恢复执行授权撤销状态失败：%w", err)
 	}
 	m.taskCancelWake = make(chan struct{}, 1)
 	m.taskCleanupDone = make(chan struct{})
-	s.startRecordWorker(m.signal)
+	m.storageDone = make(chan struct{})
+	go m.observeStorage()
 	go m.loop()
 	go m.taskCleanupLoop()
 	m.maintenanceDone = make(chan struct{})
@@ -181,13 +178,7 @@ func validateLimits(l Limits) error {
 	}
 	return nil
 }
-func randomID() string {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		panic("系统随机源不可用")
-	}
-	return hex.EncodeToString(b[:])
-}
+
 func (m *Manager) signal() {
 	select {
 	case m.wake <- struct{}{}:
@@ -260,7 +251,7 @@ func (m *Manager) availableLocked() error {
 	if m.closed {
 		return &Error{Status: 503, Code: "runtime-stopped", Message: "任务运行内核已停止"}
 	}
-	if err := m.store.recordsFault(); err != nil {
+	if err := m.store.DispatchError(); err != nil {
 		return &Error{Status: 503, Code: "record-storage-unavailable", Message: err.Error()}
 	}
 	if m.blocked != "" {
@@ -277,9 +268,9 @@ func (m *Manager) availableLocked() error {
 func (m *Manager) Info() RuntimeInfo {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	health := m.store.health()
+	health := m.store.Health()
 	i := RuntimeInfo{StorageHealth: &health, Worker: m.workerState, Storage: "ready", Limits: m.deps.Limits, Tools: []tools.PublicSchema{}}
-	if m.storageError || m.store.recordsFault() != nil {
+	if m.storageError || m.store.DispatchError() != nil {
 		i.Storage = "unavailable"
 	}
 	if m.closed {
@@ -293,7 +284,7 @@ func (m *Manager) Info() RuntimeInfo {
 		}
 	}
 	if !m.closed {
-		if ids, err := m.store.queued(context.Background()); err == nil {
+		if ids, err := readView(context.Background(), m.store).Queued(context.Background()); err == nil {
 			i.QueueDepth = len(ids)
 		} else {
 			i.Storage = "unavailable"
@@ -311,7 +302,7 @@ func (m *Manager) Info() RuntimeInfo {
 			i.Available, i.Reason = false, dispatchError.Error()
 		}
 	}
-	if recordErr := m.store.recordsFault(); recordErr != nil {
+	if recordErr := m.store.DispatchError(); recordErr != nil {
 		dispatchError = recordErr
 		i.Available, i.Reason = false, recordErr.Error()
 	}
@@ -377,7 +368,7 @@ func (m *Manager) Submit(ctx context.Context, input SubmitInput) (Run, bool, err
 	if m.closed {
 		return Run{}, false, &Error{Status: 503, Code: "runtime-stopped", Message: "任务运行内核已停止"}
 	}
-	r, previous, err := m.store.request(ctx, input.RequestID)
+	r, previous, err := readView(ctx, m.store).Request(ctx, input.RequestID)
 	if err != nil {
 		return r, false, storageFailure(err)
 	}
@@ -396,7 +387,7 @@ func (m *Manager) Submit(ctx context.Context, input SubmitInput) (Run, bool, err
 	if err = m.promoteWorkflows(ctx); err != nil {
 		return Run{}, false, storageFailure(err)
 	}
-	queue, err := m.store.queued(ctx)
+	queue, err := readView(ctx, m.store).Queued(ctx)
 	if err != nil {
 		return Run{}, false, storageFailure(err)
 	}
@@ -405,7 +396,7 @@ func (m *Manager) Submit(ctx context.Context, input SubmitInput) (Run, bool, err
 	}
 	t := Task{ID: m.deps.NewID(), RequestID: input.RequestID, Kind: input.Kind, DriverVersion: "v1", CreatedAt: stamp(m.deps.Now()), Steps: input.Steps}
 	r = Run{RequestID: input.RequestID, RunNumber: 1, ID: m.deps.NewID(), TaskID: t.ID, Status: StateQueued, CreatedAt: t.CreatedAt, Limits: m.deps.Limits, LastSeq: "0"}
-	if err = m.store.create(ctx, t, r, canonical); err != nil {
+	if err = m.store.Create(ctx, t, r, canonical); err != nil {
 		if ctx.Err() == nil && !errors.Is(err, context.Canceled) && !errors.Is(err, context.DeadlineExceeded) {
 			m.storageFailedLocked()
 		}
@@ -423,11 +414,11 @@ func (m *Manager) Get(ctx context.Context, id string) (Run, error) {
 		return Run{}, closedError()
 	}
 	value, readErr := storeRead(ctx, m.store, "Get", func(ctx context.Context) (Run, error) {
-		r, err := m.store.get(ctx, id)
+		r, err := readView(ctx, m.store).Get(ctx, id)
 		if err == nil {
-			r.Continuation, err = continuation(ctx, m.store.reader(ctx), r)
+			r.Continuation, err = continuation(ctx, m.store, r)
 			if err == nil {
-				err = projectCurrentReport(ctx, m.store.reader(ctx), &r)
+				err = projectCurrentReport(ctx, m.store, &r)
 			}
 		}
 		return r, err
@@ -441,7 +432,7 @@ func (m *Manager) List(ctx context.Context, q ListQuery) (Page[Run], error) {
 		return Page[Run]{}, closedError()
 	}
 	value, readErr := storeRead(ctx, m.store, "List", func(ctx context.Context) (Page[Run], error) {
-		p, err := m.store.list(ctx, q)
+		p, err := readView(ctx, m.store).List(ctx, q)
 		return p, err
 	})
 	return value, storageFailure(readErr)
@@ -453,7 +444,7 @@ func (m *Manager) Calls(ctx context.Context, id, cursor string, limit int) (Page
 		return Page[Call]{}, closedError()
 	}
 	value, readErr := storeRead(ctx, m.store, "Calls", func(ctx context.Context) (Page[Call], error) {
-		p, err := m.store.calls(ctx, id, cursor, limit)
+		p, err := readView(ctx, m.store).Calls(ctx, id, cursor, limit)
 		return p, err
 	})
 	return value, storageFailure(readErr)
@@ -465,7 +456,7 @@ func (m *Manager) Events(ctx context.Context, id, after string, limit int) (Page
 		return Page[Event]{}, closedError()
 	}
 	value, readErr := storeRead(ctx, m.store, "Events", func(ctx context.Context) (Page[Event], error) {
-		p, err := m.store.events(ctx, id, after, limit)
+		p, err := readView(ctx, m.store).Events(ctx, id, after, limit)
 		return p, err
 	})
 	return value, storageFailure(readErr)
@@ -489,8 +480,8 @@ func (m *Manager) Cancel(ctx context.Context, id string) (Run, error) {
 	if m.closed {
 		return Run{}, closedError()
 	}
-	r, err := m.store.change(ctx, id, "cancel", func(tx *sql.Tx, r *Run) error {
-		if terminal(r.Status) || r.CancelRequestedAt != "" {
+	r, err := m.store.ChangeRun(ctx, id, "cancel", func(tx sessionstore.Tx, r *Run) error {
+		if hstate.Terminal(r.Status) || r.CancelRequestedAt != "" {
 			return nil
 		}
 		r.CancelRequestedAt = stamp(m.deps.Now())
@@ -519,11 +510,11 @@ func (m *Manager) Cancel(ctx context.Context, id string) (Run, error) {
 				}
 			}
 		}
-		if err := m.store.event(ctx, tx, r, "run/cancel-requested", "", nil, nil); err != nil {
+		if err := tx.Event(ctx, r, "run/cancel-requested", "", nil, nil); err != nil {
 			return err
 		}
 		if r.Status == StateCancelled {
-			return m.store.event(ctx, tx, r, "run/cancelled", "", nil, nil)
+			return tx.Event(ctx, r, "run/cancelled", "", nil, nil)
 		}
 		return nil
 	})
@@ -552,7 +543,7 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 			return
 		}
 		m.mu.Lock()
-		blocked := m.blocked != "" || m.store.recordsFault() != nil
+		blocked := m.blocked != "" || m.store.DispatchError() != nil
 		p := slot.process
 		m.mu.Unlock()
 		if blocked {
@@ -645,7 +636,7 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 		if _, err := m.promoteResourceWaiters(m.ctx); err != nil && m.ctx.Err() == nil {
 			m.storageFailedLocked()
 		}
-		ids, err := m.store.queued(m.ctx)
+		ids, err := readView(m.ctx, m.store).Queued(m.ctx)
 		if err != nil {
 			if m.ctx.Err() == nil {
 				m.storageFailedLocked()
@@ -672,18 +663,18 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 		}
 		var r Run
 		for _, id := range ids {
-			candidate, readErr := m.store.get(m.ctx, id)
+			candidate, readErr := readView(m.ctx, m.store).Get(m.ctx, id)
 			if readErr != nil {
 				err = readErr
 				break
 			}
 			if candidate.WorkflowID != "" {
-				w, e := readWorkflow(m.ctx, m.store.db, candidate.WorkflowID)
+				w, e := readWorkflow(m.ctx, m.store, candidate.WorkflowID)
 				if e != nil {
 					err = e
 					break
 				}
-				if w.GateClosed || w.Status == StateRecoveryRequired || terminal(w.Status) {
+				if w.GateClosed || w.Status == StateRecoveryRequired || hstate.Terminal(w.Status) {
 					continue
 				}
 			}
@@ -728,7 +719,7 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 			continue
 		}
 		if r.WorkflowID != "" {
-			w, e := readWorkflow(m.ctx, m.store.db, r.WorkflowID)
+			w, e := readWorkflow(m.ctx, m.store, r.WorkflowID)
 			if e == nil {
 				e = m.checkWorkflowEnvironment(m.ctx, w)
 			}
@@ -739,7 +730,7 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 			}
 		}
 		taskSnapshot := r.Task
-		r, err = m.store.change(m.ctx, r.ID, "start", func(tx *sql.Tx, run *Run) error {
+		r, err = m.store.ChangeRun(m.ctx, r.ID, "start", func(tx sessionstore.Tx, run *Run) error {
 			if run.Status != StateQueued {
 				return errors.New("任务状态已变化")
 			}
@@ -750,7 +741,7 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 			if run.StartedAt == "" {
 				run.StartedAt = stamp(m.deps.Now())
 			}
-			return m.store.event(m.ctx, tx, run, "run/started", "", nil, nil)
+			return tx.Event(m.ctx, run, "run/started", "", nil, nil)
 		})
 		if err != nil {
 			if e, ok := err.(*Error); ok {
@@ -762,8 +753,8 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 			continue
 		}
 		r.Task = taskSnapshot
-		if m.store.recordsFault() != nil {
-			if continuousRun(r) {
+		if m.store.DispatchError() != nil {
+			if hstate.ContinuousRun(r) {
 				m.mu.Unlock()
 				err := (&agentExecution{manager: m, run: r}).suspendForRecovery(StateWaitingStorage, &Failure{Code: "record-storage-unavailable", Message: "启动检查点已保存，记录副本暂时无法同步，恢复后自动继续"}, "")
 				if !errors.Is(err, worker.ErrSuspended) {
@@ -782,7 +773,7 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 			remaining = time.Duration(r.WorkflowActiveReserved) * time.Millisecond
 		}
 		runCtx, cancel := context.WithTimeout(m.ctx, remaining)
-		if continuousRun(r) {
+		if hstate.ContinuousRun(r) {
 			cancel()
 			runCtx, cancel = context.WithCancel(m.ctx)
 		}
@@ -852,7 +843,7 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 		m.mu.Lock()
 		var interrupted *worker.InterruptedError
 		if !m.storageError && !execution.deleted {
-			_, e := m.store.change(context.Background(), r.ID, "active-time", func(tx *sql.Tx, current *Run) error {
+			_, e := m.store.ChangeRun(context.Background(), r.ID, "active-time", func(tx sessionstore.Tx, current *Run) error {
 				elapsed := m.deps.Now().Sub(activeStart)
 				if err := m.workflowSettleTime(context.Background(), tx, current, elapsed); err != nil {
 					return err
@@ -865,14 +856,14 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 			}
 		}
 		if !m.storageError && !execution.deleted {
-			current, getErr := m.store.get(context.Background(), r.ID)
+			current, getErr := readView(context.Background(), m.store).Get(context.Background(), r.ID)
 			if getErr != nil {
 				m.storageFailedLocked()
 			} else {
-				if continuousRun(current) && !terminal(current.Status) && !current.PolicyFrozen && current.CancelRequestedAt == "" && current.SupersededByRunID == "" && !execution.unresponsive && (m.ctx.Err() != nil || execution.maintenance || errors.As(err, &interrupted)) {
+				if hstate.ContinuousRun(current) && !hstate.Terminal(current.Status) && !current.PolicyFrozen && current.CancelRequestedAt == "" && current.SupersededByRunID == "" && !execution.unresponsive && (m.ctx.Err() != nil || execution.maintenance || errors.As(err, &interrupted)) {
 					var recoverErr error
-					_, recoverErr = m.store.change(context.Background(), current.ID, "continuous-worker-checkpoint", func(tx *sql.Tx, r *Run) error {
-						if terminal(r.Status) || r.PolicyFrozen || r.CancelRequestedAt != "" || r.SupersededByRunID != "" {
+					_, recoverErr = m.store.ChangeRun(context.Background(), current.ID, "continuous-worker-checkpoint", func(tx sessionstore.Tx, r *Run) error {
+						if hstate.Terminal(r.Status) || r.PolicyFrozen || r.CancelRequestedAt != "" || r.SupersededByRunID != "" {
 							return nil
 						}
 						unknown, e := unsettledRun(context.Background(), tx, r.ID)
@@ -896,10 +887,10 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 							return e
 						}
 						r.Status, r.Phase = StateQueued, "recovering"
-						return m.store.event(context.Background(), tx, r, "recovery/worker-checkpoint", "", nil, nil)
+						return tx.Event(context.Background(), r, "recovery/worker-checkpoint", "", nil, nil)
 					})
 					if recoverErr == nil {
-						latest, e := m.store.get(context.Background(), current.ID)
+						latest, e := readView(context.Background(), m.store).Get(context.Background(), current.ID)
 						if e == nil && latest.Status == StateQueued {
 							m.mu.Unlock()
 							closeCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
@@ -996,8 +987,8 @@ func processDone(p worker.Process) <-chan struct{} {
 
 func (m *Manager) finishLocked(id, state, reason, message string) {
 	ctx := context.Background()
-	_, err := m.store.change(ctx, id, "finish", func(tx *sql.Tx, r *Run) error {
-		if terminal(r.Status) {
+	_, err := m.store.ChangeRun(ctx, id, "finish", func(tx sessionstore.Tx, r *Run) error {
+		if hstate.Terminal(r.Status) {
 			return nil
 		}
 		if state == StateSucceeded {
@@ -1010,11 +1001,11 @@ func (m *Manager) finishLocked(id, state, reason, message string) {
 				}
 			} else if r.WorkflowID == "" {
 				var count int
-				if err := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM calls WHERE run_id=? AND state='succeeded'", id).Scan(&count); err != nil {
+				if err := tx.SucceededCallCount(ctx, id, &count); err != nil {
 					return err
 				}
 				var taskJSON string
-				if err := tx.QueryRowContext(ctx, "SELECT document FROM tasks WHERE id=?", r.TaskID).Scan(&taskJSON); err != nil {
+				if err := tx.TaskSnapshot(ctx, r.TaskID, &taskJSON); err != nil {
 					return err
 				}
 				var t Task
@@ -1037,7 +1028,7 @@ func (m *Manager) finishLocked(id, state, reason, message string) {
 			}
 		}
 		r.Status = state
-		if evidenceRecoveryRun(*r) && state == StateCancelled {
+		if hstate.EvidenceRecoveryRun(*r) && state == StateCancelled {
 			if r.Recovery != nil && r.Recovery.Status == "correcting" {
 				r.Recovery.Status, r.Recovery.Message = "exhausted", "用户已停止本轮纠正，已取得的事实保留"
 			}
@@ -1045,7 +1036,7 @@ func (m *Manager) finishLocked(id, state, reason, message string) {
 			r.FailureAnalysis = ""
 		}
 		if (state == StateCancelled || state == StateInterrupted && reason == "panel-update") && r.SessionID != "" && r.WorkflowID == "" {
-			if err := m.store.saveStoppedReply(ctx, tx, *r); err != nil {
+			if err := tx.SaveStoppedReply(ctx, *r); err != nil {
 				return err
 			}
 		}
@@ -1068,7 +1059,7 @@ func (m *Manager) finishLocked(id, state, reason, message string) {
 		if err := interruptCalls(ctx, tx, id, m.deps.Now()); err != nil {
 			return err
 		}
-		return m.store.event(ctx, tx, r, "run/"+state, "", nil, r.Error)
+		return tx.Event(ctx, r, "run/"+state, "", nil, r.Error)
 	})
 	if err != nil {
 		m.storageFailedLocked()
@@ -1090,6 +1081,7 @@ func (m *Manager) Close(ctx context.Context) error {
 		}
 		m.mu.Unlock()
 		go func() {
+			<-m.storageDone
 			<-m.done
 			<-m.taskDone
 			<-m.taskCleanupDone
@@ -1098,9 +1090,6 @@ func (m *Manager) Close(ctx context.Context) error {
 			if m.ownToolRuntime {
 				m.closeErr = errors.Join(m.closeErr, m.toolRuntime.Close(context.Background()))
 			}
-			m.mu.Lock()
-			m.closeErr = errors.Join(m.closeErr, m.store.close())
-			m.mu.Unlock()
 			close(m.closeDone)
 		}()
 	})

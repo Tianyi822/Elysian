@@ -3,7 +3,6 @@ package harness
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -14,6 +13,7 @@ import (
 	"time"
 
 	"elysian/server/internal/agent/harness/model"
+	"elysian/server/internal/agent/harness/sessionstore"
 	"elysian/server/internal/agent/harness/worker"
 )
 
@@ -24,7 +24,7 @@ func legacyBudgetWorker(limits Limits) func(context.Context) (worker.Process, er
 			a := broker.(*agentExecution)
 			m := a.manager
 			m.mu.Lock()
-			run, err := m.store.change(context.Background(), id, "legacy-budget-fixture", func(tx *sql.Tx, r *Run) error {
+			run, err := fixture(m).change(context.Background(), id, "legacy-budget-fixture", func(tx sessionstore.Tx, r *Run) error {
 				r.BudgetPolicy = ""
 				r.Limits = limits
 				return saveRun(context.Background(), tx, r)
@@ -132,7 +132,7 @@ func TestResourceBudgetStopsAndRestores(t *testing.T) {
 			if err != nil || timeline.Timeline.BudgetStop == nil || *timeline.Timeline.BudgetStop != *got.BudgetStop || timeline.Timeline.TerminalResult == nil {
 				t.Fatalf("时间线不一致：%+v %v", timeline, err)
 			}
-			lines, _ := readRecordLines(t, m.store, recordOwner{"session", session.ID})
+			lines, _ := readRecordLines(t, fixture(m), recordOwner{"session", session.ID})
 			results := 0
 			for _, line := range lines {
 				if line.Type == "messages" {
@@ -158,7 +158,7 @@ func budgetSourceFixture(t *testing.T) (*store, Session, Task, Run) {
 	run.Limits.MaxSteps, run.Limits.MaxModelRequests = 0, 0
 	run = acceptSessionTestRun(t, s, task, run, true)
 	m := &Manager{store: s, deps: Deps{Now: func() time.Time { return runtimeStoreTestTime }}}
-	_, err := s.change(context.Background(), run.ID, "budget-fixture", func(tx *sql.Tx, r *Run) error {
+	_, err := s.change(context.Background(), run.ID, "budget-fixture", func(tx sessionstore.Tx, r *Run) error {
 		r.Usage.Tokens = r.Limits.TokenBudget
 		r.Plan = &RunPlan{Revision: 2, UpdatedAt: r.CreatedAt, Steps: []PlanStep{{ID: "pull", Title: "拉取镜像", Status: "completed"}, {ID: "inspect", Title: "核实安装结果", Status: "in_progress"}}}
 		return saveRun(context.Background(), tx, r)
@@ -246,7 +246,7 @@ func TestBudgetContinuationRollbackAndGuards(t *testing.T) {
 				s.failNextCommit = errors.New("accept commit failed")
 			}
 			if mode == "unknown" || mode == "lease" {
-				err := s.write(ctx, "barrier-fixture", func(tx *sql.Tx) error {
+				err := s.write(ctx, "barrier-fixture", func(tx sessionstore.Tx) error {
 					if mode == "unknown" {
 						return saveOperation(ctx, tx, Operation{ID: "unknown-op", RunID: source.ID, TaskID: source.TaskID, ModelRequestID: "model", CallIndex: 0, Status: "unknown"})
 					}
@@ -257,7 +257,7 @@ func TestBudgetContinuationRollbackAndGuards(t *testing.T) {
 				}
 			}
 			if mode == "superseded" || mode == "cancelled" || mode == "legacy" {
-				_, err := s.change(ctx, source.ID, "guard-fixture", func(tx *sql.Tx, r *Run) error {
+				_, err := s.change(ctx, source.ID, "guard-fixture", func(tx sessionstore.Tx, r *Run) error {
 					if mode == "superseded" {
 						r.SupersededByRunID = "edited-run"
 					}
@@ -294,7 +294,7 @@ func TestBudgetContinuationRollbackAndGuards(t *testing.T) {
 			if mode == "commit" {
 				_, afterLedger := readRecordLines(t, s, recordOwner{"session", session.ID})
 				old, _ := s.get(ctx, source.ID)
-				remote, _ := readSession(ctx, s.db, session.ID)
+				remote, _ := readSession(ctx, s, session.ID)
 				if !bytes.Equal(beforeLedger, afterLedger) || old.Status != beforeRun.Status || remote.ActiveRunID != "" {
 					t.Fatal("续接事务失败泄露部分写入")
 				}
@@ -310,7 +310,7 @@ func TestBudgetContinuationRollbackAndGuards(t *testing.T) {
 func TestResourceBudgetReservationsSettleActualBytes(t *testing.T) {
 	s, _, _, source := budgetSourceFixture(t)
 	ctx := context.Background()
-	_, err := s.change(ctx, source.ID, "reservation", func(tx *sql.Tx, r *Run) error {
+	_, err := s.change(ctx, source.ID, "reservation", func(tx sessionstore.Tx, r *Run) error {
 		r.Usage.ResultBytes = 20
 		r.Limits.RunResultBytes = 100
 		r.Limits.ResultBytes = 60
@@ -434,7 +434,7 @@ func TestBudgetContinuationDifferentRequestsCompete(t *testing.T) {
 func TestBudgetContinuationAfterBarrierReconciliation(t *testing.T) {
 	s, _, _, source := budgetSourceFixture(t)
 	ctx := context.Background()
-	err := s.write(ctx, "unknown-fixture", func(tx *sql.Tx) error {
+	err := s.write(ctx, "unknown-fixture", func(tx sessionstore.Tx) error {
 		if err := saveOperation(ctx, tx, Operation{ID: "unknown", RunID: source.ID, TaskID: source.TaskID, ModelRequestID: "model", Status: "unknown"}); err != nil {
 			return err
 		}
@@ -443,7 +443,7 @@ func TestBudgetContinuationAfterBarrierReconciliation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	state, err := continuation(ctx, s.db, source)
+	state, err := continuation(ctx, s, source)
 	if err != nil || state.Allowed {
 		t.Fatalf("未知结果未阻塞：%+v %v", state, err)
 	}
@@ -451,7 +451,7 @@ func TestBudgetContinuationAfterBarrierReconciliation(t *testing.T) {
 	if _, err = m.Reconcile(ctx, "barrier", "外部查询已确认停止", "confirmed-stopped"); err != nil {
 		t.Fatal(err)
 	}
-	state, err = continuation(ctx, s.db, source)
+	state, err = continuation(ctx, s, source)
 	if err != nil || !state.Allowed {
 		t.Fatalf("核实后仍阻塞：%+v %v", state, err)
 	}
@@ -470,7 +470,7 @@ func TestBudgetStopTransactionRollback(t *testing.T) {
 	m := &Manager{store: s, deps: Deps{Now: func() time.Time { return runtimeStoreTestTime }}}
 	m.finishLocked(run.ID, StateFailed, "result-budget", "结果预算不足")
 	got, err := s.get(ctx, run.ID)
-	remote, _ := readSession(ctx, s.db, session.ID)
+	remote, _ := readSession(ctx, s, session.ID)
 	_, after := readRecordLines(t, s, recordOwner{"session", session.ID})
 	if err != nil || got.Status != StateQueued || got.BudgetStop != nil || remote.ActiveRunID != run.ID || !bytes.Equal(before, after) {
 		t.Fatalf("预算结果事务出现部分提交：%+v %v", got, err)
@@ -480,12 +480,12 @@ func TestBudgetStopTransactionRollback(t *testing.T) {
 func TestBudgetContinuationLegacyUnknownCallBlocks(t *testing.T) {
 	s, _, _, source := budgetSourceFixture(t)
 	ctx := context.Background()
-	if err := s.write(ctx, "legacy-unknown-call", func(tx *sql.Tx) error {
+	if err := s.write(ctx, "legacy-unknown-call", func(tx sessionstore.Tx) error {
 		return saveCall(ctx, tx, Call{ID: "old-call", RunID: source.ID, Status: StateInterrupted, StepIndex: 0})
 	}); err != nil {
 		t.Fatal(err)
 	}
-	state, err := continuation(ctx, s.db, source)
+	state, err := continuation(ctx, s, source)
 	if err != nil || state.Allowed {
 		t.Fatalf("旧未知调用未阻塞：%+v %v", state, err)
 	}

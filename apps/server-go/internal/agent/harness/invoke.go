@@ -3,13 +3,15 @@ package harness
 import (
 	"bytes"
 	"context"
-	"database/sql"
-	"elysian/server/internal/agent/tools"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"reflect"
 	"time"
+
+	"elysian/server/internal/agent/harness/sessionstore"
+	hstate "elysian/server/internal/agent/harness/state"
+	"elysian/server/internal/agent/tools"
 )
 
 type toolResponse struct {
@@ -60,7 +62,7 @@ func (m *Manager) invoke(ctx context.Context, run Run, index int, name string, a
 	call := Call{ModelRequestID: modelRequestID, ModelCallID: proposalID, ID: m.deps.NewID(), RunID: run.ID, StepIndex: index, Tool: name, Args: parameters, Status: StateRunning, StartedAt: stamp(m.deps.Now())}
 	// 取消不能阻止已经开始的持久化收尾；意图事务独立于 HTTP/Worker 请求上下文。
 	dbCtx := context.Background()
-	_, err := m.store.change(dbCtx, run.ID, "call-intent", func(tx *sql.Tx, r *Run) error {
+	_, err := m.store.ChangeRun(dbCtx, run.ID, "call-intent", func(tx sessionstore.Tx, r *Run) error {
 		if r.Status != StateRunning || r.CancelRequestedAt != "" {
 			return context.Canceled
 		}
@@ -80,7 +82,7 @@ func (m *Manager) invoke(ctx context.Context, run Run, index int, name string, a
 			return err
 		}
 		r.Usage.Calls++
-		return m.store.event(dbCtx, tx, r, "call/started", call.ID, &index, map[string]any{"tool": name})
+		return tx.Event(dbCtx, r, "call/started", call.ID, &index, map[string]any{"tool": name})
 	})
 	if err != nil {
 		if !errors.Is(err, context.Canceled) {
@@ -106,7 +108,7 @@ func (m *Manager) invoke(ctx context.Context, run Run, index int, name string, a
 			}
 			response <- result
 		}()
-		if result.err = m.store.waitRecords(callCtx); result.err != nil {
+		if result.err = waitRecords(m.store, callCtx); result.err != nil {
 			return
 		}
 		if m.deps.Tools == nil || !m.deps.Tools.Available() {
@@ -115,7 +117,7 @@ func (m *Manager) invoke(ctx context.Context, run Run, index int, name string, a
 			authorized, err := m.toolAuthority.Authorize(callCtx, tools.AuthorizationBinding{OperationID: call.ID, DispatchID: call.ID, Tool: name, ArgumentsDigest: tools.ArgumentsDigest(parameters)}, nil, func(ctx context.Context) error {
 				var raw string
 				var stored Call
-				if err := m.store.db.QueryRowContext(ctx, "SELECT document FROM calls WHERE id=?", call.ID).Scan(&raw); err != nil {
+				if err := readView(ctx, m.store).LatestInstructionResult(ctx, call.ID, &raw); err != nil {
 					return err
 				}
 				if err := json.Unmarshal([]byte(raw), &stored); err != nil {
@@ -124,7 +126,7 @@ func (m *Manager) invoke(ctx context.Context, run Run, index int, name string, a
 				if stored.Status != StateRunning || stored.Tool != name || !reflect.DeepEqual(stored.Args, parameters) {
 					return bad("dispatch-changed", "旧版工具调用与持久化派发不符")
 				}
-				current, err := m.store.get(ctx, run.ID)
+				current, err := readView(ctx, m.store).Get(ctx, run.ID)
 				if err != nil {
 					return err
 				}
@@ -201,11 +203,11 @@ func (m *Manager) invoke(ctx context.Context, run Run, index int, name string, a
 	if m.closed || m.storageError || m.executionLocked(run.ID) != execution {
 		return nil, context.Canceled
 	}
-	_, err = m.store.change(dbCtx, run.ID, "call-result", func(tx *sql.Tx, r *Run) error {
+	_, err = m.store.ChangeRun(dbCtx, run.ID, "call-result", func(tx sessionstore.Tx, r *Run) error {
 		if r.Status != StateRunning {
 			return context.Canceled
 		}
-		if !continuousRun(*r) && r.Usage.ResultBytes+len(value) > r.Limits.RunResultBytes {
+		if !hstate.ContinuousRun(*r) && r.Usage.ResultBytes+len(value) > r.Limits.RunResultBytes {
 			call.Status = StateFailed
 			call.Result = nil
 			value = nil
@@ -216,7 +218,7 @@ func (m *Manager) invoke(ctx context.Context, run Run, index int, name string, a
 		if err := saveCall(dbCtx, tx, call); err != nil {
 			return err
 		}
-		return m.store.event(dbCtx, tx, r, "call/finished", call.ID, &index, map[string]any{"tool": name, "status": call.Status, "truncated": call.Truncated, "error": call.Error})
+		return tx.Event(dbCtx, r, "call/finished", call.ID, &index, map[string]any{"tool": name, "status": call.Status, "truncated": call.Truncated, "error": call.Error})
 	})
 	if err != nil {
 		if !errors.Is(err, context.Canceled) {

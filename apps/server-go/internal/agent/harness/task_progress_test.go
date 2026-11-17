@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"elysian/server/internal/agent/harness/model"
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/tools"
 )
 
@@ -69,7 +70,7 @@ func TestDomainProgressSurvivesRefreshWithoutModelCallsOrActiveTime(t *testing.T
 	progress.Store(&tools.TaskProgress{State: "running", Message: "正在解压镜像层", LayerID: "next-layer"})
 	waitProgress("正在解压镜像层")
 	after, _ := m.Get(ctx, run.ID)
-	if after.Status != StateWaitingTask || after.ActiveMilliseconds != before.ActiveMilliseconds || digestJSON(after.Usage) != digestJSON(before.Usage) || requests != inferences.Load() {
+	if after.Status != StateWaitingTask || after.ActiveMilliseconds != before.ActiveMilliseconds || hstate.DigestJSON(after.Usage) != hstate.DigestJSON(before.Usage) || requests != inferences.Load() {
 		t.Fatalf("进度观察消耗了执行预算或触发模型：before=%+v after=%+v", before.Usage, after.Usage)
 	}
 	// 输出流断开与重连只读取快照，不能停止或重投后台任务。

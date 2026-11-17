@@ -93,7 +93,7 @@ func TestDockerLifecycleDomainPrecheckContinuesAndExecutionFailureStops(t *testi
 				if call.Tool != tool.name || call.Status != StateFailed || call.Error == nil || call.Error.Code != failure.Code || call.Error.Message != failure.Message {
 					t.Fatalf("domain failure was not preserved: %+v", call)
 				}
-				lines, _ := readRecordLines(t, m.store, recordOwner{"session", session.ID})
+				lines, _ := readRecordLines(t, fixture(m), recordOwner{"session", session.ID})
 				var copied *Call
 				for _, line := range lines {
 					if line.Type == "calls" && line.Key == call.ID {

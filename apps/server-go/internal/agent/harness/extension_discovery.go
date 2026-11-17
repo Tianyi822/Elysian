@@ -7,21 +7,6 @@ import (
 	"strings"
 )
 
-type ExtensionUnavailable struct {
-	Kind     string `json:"kind"`
-	ID       string `json:"id,omitempty"`
-	Revision int    `json:"revision,omitempty"`
-	Code     string `json:"code"`
-	Reason   string `json:"reason"`
-}
-
-type AutomaticExtensions struct {
-	Source      string                 `json:"source"`
-	Skills      []RevisionRef          `json:"skills"`
-	Servers     []RevisionRef          `json:"servers"`
-	Unavailable []ExtensionUnavailable `json:"unavailable"`
-}
-
 // 自动目录不写回会话环境；原环境仍是执行配置、grant、资料和信任的唯一来源。
 func (m *Manager) snapshotForAgent(ctx context.Context, env Environment, mode string, authorizationModes ...string) (CapabilitySnapshot, error) {
 	ctx = context.WithValue(ctx, wikiDisabledContextKey{}, true)
@@ -242,7 +227,7 @@ func (m *Manager) snapshotForAgent(ctx context.Context, env Environment, mode st
 
 func (m *Manager) extensionRevoked(ctx context.Context, kind string, ref RevisionRef) (bool, error) {
 	var count int
-	err := m.store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM capability_revocations WHERE kind=? AND id=? AND (revision=0 OR revision=?)", kind, ref.ID, ref.Revision).Scan(&count)
+	err := readView(ctx, m.store).ExtensionRevoked(ctx, kind, ref.ID, ref.Revision, &count)
 	return count > 0, storageFailure(err)
 }
 

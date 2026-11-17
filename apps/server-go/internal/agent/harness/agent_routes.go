@@ -12,8 +12,10 @@ import (
 	"strings"
 
 	"elysian/server/internal/agent/harness/model"
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/jsonvalue"
 	"elysian/server/internal/shared"
+
 	"github.com/go-chi/chi/v5"
 )
 
@@ -37,7 +39,7 @@ type agentRuntimeService interface {
 	Messages(context.Context, string, string, int) (Page[Message], error)
 	Memory(context.Context, string, int) (WorkingMemory, error)
 	ModelRequests(context.Context, string, string, int) (Page[ModelRequestRecord], error)
-	ChatSnapshot(context.Context, string) (ChatOutput, error)
+	ChatSnapshot(context.Context, string) (hstate.ChatOutput, error)
 	CreateTask(context.Context, string, AgentInput) (Run, bool, error)
 	ContinueTask(context.Context, string, AgentInput) (Run, bool, error)
 	CreateAttachments(context.Context, []AttachmentUpload) ([]MessageAttachment, error)
@@ -53,7 +55,7 @@ func readAgentInput[T any](w http.ResponseWriter, req *http.Request) (T, error) 
 	}
 	raw, err := io.ReadAll(http.MaxBytesReader(w, req.Body, int64(DefaultLimits().InputBytes)))
 	if err != nil {
-		return input, &Error{413, "input-too-large", "请求体超过容量限制"}
+		return input, &Error{Status: 413, Code: "input-too-large", Message: "请求体超过容量限制"}
 	}
 	if _, err = jsonvalue.Object(raw); err != nil {
 		return input, shared.InvalidRequest("请求必须为 JSON 对象")
@@ -98,7 +100,7 @@ func readAttachmentUploads(w http.ResponseWriter, req *http.Request) ([]Attachme
 		}
 		content, err := io.ReadAll(io.LimitReader(part, maxUploadPartBytes+1))
 		if err != nil {
-			return nil, &Error{413, "input-too-large", "请求体超过容量限制"}
+			return nil, &Error{Status: 413, Code: "input-too-large", Message: "请求体超过容量限制"}
 		}
 		if len(content) > maxUploadPartBytes {
 			return nil, bad("attachment-too-large", "单张图片不能超过 8 MiB")
@@ -338,7 +340,7 @@ func registerAgentRoutes(r chi.Router, service runtimeService) {
 		}
 		revision := 0
 		if raw := req.URL.Query().Get("revision"); raw != "" {
-			value, err := numberCursor(raw)
+			value, err := hstate.NumberCursor(raw)
 			if err != nil || value < 1 || value > 2147483647 {
 				writeRuntimeError(w, bad("invalid-revision", "工作记忆版本必须为正整数"))
 				return

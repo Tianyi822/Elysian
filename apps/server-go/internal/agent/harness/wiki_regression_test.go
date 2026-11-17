@@ -2,15 +2,17 @@ package harness
 
 import (
 	"context"
-	"database/sql"
-	"elysian/server/internal/agent/harness/model"
-	"elysian/server/internal/agent/harness/workspace"
 	"encoding/json"
 	"errors"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"elysian/server/internal/agent/harness/model"
+	"elysian/server/internal/agent/harness/sessionstore"
+	"elysian/server/internal/agent/harness/state"
+	"elysian/server/internal/agent/harness/workspace"
 )
 
 func wikiTestManager(t *testing.T) (*Manager, Session) {
@@ -40,7 +42,7 @@ func TestWikiCandidateDecisionAtomicAndIdempotent(t *testing.T) {
 	}
 	fail := errors.New("事务失败")
 	m.mu.Lock()
-	m.store.beforeWrite = func(op string) error {
+	fixture(m).beforeWrite = func(op string) error {
 		if op == "wiki-candidate-decision" {
 			return fail
 		}
@@ -51,7 +53,7 @@ func TestWikiCandidateDecisionAtomicAndIdempotent(t *testing.T) {
 		t.Fatal("故障没有阻断发布")
 	}
 	m.mu.Lock()
-	m.store.beforeWrite = nil
+	fixture(m).beforeWrite = nil
 	m.mu.Unlock()
 	pages, err := m.ListWikiPages(ctx, space.ID, false)
 	if err != nil || len(pages) != 0 {
@@ -107,7 +109,7 @@ func TestWikiAcceptedRevisionAndWithdrawalIsolation(t *testing.T) {
 	}
 	m.mu.Lock()
 	var revision int
-	err = m.store.db.QueryRow("SELECT revision FROM wiki_visible_pages WHERE owner_kind='run' AND owner_id=? AND page_id=?", run.ID, page.ID).Scan(&revision)
+	err = fixture(m).db.QueryRow("SELECT revision FROM wiki_visible_pages WHERE owner_kind='run' AND owner_id=? AND page_id=?", run.ID, page.ID).Scan(&revision)
 	m.mu.Unlock()
 	if err != nil || revision != 1 {
 		t.Fatalf("普通修订改变了已接受快照: %d %v", revision, err)
@@ -116,7 +118,7 @@ func TestWikiAcceptedRevisionAndWithdrawalIsolation(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.mu.Lock()
-	invalid, err := wikiArtifactInvalid(ctx, m.store.db, "run", run.ID)
+	invalid, err := wikiArtifactInvalid(ctx, fixture(m), "run", run.ID)
 	m.mu.Unlock()
 	if err != nil || !invalid {
 		t.Fatalf("撤回未隔离派生运行: %v", err)
@@ -148,7 +150,7 @@ func TestWikiEvidenceSurvivesWholeSessionCleanup(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.mu.Lock()
-	err = m.store.write(ctx, "test-old-session", func(tx *sql.Tx) error {
+	err = fixture(m).write(ctx, "test-old-session", func(tx sessionstore.Tx) error {
 		session, e := readSession(ctx, tx, s.ID)
 		if e != nil {
 			return e
@@ -181,7 +183,7 @@ func TestWikiWithdrawalQuarantinesDerivedPagesAfterSourceSessionCleanup(t *testi
 	if err != nil {
 		t.Fatal(err)
 	}
-	derived, err := m.CreateWikiPage(ctx, space.ID, WikiPageInput{Slug: "derived", Title: "容器检查经验", Markdown: "来自检查资料的总结", Sources: []WikiRef{{source.ID, source.Revision, source.Digest}}})
+	derived, err := m.CreateWikiPage(ctx, space.ID, WikiPageInput{Slug: "derived", Title: "容器检查经验", Markdown: "来自检查资料的总结", Sources: []WikiRef{{PageID: source.ID, Revision: source.Revision, Digest: source.Digest}}})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -194,7 +196,7 @@ func TestWikiWithdrawalQuarantinesDerivedPagesAfterSourceSessionCleanup(t *testi
 		t.Fatalf("%+v", done)
 	}
 	m.mu.Lock()
-	err = m.store.write(ctx, "test-old-session", func(tx *sql.Tx) error {
+	err = fixture(m).write(ctx, "test-old-session", func(tx sessionstore.Tx) error {
 		session, e := readSession(ctx, tx, s.ID)
 		if e != nil {
 			return e
@@ -274,7 +276,7 @@ func TestWikiNavigationDoesNotInjectLargeBody(t *testing.T) {
 		t.Fatalf("%+v", done)
 	}
 	m.mu.Lock()
-	refs, err := wikiArtifactRefs(ctx, m.store.db, "run", r.ID)
+	refs, err := wikiArtifactRefs(ctx, fixture(m), "run", r.ID)
 	m.mu.Unlock()
 	if err != nil || len(refs) != 1 || refs[0].PageID != page.ID {
 		t.Fatalf("导航标题来源没有固定: %+v %v", refs, err)
@@ -283,7 +285,7 @@ func TestWikiNavigationDoesNotInjectLargeBody(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.mu.Lock()
-	invalid, err := wikiArtifactInvalid(ctx, m.store.db, "run", r.ID)
+	invalid, err := wikiArtifactInvalid(ctx, fixture(m), "run", r.ID)
 	m.mu.Unlock()
 	if err != nil || !invalid {
 		t.Fatalf("导航来源撤回应隔离 Run: %v", err)
@@ -318,8 +320,8 @@ func TestWikiWorkspaceQuarantinePersistsUntilEmpty(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.mu.Lock()
-	err = m.store.write(ctx, "workspace-source-fixture", func(tx *sql.Tx) error {
-		return saveWikiArtifact(ctx, tx, "workspace", workspaceWikiKey(v), r.TaskID, r.ID, 0, []WikiRef{{page.ID, page.Revision, page.Digest}})
+	err = fixture(m).write(ctx, "workspace-source-fixture", func(tx sessionstore.Tx) error {
+		return saveWikiArtifact(ctx, tx, "workspace", state.WorkspaceWikiKey(v), r.TaskID, r.ID, 0, []WikiRef{{PageID: page.ID, Revision: page.Revision, Digest: page.Digest}})
 	})
 	m.mu.Unlock()
 	if err != nil {
@@ -360,7 +362,7 @@ func submitLegacyWikiTest(t *testing.T, m *Manager, session Session, id, content
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	ctx := context.Background()
-	stored, err := readSession(ctx, m.store.db, session.ID)
+	stored, err := readSession(ctx, fixture(m), session.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -377,13 +379,13 @@ func submitLegacyWikiTest(t *testing.T, m *Manager, session Session, id, content
 		t.Fatal(err)
 	}
 	snapshot.PolicyVersion = "platform-tools/v1"
-	snapshot.Digest = digestJSON(snapshot)
+	snapshot.Digest = state.DigestJSON(snapshot)
 	now := stamp(m.deps.Now())
 	task := Task{ID: m.deps.NewID(), SessionID: session.ID, RequestID: id, Kind: "agent", DriverVersion: "v2", CreatedAt: now, Goal: content}
 	public := profile.Public()
 	input := AgentInput{RequestID: id, Content: content}
 	run := Run{ID: m.deps.NewID(), TaskID: task.ID, SessionID: session.ID, RequestID: id, Input: content, Model: &public, Status: StateQueued, CreatedAt: now, Limits: m.deps.AgentLimits, LastSeq: "0", Phase: StateQueued, MemoryStatus: "stale", DriverVersion: "v2", WikiStrategy: wikiNavigationStrategy, Selection: &input, Snapshot: &snapshot}
-	run, _, err = m.store.acceptAgent(ctx, task, run, digestJSON(input), m.deps.NewID(), true)
+	run, _, err = fixture(m).acceptAgent(ctx, task, run, state.DigestJSON(input), m.deps.NewID(), true)
 	if err != nil {
 		t.Fatal(err)
 	}

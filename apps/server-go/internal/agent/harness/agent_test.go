@@ -17,6 +17,7 @@ import (
 	"time"
 
 	"elysian/server/internal/agent/harness/model"
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/harness/worker"
 	"elysian/server/internal/agent/tools"
 )
@@ -106,20 +107,23 @@ func agentManager(t *testing.T, client agentTestClient, change func(*Deps)) (*Ma
 		t.Fatal(err)
 	}
 	invoker := &agentTestTools{}
-	deps := Deps{LegacyAgentPolicies: true, Path: filepath.Join(t.TempDir(), "harness.sqlite"), Tools: invoker, Profiles: profiles, ModelClient: client, Spawn: func(context.Context) (worker.Process, error) { return &agentTestProcess{}, nil }, AgentLimits: DefaultAgentLimits()}
+	deps := Deps{LegacyAgentPolicies: true, Store: mustFixtureStore(t, filepath.Join(t.TempDir()), "harness.sqlite"), Tools: invoker, Profiles: profiles, ModelClient: client, Spawn: func(context.Context) (worker.Process, error) { return &agentTestProcess{}, nil }, AgentLimits: DefaultAgentLimits()}
 	deps.Limits = DefaultLimits()
 	deps.Limits.Concurrency = 1
 	if change != nil {
 		change(&deps)
 	}
-	m, err := New(deps)
+	if deps.Now != nil {
+		fixtureDeps(deps).now = deps.Now
+	}
+	m, err := newFixtureManager(t, deps)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if err := m.Close(ctx); err != nil {
+		if err := closeFixtureManager(m, ctx); err != nil {
 			t.Error(err)
 		}
 	})
@@ -370,7 +374,7 @@ func TestAgentCancellationPreservesReplyWithoutFinalMemory(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			output := chatOutput(got, records.Items)
+			output := hstate.ProjectChatOutput(got, records.Items)
 			if output.Content != want || !output.Done {
 				t.Fatalf("停止后流式回读错误：%+v", output)
 			}
@@ -440,7 +444,7 @@ func TestAgentFinalStorageFailureDoesNotPublishAnswer(t *testing.T) {
 	run := submitAgentTest(t, m, s, "storage-failure", "验收事务失败")
 	<-entered
 	m.mu.Lock()
-	m.store.beforeWrite = func(op string) error {
+	fixture(m).beforeWrite = func(op string) error {
 		if op == "finish" {
 			return errors.New("测试写入失败")
 		}
@@ -450,7 +454,7 @@ func TestAgentFinalStorageFailureDoesNotPublishAnswer(t *testing.T) {
 	close(release)
 	runtimeEventually(t, func() bool { return m.Info().Storage == "unavailable" })
 	m.mu.Lock()
-	m.store.beforeWrite = nil
+	fixture(m).beforeWrite = nil
 	m.mu.Unlock()
 	history, _ := m.Messages(context.Background(), s.ID, "", 50)
 	if len(history.Items) != 1 {
@@ -722,7 +726,7 @@ func TestAgentLongGoalDoesNotConsumeMutableMemoryLimit(t *testing.T) {
 	}
 	m.mu.Lock()
 	var stored string
-	err := m.store.db.QueryRow("SELECT document FROM working_memories WHERE task_id=?", run.TaskID).Scan(&stored)
+	err := fixture(m).db.QueryRow("SELECT document FROM working_memories WHERE task_id=?", run.TaskID).Scan(&stored)
 	m.mu.Unlock()
 	if err != nil || len(stored) > got.Limits.MemoryBytes || strings.Contains(stored, goal) {
 		t.Fatalf("目标重复存入有限记忆快照：bytes=%d err=%v", len(stored), err)

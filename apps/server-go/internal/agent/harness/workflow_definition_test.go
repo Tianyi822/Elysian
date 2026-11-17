@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 
+	"elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/jsonvalue"
 )
 
@@ -97,7 +98,7 @@ func TestWorkflowBindingExactJSONAndPointers(t *testing.T) {
 		"array":      {Array: []WorkflowBinding{workflowTestLiteral(`1e50`), workflowTestInput("/01")}},
 		"emptyArray": {Array: []WorkflowBinding{}},
 	}}
-	got, err := evaluateWorkflowBinding(binding, input, map[string]string{"read": `{"value":9007199254740995}`})
+	got, err := state.EvaluateWorkflowBinding(binding, input, map[string]string{"read": `{"value":9007199254740995}`})
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -114,7 +115,7 @@ func TestWorkflowBindingExactJSONAndPointers(t *testing.T) {
 		if err = json.Unmarshal(raw, &roundtrip); err != nil {
 			t.Fatal(err)
 		}
-		if validateWorkflowBinding(roundtrip, nil) != nil {
+		if state.ValidateWorkflowBinding(roundtrip, nil) != nil {
 			t.Fatalf("空容器绑定在存储往返中丢失：%s", raw)
 		}
 	}
@@ -124,9 +125,9 @@ func TestWorkflowBindingExactJSONAndPointers(t *testing.T) {
 			t.Fatalf("接受含歧义或未知字段的绑定：%s", raw)
 		}
 	}
-	largeInput := `"` + strings.Repeat("a", workflowMaxJSONBytes/2) + `"`
+	largeInput := `"` + strings.Repeat("a", state.WorkflowMaxJSONBytes/2) + `"`
 	amplified := WorkflowBinding{Array: []WorkflowBinding{workflowTestInput(""), workflowTestInput(""), workflowTestInput("")}}
-	if _, err := evaluateWorkflowBinding(amplified, largeInput, nil); err == nil {
+	if _, err := state.EvaluateWorkflowBinding(amplified, largeInput, nil); err == nil {
 		t.Fatal("重复引用绕过求值输出限额")
 	}
 	for name, b := range map[string]WorkflowBinding{
@@ -136,16 +137,16 @@ func TestWorkflowBindingExactJSONAndPointers(t *testing.T) {
 		"缺失结果": workflowTestOutput("missing", ""),
 	} {
 		t.Run(name, func(t *testing.T) {
-			if _, err := evaluateWorkflowBinding(b, input, nil); err == nil {
+			if _, err := state.EvaluateWorkflowBinding(b, input, nil); err == nil {
 				t.Fatal("接受无效绑定")
 			}
 		})
 	}
 	deep := workflowTestLiteral(`null`)
-	for i := 0; i < workflowMaxDepth+1; i++ {
+	for i := 0; i < state.WorkflowMaxDepth+1; i++ {
 		deep = WorkflowBinding{Array: []WorkflowBinding{deep}}
 	}
-	if _, err := evaluateWorkflowBinding(deep, `{}`, nil); err == nil {
+	if _, err := state.EvaluateWorkflowBinding(deep, `{}`, nil); err == nil {
 		t.Fatal("接受过深绑定")
 	}
 }
@@ -161,34 +162,34 @@ func TestWorkflowConditionsExactNumbersAndFiniteOperations(t *testing.T) {
 		{"eq", `{"a":[1.0,null,true]}`, `{"a":[1,null,true]}`, true}, {"ne", `"1"`, `1`, true},
 	}
 	for _, test := range tests {
-		got, err := evaluateWorkflowCondition(workflowTestCondition(test.op, workflowTestLiteral(test.left), workflowTestLiteral(test.right)), `{}`, nil)
+		got, err := state.EvaluateWorkflowCondition(workflowTestCondition(test.op, workflowTestLiteral(test.left), workflowTestLiteral(test.right)), `{}`, nil)
 		if err != nil || got != test.want {
 			t.Fatalf("%s %s %s：%v %v", test.left, test.op, test.right, got, err)
 		}
 	}
 	left := workflowTestInput("/absent")
 	exists := WorkflowCondition{Op: "exists", Left: &left}
-	if got, err := evaluateWorkflowCondition(exists, `{}`, nil); err != nil || got {
+	if got, err := state.EvaluateWorkflowCondition(exists, `{}`, nil); err != nil || got {
 		t.Fatalf("不存在字段：%v %v", got, err)
 	}
 	left = workflowTestInput("/value")
-	if got, err := evaluateWorkflowCondition(exists, `{"value":null}`, nil); err != nil || !got {
+	if got, err := state.EvaluateWorkflowCondition(exists, `{"value":null}`, nil); err != nil || !got {
 		t.Fatalf("null仍是存在字段：%v %v", got, err)
 	}
 	left = workflowTestOutput("absent", "")
-	if _, err := evaluateWorkflowCondition(exists, `{}`, nil); err == nil {
+	if _, err := state.EvaluateWorkflowCondition(exists, `{}`, nil); err == nil {
 		t.Fatal("exists吞掉了缺失步骤结果")
 	}
 	falseCondition := workflowTestCondition("eq", workflowTestLiteral(`1`), workflowTestLiteral(`2`))
 	missingComparison := workflowTestCondition("eq", workflowTestInput("/absent"), workflowTestLiteral(`null`))
-	if got, err := evaluateWorkflowCondition(WorkflowCondition{Op: "and", Children: []WorkflowCondition{falseCondition, missingComparison}}, `{}`, nil); err != nil || got {
+	if got, err := state.EvaluateWorkflowCondition(WorkflowCondition{Op: "and", Children: []WorkflowCondition{falseCondition, missingComparison}}, `{}`, nil); err != nil || got {
 		t.Fatalf("and未短路：%v %v", got, err)
 	}
 	for _, condition := range []WorkflowCondition{
 		{Op: "eval", Left: &left}, {Op: "not"}, {Op: "or"}, workflowTestCondition("gt", workflowTestLiteral(`"2"`), workflowTestLiteral(`1`)),
 		{Op: "and", Children: []WorkflowCondition{falseCondition, {Op: "eval"}}},
 	} {
-		if _, err := evaluateWorkflowCondition(condition, `{}`, nil); err == nil {
+		if _, err := state.EvaluateWorkflowCondition(condition, `{}`, nil); err == nil {
 			t.Fatalf("接受无效条件：%+v", condition)
 		}
 	}
@@ -196,20 +197,20 @@ func TestWorkflowConditionsExactNumbersAndFiniteOperations(t *testing.T) {
 
 func TestWorkflowJSONSchemaStrict2020AndPrecision(t *testing.T) {
 	schema := `{"$schema":"https://json-schema.org/draft/2020-12/schema","type":"object","properties":{"value":{"type":"integer","minimum":9007199254740993}},"required":["value"],"unevaluatedProperties":false}`
-	if err := validateWorkflowJSON(schema, `{"value":9007199254740993}`); err != nil {
+	if err := state.ValidateWorkflowJSON(schema, `{"value":9007199254740993}`); err != nil {
 		t.Fatal(err)
 	}
 	for _, value := range []string{`{"value":9007199254740992}`, `{"value":9007199254740993,"extra":true}`, `{"value":1,"value":9007199254740993}`} {
-		if validateWorkflowJSON(schema, value) == nil {
+		if state.ValidateWorkflowJSON(schema, value) == nil {
 			t.Fatalf("接受不合约束的值：%s", value)
 		}
 	}
 	for _, invalid := range []string{`{"unknownConstraint":true}`, `{"$ref":"https://example.test/schema"}`, `{"$schema":"http://json-schema.org/draft-07/schema#"}`} {
-		if validateWorkflowJSON(invalid, `{}`) == nil {
+		if state.ValidateWorkflowJSON(invalid, `{}`) == nil {
 			t.Fatalf("接受不支持的schema：%s", invalid)
 		}
 	}
-	if validateWorkflowJSON(`true`, `"`+strings.Repeat("a", workflowMaxJSONBytes)+`"`) == nil {
+	if state.ValidateWorkflowJSON(`true`, `"`+strings.Repeat("a", state.WorkflowMaxJSONBytes)+`"`) == nil {
 		t.Fatal("接受超限JSON")
 	}
 }
@@ -256,7 +257,7 @@ func TestWorkflowSharedFixtureRoundTrip(t *testing.T) {
 	if !bytes.Equal(want, got) {
 		t.Fatalf("工作流契约往返不一致：\n%s\n%s", want, got)
 	}
-	if validateWorkflowJSON(fixture.Definition.InputSchemaJSON, fixture.InputJSON) != nil || validateWorkflowJSON(fixture.Definition.OutputSchemaJSON, fixture.ExpectedOutputJSON) != nil {
+	if state.ValidateWorkflowJSON(fixture.Definition.InputSchemaJSON, fixture.InputJSON) != nil || state.ValidateWorkflowJSON(fixture.Definition.OutputSchemaJSON, fixture.ExpectedOutputJSON) != nil {
 		t.Fatal("共享输入或输出不符合schema")
 	}
 	if fixture.Approval.Kind != "workflow-gate" || fixture.Run.WorkflowFrozenFrom != StateWaitingApproval || fixture.Instance.LastSeq != "9007199254740993" || fixture.Attempt.EventSeq != fixture.Instance.LastSeq {

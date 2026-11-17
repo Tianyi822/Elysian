@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"elysian/server/internal/agent/harness/model"
+	hstate "elysian/server/internal/agent/harness/state"
 )
 
 func TestChatOutputStreamBeforePublicMessageAndReconnect(t *testing.T) {
@@ -49,7 +50,7 @@ func TestChatOutputStreamBeforePublicMessageAndReconnect(t *testing.T) {
 	server := httptest.NewServer(m.Router())
 	defer server.Close()
 	client := &http.Client{Timeout: 5 * time.Second}
-	read := func() ChatOutput {
+	read := func() hstate.ChatOutput {
 		t.Helper()
 		response, err := client.Get(server.URL + "/runs/" + run.ID + "/output")
 		if err != nil {
@@ -62,7 +63,7 @@ func TestChatOutputStreamBeforePublicMessageAndReconnect(t *testing.T) {
 		scanner := bufio.NewScanner(response.Body)
 		for scanner.Scan() {
 			if strings.HasPrefix(scanner.Text(), "data: ") {
-				var output ChatOutput
+				var output hstate.ChatOutput
 				if err := json.Unmarshal([]byte(strings.TrimPrefix(scanner.Text(), "data: ")), &output); err != nil {
 					t.Fatal(err)
 				}
@@ -70,7 +71,7 @@ func TestChatOutputStreamBeforePublicMessageAndReconnect(t *testing.T) {
 			}
 		}
 		t.Fatal("未收到流式快照", scanner.Err())
-		return ChatOutput{}
+		return hstate.ChatOutput{}
 	}
 	output := read()
 	if output.Done || output.Content != "回答第一段" || output.Reasoning != "思考第一行" {
@@ -115,12 +116,12 @@ func TestChatOutputExcludesToolsAndConsolidation(t *testing.T) {
 		{ID: "tool", Purpose: "inference", Status: StateSucceeded, Response: &model.Response{Content: "工具附带文本", Reasoning: "公开思考", ToolCalls: []model.ToolCall{{ID: "t"}}}},
 		{ID: "memory", Purpose: "final-memory", Status: StateRunning, Reasoning: "整理", Content: "不公开"},
 	}
-	output := chatOutput(Run{ID: "r", Status: StateRunning}, records)
+	output := hstate.ProjectChatOutput(Run{ID: "r", Status: StateRunning}, records)
 	if output.Content != "" || output.Reasoning != "公开思考" || output.ResponseID != "tool" {
 		t.Fatal(output)
 	}
 	records = append(records, ModelRequestRecord{ID: "failed", Purpose: "inference", Status: StateRunning, Content: "未完成回答"})
-	if output := chatOutput(Run{ID: "r", Status: StateFailed}, records); output.Content != "" || !output.Done {
+	if output := hstate.ProjectChatOutput(Run{ID: "r", Status: StateFailed}, records); output.Content != "" || !output.Done {
 		t.Fatal(output)
 	}
 }

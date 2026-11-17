@@ -12,6 +12,7 @@ import (
 	"testing"
 
 	"elysian/server/internal/agent/harness/model"
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/harness/toolbridge"
 	"elysian/server/internal/agent/kardia"
 	"elysian/server/internal/agent/tools"
@@ -133,7 +134,7 @@ func TestWebFetchChatDiscoveryResultsAndSharedHistory(t *testing.T) {
 			if err != nil || len(approvals) != 0 {
 				t.Fatalf("只读请求产生审批: %+v %v", approvals, err)
 			}
-			_, records := readRecordLines(t, m.store, recordOwner{"session", session.ID})
+			_, records := readRecordLines(t, fixture(m), recordOwner{"session", session.ID})
 			if !strings.Contains(string(records), "web_fetch") || strings.Contains(string(records), "secret-error-body") {
 				t.Fatal("JSONL 缺少调用事实或包含错误正文")
 			}
@@ -183,7 +184,7 @@ func TestWebFetchExistingSessionNextRunAndSnapshotIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	digest := digestJSON(legacy)
+	digest := hstate.DigestJSON(legacy)
 	first := submitAgentTest(t, m, session, "old-session-new-tool", "读取网页")
 	if runtimeFinished(t, m, first.ID).Status != StateSucceeded {
 		t.Fatal("旧会话新建 Run 未获得工具")
@@ -210,7 +211,7 @@ func TestWebFetchExistingSessionNextRunAndSnapshotIsolation(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if contains(saved.Tools, "web_fetch") || saved.Revision != env.Revision || digestJSON(legacy) != digest {
+	if contains(saved.Tools, "web_fetch") || saved.Revision != env.Revision || hstate.DigestJSON(legacy) != digest {
 		t.Fatal("旧环境或固定快照被修改")
 	}
 	for _, run := range []Run{first, second, edit} {

@@ -78,7 +78,7 @@ func TestLoadedToolsProjectionIgnoresInvalidPersistedReceiptsForBothViews(t *tes
 	}
 	limited := s
 	budget := *s.LoadingBudget
-	budget.ToolDefinitionTokens = s.residentDefinitionTokens() + definitionTokens(s.Tools[2])
+	budget.ToolDefinitionTokens = s.ResidentDefinitionTokens() + definitionTokens(s.Tools[2])
 	limited.LoadingBudget = &budget
 	if got := projectLoadedTools(limited, []Call{baseline, retainedToolsCall(t, s, "mcp_tool_02", a)}); !reflect.DeepEqual(got, want) {
 		t.Fatalf("超预算回执改变了可见集合或加载顺序：%+v", got)

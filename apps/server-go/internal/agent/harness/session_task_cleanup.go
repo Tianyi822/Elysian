@@ -2,34 +2,17 @@ package harness
 
 import (
 	"context"
-	"database/sql"
-	"encoding/json"
 	"errors"
 	"time"
 
+	"elysian/server/internal/agent/harness/sessionstore"
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/tools"
 )
 
-// 仅保留取消所需的精确域任务身份，不保留已删会话正文，也不重放原操作。
-const sessionTaskCleanupSchema = `CREATE TABLE IF NOT EXISTS session_task_cleanup (
- id TEXT PRIMARY KEY, document TEXT NOT NULL, retry_at TEXT NOT NULL DEFAULT ''
-);`
-
-func enqueueTaskCancellation(ctx context.Context, tx *sql.Tx, ref tools.TaskReference) error {
-	if ref.Domain == "" || ref.ID == "" && ref.RequestID == "" {
-		return nil
-	}
-	raw, err := json.Marshal(ref)
-	if err != nil {
-		return err
-	}
-	_, err = tx.ExecContext(ctx, "INSERT INTO session_task_cleanup(id,document) VALUES(?,?) ON CONFLICT(id) DO UPDATE SET retry_at=''", digestJSON(ref), string(raw))
-	return err
-}
-
 func isNotFound(err error) bool {
 	var typed *Error
-	return errors.As(err, &typed) && typed.Status == 404
+	return errors.Is(err, sessionstore.ErrNotFound) || errors.As(err, &typed) && typed.Status == 404
 }
 
 func (m *Manager) cancelDeletedSessionTasks() {
@@ -41,7 +24,7 @@ func (m *Manager) cancelDeletedSessionTasks() {
 		m.mu.Unlock()
 		return
 	}
-	refs, err := readDocuments[tools.TaskReference](m.ctx, m.store.db, "SELECT document FROM session_task_cleanup WHERE retry_at<=? ORDER BY retry_at,id LIMIT 32", stamp(m.deps.Now()))
+	refs, err := readView(m.ctx, m.store).PendingTaskCancellations(m.ctx, stamp(m.deps.Now()))
 	m.mu.Unlock()
 	if err != nil {
 		return
@@ -52,8 +35,8 @@ func (m *Manager) cancelDeletedSessionTasks() {
 			return
 		}
 		m.mu.Lock()
-		err = m.store.write(m.ctx, "session-task-cancel-attempt", func(tx *sql.Tx) error {
-			_, err := tx.ExecContext(m.ctx, "UPDATE session_task_cleanup SET retry_at=? WHERE id=?", stamp(m.deps.Now().Add(30*time.Second)), digestJSON(original))
+		err = writeStore(m.store, m.ctx, "session-task-cancel-attempt", func(tx sessionstore.Tx) error {
+			_, err := tx.RecordTaskCancellationFailure(m.ctx, stamp(m.deps.Now().Add(30*time.Second)), hstate.DigestJSON(original))
 			return err
 		})
 		m.mu.Unlock()
@@ -75,8 +58,8 @@ func (m *Manager) cancelDeletedSessionTasks() {
 			continue
 		}
 		m.mu.Lock()
-		_ = m.store.write(m.ctx, "session-task-cancelled", func(tx *sql.Tx) error {
-			_, err := tx.ExecContext(m.ctx, "DELETE FROM session_task_cleanup WHERE id=?", digestJSON(original))
+		_ = writeStore(m.store, m.ctx, "session-task-cancelled", func(tx sessionstore.Tx) error {
+			_, err := tx.RemoveTaskCancellation(m.ctx, hstate.DigestJSON(original))
 			return err
 		})
 		m.mu.Unlock()
@@ -108,7 +91,7 @@ func (m *Manager) rememberExecutionTask(execution *executionState, ref tools.Tas
 		execution.tasks = append(execution.tasks, ref)
 		return
 	}
-	if err := m.store.write(context.Background(), "deleted-session-late-task", func(tx *sql.Tx) error { return enqueueTaskCancellation(context.Background(), tx, ref) }); err != nil {
+	if err := writeStore(m.store, context.Background(), "deleted-session-late-task", func(tx sessionstore.Tx) error { return enqueueTaskCancellation(context.Background(), tx, ref) }); err != nil {
 		m.storageFailedLocked()
 		return
 	}

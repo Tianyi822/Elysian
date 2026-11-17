@@ -104,7 +104,7 @@ func TestAgentImageGateAndSubmitRecheck(t *testing.T) {
 	}
 	// 升级前的附件字节保留可读，新提交仍按 1 MiB 单张限额复检。
 	legacy := paddedImage(t, png, 1048577)
-	if _, err := m.store.db.ExecContext(ctx, "INSERT INTO agent_attachments(id,session_id,mime_type,bytes,width,height,name,created_at,content) VALUES('legacy-image',NULL,'image/png',?,1,1,'old.png',?,?)", len(legacy), stamp(m.deps.Now()), legacy); err != nil {
+	if _, err := fixture(m).db.ExecContext(ctx, "INSERT INTO agent_attachments(id,session_id,mime_type,bytes,width,height,name,created_at,content) VALUES('legacy-image',NULL,'image/png',?,1,1,'old.png',?,?)", len(legacy), stamp(m.deps.Now()), legacy); err != nil {
 		t.Fatal(err)
 	}
 	if _, _, err := m.CreateTask(ctx, vision.ID, AgentInput{RequestID: "legacy-bytes", Content: "旧大图", Attachments: []AttachmentRef{{ID: "legacy-image"}}}); err == nil || err.(*Error).Code != "attachment-too-large" {

@@ -4,6 +4,7 @@ import (
 	"testing"
 
 	execconfig "elysian/server/internal/agent/execution/config"
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/tools"
 )
 
@@ -60,13 +61,13 @@ func TestTaskCancellationOwnsControlLeaseWithoutReleasingTaskResource(t *testing
 	if len(claims) != 1 || claims[0].Kind != "task-control" || claims[0].Key != "task-1" {
 		t.Fatalf("cancel claim=%+v", claims)
 	}
-	if resourceSetsConflict(claims, []ResourceClaim{{Kind: "website", Authority: "platform", Key: "site-1", Access: "write"}}) {
+	if hstate.ResourceSetsConflict(claims, []ResourceClaim{{Kind: "website", Authority: "platform", Key: "site-1", Access: "write"}}) {
 		t.Fatal("cancel deadlocks behind the accepted task's own resource lease")
 	}
-	if resourceSetsConflict(claims, []ResourceClaim{{Kind: "filesystem", Authority: "local", Key: "/", Access: "write", Subtree: true}}) {
+	if hstate.ResourceSetsConflict(claims, []ResourceClaim{{Kind: "filesystem", Authority: "local", Key: "/", Access: "write", Subtree: true}}) {
 		t.Fatal("cancel deadlocks behind the accepted task's filesystem lease")
 	}
-	if !resourceSetsConflict(claims, claims) {
+	if !hstate.ResourceSetsConflict(claims, claims) {
 		t.Fatal("parallel cancellation calls are not serialized")
 	}
 }
@@ -80,13 +81,13 @@ func TestPlatformContentClaimsConflictWithHostFilesAndExecutionGrants(t *testing
 				host := Operation{Capability: Capability{Name: "file", Source: "builtin", ReadOnly: hostReadOnly, Metadata: tools.Metadata{ResourceType: "filesystem", ResourceKeyArgument: "root"}}, ArgumentsJSON: `{"root":"/srv/project"}`}
 				hostClaims, _ := operationResourceClaims(CapabilitySnapshot{}, host)
 				want := !readOnly || !hostReadOnly
-				if got := resourceSetsConflict(claims, hostClaims); got != want {
+				if got := hstate.ResourceSetsConflict(claims, hostClaims); got != want {
 					t.Fatalf("%s read=%v hostRead=%v conflict=%v want=%v claims=%+v host=%+v", domain, readOnly, hostReadOnly, got, want, claims, hostClaims)
 				}
 			}
 			bash := Operation{TaskID: "other-task", Capability: Capability{Name: BashExec, Source: BashSource}, ArgumentsJSON: `{}`, Execution: &ExecutionPlan{Grant: &execconfig.Grant{Directories: []execconfig.Directory{{Path: "/another/project", Access: "rw"}}}}}
 			bashClaims, _ := operationResourceClaims(CapabilitySnapshot{}, bash)
-			if !resourceSetsConflict(claims, bashClaims) {
+			if !hstate.ResourceSetsConflict(claims, bashClaims) {
 				t.Fatalf("%s content access did not conflict with writable host execution grant", domain)
 			}
 		}
@@ -100,13 +101,13 @@ func TestTaskObservationDoesNotWaitForSubmissionLease(t *testing.T) {
 		for _, action := range []string{"task_status", "task_logs", "task_list"} {
 			capability := Capability{Name: action, Source: "builtin", ReadOnly: true, Metadata: tools.Metadata{Action: action, TaskDomain: domain, TaskIDArgument: "taskId", ResourceType: domain, ResourceKeyArgument: "id"}}
 			claims, _ := operationResourceClaims(CapabilitySnapshot{}, Operation{Capability: capability, ArgumentsJSON: `{"id":"project","taskId":"task-1"}`})
-			if resourceSetsConflict(claims, original) {
+			if hstate.ResourceSetsConflict(claims, original) {
 				t.Fatalf("%s/%s blocked behind accepted task resource: %+v", domain, action, claims)
 			}
-			if !resourceSetsConflict(claims, cancel) {
+			if !hstate.ResourceSetsConflict(claims, cancel) {
 				t.Fatalf("%s/%s did not serialize with cancellation", domain, action)
 			}
-			if resourceSetsConflict(claims, claims) {
+			if hstate.ResourceSetsConflict(claims, claims) {
 				t.Fatalf("%s/%s serialized read-only task observers", domain, action)
 			}
 		}

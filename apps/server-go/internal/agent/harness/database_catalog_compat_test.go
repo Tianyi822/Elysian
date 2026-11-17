@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/tools"
 	domaindatabase "elysian/server/internal/database"
 )
@@ -25,7 +26,7 @@ func databaseLegacyCatalogFixture(t *testing.T) (Operation, tools.PublicSchema) 
 		legacy.Parameters = parameters
 		frozen, _ := json.Marshal(parameters)
 		return Operation{ArgumentsJSON: `{"engine":"MySQL","versionTag":"8.0"}`, Capability: Capability{
-			Name: schema.Name, Description: schema.Description, Source: "builtin", ReadOnly: true, Metadata: schema.Metadata, Parameters: frozen, CatalogDigest: digestJSON(legacy),
+			Name: schema.Name, Description: schema.Description, Source: "builtin", ReadOnly: true, Metadata: schema.Metadata, Parameters: frozen, CatalogDigest: hstate.DigestJSON(legacy),
 		}}, schema
 	}
 	t.Fatal("缺少数据库发现工具")
@@ -34,11 +35,11 @@ func databaseLegacyCatalogFixture(t *testing.T) (Operation, tools.PublicSchema) 
 
 func TestDatabaseCatalogCompatibilityOnlyAddsVersionDescription(t *testing.T) {
 	operation, schema := databaseLegacyCatalogFixture(t)
-	beforeOperation, beforeSchema := digestJSON(operation), digestJSON(schema)
+	beforeOperation, beforeSchema := hstate.DigestJSON(operation), hstate.DigestJSON(schema)
 	if !legacyDatabaseDiscoverCatalogCompatible(operation, schema) {
 		t.Fatal("只补充版本说明不应阻止旧运行恢复")
 	}
-	if digestJSON(operation) != beforeOperation || digestJSON(schema) != beforeSchema {
+	if hstate.DigestJSON(operation) != beforeOperation || hstate.DigestJSON(schema) != beforeSchema {
 		t.Fatal("兼容检查改写了固定快照或注册表")
 	}
 	for _, kind := range []string{"tool", "source", "read-only", "metadata", "description", "schema", "digest", "arguments"} {
@@ -58,7 +59,7 @@ func TestDatabaseCatalogCompatibilityOnlyAddsVersionDescription(t *testing.T) {
 			case "schema":
 				current.Parameters["additionalProperties"] = true
 			case "digest":
-				operation.Capability.CatalogDigest = digestJSON(current)
+				operation.Capability.CatalogDigest = hstate.DigestJSON(current)
 			case "arguments":
 				operation.ArgumentsJSON = `{"engine":"MySQL","versionTag":"8.0","unapproved":true}`
 			}
@@ -86,7 +87,7 @@ func databaseCreateLegacyCatalogFixture(t *testing.T) (Operation, tools.PublicSc
 		legacy.Parameters = parameters
 		frozen, _ := json.Marshal(parameters)
 		return Operation{ArgumentsJSON: `{"id":"new:mysql","requestId":"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa","engine":"MySQL","versionTag":"8.0","expected":"missing","name":"app","imageId":"bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb","containerName":"mysql"}`, Capability: Capability{
-			Name: schema.Name, Description: schema.Description, Source: "builtin", ReadOnly: false, Metadata: schema.Metadata, Parameters: frozen, CatalogDigest: digestJSON(legacy),
+			Name: schema.Name, Description: schema.Description, Source: "builtin", ReadOnly: false, Metadata: schema.Metadata, Parameters: frozen, CatalogDigest: hstate.DigestJSON(legacy),
 		}}, schema
 	}
 	t.Fatal("缺少数据库发现工具")
@@ -95,11 +96,11 @@ func databaseCreateLegacyCatalogFixture(t *testing.T) (Operation, tools.PublicSc
 
 func TestDatabaseCreateCatalogCompatibilityOnlyAddsDescriptions(t *testing.T) {
 	operation, schema := databaseCreateLegacyCatalogFixture(t)
-	beforeOperation, beforeSchema := digestJSON(operation), digestJSON(schema)
+	beforeOperation, beforeSchema := hstate.DigestJSON(operation), hstate.DigestJSON(schema)
 	if !legacyDatabaseCreateCatalogCompatible(operation, schema) {
 		t.Fatal("只补充版本说明不应阻止旧运行恢复")
 	}
-	if digestJSON(operation) != beforeOperation || digestJSON(schema) != beforeSchema {
+	if hstate.DigestJSON(operation) != beforeOperation || hstate.DigestJSON(schema) != beforeSchema {
 		t.Fatal("兼容检查改写了固定快照或注册表")
 	}
 	for _, kind := range []string{"tool", "source", "read-only", "metadata", "description", "schema", "digest", "arguments"} {
@@ -119,7 +120,7 @@ func TestDatabaseCreateCatalogCompatibilityOnlyAddsDescriptions(t *testing.T) {
 			case "schema":
 				current.Parameters["additionalProperties"] = true
 			case "digest":
-				operation.Capability.CatalogDigest = digestJSON(current)
+				operation.Capability.CatalogDigest = hstate.DigestJSON(current)
 			case "arguments":
 				operation.ArgumentsJSON = `{"engine":"MySQL","versionTag":"8.0","unapproved":true}`
 			}
@@ -175,7 +176,7 @@ func TestDatabaseCreateLegacyGoldenSnapshotStaysCompatible(t *testing.T) {
 	operation := Operation{ArgumentsJSON: `{"id":"new:mysql","requestId":"` + strings.Repeat("a", 64) +
 		`","engine":"MySQL","versionTag":"8.0","expected":"missing","name":"app","imageId":"` + strings.Repeat("b", 64) + `","containerName":"mysql"}`,
 		Capability: Capability{Name: create.Name, Description: create.Description, Source: "builtin",
-			ReadOnly: false, Metadata: create.Metadata, Parameters: []byte(databaseCreateLegacyParametersJSON), CatalogDigest: digestJSON(legacy)}}
+			ReadOnly: false, Metadata: create.Metadata, Parameters: []byte(databaseCreateLegacyParametersJSON), CatalogDigest: hstate.DigestJSON(legacy)}}
 	if !legacyDatabaseCreateCatalogCompatible(operation, create) {
 		t.Fatal("冻结的历史快照与新目录失配：新增的参数说明必须同步进 legacyDatabaseCreateCatalogCompatible 的剥除清单，否则旧 Run 无法恢复")
 	}

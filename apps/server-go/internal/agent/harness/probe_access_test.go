@@ -2,7 +2,6 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"net"
 	"net/http"
@@ -14,6 +13,7 @@ import (
 
 	"elysian/server/internal/agent/execution"
 	execconfig "elysian/server/internal/agent/execution/config"
+	"elysian/server/internal/agent/harness/sessionstore"
 	"elysian/server/internal/agent/mcp"
 	"elysian/server/internal/agent/tools"
 )
@@ -145,7 +145,7 @@ func TestProbeAccessDenyCancelAndRestartRemainNonExecuting(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.mu.Lock()
-	err = m.store.write(ctx, "fixture-probe-interrupted", func(tx *sql.Tx) error {
+	err = fixture(m).write(ctx, "fixture-probe-interrupted", func(tx sessionstore.Tx) error {
 		lease, err := readProbeLease(ctx, tx, p.ID)
 		if err != nil {
 			return err

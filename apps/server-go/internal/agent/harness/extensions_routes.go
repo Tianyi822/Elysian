@@ -18,6 +18,7 @@ import (
 	"elysian/server/internal/agent/harness/skills"
 	"elysian/server/internal/agent/mcp"
 	"elysian/server/internal/shared"
+
 	"github.com/go-chi/chi/v5"
 )
 
@@ -26,7 +27,7 @@ func registerExtensionRoutes(r chi.Router, service runtimeService) {
 		return func(w http.ResponseWriter, req *http.Request) {
 			manager, ok := service.(*Manager)
 			if !ok {
-				writeRuntimeError(w, &Error{503, "extensions-unavailable", "Agent 扩展能力不可用"})
+				writeRuntimeError(w, &Error{Status: 503, Code: "extensions-unavailable", Message: "Agent 扩展能力不可用"})
 				return
 			}
 			manager.mu.Lock()
@@ -38,7 +39,7 @@ func registerExtensionRoutes(r chi.Router, service runtimeService) {
 				return
 			}
 			if !ok || e == nil || kind == "skills" && e.Skills == nil || kind == "mcp" && e.Servers == nil || kind == "execution" && e.Config == nil {
-				writeRuntimeError(w, &Error{503, "extensions-unavailable", "所需 Agent 扩展尚未装配"})
+				writeRuntimeError(w, &Error{Status: 503, Code: "extensions-unavailable", Message: "所需 Agent 扩展尚未装配"})
 				return
 			}
 			handler(e, w, req)
@@ -218,7 +219,7 @@ func registerExtensionRoutes(r chi.Router, service runtimeService) {
 	}))
 	r.Post("/mcp-servers/{id}/probe", wrap("mcp", func(e *Extensions, w http.ResponseWriter, req *http.Request) {
 		if e.MCP == nil {
-			writeRuntimeError(w, &Error{503, "mcp-unavailable", "MCP 传输通道尚未装配"})
+			writeRuntimeError(w, &Error{Status: 503, Code: "mcp-unavailable", Message: "MCP 传输通道尚未装配"})
 			return
 		}
 		in, err := readAgentInput[struct {
@@ -240,7 +241,7 @@ func registerExtensionRoutes(r chi.Router, service runtimeService) {
 		}
 		m := service.(*Manager)
 		if server.Stdio != nil {
-			writeRuntimeError(w, &Error{409, "probe-authorization-required", "容器 MCP 探测须先申请并确认本次运行范围"})
+			writeRuntimeError(w, &Error{Status: 409, Code: "probe-authorization-required", Message: "容器 MCP 探测须先申请并确认本次运行范围"})
 			return
 		}
 		catalog, err := m.probeServer(req.Context(), e, server)
@@ -354,7 +355,7 @@ func registerResourceRuleRoutes(r chi.Router, service runtimeService) {
 	r.Get("/execution-runtimes", func(w http.ResponseWriter, req *http.Request) {
 		m, ok := service.(*Manager)
 		if !ok {
-			writeRuntimeError(w, &Error{503, "execution-unavailable", "容器执行服务未就绪"})
+			writeRuntimeError(w, &Error{Status: 503, Code: "execution-unavailable", Message: "容器执行服务未就绪"})
 			return
 		}
 		m.mu.Lock()
@@ -373,7 +374,7 @@ func registerResourceRuleRoutes(r chi.Router, service runtimeService) {
 		return func(w http.ResponseWriter, req *http.Request) {
 			m, ok := service.(*Manager)
 			if !ok || m == nil {
-				writeRuntimeError(w, &Error{503, "resource-rules-unavailable", "资源规则服务不可用"})
+				writeRuntimeError(w, &Error{Status: 503, Code: "resource-rules-unavailable", Message: "资源规则服务不可用"})
 				return
 			}
 			m.mu.Lock()
@@ -424,13 +425,6 @@ func registerResourceRuleRoutes(r chi.Router, service runtimeService) {
 		value, err := m.PutResourceRule(req.Context(), chi.URLParam(req, "id"), in.ExpectedRevision, in.ResourceRuleInput)
 		sendExtension(w, http.StatusOK, value, err)
 	}))
-}
-
-type mcpCatalogProjection struct {
-	mcp.Catalog
-	ModelAliases    map[string]string `json:"modelAliases"`
-	ResourceAliases map[string]string `json:"resourceAliases"`
-	PromptAliases   map[string]string `json:"promptAliases"`
 }
 
 func publicMCPCatalog(serverID string, catalog mcp.Catalog) mcpCatalogProjection {

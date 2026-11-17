@@ -2,7 +2,6 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -15,6 +14,7 @@ import (
 	"time"
 
 	"elysian/server/internal/agent/harness/model"
+	"elysian/server/internal/agent/harness/sessionstore"
 	"elysian/server/internal/agent/harness/worker"
 	"elysian/server/internal/agent/tools"
 )
@@ -80,10 +80,10 @@ func TestContinuousShutdownRestartsSameRun(t *testing.T) {
 	}, continuousDeps)
 	run := submitAgentTest(t, m, session, "continuous-shutdown", "核实服务")
 	awaitDeleteSignal(t, started)
-	if err := m.Close(context.Background()); err != nil {
+	if err := closeFixtureManager(m); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := New(m.deps)
+	reopened, err := newFixtureManager(t, m.deps)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -100,7 +100,7 @@ func TestContinuousFrozenUnknownKeepsProtectionUntilTrustedReceipt(t *testing.T)
 	r := continuousStoreRun(t, s, "freeze-unknown")
 	o := Operation{ID: "frozen-operation", RunID: r.ID, TaskID: r.TaskID, Status: "dispatched", CallID: "frozen-call", Task: &tools.TaskReference{Domain: "test", ID: "task", RequestID: "original-domain-request"}}
 	b := ExecutionBarrier{ID: o.ID, OperationID: o.ID, RunID: r.ID, Status: "dispatched"}
-	if _, err := s.change(ctx, r.ID, "inflight-fixture", func(tx *sql.Tx, r *Run) error {
+	if _, err := s.change(ctx, r.ID, "inflight-fixture", func(tx sessionstore.Tx, r *Run) error {
 		r.Status = StateRunning
 		if err := saveOperation(ctx, tx, o); err != nil {
 			return err
@@ -124,7 +124,7 @@ func TestContinuousFrozenUnknownKeepsProtectionUntilTrustedReceipt(t *testing.T)
 		t.Fatalf("未冻结：%+v", frozen)
 	}
 	m := &Manager{store: s, ctx: ctx, deps: Deps{Now: func() time.Time { return runtimeStoreTestTime }}, wake: make(chan struct{}, 1)}
-	o, _ = readOperation(ctx, s.db, o.ID)
+	o, _ = readOperation(ctx, s, o.ID)
 	if err := m.settleDomainTask(o, tools.TaskStatus{Outcome: tools.TaskUnknown}); err != nil {
 		t.Fatal(err)
 	}
@@ -141,7 +141,7 @@ func TestContinuousFrozenUnknownKeepsProtectionUntilTrustedReceipt(t *testing.T)
 		t.Fatalf("未知操作被派发或丢失核实：%+v", waiting)
 	}
 	assertDomainProtection(t, m, o, "unknown")
-	o, _ = readOperation(ctx, s.db, o.ID)
+	o, _ = readOperation(ctx, s, o.ID)
 	if o.Task.RequestID != "original-domain-request" {
 		t.Fatal("恢复更换了域请求身份")
 	}
@@ -160,17 +160,17 @@ func TestContinuousOperationRequestIdentityCannotBeRepurposed(t *testing.T) {
 	r := continuousStoreRun(t, s, "identity")
 	capability := Capability{Name: "test_async", Metadata: tools.Metadata{Async: true, TaskDomain: "docker-operation", TaskRequestArgument: "requestId"}}
 	original := Operation{ID: "original", RunID: r.ID, TaskID: r.TaskID, Status: "completed", Capability: capability, ArgumentsJSON: `{"requestId":"original-id","target":"a"}`}
-	if err := s.write(context.Background(), "identity", func(tx *sql.Tx) error { return saveOperation(context.Background(), tx, original) }); err != nil {
+	if err := s.write(context.Background(), "identity", func(tx sessionstore.Tx) error { return saveOperation(context.Background(), tx, original) }); err != nil {
 		t.Fatal(err)
 	}
-	if err := validateOperationIdentity(context.Background(), s.db, original); err != nil {
+	if err := validateOperationIdentity(context.Background(), s, original); err != nil {
 		t.Fatal("原操作精确核实被拒绝", err)
 	}
 	for _, tc := range []struct{ args, code string }{{`{"target":"a","requestId":"original-id"}`, "request-id-reused"}, {`{"target":"b","requestId":"original-id"}`, "request-id-conflict"}, {`{"target":"b","requestId":"fresh-id"}`, ""}} {
 		next := original
 		next.ID = "next"
 		next.ArgumentsJSON = tc.args
-		err := validateOperationIdentity(context.Background(), s.db, next)
+		err := validateOperationIdentity(context.Background(), s, next)
 		if tc.code == "" {
 			if err != nil {
 				t.Fatal(err)
@@ -250,7 +250,7 @@ func TestContinuousRealWorkerHTTPRecoversAndCompletes(t *testing.T) {
 	if done.Status != StateSucceeded || done.Usage.Calls != 12 || calls != 12 || requests.Load() != 15 {
 		t.Fatalf("真实闭环失败：%+v calls=%d requests=%d", done, calls, requests.Load())
 	}
-	if err = m.store.waitRecords(context.Background()); err != nil {
+	if err = fixture(m).waitRecords(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 }

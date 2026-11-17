@@ -2,10 +2,11 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"strings"
 	"testing"
+
+	"elysian/server/internal/agent/harness/sessionstore"
 )
 
 func TestWikiNewSessionDefaultAndOldSelectionPreserved(t *testing.T) {
@@ -36,7 +37,7 @@ func TestWikiNewSessionDefaultAndOldSelectionPreserved(t *testing.T) {
 		t.Fatal(err)
 	}
 	// 模拟持久化旧会话；后续接受运行不依赖其新会话标记，也不改写选中空间。
-	err = m.store.write(ctx, "old-session-fixture", func(tx *sql.Tx) error {
+	err = fixture(m).write(ctx, "old-session-fixture", func(tx sessionstore.Tx) error {
 		s, e := readSession(ctx, tx, first.ID)
 		if e != nil {
 			return e
@@ -62,7 +63,7 @@ func TestWikiNewSessionDefaultAndOldSelectionPreserved(t *testing.T) {
 			}
 		}
 		var snapshots int
-		if err := m.store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM wiki_run_spaces WHERE run_id=?", run.ID).Scan(&snapshots); err != nil || snapshots != 0 {
+		if err := fixture(m).db.QueryRowContext(ctx, "SELECT COUNT(*) FROM wiki_run_spaces WHERE run_id=?", run.ID).Scan(&snapshots); err != nil || snapshots != 0 {
 			t.Fatalf("新运行仍固定旧空间: %d %v", snapshots, err)
 		}
 	}
@@ -71,13 +72,13 @@ func TestWikiNewSessionDefaultAndOldSelectionPreserved(t *testing.T) {
 	if selected.SpaceID != business.ID || !selected.IncludeGlobal {
 		t.Fatalf("旧会话选择被改写：%+v", selected)
 	}
-	finishSessionTestRun(t, m.store, run.ID, "完成", nil)
+	finishSessionTestRun(t, fixture(m), run.ID, "完成", nil)
 	continuation, _, err := m.ContinueTask(ctx, run.TaskID, AgentInput{RequestID: "old-session-continue", Content: "继续"})
 	if err != nil {
 		t.Fatal(err)
 	}
 	assertDisabled(continuation)
-	finishSessionTestRun(t, m.store, continuation.ID, "完成", nil)
+	finishSessionTestRun(t, fixture(m), continuation.ID, "完成", nil)
 	messages, err := m.Messages(ctx, first.ID, "", 50)
 	if err != nil {
 		t.Fatal(err)
@@ -128,7 +129,7 @@ func TestWikiNavigationAndAcceptedLegacyKeepDifferentContracts(t *testing.T) {
 	// 恢复固定的存量导航快照，保留按需读取与旧版本兼容。
 	run.WikiStrategy = wikiNavigationStrategy
 	run.Snapshot.Tools = wikiNavigationCapabilities()
-	if err := m.store.write(ctx, "legacy-wiki-fixture", func(tx *sql.Tx) error { return snapshotWikiRunSpaces(ctx, tx, run.ID, s.ID) }); err != nil {
+	if err := fixture(m).write(ctx, "legacy-wiki-fixture", func(tx sessionstore.Tx) error { return snapshotWikiRunSpaces(ctx, tx, run.ID, s.ID) }); err != nil {
 		t.Fatal(err)
 	}
 	a.run = run

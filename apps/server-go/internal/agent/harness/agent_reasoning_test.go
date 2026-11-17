@@ -56,7 +56,7 @@ func TestAgentReasoningSnapshotAndConfirmedPersistence(t *testing.T) {
 				t.Fatalf("生成中的快照错误：%+v %v", page, err)
 			}
 			m.mu.Lock()
-			stored, err := m.store.modelRequests(context.Background(), run.ID, "", 50)
+			stored, err := fixture(m).modelRequests(context.Background(), run.ID, "", 50)
 			m.mu.Unlock()
 			if err != nil || len(stored.Items) != 1 || stored.Items[0].Reasoning != "" || stored.Items[0].Content != "" {
 				t.Fatal("未确认的增量不应落盘")

@@ -2,7 +2,6 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +11,8 @@ import (
 	"testing"
 
 	"elysian/server/internal/agent/harness/model"
+	"elysian/server/internal/agent/harness/sessionstore"
+	hstate "elysian/server/internal/agent/harness/state"
 )
 
 func TestEmbeddingUsageRecordsIndexQueryAndUnknownSeparately(t *testing.T) {
@@ -32,7 +33,9 @@ func TestEmbeddingUsageRecordsIndexQueryAndUnknownSeparately(t *testing.T) {
 	defer server.Close()
 	m, _, _ := agentManager(t, func(context.Context, model.Profile, model.Request) (model.Response, error) {
 		return finalReply("完成"), nil
-	}, func(deps *Deps) { deps.Path = filepath.Join(t.TempDir(), "data", "harness.sqlite") })
+	}, func(deps *Deps) {
+		deps.EmbeddingConfigPath = filepath.Join(t.TempDir(), "config", "agent", "embeddings.json")
+	})
 	ctx := context.Background()
 	profile, err := m.CreateEmbeddingProfile(ctx, EmbeddingProfileInput{Name: "用量测试", BaseURL: server.URL, Model: "embedding", Dimensions: 2, Active: true})
 	if err != nil {
@@ -78,7 +81,7 @@ func TestEmbeddingMaintenanceGuardRejectsConfigAndProviderWrites(t *testing.T) {
 	m, _, _ := agentManager(t, func(context.Context, model.Profile, model.Request) (model.Response, error) {
 		return finalReply("完成"), nil
 	}, func(deps *Deps) {
-		deps.Path = filepath.Join(t.TempDir(), "data", "harness.sqlite")
+		deps.EmbeddingConfigPath = filepath.Join(t.TempDir(), "config", "agent", "embeddings.json")
 		deps.DispatchGuard = func() error {
 			if maintenance.Load() {
 				return bad("maintenance-active", "面板维护中")
@@ -112,17 +115,17 @@ func TestEmbeddingMaintenanceGuardRejectsConfigAndProviderWrites(t *testing.T) {
 func TestEmbeddingRequestRecoveryKeepsUnknownUsage(t *testing.T) {
 	ctx := context.Background()
 	s, path := openRuntimeTestStore(t)
-	m := &Manager{store: s, deps: Deps{Path: path, Now: s.now, NewID: randomID}}
+	m := &Manager{store: s, deps: Deps{Store: s, EmbeddingConfigPath: filepath.Join(filepath.Dir(filepath.Dir(path)), "config", "agent", "embeddings.json"), Now: s.now, NewID: hstate.RandomID}}
 	for _, maintenance := range []bool{false, true} {
 		id := "restart"
 		if maintenance {
 			id = "maintenance"
 		}
 		record := EmbeddingRequest{ID: id, ProfileID: "profile-one", ProfileRevision: 1, Purpose: "query", Status: StateRunning, InputBytes: 6, InputDigest: strings.Repeat("a", 64), EstimatedTokens: 262, StartedAt: stamp(s.now())}
-		if err := s.write(ctx, "test-record", func(tx *sql.Tx) error { return saveEmbeddingRequest(ctx, tx, record) }); err != nil {
+		if err := s.write(ctx, "test-record", func(tx sessionstore.Tx) error { return saveEmbeddingRequest(ctx, tx, record) }); err != nil {
 			t.Fatal(err)
 		}
-		if err := s.write(ctx, "test-recover", func(tx *sql.Tx) error { return m.recoverEmbeddingRequests(ctx, tx, maintenance) }); err != nil {
+		if err := s.write(ctx, "test-recover", func(tx sessionstore.Tx) error { return m.recoverEmbeddingRequests(ctx, tx, maintenance) }); err != nil {
 			t.Fatal(err)
 		}
 		var raw string

@@ -2,10 +2,11 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"sync/atomic"
 	"testing"
 
+	"elysian/server/internal/agent/harness/sessionstore"
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/tools"
 )
 
@@ -14,9 +15,9 @@ func seedApprovalUnknownBlocker(t *testing.T, m *Manager, withBarrier bool) Oper
 	ctx := context.Background()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	r := createRuntimeTestRun(t, m.store, "old-approval-blocker", runtimeStoreTestTime)
+	r := createRuntimeTestRun(t, fixture(m), "old-approval-blocker", runtimeStoreTestTime)
 	o := Operation{ID: "old-approval-blocker", RunID: r.ID, TaskID: r.TaskID, Status: "unknown", DispatchID: "old-dispatch", DispatchedAt: stamp(runtimeStoreTestTime), Capability: Capability{Name: "old_write", Source: "builtin"}, ResourceClaims: []ResourceClaim{{Kind: "docker-container", Authority: "local", Key: "old-container", Access: "write"}}}
-	_, err := m.store.change(ctx, r.ID, "old-unknown-fixture", func(tx *sql.Tx, r *Run) error {
+	_, err := fixture(m).change(ctx, r.ID, "old-unknown-fixture", func(tx sessionstore.Tx, r *Run) error {
 		r.Status, r.EndReason = StateInterrupted, "outcome-unknown"
 		r.EndedAt = stamp(runtimeStoreTestTime)
 		if err := saveOperation(ctx, tx, o); err != nil {
@@ -69,7 +70,7 @@ func TestUnknownBlockerIsReportedBeforeNewApproval(t *testing.T) {
 			if op.ApprovalID != "" || op.DispatchID != "" || op.DispatchedAt != "" || op.ResourceWait == nil || !op.ResourceWait.Unknown || op.ResourceWait.RunID != owner.RunID || op.ResourceWait.OperationID != owner.ID {
 				t.Fatalf("incorrect pre-approval execution facts: %+v", op)
 			}
-			fact := projectToolExecution(done, &op, nil, nil)
+			fact := hstate.ProjectToolExecution(done, &op, nil, nil)
 			if fact.Status != "not-executed" || fact.ResourceWait == nil {
 				t.Fatalf("incorrect blocked projection: %+v", fact)
 			}
@@ -77,8 +78,8 @@ func TestUnknownBlockerIsReportedBeforeNewApproval(t *testing.T) {
 			if err != nil || len(calls.Items) != 1 || calls.Items[0].Tool != toolSearchName {
 				t.Fatalf("undispatched operation has execution receipt: %+v %v", calls, err)
 			}
-			old, err := readOperation(ctx, m.store.db, owner.ID)
-			if err != nil || digestJSON(old) != digestJSON(owner) {
+			old, err := readOperation(ctx, fixture(m), owner.ID)
+			if err != nil || hstate.DigestJSON(old) != hstate.DigestJSON(owner) {
 				t.Fatalf("pre-approval check changed old protection: %+v %v", old, err)
 			}
 		})
@@ -117,7 +118,7 @@ func TestUnknownResourcePreflightPreservesReadAndCancellationScope(t *testing.T)
 	s, _ := openRuntimeTestStore(t)
 	ctx := context.Background()
 	claim := ResourceClaim{Kind: "docker-container", Authority: "local", Key: "container", Access: "write"}
-	if err := s.write(ctx, "unknown-lease", func(tx *sql.Tx) error {
+	if err := s.write(ctx, "unknown-lease", func(tx sessionstore.Tx) error {
 		return saveResourceLease(ctx, tx, ResourceLease{ID: "owner", RunID: "owner-run", OperationID: "owner", State: "unknown", Claims: []ResourceClaim{claim}})
 	}); err != nil {
 		t.Fatal(err)
@@ -134,11 +135,11 @@ func TestUnknownResourcePreflightPreservesReadAndCancellationScope(t *testing.T)
 		{"async cancellation", Operation{Capability: Capability{Source: "builtin", Metadata: tools.Metadata{Async: true, Action: "cancel", TaskDomain: "domain", TaskIDArgument: "taskId"}}}, false},
 	} {
 		t.Run(test.name, func(t *testing.T) {
-			wait, err := unknownResourceWait(ctx, s.db, test.o, stamp(runtimeStoreTestTime))
+			wait, err := unknownResourceWait(ctx, s, test.o, stamp(runtimeStoreTestTime))
 			if err != nil || (wait != nil) != test.want {
 				t.Fatalf("unknown protection scope changed: %+v %v", wait, err)
 			}
-			if wait != nil && externalOperation(test.o) && wait.Resource != "external:*" {
+			if wait != nil && hstate.ExternalOperation(test.o) && wait.Resource != "external:*" {
 				t.Fatalf("global protection stored only a concrete conflict: %+v", wait)
 			}
 		})

@@ -11,6 +11,7 @@ import (
 	"testing"
 
 	"elysian/server/internal/agent/harness/model"
+	hstate "elysian/server/internal/agent/harness/state"
 )
 
 func budgetTestSnapshot(t *testing.T, count, size int) CapabilitySnapshot {
@@ -43,7 +44,7 @@ func TestLoadingBudgetSearchSizeEvictionAndIndex(t *testing.T) {
 		for _, name := range result.Retained {
 			visible[name] = true
 		}
-		if len(result.Retained) > 16 || modelDefinitionTokens(s.visibleModelTools(visible)) > s.LoadingBudget.ToolDefinitionTokens {
+		if len(result.Retained) > 16 || modelDefinitionTokens(s.VisibleModelTools(visible)) > s.LoadingBudget.ToolDefinitionTokens {
 			t.Fatal("定义预算失效")
 		}
 		previous = result.Retained
@@ -64,7 +65,7 @@ func TestLoadingBudgetSearchSizeEvictionAndIndex(t *testing.T) {
 	for i := 0; i < 32; i++ {
 		s.SkillSummaries = append(s.SkillSummaries, SkillSummary{Ref: RevisionRef{ID: fmt.Sprintf("skill-%02d", i), Revision: 1}, Name: fmt.Sprintf("技能-%02d", i), Description: strings.Repeat("中", 300)})
 	}
-	index := s.skillIndex("技能-31")
+	index := s.SkillIndex("技能-31")
 	if estimateContextText(string(index)) > s.LoadingBudget.SkillIndexTokens {
 		t.Fatal("技能索引超限")
 	}
@@ -113,8 +114,8 @@ func TestLoadingBudgetCapturedWireComparison(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			send(eager.modelTools())
-			send(s.visibleModelTools(nil))
+			send(eager.ModelTools())
+			send(s.VisibleModelTools(nil))
 			if strings.Contains(string(wires[1]), "original_") || strings.Contains(string(wires[1]), "mcp_tool_") {
 				t.Fatal("未加载扩展发送完整定义")
 			}
@@ -138,11 +139,11 @@ func TestLoadingBudgetCapturedWireComparison(t *testing.T) {
 					}
 				}
 			}
-			send(s.visibleModelTools(visible))
+			send(s.VisibleModelTools(visible))
 			if tc.name == "huge" && hits != 0 || tc.name != "huge" && hits != tc.count {
 				t.Fatal("固定精确查询命中率错误")
 			}
-			if modelDefinitionTokens(s.visibleModelTools(visible)) > s.LoadingBudget.ToolDefinitionTokens {
+			if modelDefinitionTokens(s.VisibleModelTools(visible)) > s.LoadingBudget.ToolDefinitionTokens {
 				t.Fatal("最终请求工具超预算")
 			}
 			t.Logf("本地估算（非供应商用量）：候选=%d，全量定义=%d bytes/%d tokens，首次按需=%d bytes/%d tokens，首次搜索后=%d bytes/%d tokens；固定精确查询命中=%d/%d，搜索轮次=%d", tc.count, len(wires[0]), estimateContextText(string(wires[0])), len(wires[1]), estimateContextText(string(wires[1])), len(wires[2]), estimateContextText(string(wires[2])), hits, tc.count, rounds)
@@ -197,7 +198,7 @@ func TestLoadingBudgetEvictedSetSurvivesApprovalRestart(t *testing.T) {
 	run := submitAgentTest(t, m, session, "budget-restart", "执行操作")
 	t.Cleanup(func() {
 		if t.Failed() {
-			current, _ := m.store.get(ctx, run.ID)
+			current, _ := fixture(m).get(ctx, run.ID)
 			t.Logf("requests=%d state=%s error=%+v usage=%+v", requests, current.Status, current.Error, current.Usage)
 		}
 	})
@@ -209,7 +210,7 @@ func TestLoadingBudgetEvictedSetSurvivesApprovalRestart(t *testing.T) {
 	runtimeEventually(t, func() bool { m.mu.Lock(); defer m.mu.Unlock(); return m.activeID == "" })
 	m = reopenOperationManager(t, m)
 	after, err := m.loadedToolsV2(ctx, run.ID, *run.Snapshot)
-	if err != nil || digestJSON(before) != digestJSON(after) {
+	if err != nil || hstate.DigestJSON(before) != hstate.DigestJSON(after) {
 		t.Fatalf("恢复加载集合改变: %v %v", after, err)
 	}
 	if _, err = m.Decide(ctx, approval.ID, "approved"); err != nil {

@@ -2,15 +2,15 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
-	"errors"
 	"path"
 	"sort"
 	"strconv"
 	"strings"
 	"unicode/utf8"
 
+	"elysian/server/internal/agent/harness/sessionstore"
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/jsonvalue"
 )
 
@@ -292,28 +292,13 @@ func operationResourceClaims(snapshot CapabilitySnapshot, o Operation) ([]Resour
 	return canonicalResourceClaims(claims), refs
 }
 
-func readResourceRule(ctx context.Context, q interface {
-	QueryRowContext(context.Context, string, ...any) *sql.Row
-}, id string, revision int) (ResourceRule, error) {
-	var rule ResourceRule
-	var raw string
-	err := q.QueryRowContext(ctx, "SELECT document FROM resource_rules WHERE id=? AND (?=0 OR revision=?) ORDER BY revision DESC LIMIT 1", id, revision, revision).Scan(&raw)
-	if errors.Is(err, sql.ErrNoRows) {
-		return rule, bad("resource-rule-not-found", "资源规则不存在")
-	}
-	if err == nil {
-		err = json.Unmarshal([]byte(raw), &rule)
-	}
-	return rule, err
-}
-
 func (m *Manager) ResourceRules(ctx context.Context) ([]ResourceRule, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
 		return nil, closedError()
 	}
-	rules, err := readDocuments[ResourceRule](ctx, m.store.db, "SELECT r.document FROM resource_rules r JOIN (SELECT id,MAX(revision) AS revision FROM resource_rules GROUP BY id) latest ON r.id=latest.id AND r.revision=latest.revision ORDER BY r.id")
+	rules, err := readView(ctx, m.store).ResourceRules(ctx)
 	return rules, storageFailure(err)
 }
 
@@ -323,7 +308,7 @@ func (m *Manager) GetResourceRule(ctx context.Context, id string, revision int) 
 	if m.closed {
 		return ResourceRule{}, closedError()
 	}
-	rule, err := readResourceRule(ctx, m.store.db, id, revision)
+	rule, err := readResourceRule(ctx, m.store, id, revision)
 	return rule, storageFailure(err)
 }
 
@@ -345,21 +330,21 @@ func (m *Manager) PutResourceRule(ctx context.Context, id string, expected int, 
 	} else if !requestPattern.MatchString(id) || expected < 1 {
 		return rule, bad("invalid-resource-rule", "更新资源规则必须指定编号及当前修订")
 	}
-	err := m.store.write(ctx, "resource-rule", func(tx *sql.Tx) error {
+	err := writeStore(m.store, ctx, "resource-rule", func(tx sessionstore.Tx) error {
 		var latest int
-		if err := tx.QueryRowContext(ctx, "SELECT COALESCE(MAX(revision),0) FROM resource_rules WHERE id=?", id).Scan(&latest); err != nil {
+		if err := tx.ResourceRuleRevision(ctx, id, &latest); err != nil {
 			return err
 		}
 		if latest != expected {
-			return &Error{409, "revision-conflict", "资源规则修订已变化"}
+			return &Error{Status: 409, Code: "revision-conflict", Message: "资源规则修订已变化"}
 		}
 		rule = ResourceRule{ResourceRuleInput: in, ID: id, Revision: latest + 1, CreatedAt: stamp(m.deps.Now())}
-		rule.Digest = digestJSON(rule)
+		rule.Digest = hstate.DigestJSON(rule)
 		raw, err := json.Marshal(rule)
 		if err != nil {
 			return err
 		}
-		_, err = tx.ExecContext(ctx, "INSERT INTO resource_rules(id,revision,document) VALUES(?,?,?)", id, rule.Revision, string(raw))
+		_, err = tx.InsertResourceRule(ctx, id, rule.Revision, string(raw))
 		return err
 	})
 	return rule, storageFailure(err)

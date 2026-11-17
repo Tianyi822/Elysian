@@ -2,10 +2,12 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"time"
+
+	"elysian/server/internal/agent/harness/sessionstore"
+	"elysian/server/internal/agent/harness/state"
 )
 
 func (m *Manager) CancelWorkflow(ctx context.Context, id string) (WorkflowInstance, error) {
@@ -15,20 +17,20 @@ func (m *Manager) CancelWorkflow(ctx context.Context, id string) (WorkflowInstan
 	if err := m.agentWritable(); err != nil {
 		return w, err
 	}
-	err := m.store.write(ctx, "workflow-cancel", func(tx *sql.Tx) error {
+	err := writeStore(m.store, ctx, "workflow-cancel", func(tx sessionstore.Tx) error {
 		var e error
 		w, e = readWorkflow(ctx, tx, id)
 		if e != nil {
 			return e
 		}
-		if terminal(w.Status) {
+		if state.Terminal(w.Status) {
 			return nil
 		}
-		if workflowV2(w) {
+		if state.WorkflowV2(w) {
 			return m.cancelWorkflowV2(ctx, tx, &w)
 		}
 		w.CancelRequestedAt = stamp(m.deps.Now())
-		if e = m.store.workflowEvent(ctx, tx, &w, "workflow/cancel-requested", ""); e != nil {
+		if e = tx.WorkflowEvent(ctx, &w, "workflow/cancel-requested", ""); e != nil {
 			return e
 		}
 		if w.ActiveRunID != "" {
@@ -37,7 +39,7 @@ func (m *Manager) CancelWorkflow(ctx context.Context, id string) (WorkflowInstan
 				return e
 			}
 			r.CancelRequestedAt = w.CancelRequestedAt
-			approvals, e := readDocuments[Approval](ctx, tx, "SELECT document FROM approvals WHERE run_id=? ORDER BY rowid", r.ID)
+			approvals, e := tx.NodeApprovals(ctx, r.ID)
 			if e != nil {
 				return e
 			}
@@ -50,16 +52,16 @@ func (m *Manager) CancelWorkflow(ctx context.Context, id string) (WorkflowInstan
 				}
 			}
 			if r.Status == StateRunning {
-				return m.store.event(ctx, tx, &r, "run/cancel-requested", "", nil, nil)
+				return tx.Event(ctx, &r, "run/cancel-requested", "", nil, nil)
 			}
-			if !terminal(r.Status) {
+			if !state.Terminal(r.Status) {
 				r.Status = StateCancelled
 				r.EndedAt = w.CancelRequestedAt
 				r.EndReason = "cancelled"
-				if e = m.store.event(ctx, tx, &r, "run/cancelled", "", nil, nil); e != nil {
+				if e = tx.Event(ctx, &r, "run/cancelled", "", nil, nil); e != nil {
 					return e
 				}
-				if e = m.store.releaseSession(ctx, tx, &r); e != nil {
+				if e = tx.ReleaseSession(ctx, &r); e != nil {
 					return e
 				}
 				w, e = readWorkflow(ctx, tx, id)
@@ -68,15 +70,15 @@ func (m *Manager) CancelWorkflow(ctx context.Context, id string) (WorkflowInstan
 		}
 		w.Status = StateCancelled
 		w.EndedAt = w.CancelRequestedAt
-		if e = m.store.workflowEvent(ctx, tx, &w, "workflow/cancelled", ""); e != nil {
+		if e = tx.WorkflowEvent(ctx, &w, "workflow/cancelled", ""); e != nil {
 			return e
 		}
-		return m.store.releaseWorkflowSession(ctx, tx, w)
+		return tx.ReleaseWorkflowSession(ctx, w)
 	})
 	if execution := m.executionLocked(w.ActiveRunID); err == nil && execution != nil {
 		execution.cancel()
 	}
-	if err == nil && workflowV2(w) {
+	if err == nil && state.WorkflowV2(w) {
 		for _, execution := range m.executions {
 			if execution.rootID == "workflow:"+w.ID {
 				execution.cancel()
@@ -84,7 +86,7 @@ func (m *Manager) CancelWorkflow(ctx context.Context, id string) (WorkflowInstan
 		}
 	}
 	if err == nil {
-		w, err = readWorkflow(ctx, m.store.db, id)
+		w, err = readWorkflow(ctx, m.store, id)
 	}
 	m.signal()
 	return w, storageFailure(err)
@@ -102,15 +104,15 @@ func (m *Manager) RecoverWorkflow(ctx context.Context, id string, input Workflow
 	raw, _ := json.Marshal(input)
 	canonical := string(raw)
 	var prior, document string
-	err := m.store.db.QueryRowContext(ctx, "SELECT canonical_input,document FROM workflow_recoveries WHERE workflow_id=? AND request_id=?", id, input.RequestID).Scan(&prior, &document)
+	err := readView(ctx, m.store).WorkflowRecoveryRequest(ctx, id, input.RequestID, &prior, &document)
 	if err == nil {
 		if prior != canonical {
-			return w, false, &Error{409, "request-conflict", "相同恢复请求标识对应不同输入"}
+			return w, false, &Error{Status: 409, Code: "request-conflict", Message: "相同恢复请求标识对应不同输入"}
 		}
 		err = json.Unmarshal([]byte(document), &w)
 		return w, true, err
 	}
-	if !errors.Is(err, sql.ErrNoRows) {
+	if !errors.Is(err, sessionstore.ErrNotFound) {
 		return w, false, storageFailure(err)
 	}
 	if err = m.agentWritable(); err != nil {
@@ -119,40 +121,40 @@ func (m *Manager) RecoverWorkflow(ctx context.Context, id string, input Workflow
 	if err = recoveryEvidence(input); err != nil {
 		return w, false, err
 	}
-	w, err = readWorkflow(ctx, m.store.db, id)
+	w, err = readWorkflow(ctx, m.store, id)
 	if err != nil {
 		return w, false, storageFailure(err)
 	}
 	if w.Revision != input.ExpectedRevision {
-		return w, false, &Error{409, "revision-conflict", "工作流状态版本已变化"}
+		return w, false, &Error{Status: 409, Code: "revision-conflict", Message: "工作流状态版本已变化"}
 	}
 	if w.Status != StateRecoveryRequired || w.CancelRequestedAt != "" {
-		return w, false, &Error{409, "workflow-state", "流程不处于可恢复状态"}
+		return w, false, &Error{Status: 409, Code: "workflow-state", Message: "流程不处于可恢复状态"}
 	}
 	var count int
-	if err = m.store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM execution_barriers WHERE state IN ('dispatched','unknown')").Scan(&count); err != nil {
+	if err = readView(ctx, m.store).UnresolvedBarrierCount(ctx, &count); err != nil {
 		return w, false, storageFailure(err)
 	}
 	if count > 0 {
-		return w, false, &Error{409, "execution-barrier", "必须先核实全部未知执行屏障"}
+		return w, false, &Error{Status: 409, Code: "execution-barrier", Message: "必须先核实全部未知执行屏障"}
 	}
 	if m.executionLocked(w.ActiveRunID) != nil {
-		return w, false, &Error{409, "workflow-active", "原执行尚未确认停止"}
+		return w, false, &Error{Status: 409, Code: "workflow-active", Message: "原执行尚未确认停止"}
 	}
-	if workflowV2(w) {
+	if state.WorkflowV2(w) {
 		return m.recoverWorkflowV2(ctx, w, input, canonical)
 	}
-	d, err := readWorkflowDefinition(ctx, m.store.db, w.DefinitionID, w.DefinitionRevision)
+	d, err := readWorkflowDefinition(ctx, m.store, w.DefinitionID, w.DefinitionRevision)
 	if err != nil {
 		return w, false, storageFailure(err)
 	}
-	step, err := workflowStep(d, w.CurrentStepID)
+	step, err := state.WorkflowStep(d, w.CurrentStepID)
 	if err != nil {
 		return w, false, err
 	}
 	var r Run
 	if w.ActiveRunID != "" {
-		r, err = readRun(ctx, m.store.db, w.ActiveRunID)
+		r, err = readRun(ctx, m.store, w.ActiveRunID)
 		if err != nil {
 			return w, false, storageFailure(err)
 		}
@@ -161,7 +163,7 @@ func (m *Manager) RecoverWorkflow(ctx context.Context, id string, input Workflow
 	if err = m.checkWorkflowEnvironment(ctx, w); err != nil {
 		return w, false, err
 	}
-	err = m.store.write(ctx, "workflow-recovery", func(tx *sql.Tx) error {
+	err = writeStore(m.store, ctx, "workflow-recovery", func(tx sessionstore.Tx) error {
 		if err := validateWorkflowV1RecoverySources(ctx, tx, w); err != nil {
 			return err
 		}
@@ -171,7 +173,7 @@ func (m *Manager) RecoverWorkflow(ctx context.Context, id string, input Workflow
 		switch input.Action {
 		case "continue":
 			if w.Error == nil || w.Error.Code != "maintenance-recovery" {
-				return &Error{409, "unsafe-resume", "只能从维护冻结的已确认边界继续"}
+				return &Error{Status: 409, Code: "unsafe-resume", Message: "只能从维护冻结的已确认边界继续"}
 			}
 			if r.ID == "" {
 				w.Status = StateReady
@@ -179,21 +181,21 @@ func (m *Manager) RecoverWorkflow(ctx context.Context, id string, input Workflow
 				break
 			}
 			if r.WorkflowFrozenFrom != StateQueued {
-				return &Error{409, "unsafe-resume", "该步骤不是未派发边界，应重新审批、重试或补录"}
+				return &Error{Status: 409, Code: "unsafe-resume", Message: "该步骤不是未派发边界，应重新审批、重试或补录"}
 			}
 			var approvals int
-			if e := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM approvals WHERE run_id=?", r.ID).Scan(&approvals); e != nil {
+			if e := tx.PendingWorkflowApprovalCount(ctx, r.ID, &approvals); e != nil {
 				return e
 			}
 			if approvals > 0 {
-				return &Error{409, "unsafe-resume", "原审批已经撤销，应明确重新申请"}
+				return &Error{Status: 409, Code: "unsafe-resume", Message: "原审批已经撤销，应明确重新申请"}
 			}
 			var operations int
-			if e := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM operations WHERE run_id=?", r.ID).Scan(&operations); e != nil {
+			if e := tx.DispatchedOperationCount(ctx, r.ID, &operations); e != nil {
 				return e
 			}
 			if operations > 0 {
-				return &Error{409, "unsafe-resume", "保存的操作需要重新核对审批"}
+				return &Error{Status: 409, Code: "unsafe-resume", Message: "保存的操作需要重新核对审批"}
 			}
 			r.Status = StateQueued
 			r.WorkflowFrozenFrom = ""
@@ -202,10 +204,10 @@ func (m *Manager) RecoverWorkflow(ctx context.Context, id string, input Workflow
 			}
 			w.Status = StateQueued
 		case "renew-approval":
-			if r.ID == "" || terminal(r.Status) {
-				return &Error{409, "unsafe-resume", "只能重新申请尚未派发步骤的审批"}
+			if r.ID == "" || state.Terminal(r.Status) {
+				return &Error{Status: 409, Code: "unsafe-resume", Message: "只能重新申请尚未派发步骤的审批"}
 			}
-			approvals, e := readDocuments[Approval](ctx, tx, "SELECT document FROM approvals WHERE run_id=? ORDER BY rowid", r.ID)
+			approvals, e := tx.NodeApprovals(ctx, r.ID)
 			if e != nil {
 				return e
 			}
@@ -214,11 +216,11 @@ func (m *Manager) RecoverWorkflow(ctx context.Context, id string, input Workflow
 			}
 			old := approvals[len(approvals)-1]
 			var pending int
-			if e = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM approvals WHERE state='pending'").Scan(&pending); e != nil {
+			if e = tx.PendingApprovalCount(ctx, &pending); e != nil {
 				return e
 			}
 			if pending >= 32 {
-				return &Error{429, "approvals-full", "待审批运行已达上限"}
+				return &Error{Status: 429, Code: "approvals-full", Message: "待审批运行已达上限"}
 			}
 			for _, a := range approvals {
 				if a.Status == "pending" || a.Status == "approved" {
@@ -241,14 +243,14 @@ func (m *Manager) RecoverWorkflow(ctx context.Context, id string, input Workflow
 					return e
 				}
 				if o.DispatchID != "" || o.Status == "completed" || o.Status == "unknown" {
-					return &Error{409, "operation-dispatched", "已派发操作不能重新申请原审批"}
+					return &Error{Status: 409, Code: "operation-dispatched", Message: "已派发操作不能重新申请原审批"}
 				}
 				v, e := readWorkspaceVersion(ctx, tx, w.TaskID)
 				if e != nil {
 					return e
 				}
 				if v.Revision != o.WorkspaceRevision {
-					return &Error{409, "workspace-conflict", "工作区版本与原操作审批基线不同"}
+					return &Error{Status: 409, Code: "workspace-conflict", Message: "工作区版本与原操作审批基线不同"}
 				}
 				o.ApprovalID = renewed.ID
 				o.Status = StateWaitingApproval
@@ -265,7 +267,7 @@ func (m *Manager) RecoverWorkflow(ctx context.Context, id string, input Workflow
 			r.EndReason = ""
 			r.Error = nil
 			r.Phase = StateWaitingApproval
-			if e = m.store.event(ctx, tx, &r, "approval/renewed", "", nil, map[string]string{"approvalId": renewed.ID}); e != nil {
+			if e = tx.Event(ctx, &r, "approval/renewed", "", nil, map[string]string{"approvalId": renewed.ID}); e != nil {
 				return e
 			}
 			w, e = readWorkflow(ctx, tx, id)
@@ -280,15 +282,15 @@ func (m *Manager) RecoverWorkflow(ctx context.Context, id string, input Workflow
 					return e
 				}
 				if a.Status == StateSucceeded {
-					return &Error{409, "already-completed", "已提交完成凭据的步骤不能重做"}
+					return &Error{Status: 409, Code: "already-completed", Message: "已提交完成凭据的步骤不能重做"}
 				}
 			}
 
-			if r.ID != "" && !terminal(r.Status) {
-				return &Error{409, "unsafe-retry", "尚未派发的暂停步骤应继续或重新申请审批"}
+			if r.ID != "" && !state.Terminal(r.Status) {
+				return &Error{Status: 409, Code: "unsafe-retry", Message: "尚未派发的暂停步骤应继续或重新申请审批"}
 			}
 			var attempts int
-			if e := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM workflow_attempts WHERE workflow_id=? AND step_id=?", w.ID, step.ID).Scan(&attempts); e != nil {
+			if e := tx.WorkflowStepAttemptCount(ctx, w.ID, step.ID, &attempts); e != nil {
 				return e
 			}
 			if attempts >= w.Limits.Attempts {
@@ -298,23 +300,23 @@ func (m *Manager) RecoverWorkflow(ctx context.Context, id string, input Workflow
 			w.Status = StateReady
 			w.ReadyAt = stamp(m.deps.Now())
 		case "accept-result":
-			barriers, e := readDocuments[ExecutionBarrier](ctx, tx, "SELECT document FROM execution_barriers WHERE run_id=?", r.ID)
+			barriers, e := tx.NodeBarriers(ctx, r.ID)
 			if e != nil {
 				return e
 			}
 			for _, b := range barriers {
 				if b.Status == "reconciled" && b.Decision != "confirmed-completed" {
-					return &Error{409, "resolution-conflict", "该尝试已核实为停止，只能明确重试，不能补录为完成"}
+					return &Error{Status: 409, Code: "resolution-conflict", Message: "该尝试已核实为停止，只能明确重试，不能补录为完成"}
 				}
 			}
 
-			if r.ID == "" || !terminal(r.Status) || step.Kind == "approval" || step.Kind == "condition" {
-				return &Error{409, "invalid-resolution", "只能补录已终止 Agent 或操作步骤的外部结果"}
+			if r.ID == "" || !state.Terminal(r.Status) || step.Kind == "approval" || step.Kind == "condition" {
+				return &Error{Status: 409, Code: "invalid-resolution", Message: "只能补录已终止 Agent 或操作步骤的外部结果"}
 			}
 			if len(input.OutputJSON) > r.Limits.ResultBytes || w.Usage.ResultBytes+len(input.OutputJSON) > w.Limits.ResultBytes {
-				return &Error{413, "output-too-large", "补录结果超过容量或流程预算"}
+				return &Error{Status: 413, Code: "output-too-large", Message: "补录结果超过容量或流程预算"}
 			}
-			if e := validateWorkflowJSON(step.OutputSchemaJSON, input.OutputJSON); e != nil {
+			if e := state.ValidateWorkflowJSON(step.OutputSchemaJSON, input.OutputJSON); e != nil {
 				return e
 			}
 			a, e := readWorkflowAttempt(ctx, tx, r.ID)
@@ -322,7 +324,7 @@ func (m *Manager) RecoverWorkflow(ctx context.Context, id string, input Workflow
 				return e
 			}
 			if a.Status == StateSucceeded {
-				return &Error{409, "already-completed", "步骤已经有完成凭据"}
+				return &Error{Status: 409, Code: "already-completed", Message: "步骤已经有完成凭据"}
 			}
 			a.Status = StateSucceeded
 			a.OutputJSON = input.OutputJSON
@@ -331,7 +333,7 @@ func (m *Manager) RecoverWorkflow(ctx context.Context, id string, input Workflow
 			a.CompletionSource = "operator"
 			a.Evidence = input.Evidence
 			a.EndedAt = stamp(m.deps.Now())
-			if e = m.store.event(ctx, tx, &r, "workflow/result-recorded", "", nil, map[string]string{"evidence": input.Evidence}); e != nil {
+			if e = tx.Event(ctx, &r, "workflow/result-recorded", "", nil, map[string]string{"evidence": input.Evidence}); e != nil {
 				return e
 			}
 			a.EventSeq = r.LastSeq
@@ -345,7 +347,7 @@ func (m *Manager) RecoverWorkflow(ctx context.Context, id string, input Workflow
 			if e = saveWorkflowAttempt(ctx, tx, a); e != nil {
 				return e
 			}
-			if e = m.store.advanceWorkflow(ctx, tx, &w, a, ""); e != nil {
+			if e = tx.AdvanceWorkflow(ctx, &w, a, ""); e != nil {
 				return e
 			}
 		default:
@@ -354,14 +356,14 @@ func (m *Manager) RecoverWorkflow(ctx context.Context, id string, input Workflow
 		if w.Status != StateRecoveryRequired {
 			w.Error = nil
 		}
-		if e := m.store.workflowEvent(ctx, tx, &w, "workflow/recovered", input.Action+"："+input.Evidence); e != nil {
+		if e := tx.WorkflowEvent(ctx, &w, "workflow/recovered", input.Action+"："+input.Evidence); e != nil {
 			return e
 		}
-		if e := m.store.releaseWorkflowSession(ctx, tx, w); e != nil {
+		if e := tx.ReleaseWorkflowSession(ctx, w); e != nil {
 			return e
 		}
 		b, _ := json.Marshal(w)
-		_, e := tx.ExecContext(ctx, "INSERT INTO workflow_recoveries(workflow_id,request_id,canonical_input,document) VALUES(?,?,?,?)", id, input.RequestID, canonical, string(b))
+		_, e := tx.InsertWorkflowRecovery(ctx, id, input.RequestID, canonical, string(b))
 		return e
 	})
 	if err == nil {
@@ -374,13 +376,13 @@ func (m *Manager) recoverWorkflows(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	err = m.store.write(ctx, "workflow-startup", func(tx *sql.Tx) error {
+	err = writeStore(m.store, ctx, "workflow-startup", func(tx sessionstore.Tx) error {
 		if fence {
 			if err := m.freezeWikiJobsForMaintenance(ctx, tx); err != nil {
 				return err
 			}
 		}
-		runs, e := readDocuments[Run](ctx, tx, "SELECT document FROM runs WHERE workflow_id<>''")
+		runs, e := tx.WorkflowRuns(ctx)
 		if e != nil {
 			return e
 		}
@@ -403,21 +405,21 @@ func (m *Manager) recoverWorkflows(ctx context.Context) error {
 				runs[index] = r
 			}
 		}
-		list, e := readDocuments[WorkflowInstance](ctx, tx, "SELECT document FROM workflow_instances WHERE state NOT IN ('succeeded','failed','cancelled')")
+		list, e := tx.ActiveWorkflows(ctx)
 		if e != nil {
 			return e
 		}
 		for _, w := range list {
-			if e = m.store.failWorkflowActiveBudget(ctx, tx, &w, nil); e != nil {
+			if e = tx.FailWorkflowActiveBudget(ctx, &w, nil); e != nil {
 				return e
 			}
-			if workflowV2(w) {
+			if state.WorkflowV2(w) {
 				if e = m.recoverWorkflowV2Startup(ctx, tx, &w, fence); e != nil {
 					return e
 				}
 				continue
 			}
-			if terminal(w.Status) || !fence {
+			if state.Terminal(w.Status) || !fence {
 				continue
 			}
 			w.Status = StateRecoveryRequired
@@ -431,7 +433,7 @@ func (m *Manager) recoverWorkflows(ctx context.Context) error {
 					}
 				}
 			}
-			approvals, e := readDocuments[Approval](ctx, tx, "SELECT a.document FROM approvals a JOIN runs r ON r.id=a.run_id WHERE r.workflow_id=? AND a.state IN ('pending','approved')", w.ID)
+			approvals, e := tx.WorkflowApprovals(ctx, w.ID)
 			if e != nil {
 				return e
 			}
@@ -441,7 +443,7 @@ func (m *Manager) recoverWorkflows(ctx context.Context) error {
 					return e
 				}
 			}
-			if e = m.store.workflowEvent(ctx, tx, &w, "workflow/recovery-required", w.Error.Message); e != nil {
+			if e = tx.WorkflowEvent(ctx, &w, "workflow/recovery-required", w.Error.Message); e != nil {
 				return e
 			}
 		}

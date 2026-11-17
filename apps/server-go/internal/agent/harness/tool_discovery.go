@@ -6,9 +6,9 @@ import (
 	"fmt"
 	"sort"
 	"strings"
-	"unicode"
 	"unicode/utf8"
 
+	"elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/mcp"
 	"elysian/server/internal/agent/tools"
 )
@@ -22,55 +22,7 @@ const (
 	maxDiscoveryCatalog = 512
 )
 
-type toolInventory struct {
-	Total   int               `json:"total"`
-	Domains map[string]int    `json:"domains"`
-	Notes   map[string]string `json:"notes"`
-}
-
-// domainBoundaries 是各域能力的固定边界说明，供模型判断某项能力是否存在，避免在目录中
-// 反复搜索不提供的能力。只写领域级能力与不提供的能力，不含工具名或描述明细；未登记的域只报数量。
-var domainBoundaries = map[string]string{
-	"workspace":     "任务工作区文件清单与文本读写",
-	"docker":        "本机容器和镜像、详情与日志、服务创建及启停删除、受控容器内执行；受管数据库登记、逻辑库与诊断共用 Docker 入口；不含逐容器资源统计（stats）",
-	"database":      "受管数据库实例与逻辑库的登记、状态、固定指标与写操作",
-	"files":         "面板文件页的文件与目录读写",
-	"security":      "SSH 状态、账号、登录记录与密钥指纹",
-	"firewall":      "防火墙规则、连接与统计快照、业务端口放行",
-	"logs":          "平台日志读取",
-	"platform":      "面板进程内存、本机内存/CPU 使用率/负载/磁盘挂载采样、Docker 与 Caddy 依赖状态",
-	"panel":         "面板自身信息与上游更新检查",
-	"website":       "网站项目的登记、运行时版本、来源分析、部署与启停",
-	"web":           "公网 URL 的 HTML、纯文本、Markdown 与 JSON 读取；正文有界截断，不执行 JavaScript、不登录、不访问内网、不读取 PDF、不提供搜索引擎",
-	"container-app": "容器应用工作区与镜像构建",
-	"skill-load":    "已选技能的资料加载",
-	"mcp-tool":      "已接入 MCP 工具的搜索与调用",
-	"mcp-resource":  "MCP 资源读取",
-	"wiki":          "知识库页面检索",
-	"script":        "技能脚本执行（非只读）",
-	"bash":          "受控命令执行（非只读）",
-}
-
-func (s CapabilitySnapshot) toolInventory() toolInventory {
-	result := toolInventory{Domains: map[string]int{}, Notes: map[string]string{}}
-	for _, c := range s.Tools {
-		if c.Source == toolDiscoverySource || c.Source == userInputSource || c.Source == planSource || c.Source == taskHistorySource {
-			continue
-		}
-		domain := c.Metadata.Domain
-		if domain == "" {
-			domain = c.Source
-		}
-		result.Total++
-		result.Domains[domain]++
-	}
-	for domain := range result.Domains {
-		if note, ok := domainBoundaries[domain]; ok {
-			result.Notes[domain] = note
-		}
-	}
-	return result
-}
+var domainBoundaries = state.DomainBoundaries
 
 func toolSearchCapability() Capability {
 	return Capability{
@@ -213,25 +165,7 @@ func discoveryReadList(c Capability) bool {
 	return c.ReadOnly && (c.Metadata.Action == "list" || strings.HasSuffix(c.Name, "_list"))
 }
 
-func searchTerms(query string) []string {
-	terms := map[string]bool{query: true}
-	for _, token := range strings.FieldsFunc(query, func(r rune) bool { return !unicode.IsLetter(r) && !unicode.IsDigit(r) }) {
-		terms[token] = true
-		// 中文不依赖分词服务；连续汉字二元组支持自然语言中的领域和动作。
-		runes := []rune(token)
-		for i := 0; i+1 < len(runes); i++ {
-			if unicode.Is(unicode.Han, runes[i]) && unicode.Is(unicode.Han, runes[i+1]) {
-				terms[string(runes[i:i+2])] = true
-			}
-		}
-	}
-	result := make([]string, 0, len(terms))
-	for term := range terms {
-		result = append(result, term)
-	}
-	sort.Strings(result)
-	return result
-}
+var searchTerms = state.SearchTerms
 
 func discoveryDomainKeywords(domain, source string) string {
 	aliases := map[string]string{
@@ -252,22 +186,20 @@ func (a *agentExecution) onDemandTools() bool {
 // 从已确认的内核搜索回执恢复可见集，不依赖会被整理的消息窗口或模型工作记忆。
 func (a *agentExecution) loadedToolNames(ctx context.Context) (map[string]bool, error) {
 	loaded := map[string]bool{}
-	rows, err := a.manager.store.db.QueryContext(ctx, `SELECT c.document FROM calls c JOIN operations o ON o.id=json_extract(c.document,'$.operationId') WHERE c.run_id=? AND c.state='succeeded' AND o.state='completed' AND json_extract(o.document,'$.capability.source')=? AND json_extract(o.document,'$.snapshotDigest')=? ORDER BY c.rowid DESC`, a.run.ID, toolDiscoverySource, a.run.Snapshot.Digest)
+	rows, err := readView(ctx, a.manager.store).LoadedToolHistory(ctx, a.run.ID, toolDiscoverySource, a.run.Snapshot.Digest)
 	if err != nil {
 		return nil, storageFailure(err)
 	}
-	defer rows.Close()
+
 	allowed := map[string]bool{}
 	for _, c := range a.run.Snapshot.Tools {
 		allowed[c.Name] = c.Source != toolDiscoverySource
 	}
-	for rows.Next() {
+	for _, record := range rows {
 		var raw []byte
 		var call Call
 		var result toolSearchResult
-		if err := rows.Scan(&raw); err != nil {
-			return nil, storageFailure(err)
-		}
+		raw = record.Document
 		if err := json.Unmarshal(raw, &call); err != nil {
 			return nil, storageFailure(err)
 		}
@@ -283,7 +215,7 @@ func (a *agentExecution) loadedToolNames(ctx context.Context) (map[string]bool, 
 			}
 		}
 	}
-	return loaded, storageFailure(rows.Err())
+	return loaded, nil
 }
 
 func (a *agentExecution) validateVisibleProposal(record ModelRequestRecord, name string) error {

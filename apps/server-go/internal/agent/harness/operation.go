@@ -2,20 +2,22 @@ package harness
 
 import (
 	"context"
-	"database/sql"
+	"encoding/json"
+	"errors"
+	"strconv"
+	"time"
+
 	"elysian/server/internal/agent/execution"
 	execconfig "elysian/server/internal/agent/execution/config"
 	"elysian/server/internal/agent/harness/model"
+	"elysian/server/internal/agent/harness/sessionstore"
 	"elysian/server/internal/agent/harness/skills"
+	"elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/harness/worker"
 	"elysian/server/internal/agent/harness/workspace"
 	"elysian/server/internal/agent/jsonvalue"
 	"elysian/server/internal/agent/mcp"
 	"elysian/server/internal/agent/tools"
-	"encoding/json"
-	"errors"
-	"strconv"
-	"time"
 )
 
 func (a *agentExecution) capability(name string) (Capability, bool) {
@@ -173,7 +175,7 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		m.mu.Unlock()
 		return context.Canceled
 	}
-	run, err := m.store.get(dbCtx, a.run.ID)
+	run, err := m.store.Get(dbCtx, a.run.ID)
 	if err != nil {
 		m.storageFailedLocked()
 		m.mu.Unlock()
@@ -211,13 +213,13 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 			operationErr = errors.Join(operationErr, closeErr)
 		}
 	}()
-	err = m.store.db.QueryRowContext(dbCtx, "SELECT document FROM operations WHERE run_id=? AND model_request_id=? AND call_index=?", run.ID, originID, index).Scan(&raw)
+	err = m.store.OperationInvocation(dbCtx, run.ID, originID, index, &raw)
 	if err == nil {
 		err = json.Unmarshal([]byte(raw), &o)
-	} else if errors.Is(err, sql.ErrNoRows) {
+	} else if errors.Is(err, sessionstore.ErrNotFound) {
 		err = nil
 		if err = toolTokenBudget(run); err == nil {
-			err = ensureResultBudget(dbCtx, m.store.db, run, run.Limits.ResultBytes)
+			err = ensureResultBudget(dbCtx, m.store, run, run.Limits.ResultBytes)
 		}
 		if err != nil {
 			m.mu.Unlock()
@@ -232,7 +234,7 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		o.ScopeID, o.NodeID = run.ScopeID, run.NodeID
 		o.WorkflowStepID = run.WorkflowStepID
 		o.WorkflowAttempt = run.WorkflowAttempt
-		v, readErr := readWorkspaceVersion(dbCtx, m.store.db, run.TaskID)
+		v, readErr := readWorkspaceVersion(dbCtx, m.store, run.TaskID)
 		if readErr != nil {
 			m.mu.Unlock()
 			return storageFailure(readErr)
@@ -249,7 +251,7 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 				m.mu.Unlock()
 				o, err = preparer.Prepare(ctx, *a.run.Snapshot, o)
 				m.mu.Lock()
-				current, readErr := m.store.get(dbCtx, run.ID)
+				current, readErr := m.store.Get(dbCtx, run.ID)
 				if readErr != nil {
 					m.mu.Unlock()
 					return storageFailure(readErr)
@@ -270,7 +272,7 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		if o.Access != nil && o.Execution != nil {
 			seconds := run.Limits.CallTimeoutSeconds
 			remaining := run.Limits.RunTimeoutSeconds - int(run.ActiveMilliseconds/1000)
-			if !continuousRun(run) && remaining < seconds {
+			if !state.ContinuousRun(run) && remaining < seconds {
 				seconds = remaining
 			}
 			if seconds < 1 {
@@ -280,7 +282,7 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 				o.Execution.Profile.TimeoutSeconds = seconds
 			}
 			o.Access.ScopeKey = accessScopeKey(o)
-			o.Access.Digest = accessDigest(o)
+			o.Access.Digest = state.AccessDigest(o)
 		}
 		o.FileChanges, err = m.prepareOperationChanges(ctx, o)
 		if err != nil {
@@ -290,7 +292,7 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		// Resource identity is derived from the immutable capability snapshot and
 		// the exact JSON argument string before an approval can be created.
 		o.ResourceClaims, o.ResourceRules = operationResourceClaims(*a.run.Snapshot, o)
-		o.ClaimsDigest = digestJSON(o.ResourceClaims)
+		o.ClaimsDigest = state.DigestJSON(o.ResourceClaims)
 	} else {
 		m.storageFailedLocked()
 		m.mu.Unlock()
@@ -306,14 +308,14 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 			return bad("resource-claims-changed", "操作资源声明缺少固定摘要")
 		}
 		o.ResourceClaims, o.ResourceRules = operationResourceClaims(*a.run.Snapshot, o)
-		o.ClaimsDigest = digestJSON(o.ResourceClaims)
+		o.ClaimsDigest = state.DigestJSON(o.ResourceClaims)
 	} else {
 		claims, refs := operationResourceClaims(*a.run.Snapshot, o)
 		storedClaims := o.ResourceClaims
 		if storedClaims == nil {
 			storedClaims = []ResourceClaim{} // Empty claims are omitted in persisted JSON.
 		}
-		if digestJSON(claims) != o.ClaimsDigest || digestJSON(storedClaims) != o.ClaimsDigest || digestJSON(refs) != digestJSON(o.ResourceRules) {
+		if state.DigestJSON(claims) != o.ClaimsDigest || state.DigestJSON(storedClaims) != o.ClaimsDigest || state.DigestJSON(refs) != state.DigestJSON(o.ResourceRules) {
 			m.mu.Unlock()
 			return bad("resource-claims-changed", "操作资源声明与固定快照不符")
 		}
@@ -327,7 +329,7 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		return bad("outcome-unknown", "已派发操作结果未确认，禁止重复执行")
 	}
 	if err = toolTokenBudget(run); err == nil {
-		err = ensureResultBudget(dbCtx, m.store.db, run, run.Limits.ResultBytes)
+		err = ensureResultBudget(dbCtx, m.store, run, run.Limits.ResultBytes)
 	}
 	if err != nil {
 		m.mu.Unlock()
@@ -345,7 +347,7 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		}
 	}
 	if c.Source == "script" {
-		items, readErr := readDocuments[ContextItem](ctx, m.store.db, "SELECT document FROM context_items WHERE task_id=?", run.TaskID)
+		items, readErr := readView(ctx, m.store).OperationContext(ctx, run.TaskID)
 		if readErr != nil {
 			m.mu.Unlock()
 			return storageFailure(readErr)
@@ -434,14 +436,14 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		}
 	}
 	if o.ApprovalID == "" {
-		wait, readErr := unknownResourceWait(dbCtx, m.store.db, o, stamp(m.deps.Now()))
+		wait, readErr := unknownResourceWait(dbCtx, m.store, o, stamp(m.deps.Now()))
 		if readErr != nil {
 			m.mu.Unlock()
 			return storageFailure(readErr)
 		}
 		if wait != nil {
 			blocked := false
-			_, err = m.store.change(dbCtx, run.ID, "operation-blocked-before-approval", func(tx *sql.Tx, r *Run) error {
+			_, err = m.store.ChangeRun(dbCtx, run.ID, "operation-blocked-before-approval", func(tx sessionstore.Tx, r *Run) error {
 				if r.CancelRequestedAt != "" || r.Status != StateRunning {
 					return context.Canceled
 				}
@@ -452,7 +454,7 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 				}
 				blocked = true
 				o.Status, o.ResourceWait = StateWaitingResource, current
-				return interruptResourceWaiter(dbCtx, tx, m.store, r, o, now)
+				return interruptResourceWaiter(dbCtx, tx, r, o, now)
 			})
 			if err != nil {
 				m.mu.Unlock()
@@ -466,13 +468,13 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 	}
 	if !direct && o.ApprovalID == "" {
 		var count int
-		if err = m.store.db.QueryRowContext(dbCtx, "SELECT COUNT(*) FROM approvals WHERE state='pending'").Scan(&count); err != nil {
+		if err = m.store.PendingApprovalCount(dbCtx, &count); err != nil {
 			m.mu.Unlock()
 			return storageFailure(err)
 		}
 		if count >= 32 {
 			m.mu.Unlock()
-			return &Error{429, "approvals-full", "待审批运行已达 32 个上限"}
+			return &Error{Status: 429, Code: "approvals-full", Message: "待审批运行已达 32 个上限"}
 		}
 		o.Policy = "approval-required"
 		o.Status = StateWaitingApproval
@@ -480,7 +482,7 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		approval := Approval{Kind: "operation", WorkflowID: run.WorkflowID, WorkflowStepID: run.WorkflowStepID, WorkflowAttempt: run.WorkflowAttempt, ID: o.ApprovalID, RunID: o.RunID, OperationID: o.ID, Status: "pending", CreatedAt: o.CreatedAt, ExpiresAt: stamp(m.deps.Now().Add(24 * time.Hour)), Operation: o}
 		approval.ScopeID, approval.NodeID = run.ScopeID, run.NodeID
 		approval.Access = o.Access
-		_, err = m.store.change(dbCtx, run.ID, "approval-intent", func(tx *sql.Tx, r *Run) error {
+		_, err = m.store.ChangeRun(dbCtx, run.ID, "approval-intent", func(tx sessionstore.Tx, r *Run) error {
 			if err := saveOperation(dbCtx, tx, o); err != nil {
 				return err
 			}
@@ -490,7 +492,7 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 			r.Status = StateWaitingApproval
 			r.Phase = StateWaitingApproval
 			r.Resume = &RecoveryCursor{ResponseID: o.ModelRequestID, CallIndex: index}
-			return m.store.event(dbCtx, tx, r, "approval/request", "", nil, map[string]string{"approvalId": approval.ID, "operationId": o.ID})
+			return tx.Event(dbCtx, r, "approval/request", "", nil, map[string]string{"approvalId": approval.ID, "operationId": o.ID})
 		})
 		if err != nil {
 			m.storageFailedLocked()
@@ -504,7 +506,7 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 	var approval *Approval
 	if !direct {
 		var aa Approval
-		if err = m.store.db.QueryRowContext(dbCtx, "SELECT document FROM approvals WHERE id=?", o.ApprovalID).Scan(&raw); err == nil {
+		if err = m.store.ApprovalRecord(dbCtx, o.ApprovalID, &raw); err == nil {
 			err = json.Unmarshal([]byte(raw), &aa)
 		}
 		if err != nil {
@@ -516,7 +518,7 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 			m.mu.Unlock()
 			return err
 		}
-		if aa.Status != "approved" || approvalExpired(aa, m.deps.Now()) || !approvedOperationMatches(aa.Operation, o) {
+		if aa.Status != "approved" || approvalExpired(aa, m.deps.Now()) || !state.ApprovedOperationMatches(aa.Operation, o) {
 			m.mu.Unlock()
 			return bad("approval-invalid", "审批已失效或操作发生变化")
 		}
@@ -527,34 +529,34 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 	if o.Access != nil && direct && o.Authorization == nil && a.run.Snapshot.PolicyVersion == PermissionPolicyVersion {
 		o.Authorization = &OperationAuthorization{ID: o.ID, Digest: o.Access.Digest, Decision: "once", CreatedAt: stamp(m.deps.Now())}
 		// 自动决定先落 SQLite/JSONL，镜像准备及外部派发只消费已持久化的操作授权。
-		_, err = m.store.change(dbCtx, run.ID, "access-auto-decision", func(tx *sql.Tx, r *Run) error {
+		_, err = m.store.ChangeRun(dbCtx, run.ID, "access-auto-decision", func(tx sessionstore.Tx, r *Run) error {
 			if r.CancelRequestedAt != "" || r.Status != StateRunning {
 				return context.Canceled
 			}
 			if err := saveOperation(dbCtx, tx, o); err != nil {
 				return err
 			}
-			return m.store.event(dbCtx, tx, r, "access/automatic", "", nil, map[string]string{"operationId": o.ID, "source": decisionSource})
+			return tx.Event(dbCtx, r, "access/automatic", "", nil, map[string]string{"operationId": o.ID, "source": decisionSource})
 		})
 		if err == nil {
 			m.mu.Unlock()
-			err = m.store.waitRecords(ctx)
+			err = waitRecords(m.store, ctx)
 			m.mu.Lock()
 		}
 		if err != nil {
 			m.mu.Unlock()
-			if continuousRun(run) && m.store.recordsFault() != nil {
+			if state.ContinuousRun(run) && m.store.DispatchError() != nil {
 				return a.suspendForRecovery(StateWaitingStorage, &Failure{Code: "record-storage-unavailable", Message: "操作授权已保存，等待记录副本恢复后按原身份继续"}, "")
 			}
 			return storageFailure(err)
 		}
 	}
 	m.mu.Unlock()
-	syncErr := m.store.waitRecords(ctx)
+	syncErr := waitRecords(m.store, ctx)
 	m.mu.Lock()
 	if syncErr != nil {
 		m.mu.Unlock()
-		if continuousRun(run) {
+		if state.ContinuousRun(run) {
 			return a.suspendForRecovery(StateWaitingStorage, &Failure{Code: "record-storage-unavailable", Message: "操作检查点已保存，等待记录同步恢复"}, "")
 		}
 		return storageFailure(syncErr)
@@ -586,8 +588,8 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 	barrier := ExecutionBarrier{WorkflowID: run.WorkflowID, ID: m.deps.NewID(), RunID: run.ID, OperationID: o.ID, Status: "dispatched", CreatedAt: dispatchedAt}
 	barrier.ScopeID, barrier.NodeID = run.ScopeID, run.NodeID
 	resourceWaiting := false
-	_, err = m.store.change(dbCtx, run.ID, "operation-dispatch", func(tx *sql.Tx, r *Run) error {
-		if continuousRun(*r) {
+	_, err = m.store.ChangeRun(dbCtx, run.ID, "operation-dispatch", func(tx sessionstore.Tx, r *Run) error {
+		if state.ContinuousRun(*r) {
 			if err := validateOperationIdentity(dbCtx, tx, o); err != nil {
 				return err
 			}
@@ -615,12 +617,12 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 				return err
 			}
 			if o.ResourceWait != nil && o.ResourceWait.Unknown {
-				return interruptResourceWaiter(dbCtx, tx, m.store, r, o, dispatchedAt)
+				return interruptResourceWaiter(dbCtx, tx, r, o, dispatchedAt)
 			}
 			r.Status = StateWaitingResource
 			r.Phase = StateWaitingResource
 			r.Resume = &RecoveryCursor{ResponseID: o.ModelRequestID, CallIndex: index}
-			return m.store.event(dbCtx, tx, r, "resource/waiting", o.CallID, &index, map[string]string{"operationId": o.ID})
+			return tx.Event(dbCtx, r, "resource/waiting", o.CallID, &index, map[string]string{"operationId": o.ID})
 		}
 		if callLimitReached(*r) {
 			return bad("call-budget", "工具调用次数达到上限")
@@ -659,7 +661,7 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		if err := saveOperation(dbCtx, tx, o); err != nil {
 			return err
 		}
-		if !c.ReadOnly || externalOperation(o) {
+		if !c.ReadOnly || state.ExternalOperation(o) {
 			if err := saveBarrier(dbCtx, tx, barrier); err != nil {
 				return err
 			}
@@ -668,7 +670,7 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 			return err
 		}
 		r.Usage.Calls++
-		return m.store.event(dbCtx, tx, r, "call/started", call.ID, &call.StepIndex, map[string]string{"operationId": o.ID, "dispatchId": o.DispatchID})
+		return tx.Event(dbCtx, r, "call/started", call.ID, &call.StepIndex, map[string]string{"operationId": o.ID, "dispatchId": o.DispatchID})
 	})
 	if err != nil {
 		if _, ok := err.(*Error); !ok {
@@ -699,7 +701,7 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		defer func() {
 			if recover() != nil {
 				result.e = bad("operation-failed", "操作内部错误")
-				result.r.Unknown = !c.ReadOnly || externalOperation(dispatchedOperation)
+				result.r.Unknown = !c.ReadOnly || state.ExternalOperation(dispatchedOperation)
 			}
 			if result.r.Task != nil {
 				m.rememberExecutionTask(execution, *result.r.Task)
@@ -707,14 +709,14 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 			}
 			results <- result
 		}()
-		if result.e = m.store.recordsFault(); result.e != nil {
+		if result.e = m.store.DispatchError(); result.e != nil {
 			return
 		}
 		m.mu.Lock()
 		if m.closed || execution.finishing || m.storageError || callCtx.Err() != nil {
 			result.e = context.Canceled
-		} else if m.store.recordsFault() != nil {
-			result.e = m.store.recordsFault()
+		} else if m.store.DispatchError() != nil {
+			result.e = m.store.DispatchError()
 		} else if result.e = m.checkRevocations(callCtx, *a.run.Snapshot, dispatchedOperation); result.e == nil && m.deps.DispatchGuard != nil {
 			result.e = m.deps.DispatchGuard()
 		}
@@ -752,10 +754,10 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 	}
 	if callCtx.Err() != nil {
 		result.e = callCtx.Err()
-		result.r.Unknown = externalOperation(o) || result.r.Unknown
+		result.r.Unknown = state.ExternalOperation(o) || result.r.Unknown
 	}
 	if closeErr := closeScope(); closeErr != nil {
-		result.r.Unknown = externalOperation(o) || result.r.Unknown
+		result.r.Unknown = state.ExternalOperation(o) || result.r.Unknown
 		if result.e == nil {
 			result.e = closeErr
 		}
@@ -784,19 +786,19 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		o.Task = result.r.Task
 		o.PendingResult = append(json.RawMessage(nil), result.r.Value...)
 		o.Status = StateWaitingTask
-		_, err = m.store.change(dbCtx, run.ID, "operation-task-accepted", func(tx *sql.Tx, r *Run) error {
+		_, err = m.store.ChangeRun(dbCtx, run.ID, "operation-task-accepted", func(tx sessionstore.Tx, r *Run) error {
 			if err := saveOperation(dbCtx, tx, o); err != nil {
 				return err
 			}
 			if err := saveCall(dbCtx, tx, call); err != nil {
 				return err
 			}
-			if !terminal(r.Status) && r.CancelRequestedAt == "" {
+			if !state.Terminal(r.Status) && r.CancelRequestedAt == "" {
 				r.Status = StateWaitingTask
 				r.Phase = StateWaitingTask
 				r.Resume = &RecoveryCursor{ResponseID: o.ModelRequestID, CallIndex: index}
 			}
-			return m.store.event(dbCtx, tx, r, "operation/task-accepted", call.ID, &call.StepIndex, map[string]any{"operationId": o.ID, "task": o.Task})
+			return tx.Event(dbCtx, r, "operation/task-accepted", call.ID, &call.StepIndex, map[string]any{"operationId": o.ID, "task": o.Task})
 		})
 		if err != nil {
 			m.storageFailedLocked()
@@ -808,7 +810,7 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 	call.EndedAt = o.EndedAt
 	// Retry records are persisted while this invocation is outside the manager lock.
 	var retryRaw string
-	if e := m.store.db.QueryRowContext(dbCtx, "SELECT document FROM calls WHERE id=?", call.ID).Scan(&retryRaw); e == nil {
+	if e := m.store.LatestInstructionResult(dbCtx, call.ID, &retryRaw); e == nil {
 		var persisted Call
 		if json.Unmarshal([]byte(retryRaw), &persisted) == nil {
 			call.Attempts = persisted.Attempts
@@ -828,7 +830,7 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		if errors.As(capabilityError(result.e), &cause) {
 			call.Error = &Failure{Code: cause.Code, Message: cause.Message}
 		}
-		if evidenceRecoveryRun(run) && call.Error.Evidence == nil {
+		if state.EvidenceRecoveryRun(run) && call.Error.Evidence == nil {
 			call.Error.Evidence = &tools.ExecutionEvidence{Execution: "unknown", Changes: "unknown", Recovery: "verify", Stage: "dispatch", Suggestion: "等待系统核实任务身份和真实回执，禁止重复提交"}
 		}
 	}
@@ -866,14 +868,14 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		// 未知结果的接受凭据也计量；保留未来核实回执所需的剩余容量。
 		call.ReservedResultBytes = max(0, run.Limits.ResultBytes-len(call.Result))
 	}
-	_, err = m.store.change(dbCtx, run.ID, "operation-result", func(tx *sql.Tx, r *Run) error {
+	_, err = m.store.ChangeRun(dbCtx, run.ID, "operation-result", func(tx sessionstore.Tx, r *Run) error {
 		if r.Recovery != nil && r.Recovery.OperationID == o.ID && r.Recovery.Status == "correcting" {
 			r.Recovery.Status, r.Recovery.Message = "recovered", "只读查询重试成功，继续任务"
 			if call.Error != nil {
 				r.Recovery.Status, r.Recovery.Message = "exhausted", "只读查询重试结束，已将具体原因交回模型"
 			}
 		}
-		if !continuousRun(*r) && r.Usage.ResultBytes+len(call.Result) > r.Limits.RunResultBytes {
+		if !state.ContinuousRun(*r) && r.Usage.ResultBytes+len(call.Result) > r.Limits.RunResultBytes {
 			call.Result = nil
 			call.Status = StateFailed
 			call.Error = &Failure{Code: "result-budget", Message: "运行结果总量达到上限"}
@@ -884,7 +886,7 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 			return err
 		}
 		r.Usage.ResultBytes += len(call.Result)
-		verifiedWorkspace := evidenceRecoveryRun(*r) && result.r.BusinessError != nil && result.r.BusinessError.Evidence != nil && result.r.BusinessError.Evidence.Stage == "workspace-verified" && result.r.BusinessError.Evidence.Execution == "finished"
+		verifiedWorkspace := state.EvidenceRecoveryRun(*r) && result.r.BusinessError != nil && result.r.BusinessError.Evidence != nil && result.r.BusinessError.Evidence.Stage == "workspace-verified" && result.r.BusinessError.Evidence.Execution == "finished"
 		if result.r.Workspace != nil && (!result.r.Unknown || verifiedWorkspace) {
 			if err := commitWorkspaceVersion(dbCtx, tx, *result.r.Workspace); err != nil {
 				return err
@@ -897,26 +899,26 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 			if e != nil {
 				return e
 			}
-			refs = mergeWikiRefs(refs, baseRefs)
+			refs = state.MergeWikiRefs(refs, baseRefs)
 			// 即使派发后来源撤回，也保留文件事实并隔离其来源，不丢弃外部结果。
 			key := r.TaskID + ":" + strconv.Itoa(result.r.Workspace.Revision)
-			if _, e = tx.ExecContext(dbCtx, "INSERT OR IGNORE INTO wiki_artifacts(kind,id,task_id,run_id) VALUES('workspace',?,?,?)", key, r.TaskID, r.ID); e != nil {
+			if _, e = tx.InsertOperationArtifact(dbCtx, key, r.TaskID, r.ID); e != nil {
 				return e
 			}
 			for _, ref := range refs {
-				if _, e = tx.ExecContext(dbCtx, "INSERT OR IGNORE INTO wiki_dependencies(kind,id,page_id,revision,digest) VALUES('workspace',?,?,?,?)", key, ref.PageID, ref.Revision, ref.Digest); e != nil {
+				if _, e = tx.InsertOperationDependency(dbCtx, key, ref.PageID, ref.Revision, ref.Digest); e != nil {
 					return e
 				}
 			}
 			if invalid, e := wikiArtifactInvalid(dbCtx, tx, "run", r.ID); e != nil {
 				return e
 			} else if invalid {
-				if _, e = tx.ExecContext(dbCtx, "UPDATE wiki_artifacts SET invalidated=1 WHERE kind='workspace' AND id=?", key); e != nil {
+				if _, e = tx.InvalidateOperationArtifact(dbCtx, key); e != nil {
 					return e
 				}
 			}
 		}
-		if !c.ReadOnly || externalOperation(o) || result.r.Unknown {
+		if !c.ReadOnly || state.ExternalOperation(o) || result.r.Unknown {
 			if result.r.Unknown {
 				barrier.Status = "unknown"
 			} else {
@@ -932,8 +934,8 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		if err := settleOperationProtection(dbCtx, tx, o.ID, o.EndedAt, result.r.Unknown); err != nil {
 			return err
 		}
-		if result.r.Unknown && evidenceRecoveryRun(*r) && !terminal(r.Status) && r.CancelRequestedAt == "" {
-			beginRecovery(r, &o, m.deps.Now())
+		if result.r.Unknown && state.EvidenceRecoveryRun(*r) && !state.Terminal(r.Status) && r.CancelRequestedAt == "" {
+			state.BeginRecovery(r, &o, m.deps.Now())
 		}
 		if err := saveOperation(dbCtx, tx, o); err != nil {
 			return err
@@ -947,11 +949,11 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 			item.RunID = r.ID
 			item.TaskID = r.TaskID
 			item.CreatedAt = o.EndedAt
-			item.EventSeq = nextSeq(r.LastSeq)
+			item.EventSeq = state.NextSeq(r.LastSeq)
 			item.CallID = call.ID
 			item.Content = ""
 			b, _ := json.Marshal(item)
-			if _, err := tx.ExecContext(dbCtx, "INSERT INTO context_items(id,run_id,task_id,document) VALUES(?,?,?,?)", item.ID, item.RunID, item.TaskID, string(b)); err != nil {
+			if _, err := tx.InsertContextItem(dbCtx, item.ID, item.RunID, item.TaskID, string(b)); err != nil {
 				return err
 			}
 		}
@@ -961,7 +963,7 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 			if output == "" {
 				output = "null"
 			}
-			if e := validateWorkflowJSON(r.WorkflowOutputSchemaJSON, output); e != nil {
+			if e := state.ValidateWorkflowJSON(r.WorkflowOutputSchemaJSON, output); e != nil {
 				result.e = e
 			} else {
 				r.WorkflowOutputCallID = call.ID
@@ -970,7 +972,7 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 				r.EndReason = "completed"
 			}
 		}
-		return m.store.event(dbCtx, tx, r, "call/finished", call.ID, &call.StepIndex, map[string]any{"operationId": o.ID, "status": call.Status, "error": call.Error})
+		return tx.Event(dbCtx, r, "call/finished", call.ID, &call.StepIndex, map[string]any{"operationId": o.ID, "status": call.Status, "error": call.Error})
 	})
 	if err != nil {
 		m.storageFailedLocked()
@@ -1001,15 +1003,15 @@ func capabilityError(err error) error {
 	var files *workspace.Error
 	switch {
 	case errors.As(err, &remote):
-		return &Error{remote.Status, remote.Code, remote.Message}
+		return &Error{Status: remote.Status, Code: remote.Code, Message: remote.Message}
 	case errors.As(err, &container):
-		return &Error{container.Status, container.Code, container.Message}
+		return &Error{Status: container.Status, Code: container.Code, Message: container.Message}
 	case errors.As(err, &config):
-		return &Error{config.Status, config.Code, config.Message}
+		return &Error{Status: config.Status, Code: config.Code, Message: config.Message}
 	case errors.As(err, &skill):
-		return &Error{skill.Status, skill.Code, skill.Message}
+		return &Error{Status: skill.Status, Code: skill.Code, Message: skill.Message}
 	case errors.As(err, &files):
-		return &Error{files.Status, files.Code, files.Message}
+		return &Error{Status: files.Status, Code: files.Code, Message: files.Message}
 	default:
 		return err
 	}

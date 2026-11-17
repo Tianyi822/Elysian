@@ -2,7 +2,6 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"strconv"
@@ -10,12 +9,13 @@ import (
 	"unicode/utf8"
 
 	"elysian/server/internal/agent/harness/model"
+	"elysian/server/internal/agent/harness/sessionstore"
+	"elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/mcp"
 	"elysian/server/internal/agent/tools"
 )
 
 const taskHistoryTool = "task_history"
-const taskHistorySource = "task-history"
 
 func taskHistoryCapability() Capability {
 	return Capability{Name: taskHistoryTool, Source: taskHistorySource, ReadOnly: true,
@@ -47,7 +47,7 @@ func readTaskHistory(ctx context.Context, q reportReader, taskID string, args js
 	if input.Offset > 0 && input.Reference == "" {
 		return page, bad("invalid-history-reference", "分段读取须指定原证据引用")
 	}
-	cursor, err := numberCursor(input.Cursor)
+	cursor, err := state.NumberCursor(input.Cursor)
 	if err != nil {
 		return page, err
 	}
@@ -58,31 +58,21 @@ func readTaskHistory(ctx context.Context, q reportReader, taskID string, args js
 			return page, bad("invalid-history-reference", "证据引用须为 runId:eventSeq")
 		}
 		runID = parts[0]
-		seq, err = numberCursor(parts[1])
+		seq, err = state.NumberCursor(parts[1])
 		if err != nil || seq < 1 {
 			return page, bad("invalid-history-reference", "证据引用序号无效")
 		}
 	}
-	rows, err := q.QueryContext(ctx, `SELECT e.rowid,e.document,
- COALESCE(json_object('tool',json_extract(c.document,'$.tool'),'status',c.state,'result',json_extract(c.document,'$.result'),'error',json_extract(c.document,'$.error'),'originalModelContent',json_extract(c.document,'$.modelContent')),'null'),
- COALESCE(json_object('purpose',json_extract(m.document,'$.purpose'),'response',json_remove(json_extract(m.document,'$.response'),'$.reasoning'),'error',json_extract(m.document,'$.error')),'null')
- FROM run_events e JOIN runs r ON r.id=e.run_id
- LEFT JOIN calls c ON c.run_id=e.run_id AND c.id=json_extract(e.document,'$.callId')
- LEFT JOIN model_requests m ON m.run_id=e.run_id AND m.id=json_extract(e.document,'$.data.modelRequestId')
- WHERE r.task_id=? AND COALESCE(json_extract(r.document,'$.supersededByRunId'),'')='' AND e.rowid>?
- AND (?='' OR (e.run_id=? AND e.seq=?)) AND (?='' OR instr(e.document,?)>0 OR instr(c.document,?)>0 OR instr(m.document,?)>0)
- ORDER BY e.rowid LIMIT 21`, taskID, cursor, runID, runID, seq, input.Keyword, input.Keyword, input.Keyword, input.Keyword)
+	rows, err := readView(ctx, q).TaskHistory(ctx, taskID, cursor, runID, seq, input.Keyword)
 	if err != nil {
 		return page, err
 	}
-	defer rows.Close()
+
 	size := 0
-	for rows.Next() {
+	for _, record := range rows {
 		var rowID int64
 		var raw, call, reply string
-		if err = rows.Scan(&rowID, &raw, &call, &reply); err != nil {
-			return page, err
-		}
+		rowID, raw, call, reply = record.Sequence, record.Event, record.Call, record.ModelRequest
 		if len(page.Items) == 20 {
 			page.HasMore = true
 			break
@@ -120,7 +110,7 @@ func readTaskHistory(ctx context.Context, q reportReader, taskID string, args js
 		size += len(entry)
 		page.NextCursor = strconv.FormatInt(rowID, 10)
 	}
-	return page, rows.Err()
+	return page, nil
 }
 
 func (a *agentExecution) executeTaskHistory(ctx context.Context, index int, proposal model.ToolCall) error {
@@ -128,18 +118,18 @@ func (a *agentExecution) executeTaskHistory(ctx context.Context, index int, prop
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	capability, ok := a.capability(taskHistoryTool)
-	if !continuousRun(a.run) || !ok || capability.Source != taskHistorySource {
+	if !state.ContinuousRun(a.run) || !ok || capability.Source != taskHistorySource {
 		return bad("tool-denied", "该运行不支持任务历史检索")
 	}
 	if err := a.validateVisibleProposal(*a.pending, taskHistoryTool); err != nil {
 		return err
 	}
-	_, err := m.store.change(ctx, a.run.ID, "task-history", func(tx *sql.Tx, r *Run) error {
+	_, err := m.store.ChangeRun(ctx, a.run.ID, "task-history", func(tx sessionstore.Tx, r *Run) error {
 		if r.Status != StateRunning || r.CancelRequestedAt != "" {
 			return context.Canceled
 		}
 		var exists bool
-		if err := tx.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM calls WHERE run_id=? AND json_extract(document,'$.modelRequestId')=? AND json_extract(document,'$.modelCallId')=?)", r.ID, a.pending.ID, proposal.ID).Scan(&exists); err != nil {
+		if err := tx.TaskHistoryInvocationExists(ctx, r.ID, a.pending.ID, proposal.ID, &exists); err != nil {
 			return err
 		}
 		if exists {
@@ -164,7 +154,9 @@ func (a *agentExecution) executeTaskHistory(ctx context.Context, index int, prop
 		if err := saveCall(ctx, tx, call); err != nil {
 			return err
 		}
-		return m.store.event(ctx, tx, r, "history/read", call.ID, &call.StepIndex, nil)
+		return tx.Event(ctx, r, "history/read", call.ID, &call.StepIndex, nil)
 	})
 	return storageFailure(err)
 }
+
+const taskHistorySource = state.TaskHistorySource

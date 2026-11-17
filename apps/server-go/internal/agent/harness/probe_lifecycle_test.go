@@ -2,7 +2,6 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"io"
@@ -17,6 +16,7 @@ import (
 
 	"elysian/server/internal/agent/execution"
 	"elysian/server/internal/agent/harness/model"
+	"elysian/server/internal/agent/harness/sessionstore"
 	"elysian/server/internal/agent/mcp"
 	"elysian/server/internal/agent/tools"
 )
@@ -183,7 +183,7 @@ func TestProbeConflictingLeaseAndMaintenancePreventAnyStartup(t *testing.T) {
 	m, e, server := probeManager(t, func(context.Context, mcp.Server) (mcp.Duplex, error) { opens.Add(1); return newProbeDuplex(), nil })
 	ctx := context.Background()
 	m.mu.Lock()
-	err := m.store.write(ctx, "fixture-lease", func(tx *sql.Tx) error {
+	err := fixture(m).write(ctx, "fixture-lease", func(tx sessionstore.Tx) error {
 		return saveResourceLease(ctx, tx, ResourceLease{ID: "existing", ScopeID: "scope-existing", State: "held", Claims: []ResourceClaim{{Kind: "file", Authority: "host", Key: "/grants/project", Access: "write"}}, CreatedAt: stamp(time.Now())})
 	})
 	m.mu.Unlock()
@@ -193,7 +193,7 @@ func TestProbeConflictingLeaseAndMaintenancePreventAnyStartup(t *testing.T) {
 	_, err = m.probeServer(ctx, e, server)
 	runtimeErrorCode(t, err, "resource-busy")
 	m.mu.Lock()
-	m.deps.DispatchGuard = func() error { return &Error{503, "maintenance", "维护期间暂停派发"} }
+	m.deps.DispatchGuard = func() error { return &Error{Status: 503, Code: "maintenance", Message: "维护期间暂停派发"} }
 	m.mu.Unlock()
 	_, err = m.probeServer(ctx, e, server)
 	runtimeErrorCode(t, err, "maintenance")

@@ -2,11 +2,12 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"elysian/server/internal/agent/harness/sessionstore"
 )
 
 func assertWorkflowTimeBudgetFailed(t *testing.T, m *Manager, id string) WorkflowInstance {
@@ -37,14 +38,14 @@ func TestWorkflowActiveBudgetStartupSettlesCrashReservation(t *testing.T) {
 			w = workflowWait(t, m, w.ID, StateWaitingApproval)
 			workflowIdle(t, m)
 			deps := m.deps
-			if err := m.Close(ctx); err != nil {
+			if err := closeFixtureManager(m, ctx); err != nil {
 				t.Fatal(err)
 			}
-			persisted, err := openStore(deps.Path, deps.Now)
+			persisted, err := openStore(fixtureDeps(deps).path, deps.Now)
 			if err != nil {
 				t.Fatal(err)
 			}
-			err = persisted.write(ctx, "crash-reservation-fixture", func(tx *sql.Tx) error {
+			err = persisted.write(ctx, "crash-reservation-fixture", func(tx sessionstore.Tx) error {
 				current, err := readWorkflow(ctx, tx, w.ID)
 				if err != nil {
 					return err
@@ -67,11 +68,11 @@ func TestWorkflowActiveBudgetStartupSettlesCrashReservation(t *testing.T) {
 			if err != nil || closeErr != nil {
 				t.Fatalf("准备崩溃窗口失败：%v %v", err, closeErr)
 			}
-			m, err = New(deps)
+			m, err = newFixtureManager(t, deps)
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(func() { _ = m.Close(context.Background()) })
+			t.Cleanup(func() { _ = closeFixtureManager(m, context.Background()) })
 			w = assertWorkflowTimeBudgetFailed(t, m, w.ID)
 			runs := workflowAgentRuns(t, m, w.ID)
 			expectedRunState := StateFailed
@@ -82,8 +83,8 @@ func TestWorkflowActiveBudgetStartupSettlesCrashReservation(t *testing.T) {
 				t.Fatalf("预算失败重写旧终态或仍派发步骤：%+v calls=%d", runs, calls.Load())
 			}
 			m.mu.Lock()
-			attempt, attemptErr := readWorkflowAttempt(ctx, m.store.db, runs[0].ID)
-			approvals, approvalErr := readDocuments[Approval](ctx, m.store.db, "SELECT document FROM approvals WHERE run_id=?", runs[0].ID)
+			attempt, attemptErr := readWorkflowAttempt(ctx, fixture(m), runs[0].ID)
+			approvals, approvalErr := readDocuments[Approval](ctx, fixture(m).db, "SELECT document FROM approvals WHERE run_id=?", runs[0].ID)
 			m.mu.Unlock()
 			if attemptErr != nil || attempt.Status != expectedRunState || approvalErr != nil || len(approvals) != 1 || approvals[0].Status != "revoked" {
 				t.Fatalf("尝试或旧审批未结束：%+v %+v %v %v", attempt, approvals, attemptErr, approvalErr)
@@ -108,7 +109,7 @@ func TestWorkflowActiveBudgetDeadlineFailsAndPreservesUnknownBarrier(t *testing.
 	a := waitingApproval(t, m, w.ActiveRunID)
 	workflowIdle(t, m)
 	m.mu.Lock()
-	err := m.store.write(ctx, "deadline-budget-fixture", func(tx *sql.Tx) error {
+	err := fixture(m).write(ctx, "deadline-budget-fixture", func(tx sessionstore.Tx) error {
 		current, err := readWorkflow(ctx, tx, w.ID)
 		if err != nil {
 			return err
@@ -145,7 +146,7 @@ func TestWorkflowNonTimeBudgetsDoNotBlockFollowingCondition(t *testing.T) {
 	a := waitingApproval(t, m, w.ActiveRunID)
 	workflowIdle(t, m)
 	m.mu.Lock()
-	err := m.store.write(ctx, "exact-nontime-budgets-fixture", func(tx *sql.Tx) error {
+	err := fixture(m).write(ctx, "exact-nontime-budgets-fixture", func(tx sessionstore.Tx) error {
 		current, err := readWorkflow(ctx, tx, w.ID)
 		if err != nil {
 			return err

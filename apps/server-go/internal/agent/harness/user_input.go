@@ -2,12 +2,13 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"strings"
 	"unicode/utf8"
 
 	"elysian/server/internal/agent/harness/model"
+	"elysian/server/internal/agent/harness/sessionstore"
+	"elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/harness/worker"
 	"elysian/server/internal/agent/mcp"
 	"elysian/server/internal/agent/tools"
@@ -15,51 +16,6 @@ import (
 
 const StateWaitingInput = "waiting-input"
 const userInputTool = "request_user_input"
-const userInputSource = "user-input"
-
-const userInputSchema = `CREATE TABLE user_inputs (
- id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
- model_request_id TEXT NOT NULL, model_call_id TEXT NOT NULL, state TEXT NOT NULL,
- document TEXT NOT NULL, UNIQUE(run_id,model_request_id,model_call_id));
- CREATE UNIQUE INDEX user_inputs_pending ON user_inputs(run_id) WHERE state='pending';`
-
-type UserInputOption struct {
-	ID          string `json:"id"`
-	Label       string `json:"label"`
-	Description string `json:"description"`
-}
-type UserInputQuestion struct {
-	ID                  string            `json:"id"`
-	Header              string            `json:"header"`
-	Question            string            `json:"question"`
-	Options             []UserInputOption `json:"options"`
-	RecommendedOptionID string            `json:"recommendedOptionId,omitempty"`
-}
-type UserInputAnswer struct {
-	OptionID string `json:"optionId,omitempty"`
-	Text     string `json:"text,omitempty"`
-}
-type AnswerUserInput struct {
-	RequestID string                     `json:"requestId"`
-	Answers   map[string]UserInputAnswer `json:"answers"`
-}
-type UserInputRequest struct {
-	ID              string                     `json:"id"`
-	RunID           string                     `json:"runId"`
-	ModelRequestID  string                     `json:"modelRequestId"`
-	ModelCallID     string                     `json:"modelCallId"`
-	CallID          string                     `json:"callId"`
-	Status          string                     `json:"status"`
-	Questions       []UserInputQuestion        `json:"questions"`
-	Answers         map[string]UserInputAnswer `json:"answers,omitempty"`
-	AnswerRequestID string                     `json:"answerRequestId,omitempty"`
-	CreatedAt       string                     `json:"createdAt"`
-	EndedAt         string                     `json:"endedAt,omitempty"`
-}
-type UserInputReceipt struct {
-	UserInput UserInputRequest `json:"userInput"`
-	Run       Run              `json:"run"`
-}
 
 func userInputCapability() Capability {
 	return Capability{Name: userInputTool, Source: userInputSource, ReadOnly: true,
@@ -98,21 +54,12 @@ func parseUserInput(raw json.RawMessage) ([]UserInputQuestion, error) {
 	return args.Questions, nil
 }
 
-func saveUserInput(ctx context.Context, tx *sql.Tx, q UserInputRequest) error {
-	b, err := json.Marshal(q)
-	if err != nil {
-		return err
-	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO user_inputs(id,run_id,model_request_id,model_call_id,state,document) VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET state=excluded.state,document=excluded.document`, q.ID, q.RunID, q.ModelRequestID, q.ModelCallID, q.Status, string(b))
-	return err
-}
-
 // 澄清是父进程内部交互，不占用外部操作租约；回答仍作为原工具调用的结果。
 func (a *agentExecution) executeUserInput(ctx context.Context, index int, proposal model.ToolCall, rejection string) error {
 	m := a.manager
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.closed || ctx.Err() != nil || m.store.recordsFault() != nil {
+	if m.closed || ctx.Err() != nil || m.store.DispatchError() != nil {
 		return context.Canceled
 	}
 	if m.deps.DispatchGuard != nil {
@@ -121,7 +68,7 @@ func (a *agentExecution) executeUserInput(ctx context.Context, index int, propos
 		}
 	}
 	now := stamp(m.deps.Now())
-	_, err := m.store.change(ctx, a.run.ID, "user-input", func(tx *sql.Tx, r *Run) error {
+	_, err := m.store.ChangeRun(ctx, a.run.ID, "user-input", func(tx sessionstore.Tx, r *Run) error {
 		if r.Status != StateRunning || r.CancelRequestedAt != "" {
 			return context.Canceled
 		}
@@ -158,7 +105,7 @@ func (a *agentExecution) executeUserInput(ctx context.Context, index int, propos
 		if e := saveCall(ctx, tx, call); e != nil {
 			return e
 		}
-		return m.store.event(ctx, tx, r, "user-input/request", call.ID, &call.StepIndex, nil)
+		return tx.Event(ctx, r, "user-input/request", call.ID, &call.StepIndex, nil)
 	})
 	if err != nil {
 		if _, ok := err.(*Error); !ok && ctx.Err() == nil {
@@ -182,19 +129,19 @@ func (m *Manager) AnswerUserInput(ctx context.Context, runID, inputID string, in
 	if !requestPattern.MatchString(input.RequestID) {
 		return receipt, bad("invalid-user-input-answer", "回答请求编号无效")
 	}
-	if err := m.store.recordsFault(); err != nil {
-		return receipt, &Error{503, "record-storage-unavailable", "运行记录副本不可用，请稍后重试"}
+	if err := m.store.DispatchError(); err != nil {
+		return receipt, &Error{Status: 503, Code: "record-storage-unavailable", Message: "运行记录副本不可用，请稍后重试"}
 	}
 	if m.deps.DispatchGuard != nil {
 		if err := m.deps.DispatchGuard(); err != nil {
 			return receipt, err
 		}
 	}
-	run, err := m.store.change(ctx, runID, "user-input-answer", func(tx *sql.Tx, r *Run) error {
+	run, err := m.store.ChangeRun(ctx, runID, "user-input-answer", func(tx sessionstore.Tx, r *Run) error {
 		var raw string
-		if e := tx.QueryRowContext(ctx, "SELECT document FROM user_inputs WHERE id=? AND run_id=?", inputID, runID).Scan(&raw); e != nil {
-			if e == sql.ErrNoRows {
-				return &Error{409, "user-input-conflict", "问题不属于当前运行或已不可用"}
+		if e := tx.UserInputRecord(ctx, inputID, runID, &raw); e != nil {
+			if e == sessionstore.ErrNotFound {
+				return &Error{Status: 409, Code: "user-input-conflict", Message: "问题不属于当前运行或已不可用"}
 			}
 			return e
 		}
@@ -202,12 +149,12 @@ func (m *Manager) AnswerUserInput(ctx context.Context, runID, inputID string, in
 		if e := json.Unmarshal([]byte(raw), &q); e != nil {
 			return e
 		}
-		if q.Status == "answered" && q.AnswerRequestID == input.RequestID && digestJSON(q.Answers) == digestJSON(input.Answers) {
+		if q.Status == "answered" && q.AnswerRequestID == input.RequestID && state.DigestJSON(q.Answers) == state.DigestJSON(input.Answers) {
 			receipt.UserInput = q
 			return nil
 		}
 		if q.Status != "pending" || r.Status != StateWaitingInput || r.CancelRequestedAt != "" {
-			return &Error{409, "user-input-conflict", "问题已回答或本轮已取消，请刷新查看"}
+			return &Error{Status: 409, Code: "user-input-conflict", Message: "问题已回答或本轮已取消，请刷新查看"}
 		}
 		if len(input.Answers) != len(q.Questions) {
 			return bad("invalid-user-input-answer", "请回答全部问题")
@@ -228,17 +175,17 @@ func (m *Manager) AnswerUserInput(ctx context.Context, runID, inputID string, in
 			}
 		}
 		var count int
-		if e := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM runs WHERE state='queued'").Scan(&count); e != nil {
+		if e := tx.QueuedRunCount(ctx, &count); e != nil {
 			return e
 		}
 		if count >= r.Limits.QueueCapacity {
-			return &Error{429, "queue-full", "任务队列已满，问题保持待回答"}
+			return &Error{Status: 429, Code: "queue-full", Message: "任务队列已满，问题保持待回答"}
 		}
 		if e := m.validateWikiRun(ctx, tx, r.ID); e != nil {
 			return e
 		}
 		var call Call
-		if e := tx.QueryRowContext(ctx, "SELECT document FROM calls WHERE id=? AND run_id=?", q.CallID, r.ID).Scan(&raw); e != nil {
+		if e := tx.UserInputCall(ctx, q.CallID, r.ID, &raw); e != nil {
 			return e
 		}
 		if e := json.Unmarshal([]byte(raw), &call); e != nil {
@@ -247,7 +194,7 @@ func (m *Manager) AnswerUserInput(ctx context.Context, runID, inputID string, in
 		q.Status, q.AnswerRequestID, q.Answers, q.EndedAt = "answered", input.RequestID, input.Answers, stamp(m.deps.Now())
 		call.Status, call.EndedAt = StateSucceeded, q.EndedAt
 		call.Result, _ = json.Marshal(map[string]any{"questions": q.Questions, "answers": q.Answers})
-		if len(call.Result) > r.Limits.ResultBytes || !continuousRun(*r) && r.Usage.ResultBytes+len(call.Result) > r.Limits.RunResultBytes {
+		if len(call.Result) > r.Limits.ResultBytes || !state.ContinuousRun(*r) && r.Usage.ResultBytes+len(call.Result) > r.Limits.RunResultBytes {
 			return bad("result-limit", "回答超过本轮结果容量限制")
 		}
 		r.Usage.ResultBytes += len(call.Result)
@@ -261,7 +208,7 @@ func (m *Manager) AnswerUserInput(ctx context.Context, runID, inputID string, in
 		r.Status, r.Phase = StateQueued, "queued"
 		r.Resume = &RecoveryCursor{ResponseID: q.ModelRequestID, CallIndex: 1}
 		receipt.UserInput = q
-		return m.store.event(ctx, tx, r, "user-input/answered", call.ID, &call.StepIndex, nil)
+		return tx.Event(ctx, r, "user-input/answered", call.ID, &call.StepIndex, nil)
 	})
 	if err != nil {
 		if _, ok := err.(*Error); !ok && ctx.Err() == nil {
@@ -274,28 +221,4 @@ func (m *Manager) AnswerUserInput(ctx context.Context, runID, inputID string, in
 	return receipt, nil
 }
 
-func cancelUserInputs(ctx context.Context, tx *sql.Tx, runID, endedAt string) error {
-	questions, err := readDocuments[UserInputRequest](ctx, tx, "SELECT document FROM user_inputs WHERE run_id=? AND state='pending'", runID)
-	if err != nil {
-		return err
-	}
-	for _, q := range questions {
-		q.Status, q.EndedAt = "cancelled", endedAt
-		if err := saveUserInput(ctx, tx, q); err != nil {
-			return err
-		}
-		var raw string
-		if err := tx.QueryRowContext(ctx, "SELECT document FROM calls WHERE id=?", q.CallID).Scan(&raw); err != nil {
-			return err
-		}
-		var call Call
-		if err := json.Unmarshal([]byte(raw), &call); err != nil {
-			return err
-		}
-		call.Status, call.EndedAt = StateCancelled, endedAt
-		if err := saveCall(ctx, tx, call); err != nil {
-			return err
-		}
-	}
-	return nil
-}
+const userInputSource = state.UserInputSource

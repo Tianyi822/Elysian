@@ -2,8 +2,6 @@ package harness
 
 import (
 	"context"
-	"database/sql"
-	"elysian/server/internal/agent/harness/model"
 	"encoding/json"
 	"errors"
 	"os"
@@ -12,6 +10,9 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"elysian/server/internal/agent/harness/model"
+	"elysian/server/internal/agent/harness/sessionstore"
 )
 
 func workflowLiteral(s string) WorkflowBinding { return WorkflowBinding{LiteralJSON: &s} }
@@ -114,7 +115,7 @@ func TestWorkflowExpiryRenewalAndDenial(t *testing.T) {
 	a := waitingApproval(t, m, w.ActiveRunID)
 	workflowIdle(t, m)
 	m.mu.Lock()
-	e := m.store.write(ctx, "expire-test", func(tx *sql.Tx) error {
+	e := fixture(m).write(ctx, "expire-test", func(tx sessionstore.Tx) error {
 		a.ExpiresAt = stamp(time.Now().Add(-time.Hour))
 		return saveApproval(ctx, tx, a)
 	})

@@ -14,7 +14,7 @@ func TestAgentWritableRejectsClosedRecordFaultStorageAndDispatch(t *testing.T) {
 
 	t.Run("record fault", func(t *testing.T) {
 		m, _ := sessionAPIManager(t)
-		m.store.failRecords(errors.New("disk unavailable"))
+		fixture(m).failRecords(errors.New("disk unavailable"))
 		runtimeErrorCode(t, m.agentWritable(), "record-storage-unavailable")
 	})
 

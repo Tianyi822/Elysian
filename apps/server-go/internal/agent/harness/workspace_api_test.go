@@ -2,7 +2,6 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"path/filepath"
 	"strings"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"elysian/server/internal/agent/harness/model"
+	"elysian/server/internal/agent/harness/sessionstore"
 	"elysian/server/internal/agent/harness/workspace"
 )
 
@@ -40,7 +40,7 @@ func requireWorkspaceCode(t *testing.T, err error, code string) {
 func TestWorkspaceAPIUsesDatabasePointerAndCAS(t *testing.T) {
 	m, session, task := workspaceManagerFixture(t)
 	ctx := context.Background()
-	initialSession, err := readSession(ctx, m.store.db, session.ID)
+	initialSession, err := readSession(ctx, fixture(m), session.ID)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -75,7 +75,7 @@ func TestWorkspaceAPIUsesDatabasePointerAndCAS(t *testing.T) {
 	}
 	_, err = m.Workspace(ctx, task.ID, "source/main.py")
 	requireWorkspaceCode(t, err, "workspace_file_not_found")
-	storedSession, err := readSession(ctx, m.store.db, session.ID)
+	storedSession, err := readSession(ctx, fixture(m), session.ID)
 	if err != nil || storedSession.LastActivityAt != initialSession.LastActivityAt {
 		t.Fatalf("工作区修改不应延长对话保留期限：%+v %v", storedSession, err)
 	}
@@ -92,8 +92,8 @@ func TestWorkspaceAPIBusySessionIncludesWaitingApproval(t *testing.T) {
 			other := Task{ID: "other-" + state, SessionID: session.ID, RequestID: "request-" + state, Kind: "agent", DriverVersion: "v1", CreatedAt: stamp(m.deps.Now()), Goal: "其他任务"}
 			run := Run{ID: "run-" + state, SessionID: session.ID, TaskID: other.ID, RequestID: other.RequestID, Input: other.Goal, Status: StateQueued, CreatedAt: other.CreatedAt, LastSeq: "0", Limits: DefaultAgentLimits()}
 			run.Model = &model.Profile{ID: session.ModelProfileID, Revision: session.ModelRevision}
-			accepted := acceptSessionTestRun(t, m.store, other, run, true)
-			_, err := m.store.change(ctx, accepted.ID, "busy-test", func(tx *sql.Tx, r *Run) error { r.Status = state; return nil })
+			accepted := acceptSessionTestRun(t, fixture(m), other, run, true)
+			_, err := fixture(m).change(ctx, accepted.ID, "busy-test", func(tx sessionstore.Tx, r *Run) error { r.Status = state; return nil })
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -102,7 +102,7 @@ func TestWorkspaceAPIBusySessionIncludesWaitingApproval(t *testing.T) {
 			if view, err := m.Workspace(ctx, task.ID, "file"); err != nil || string(view.Content) != "old" {
 				t.Fatalf("忙碌读取：%+v %v", view, err)
 			}
-			finishSessionTestRun(t, m.store, accepted.ID, "完成", nil)
+			finishSessionTestRun(t, fixture(m), accepted.ID, "完成", nil)
 		})
 	}
 }
@@ -114,14 +114,14 @@ func TestWorkspaceMaintenanceFreezesWritesAndCleanupSurvivesMissingBackend(t *te
 	if _, err := m.WriteWorkspace(ctx, task.ID, 0, "file", strings.NewReader("保留文件")); err != nil {
 		t.Fatal(err)
 	}
-	m.deps.DispatchGuard = func() error { return &Error{409, "maintenance-active", "维护中"} }
+	m.deps.DispatchGuard = func() error { return &Error{Status: 409, Code: "maintenance-active", Message: "维护中"} }
 	_, err := m.WriteWorkspace(ctx, task.ID, 1, "file", strings.NewReader("不应写入"))
 	requireWorkspaceCode(t, err, "maintenance-active")
 	if _, err = m.Workspace(ctx, task.ID, "file"); err != nil {
 		t.Fatal("维护期间应可读取已提交文件", err)
 	}
 	m.deps.DispatchGuard = nil
-	err = m.store.write(ctx, "expire-workspace", func(tx *sql.Tx) error {
+	err = fixture(m).write(ctx, "expire-workspace", func(tx sessionstore.Tx) error {
 		s, e := readSession(ctx, tx, session.ID)
 		if e != nil {
 			return e
@@ -138,14 +138,14 @@ func TestWorkspaceMaintenanceFreezesWritesAndCleanupSurvivesMissingBackend(t *te
 		t.Fatal(err)
 	}
 	var count int
-	if err = m.store.db.QueryRow("SELECT count(*) FROM workspace_cleanup WHERE task_id=?", task.ID).Scan(&count); err != nil || count != 1 {
+	if err = fixture(m).db.QueryRow("SELECT count(*) FROM workspace_cleanup WHERE task_id=?", task.ID).Scan(&count); err != nil || count != 1 {
 		t.Fatalf("未持久保留清理任务：%d %v", count, err)
 	}
 	m.deps.Workspaces = backend
 	if err = m.sweep(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if err = m.store.db.QueryRow("SELECT count(*) FROM workspace_cleanup WHERE task_id=?", task.ID).Scan(&count); err != nil || count != 0 {
+	if err = fixture(m).db.QueryRow("SELECT count(*) FROM workspace_cleanup WHERE task_id=?", task.ID).Scan(&count); err != nil || count != 0 {
 		t.Fatalf("未完成清理：%d %v", count, err)
 	}
 	if _, err = backend.Version(ctx, task.ID, 1); err == nil {
@@ -192,7 +192,7 @@ func TestWorkspaceAPIConcurrentWritersAndLateBusyRecheck(t *testing.T) {
 	}()
 	<-blocked.started
 	m.mu.Lock()
-	err = m.store.write(ctx, "new-busy", func(tx *sql.Tx) error {
+	err = fixture(m).write(ctx, "new-busy", func(tx sessionstore.Tx) error {
 		stored, err := readSession(ctx, tx, session.ID)
 		if err != nil {
 			return err
@@ -230,7 +230,7 @@ func TestWorkspaceAPIPointerRollbackAndRestart(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if _, err = m.store.db.Exec(`CREATE TRIGGER reject_workspace_update BEFORE UPDATE ON workspace_versions BEGIN SELECT RAISE(ABORT,'注入事务失败'); END`); err != nil {
+	if _, err = fixture(m).db.Exec(`CREATE TRIGGER reject_workspace_update BEFORE UPDATE ON workspace_versions BEGIN SELECT RAISE(ABORT,'注入事务失败'); END`); err != nil {
 		t.Fatal(err)
 	}
 	_, err = m.WriteWorkspace(ctx, task.ID, first.Revision, "file", strings.NewReader("not committed"))
@@ -244,17 +244,17 @@ func TestWorkspaceAPIPointerRollbackAndRestart(t *testing.T) {
 	var dbPath string
 	var seq int
 	var name string
-	if err = m.store.db.QueryRow("PRAGMA database_list").Scan(&seq, &name, &dbPath); err != nil {
+	if err = fixture(m).db.QueryRow("PRAGMA database_list").Scan(&seq, &name, &dbPath); err != nil {
 		t.Fatal(err)
 	}
-	if err = m.store.close(); err != nil {
+	if err = fixture(m).close(); err != nil {
 		t.Fatal(err)
 	}
 	m.store, err = openStore(dbPath, m.deps.Now)
 	if err != nil {
 		t.Fatal(err)
 	}
-	defer m.store.close()
+	defer fixture(m).close()
 	current, err = m.Workspace(ctx, task.ID, "file")
 	if err != nil || current.Version != first || string(current.Content) != "committed" {
 		t.Fatalf("重启选择了未提交候选：%+v %v", current, err)
@@ -268,7 +268,7 @@ func TestWorkspaceCommitParticipatesInOperationTransaction(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	err = m.store.write(ctx, "fake-operation-result", func(tx *sql.Tx) error {
+	err = fixture(m).write(ctx, "fake-operation-result", func(tx sessionstore.Tx) error {
 		if err := commitWorkspaceVersion(ctx, tx, candidate); err != nil {
 			return err
 		}
@@ -277,14 +277,14 @@ func TestWorkspaceCommitParticipatesInOperationTransaction(t *testing.T) {
 	if err == nil {
 		t.Fatal("预期事务失败")
 	}
-	current, err := readWorkspaceVersion(ctx, m.store.db, task.ID)
+	current, err := readWorkspaceVersion(ctx, fixture(m), task.ID)
 	if err != nil || current.Revision != 0 {
 		t.Fatalf("动作失败仍推进指针：%+v %v", current, err)
 	}
-	if err = m.store.write(ctx, "operation-result", func(tx *sql.Tx) error { return commitWorkspaceVersion(ctx, tx, candidate) }); err != nil {
+	if err = fixture(m).write(ctx, "operation-result", func(tx sessionstore.Tx) error { return commitWorkspaceVersion(ctx, tx, candidate) }); err != nil {
 		t.Fatal(err)
 	}
-	err = m.store.write(ctx, "duplicate-result", func(tx *sql.Tx) error { return commitWorkspaceVersion(ctx, tx, candidate) })
+	err = fixture(m).write(ctx, "duplicate-result", func(tx sessionstore.Tx) error { return commitWorkspaceVersion(ctx, tx, candidate) })
 	requireWorkspaceCode(t, err, "workspace-revision-conflict")
 }
 
@@ -295,16 +295,16 @@ func TestWorkspaceSweepRemovesOnlyExpiredTaskArchives(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	m.store.now = func() time.Time { return runtimeStoreTestTime.Add(40 * 24 * time.Hour) }
+	fixture(m).now = func() time.Time { return runtimeStoreTestTime.Add(40 * 24 * time.Hour) }
 	m.deps.Limits = DefaultLimits()
-	_, recentTask, recentRun := sessionStoreFixture(t, m.store, "recent-workspace", m.store.now())
-	recentRun = acceptSessionTestRun(t, m.store, recentTask, recentRun, true)
-	finishSessionTestRun(t, m.store, recentRun.ID, "完成", nil)
+	_, recentTask, recentRun := sessionStoreFixture(t, fixture(m), "recent-workspace", fixture(m).now())
+	recentRun = acceptSessionTestRun(t, fixture(m), recentTask, recentRun, true)
+	finishSessionTestRun(t, fixture(m), recentRun.ID, "完成", nil)
 	recentVersion, err := m.deps.Workspaces.PrepareWrite(ctx, recentTask.ID, 0, "file", strings.NewReader("recent"))
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = m.store.write(ctx, "recent-workspace", func(tx *sql.Tx) error { return commitWorkspaceVersion(ctx, tx, recentVersion) }); err != nil {
+	if err = fixture(m).write(ctx, "recent-workspace", func(tx sessionstore.Tx) error { return commitWorkspaceVersion(ctx, tx, recentVersion) }); err != nil {
 		t.Fatal(err)
 	}
 	if err = m.sweep(ctx); err != nil {

@@ -13,6 +13,7 @@ import (
 	"testing"
 	"time"
 
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/harness/worker"
 	"elysian/server/internal/agent/tools"
 )
@@ -63,20 +64,23 @@ func runtimeEventually(t *testing.T, f func() bool) {
 }
 func runtimeManager(t *testing.T, b *runtimeTestTools, change func(*Deps)) *Manager {
 	t.Helper()
-	deps := Deps{Path: filepath.Join(t.TempDir(), "harness.sqlite"), Tools: b,
+	deps := Deps{Store: mustFixtureStore(t, filepath.Join(t.TempDir()), "harness.sqlite"), Tools: b,
 		Spawn: func(context.Context) (worker.Process, error) { return &runtimeTestProcess{}, nil }, Limits: DefaultLimits()}
 	deps.Limits.Concurrency = 1
 	if change != nil {
 		change(&deps)
 	}
-	m, err := New(deps)
+	if deps.Now != nil {
+		fixtureDeps(deps).now = deps.Now
+	}
+	m, err := newFixtureManager(t, deps)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
 		defer cancel()
-		if err := m.Close(ctx); err != nil {
+		if err := closeFixtureManager(m, ctx); err != nil {
 			t.Error(err)
 		}
 	})
@@ -107,7 +111,7 @@ func runtimeFinished(t *testing.T, m *Manager, id string) Run {
 		if err != nil {
 			t.Fatal(err)
 		}
-		return terminal(got.Status)
+		return hstate.Terminal(got.Status)
 	})
 	return got
 }
@@ -284,7 +288,7 @@ func TestManagerCallerCancellationDoesNotDisableStorage(t *testing.T) {
 	b := &runtimeTestTools{}
 	m := runtimeManager(t, b, nil)
 	m.mu.Lock()
-	m.store.beforeWrite = func(op string) error {
+	fixture(m).beforeWrite = func(op string) error {
 		if op == "submit" || op == "cancel" {
 			return context.Canceled
 		}
@@ -297,13 +301,13 @@ func TestManagerCallerCancellationDoesNotDisableStorage(t *testing.T) {
 		t.Fatal("HTTP 请求取消误伤存储")
 	}
 	m.mu.Lock()
-	m.store.beforeWrite = nil
+	fixture(m).beforeWrite = nil
 	m.mu.Unlock()
 	r := runtimeSubmit(t, m, "accepted", "docker_images_list")
 	runtimeFinished(t, m, r.ID)
 	m.mu.Lock()
 	// 只模拟当前 HTTP 取消请求，避免误伤终态后仍会运行的后台维护事务。
-	m.store.beforeWrite = func(op string) error {
+	fixture(m).beforeWrite = func(op string) error {
 		if op == "cancel" {
 			return context.Canceled
 		}
@@ -316,7 +320,7 @@ func TestManagerCallerCancellationDoesNotDisableStorage(t *testing.T) {
 		t.Fatal("取消 HTTP 请求误伤存储")
 	}
 	m.mu.Lock()
-	m.store.beforeWrite = nil
+	fixture(m).beforeWrite = nil
 	m.mu.Unlock()
 }
 
@@ -419,7 +423,7 @@ func TestManagerStorageFailureStopsBeforeEffectOrNextStep(t *testing.T) {
 			b := &runtimeTestTools{}
 			m := runtimeManager(t, b, nil)
 			m.mu.Lock()
-			m.store.beforeWrite = func(operation string) error {
+			fixture(m).beforeWrite = func(operation string) error {
 				if operation == op {
 					return errors.New("disk full secret-marker")
 				}
@@ -442,10 +446,10 @@ func TestManagerStorageFailureStopsBeforeEffectOrNextStep(t *testing.T) {
 			if strings.Contains(m.Info().Reason, "secret-marker") {
 				t.Fatal("泄漏底层错误")
 			}
-			if err = m.Close(context.Background()); err != nil {
+			if err = closeFixtureManager(m); err != nil {
 				t.Fatal(err)
 			}
-			s, err := openStore(m.deps.Path, time.Now)
+			s, err := openStore(fixture(m).path, time.Now)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -524,7 +528,7 @@ func TestManagerRestartDispatchesQueuedButNeverReplaysRunning(t *testing.T) {
 		t.Fatal(err)
 	}
 	b := &runtimeTestTools{}
-	m := runtimeManager(t, b, func(d *Deps) { d.Path = path })
+	m := runtimeManager(t, b, func(d *Deps) { d.Store = mustFixtureStore(t, path) })
 	if got := runtimeFinished(t, m, queued.ID); got.Status != StateSucceeded {
 		t.Fatalf("排队任务未恢复: %+v", got)
 	}
@@ -594,10 +598,10 @@ func TestManagerCloseInterruptsActiveAndKeepsQueuedForRestart(t *testing.T) {
 	queued := runtimeSubmit(t, m, "keep-queue", "docker_policy_view")
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
-	if err := m.Close(ctx); err != nil {
+	if err := closeFixtureManager(m, ctx); err != nil {
 		t.Fatal(err)
 	}
-	s, err := openStore(m.deps.Path, time.Now)
+	s, err := openStore(fixture(m).path, time.Now)
 	if err != nil {
 		t.Fatal(err)
 	}

@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"elysian/server/internal/agent/harness/model"
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/tools"
 )
 
@@ -126,7 +127,7 @@ func TestUpdateCancelsAcceptedTaskAndPreservesBarrierUntilReceipt(t *testing.T) 
 	if got, err := m.Get(ctx, run.ID); err != nil || got.Status != StateInterrupted || submissions.Load() != 1 {
 		t.Fatalf("迟到回执自动续跑或重投: %+v %v", got, err)
 	}
-	readRecordLines(t, m.store, recordOwner{"session", session.ID})
+	readRecordLines(t, fixture(m), recordOwner{"session", session.ID})
 }
 
 func TestUpdateInterruptsPendingQuestionsAndApprovals(t *testing.T) {
@@ -158,7 +159,7 @@ func TestUpdateInterruptsPendingQuestionsAndApprovals(t *testing.T) {
 			run := submitAgentTest(t, m, session, "waiting-update", "准备操作")
 			runtimeEventually(t, func() bool {
 				got, _ := m.Get(context.Background(), run.ID)
-				if terminal(got.Status) {
+				if hstate.Terminal(got.Status) {
 					t.Fatalf("等待确认前提前终止: %+v", got)
 				}
 				return got.Status == waiting
@@ -173,7 +174,7 @@ func TestUpdateInterruptsPendingQuestionsAndApprovals(t *testing.T) {
 			if requests.Load() != 1 {
 				t.Fatal("更新结束自动重跑了等待运行")
 			}
-			readRecordLines(t, m.store, recordOwner{"session", session.ID})
+			readRecordLines(t, fixture(m), recordOwner{"session", session.ID})
 		})
 	}
 }

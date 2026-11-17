@@ -2,10 +2,12 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"sort"
 	"time"
+
+	"elysian/server/internal/agent/harness/sessionstore"
+	"elysian/server/internal/agent/harness/state"
 )
 
 func wikiCapabilities() []Capability {
@@ -29,10 +31,10 @@ func (m *Manager) executeWikiOperation(ctx context.Context, r Run, o Operation) 
 	if err := json.Unmarshal([]byte(o.ArgumentsJSON), &in); err != nil {
 		return CapabilityResult{}, err
 	}
-	if err := m.validateWikiRun(ctx, m.store.db, r.ID); err != nil {
+	if err := m.validateWikiRun(ctx, m.store, r.ID); err != nil {
 		return CapabilityResult{}, err
 	}
-	pages, err := readDocuments[WikiPage](ctx, m.store.db, `SELECT p.document FROM wiki_visible_pages v JOIN wiki_page_revisions p ON p.page_id=v.page_id AND p.revision=v.revision WHERE v.owner_kind='run' AND v.owner_id=? ORDER BY v.page_id`, r.ID)
+	pages, err := readView(ctx, m.store).WikiVisiblePages(ctx, r.ID)
 	if err != nil {
 		return CapabilityResult{}, err
 	}
@@ -49,8 +51,8 @@ func (m *Manager) executeWikiOperation(ctx context.Context, r Run, o Operation) 
 	hits := []WikiSearchHit{}
 	visible := []WikiPage{}
 	for _, p := range pages {
-		ref := WikiRef{p.ID, p.Revision, p.Digest}
-		if validateWikiSources(ctx, m.store.db, append(append([]WikiRef{}, p.Sources...), ref)) != nil {
+		ref := WikiRef{PageID: p.ID, Revision: p.Revision, Digest: p.Digest}
+		if validateWikiSources(ctx, m.store, append(append([]WikiRef{}, p.Sources...), ref)) != nil {
 			continue
 		}
 		if o.Capability.Name == "wiki_search" && p.ExpiresAt != "" {
@@ -63,7 +65,7 @@ func (m *Manager) executeWikiOperation(ctx context.Context, r Run, o Operation) 
 		score := 1.0
 		switch o.Capability.Name {
 		case "wiki_search":
-			score = wikiTextScore(in.Query, wikiSearchText(p))
+			score = wikiTextScore(in.Query, state.WikiSearchText(p))
 		case "wiki_read":
 			if p.ID != in.PageID {
 				continue
@@ -82,7 +84,7 @@ func (m *Manager) executeWikiOperation(ctx context.Context, r Run, o Operation) 
 	if o.Capability.Name == "wiki_search" {
 		search = m.wikiHybridSearchLocked(ctx, visible, in.Query, search, 8)
 		hits = search.Items
-		if err := m.validateWikiRun(ctx, m.store.db, r.ID); err != nil {
+		if err := m.validateWikiRun(ctx, m.store, r.ID); err != nil {
 			return CapabilityResult{}, err
 		}
 	}
@@ -96,9 +98,9 @@ func (m *Manager) executeWikiOperation(ctx context.Context, r Run, o Operation) 
 		}
 		used += len(p.Markdown) + len(p.Title)
 		out = append(out, p)
-		refs = mergeWikiRefs(refs, p.Sources, []WikiRef{{p.ID, p.Revision, p.Digest}})
+		refs = state.MergeWikiRefs(refs, p.Sources, []WikiRef{{PageID: p.ID, Revision: p.Revision, Digest: p.Digest}})
 	}
-	err = m.store.write(ctx, "wiki-operation-sources", func(tx *sql.Tx) error {
+	err = writeStore(m.store, ctx, "wiki-operation-sources", func(tx sessionstore.Tx) error {
 		g, e := wikiGeneration(ctx, tx, r.TaskID)
 		if e != nil {
 			return e

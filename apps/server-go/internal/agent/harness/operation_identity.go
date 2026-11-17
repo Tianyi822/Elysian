@@ -24,7 +24,7 @@ func validateOperationIdentity(ctx context.Context, q reportReader, operation Op
 	if requestID == "" {
 		return nil
 	}
-	previous, err := readDocuments[Operation](ctx, q, "SELECT document FROM operations WHERE id<>? AND json_extract(document,'$.capability.metadata.taskDomain')=?", operation.ID, metadata.TaskDomain)
+	previous, err := readView(ctx, q).PriorOperationAttempts(ctx, operation.ID, metadata.TaskDomain)
 	if err != nil {
 		return err
 	}
@@ -72,7 +72,7 @@ func (a *agentExecution) validateOperationBatch(ctx context.Context, calls []mod
 				}
 				seen[key] = true
 			}
-			if err = validateOperationIdentity(ctx, a.manager.store.reader(ctx), Operation{Capability: capability, ArgumentsJSON: string(call.Arguments)}); err != nil {
+			if err = validateOperationIdentity(ctx, a.manager.store, Operation{Capability: capability, ArgumentsJSON: string(call.Arguments)}); err != nil {
 				return err
 			}
 		}

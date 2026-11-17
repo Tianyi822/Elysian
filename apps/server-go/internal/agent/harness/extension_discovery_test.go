@@ -6,15 +6,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
-
-	"elysian/server/internal/agent/execution"
-	execconfig "elysian/server/internal/agent/execution/config"
-	"elysian/server/internal/agent/harness/skills"
 	"strings"
 	"sync/atomic"
 	"testing"
 
+	"elysian/server/internal/agent/execution"
+	execconfig "elysian/server/internal/agent/execution/config"
 	"elysian/server/internal/agent/harness/model"
+	"elysian/server/internal/agent/harness/skills"
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/mcp"
 )
 
@@ -92,7 +92,7 @@ func TestEnabledExtensionsLatestRevisionTrustAndIdempotency(t *testing.T) {
 		}
 	}
 	current, err := m.GetEnvironment(ctx, session.ID)
-	if err != nil || digestJSON(current) != digestJSON(env) {
+	if err != nil || hstate.DigestJSON(current) != hstate.DigestJSON(env) {
 		t.Fatal("自动目录改写了会话环境")
 	}
 	retry, dup, err := m.CreateTask(ctx, session.ID, input)

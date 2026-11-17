@@ -4,11 +4,11 @@ func (m *Manager) agentWritable() error {
 	if m.closed {
 		return closedError()
 	}
-	if err := m.store.recordsFault(); err != nil {
-		return &Error{503, "record-storage-unavailable", err.Error()}
+	if err := m.store.DispatchError(); err != nil {
+		return &Error{Status: 503, Code: "record-storage-unavailable", Message: err.Error()}
 	}
 	if m.storageError {
-		return &Error{503, "storage-unavailable", "运行存储不可用"}
+		return &Error{Status: 503, Code: "storage-unavailable", Message: "运行存储不可用"}
 	}
 	if m.deps.DispatchGuard != nil {
 		return m.deps.DispatchGuard()

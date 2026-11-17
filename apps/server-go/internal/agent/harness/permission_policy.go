@@ -1,14 +1,16 @@
 package harness
 
-import "strings"
+import (
+	"strings"
 
-type PermissionMode string
+	"elysian/server/internal/agent/harness/state"
+)
 
 const (
-	PermissionAsk           PermissionMode = "ask"
-	PermissionAssist        PermissionMode = "assist"
-	PermissionFull          PermissionMode = "full"
-	PermissionPolicyVersion                = "permission-modes/v2"
+	PermissionAsk           = state.PermissionAsk
+	PermissionAssist        = state.PermissionAssist
+	PermissionFull          = state.PermissionFull
+	PermissionPolicyVersion = state.PermissionPolicyVersion
 )
 
 func normalizePermissionMode(mode PermissionMode) (PermissionMode, error) {

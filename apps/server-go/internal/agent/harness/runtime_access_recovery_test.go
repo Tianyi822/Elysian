@@ -2,7 +2,6 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"net"
@@ -15,6 +14,8 @@ import (
 
 	"elysian/server/internal/agent/execution"
 	execconfig "elysian/server/internal/agent/execution/config"
+	"elysian/server/internal/agent/harness/sessionstore"
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/harness/worker"
 )
 
@@ -30,14 +31,14 @@ func pullingRuntimeFixture(t *testing.T, s *store, suffix string) (Run, Operatio
 	o.Access = &AccessRequest{Revision: 1, Kind: "script", SessionAllowed: true, Runtime: &AccessRuntime{Name: "bash", Image: image, Platform: "linux/amd64", RequiresDownload: true}}
 	o.Execution = &ExecutionPlan{Profile: execconfig.Profile{ID: "runtime-bash", Revision: 1, Name: "bash", Image: image, Runtime: "bash", Command: []string{"bash"}, TimeoutSeconds: 30, CPUMillis: 500, MemoryBytes: 256 << 20, PIDs: 64, Enabled: true}}
 	o.Access.ScopeKey, o.Access.Digest = accessScopeKey(o), ""
-	o.Access.Digest = accessDigest(o)
+	o.Access.Digest = hstate.AccessDigest(o)
 	approved := Approval{ID: o.ApprovalID, Kind: "operation", RunID: run.ID, OperationID: o.ID, Status: "approved", Decision: "approved", CreatedAt: stamp(s.now()), DecidedAt: stamp(s.now()), ExpiresAt: stamp(s.now().Add(time.Hour)), Access: o.Access, Operation: o}
 	decision := accessInput(approved, "once", "approve-"+suffix)
 	approved.AccessDecision = &decision
 	o.Authorization = &OperationAuthorization{ID: o.ID, Digest: o.Access.Digest, Decision: "once", CreatedAt: stamp(s.now())}
 	o.Preparation = &RuntimePreparation{State: "pulling", Current: 4, Total: 12}
 	var err error
-	run, err = s.change(context.Background(), run.ID, "fixture-runtime-pulling", func(tx *sql.Tx, r *Run) error {
+	run, err = s.change(context.Background(), run.ID, "fixture-runtime-pulling", func(tx sessionstore.Tx, r *Run) error {
 		r.Status, r.Phase = StateRunning, "preparing-runtime"
 		r.Resume = &RecoveryCursor{ResponseID: o.ModelRequestID, CallIndex: o.CallIndex}
 		if err := saveOperation(context.Background(), tx, o); err != nil {
@@ -83,25 +84,25 @@ func TestRuntimePreparationCrashRestoresUnknownWithNewApproval(t *testing.T) {
 		t.Fatal(err)
 	}
 	got, err := reopened.get(ctx, run.ID)
-	if err != nil || got.Status != StateWaitingApproval || got.Phase != StateWaitingApproval || got.ActiveMilliseconds != run.ActiveMilliseconds || digestJSON(got.Resume) != digestJSON(run.Resume) || got.Snapshot.Digest != run.Snapshot.Digest || got.EndedAt != "" {
+	if err != nil || got.Status != StateWaitingApproval || got.Phase != StateWaitingApproval || got.ActiveMilliseconds != run.ActiveMilliseconds || hstate.DigestJSON(got.Resume) != hstate.DigestJSON(run.Resume) || got.Snapshot.Digest != run.Snapshot.Digest || got.EndedAt != "" {
 		t.Fatalf("crash lost exact continuation or budget: %+v %v", got, err)
 	}
-	current, err := readOperation(ctx, reopened.db, operation.ID)
+	current, err := readOperation(ctx, reopened, operation.ID)
 	if err != nil || current.Preparation == nil || current.Preparation.State != "unknown" || current.Preparation.Current != 4 || current.Authorization != nil || current.DispatchID != "" || current.Access.Revision != operation.Access.Revision+1 || current.ApprovalID == approved.ID {
 		t.Fatalf("preparation was replayed or its authority retained: %+v %v", current, err)
 	}
-	if current.Access.Digest == approved.Access.Digest || accessDigest(current) != current.Access.Digest {
+	if current.Access.Digest == approved.Access.Digest || hstate.AccessDigest(current) != current.Access.Digest {
 		t.Fatal("recovery request did not get its own valid digest")
 	}
 	previous := readRecoveryApproval(t, reopened, approved.ID)
-	if previous.Status != "revoked" || digestJSON(previous.AccessDecision) != digestJSON(approved.AccessDecision) || previous.DecidedAt != approved.DecidedAt {
+	if previous.Status != "revoked" || hstate.DigestJSON(previous.AccessDecision) != hstate.DigestJSON(approved.AccessDecision) || previous.DecidedAt != approved.DecidedAt {
 		t.Fatalf("original decision was overwritten: %+v", previous)
 	}
 	next := readRecoveryApproval(t, reopened, current.ApprovalID)
-	if next.Status != "pending" || next.AccessDecision != nil || !approvedOperationMatches(next.Operation, current) {
+	if next.Status != "pending" || next.AccessDecision != nil || !hstate.ApprovedOperationMatches(next.Operation, current) {
 		t.Fatalf("recovery approval does not match pending operation: %+v", next)
 	}
-	session, err := readSession(ctx, reopened.db, run.SessionID)
+	session, err := readSession(ctx, reopened, run.SessionID)
 	if err != nil || session.ActiveRunID != run.ID {
 		t.Fatalf("preparation recovery released session: %+v %v", session, err)
 	}
@@ -116,6 +117,11 @@ func TestRuntimePreparationCrashRestoresUnknownWithNewApproval(t *testing.T) {
 	if again.LastSeq != beforeSeq || runtimeStoreCount(t, reopened, "approvals") != 2 {
 		t.Fatal("repeated recovery created another approval")
 	}
+	replicaCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+	if err := reopened.waitRecords(replicaCtx); err != nil {
+		t.Fatal(err)
+	}
 	if dirty := runtimeStoreCount(t, reopened, "agent_record_dirty"); dirty != 0 {
 		t.Fatal("recovery facts not flushed to JSONL", dirty)
 	}
@@ -127,7 +133,7 @@ func TestRuntimePreparationRecoveryDoesNotReviveCancelledOrDispatchedRuns(t *tes
 			ctx := context.Background()
 			s, _ := openRuntimeTestStore(t)
 			run, operation, _ := pullingRuntimeFixture(t, s, state)
-			_, err := s.change(ctx, run.ID, "fixture-no-runtime-recovery", func(tx *sql.Tx, r *Run) error {
+			_, err := s.change(ctx, run.ID, "fixture-no-runtime-recovery", func(tx sessionstore.Tx, r *Run) error {
 				switch state {
 				case "cancelled", "succeeded", "interrupted":
 					r.Status, r.EndedAt = state, stamp(s.now())
@@ -157,7 +163,7 @@ func TestRuntimePreparationRecoveryDoesNotReviveCancelledOrDispatchedRuns(t *tes
 				t.Fatal(err)
 			}
 			got, err := s.get(ctx, run.ID)
-			if err != nil || !terminal(got.Status) || runtimeStoreCount(t, s, "approvals") != 1 {
+			if err != nil || !hstate.Terminal(got.Status) || runtimeStoreCount(t, s, "approvals") != 1 {
 				t.Fatalf("unsafe recovery revived %s: %+v %v", state, got, err)
 			}
 			if state == "dispatched" || state == "barrier" {
@@ -178,7 +184,7 @@ func TestRuntimePreparationRecoveryConfirmationOnlyInspectsImage(t *testing.T) {
 			if err := s.recover(ctx); err != nil {
 				t.Fatal(err)
 			}
-			current, err := readOperation(ctx, s.db, operation.ID)
+			current, err := readOperation(ctx, s, operation.ID)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -210,15 +216,15 @@ func TestRuntimePreparationRecoveryConfirmationOnlyInspectsImage(t *testing.T) {
 				t.Fatal(err)
 			}
 			t.Cleanup(func() { _ = executor.Close(ctx) })
-			m := &Manager{ctx: ctx, store: s, deps: Deps{Now: s.now, NewID: randomID, Catalog: &Extensions{Executor: executor}}, wake: make(chan struct{}, 1)}
+			m := &Manager{ctx: ctx, store: s, deps: Deps{Now: s.now, NewID: hstate.RandomID, Catalog: &Extensions{Executor: executor}}, wake: make(chan struct{}, 1)}
 			if _, err := m.DecideAccess(ctx, approval.ID, accessInput(approval, "once", "confirm-inspect")); err != nil {
 				t.Fatal(err)
 			}
-			run, err = s.change(ctx, run.ID, "fixture-start-confirmed-recovery", func(tx *sql.Tx, r *Run) error { r.Status = StateRunning; return saveRun(ctx, tx, r) })
+			run, err = s.change(ctx, run.ID, "fixture-start-confirmed-recovery", func(tx sessionstore.Tx, r *Run) error { r.Status = StateRunning; return saveRun(ctx, tx, r) })
 			if err != nil {
 				t.Fatal(err)
 			}
-			current, err = readOperation(ctx, s.db, operation.ID)
+			current, err = readOperation(ctx, s, operation.ID)
 			if err != nil {
 				t.Fatal(err)
 			}
@@ -294,7 +300,7 @@ func TestRuntimePreparationShutdownCancellation(t *testing.T) {
 			defer stopManager()
 			callCtx, stopCall := context.WithCancel(ctx)
 			defer stopCall()
-			m := &Manager{ctx: managerCtx, store: s, deps: Deps{Now: s.now, NewID: randomID, Catalog: &Extensions{Executor: executor}}, wake: make(chan struct{}, 1)}
+			m := &Manager{ctx: managerCtx, store: s, deps: Deps{Now: s.now, NewID: hstate.RandomID, Catalog: &Extensions{Executor: executor}}, wake: make(chan struct{}, 1)}
 			result := make(chan error, 1)
 			go func() {
 				_, prepareErr := m.prepareAuthorizedRuntime(callCtx, run, operation)
@@ -328,12 +334,12 @@ func TestRuntimePreparationShutdownCancellation(t *testing.T) {
 			if readErr != nil {
 				t.Fatal(readErr)
 			}
-			current, readErr := readOperation(ctx, s.db, operation.ID)
+			current, readErr := readOperation(ctx, s, operation.ID)
 			if readErr != nil {
 				t.Fatal(readErr)
 			}
 			previous := readRecoveryApproval(t, s, approved.ID)
-			if digestJSON(previous.AccessDecision) != digestJSON(approved.AccessDecision) || previous.DecidedAt != approved.DecidedAt {
+			if hstate.DigestJSON(previous.AccessDecision) != hstate.DigestJSON(approved.AccessDecision) || previous.DecidedAt != approved.DecidedAt {
 				t.Fatal("stream interruption overwrote the original authorization decision")
 			}
 			if tc.userCanceled {
@@ -344,7 +350,7 @@ func TestRuntimePreparationShutdownCancellation(t *testing.T) {
 				if !errors.Is(err, worker.ErrSuspended) || got.Status != StateWaitingApproval || got.CancelRequestedAt != "" || current.Preparation == nil || current.Preparation.State != "unknown" || current.Authorization != nil || current.ApprovalID == approved.ID || current.Access.Revision != originalRevision+1 || previous.Status != "revoked" {
 					t.Fatalf("shutdown lost the durable verification-only wait: %+v %+v %v", got, current, err)
 				}
-				if digestJSON(got.Resume) != digestJSON(run.Resume) || got.ActiveMilliseconds != run.ActiveMilliseconds || accessDigest(current) != current.Access.Digest {
+				if hstate.DigestJSON(got.Resume) != hstate.DigestJSON(run.Resume) || got.ActiveMilliseconds != run.ActiveMilliseconds || hstate.AccessDigest(current) != current.Access.Digest {
 					t.Fatal("shutdown changed the original continuation, budget, or approved operation")
 				}
 			}
@@ -352,7 +358,7 @@ func TestRuntimePreparationShutdownCancellation(t *testing.T) {
 				t.Fatal(err)
 			}
 			afterRecovery, _ := s.get(ctx, run.ID)
-			if tc.userCanceled && !terminal(afterRecovery.Status) || !tc.userCanceled && afterRecovery.Status != StateWaitingApproval {
+			if tc.userCanceled && !hstate.Terminal(afterRecovery.Status) || !tc.userCanceled && afterRecovery.Status != StateWaitingApproval {
 				t.Fatalf("restart changed cancellation or wait semantics: %+v", afterRecovery)
 			}
 			if pulls.Load() != 1 || inspections.Load() != 1 || current.DispatchID != "" || runtimeStoreCount(t, s, "execution_barriers") != 0 || runtimeStoreCount(t, s, "calls") != 0 {

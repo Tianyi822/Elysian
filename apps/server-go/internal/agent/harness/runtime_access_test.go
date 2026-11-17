@@ -2,7 +2,6 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"sync/atomic"
@@ -10,6 +9,8 @@ import (
 
 	execconfig "elysian/server/internal/agent/execution/config"
 	"elysian/server/internal/agent/harness/model"
+	"elysian/server/internal/agent/harness/sessionstore"
+	hstate "elysian/server/internal/agent/harness/state"
 )
 
 type demandTestCatalog struct{ operationCatalog }
@@ -23,7 +24,7 @@ func (c *demandTestCatalog) Prepare(_ context.Context, s CapabilitySnapshot, o O
 	}
 	o.Access = &AccessRequest{Revision: 1, Kind: "mcp", Directories: []execconfig.Directory{}, Network: []execconfig.NetworkEndpoint{}, PrivateCIDRs: []string{}, Resources: []execconfig.Resource{}, SessionAllowed: true}
 	o.Access.ScopeKey = accessScopeKey(o)
-	o.Access.Digest = accessDigest(o)
+	o.Access.Digest = hstate.AccessDigest(o)
 	return o, nil
 }
 func accessInput(a Approval, decision, request string) AccessDecision {
@@ -64,7 +65,7 @@ func TestRuntimeAccessNewRunsNeverRememberSessionScope(t *testing.T) {
 		t.Fatal("重试不幂等", err)
 	}
 	// 持久化存量允许项，新运行也必须重新询问。
-	if err := m.store.write(ctx, "legacy-authorization-fixture", func(tx *sql.Tx) error {
+	if err := fixture(m).write(ctx, "legacy-authorization-fixture", func(tx sessionstore.Tx) error {
 		return saveSessionAuthorization(ctx, tx, SessionAuthorization{ID: "legacy-allow", SessionID: s.ID, Revision: 1, Status: "active", Access: *approval.Access})
 	}); err != nil {
 		t.Fatal(err)
@@ -185,12 +186,12 @@ func TestFullModePersistsExactRuntimeAuthorizationBeforeDispatch(t *testing.T) {
 	var m *Manager
 	var calls atomic.Int32
 	cat := &demandTestCatalog{operationCatalog{execute: func(ctx context.Context, o Operation) (CapabilityResult, error) {
-		stored, err := readOperation(ctx, m.store.db, o.ID)
+		stored, err := readOperation(ctx, fixture(m), o.ID)
 		if err != nil || stored.Authorization == nil || stored.Authorization.Digest != o.Access.Digest || stored.Authorization.SessionAuthorizationID != "" {
 			t.Errorf("授权未精确落盘: %+v %v", stored.Authorization, err)
 		}
 		var records int
-		if err := m.store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM agent_record_outbox WHERE fact_type='operations' AND fact_key=?", o.ID).Scan(&records); err != nil || records == 0 {
+		if err := fixture(m).db.QueryRowContext(ctx, "SELECT COUNT(*) FROM agent_record_outbox WHERE fact_type='operations' AND fact_key=?", o.ID).Scan(&records); err != nil || records == 0 {
 			t.Errorf("缺少同事务 JSONL 账本: %d %v", records, err)
 		}
 		calls.Add(1)
@@ -219,9 +220,9 @@ func TestAutomaticRuntimeAuthorizationReplicaFailureBlocksDispatch(t *testing.T)
 	}}}
 	m, session, _ := agentManager(t, operationClient(), func(d *Deps) { d.Catalog = cat })
 	m.mu.Lock()
-	m.store.beforeWrite = func(op string) error {
+	fixture(m).beforeWrite = func(op string) error {
 		if op == "access-auto-decision" {
-			m.store.setRecordHook(func(stage string) error {
+			fixture(m).setRecordHook(func(stage string) error {
 				if stage == "append" {
 					return errors.New("injected auto authorization replica failure")
 				}
@@ -235,7 +236,7 @@ func TestAutomaticRuntimeAuthorizationReplicaFailureBlocksDispatch(t *testing.T)
 	if err != nil {
 		t.Fatal(err)
 	}
-	runtimeEventually(t, func() bool { return m.store.recordsFault() != nil })
+	runtimeEventually(t, func() bool { return fixture(m).recordsFault() != nil })
 	operations, err := m.Operations(context.Background(), run.ID)
 	if err != nil {
 		t.Fatal(err)

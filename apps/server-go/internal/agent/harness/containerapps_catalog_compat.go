@@ -3,6 +3,7 @@ package harness
 import (
 	"encoding/json"
 
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/mcp"
 	"elysian/server/internal/agent/tools"
 )
@@ -34,7 +35,7 @@ func legacyContainerAppsWriteCatalogCompatible(operation Operation, current tool
 		return false
 	}
 	expectedRemove := tools.Schema{Type: tools.SchemaBoolean, Description: "true 表示删除该普通文件；与 content 互斥，必须且只能提供一项"}
-	if digestJSON(remove) != digestJSON(expectedRemove.JSONSchema()) {
+	if hstate.DigestJSON(remove) != hstate.DigestJSON(expectedRemove.JSONSchema()) {
 		return false
 	}
 	required, ok := parameters["required"].([]any)
@@ -46,7 +47,7 @@ func legacyContainerAppsWriteCatalogCompatible(operation Operation, current tool
 	parameters["required"] = []any{"slug", "path", "content", "expectedDigest"}
 	previous := tools.PublicSchema{Name: current.Name, Description: "审批后写入普通配置文本，内容摘要不符时拒绝；不写凭据文件", Parameters: parameters, Metadata: current.Metadata}
 	previous.Metadata.Version = "1"
-	if digestJSON(previous) != c.CatalogDigest {
+	if hstate.DigestJSON(previous) != c.CatalogDigest {
 		return false
 	}
 	var frozenParameters map[string]any
@@ -54,5 +55,5 @@ func legacyContainerAppsWriteCatalogCompatible(operation Operation, current tool
 		return false
 	}
 	frozen := tools.PublicSchema{Name: c.Name, Description: c.Description, Parameters: frozenParameters, Metadata: c.Metadata}
-	return digestJSON(frozen) == c.CatalogDigest
+	return hstate.DigestJSON(frozen) == c.CatalogDigest
 }

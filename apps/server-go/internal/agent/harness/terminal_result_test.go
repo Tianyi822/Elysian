@@ -3,16 +3,16 @@ package harness
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"strings"
 	"testing"
 
 	"elysian/server/internal/agent/harness/model"
+	"elysian/server/internal/agent/harness/sessionstore"
 )
 
 func finishFailedTestRun(s *store, runID, status string, failure *Failure) error {
-	_, err := s.change(context.Background(), runID, "finish-result-test", func(tx *sql.Tx, r *Run) error {
+	_, err := s.change(context.Background(), runID, "finish-result-test", func(tx sessionstore.Tx, r *Run) error {
 		r.Status, r.Error, r.EndReason, r.EndedAt = status, failure, "test-failure", stamp(s.now())
 		return s.event(context.Background(), tx, r, "run/"+status, "", nil, failure)
 	})
@@ -76,7 +76,7 @@ func TestTerminalResultRollbackKeepsRunSessionAndLedgerTogether(t *testing.T) {
 	if err != nil || got.Status != StateQueued {
 		t.Fatalf("状态未回滚：%+v %v", got, err)
 	}
-	stored, err := readSession(context.Background(), s.db, session.ID)
+	stored, err := readSession(context.Background(), s, session.ID)
 	if err != nil || stored.ActiveRunID != run.ID || stored.LastSeq != "1" {
 		t.Fatalf("会话未回滚：%+v %v", stored, err)
 	}
@@ -92,7 +92,7 @@ func TestTerminalResultManualStopAndAutomaticInvalidation(t *testing.T) {
 			s, _ := openRuntimeTestStore(t)
 			session, task, run := sessionStoreFixture(t, s, "result-stop", runtimeStoreTestTime)
 			run = acceptSessionTestRun(t, s, task, run, true)
-			_, err := s.change(context.Background(), run.ID, "cancel-result-test", func(tx *sql.Tx, r *Run) error {
+			_, err := s.change(context.Background(), run.ID, "cancel-result-test", func(tx sessionstore.Tx, r *Run) error {
 				r.CancelRequestedAt = stamp(s.now())
 				kind := "wiki/context-invalidated"
 				if manual {
@@ -115,7 +115,7 @@ func TestTerminalResultManualStopAndAutomaticInvalidation(t *testing.T) {
 				t.Fatalf("manual=%t messages=%+v err=%v", manual, page, err)
 			}
 			got, _ := s.get(context.Background(), run.ID)
-			result, err := s.terminalResult(context.Background(), s.db, got)
+			result, err := s.terminalResult(context.Background(), s, got)
 			if err != nil || (result == nil) != manual {
 				t.Fatalf("手动停止投影错误：%+v %v", result, err)
 			}
@@ -127,7 +127,7 @@ func TestTerminalResultRestartRecoveryAndLegacyProjection(t *testing.T) {
 	s, _ := openRuntimeTestStore(t)
 	session, task, run := sessionStoreFixture(t, s, "result-restart", runtimeStoreTestTime)
 	run = acceptSessionTestRun(t, s, task, run, true)
-	_, err := s.change(context.Background(), run.ID, "start", func(tx *sql.Tx, r *Run) error {
+	_, err := s.change(context.Background(), run.ID, "start", func(tx sessionstore.Tx, r *Run) error {
 		r.Status = StateRunning
 		return s.event(context.Background(), tx, r, "run/running", "", nil, nil)
 	})
@@ -146,7 +146,7 @@ func TestTerminalResultRestartRecoveryAndLegacyProjection(t *testing.T) {
 	}
 	legacy := Run{ID: "old", SessionID: session.ID, Status: StateFailed, Error: &Failure{Code: "old", Message: "历史错误"}}
 	before := runtimeStoreCount(t, s, "messages")
-	result, err := s.terminalResult(context.Background(), s.db, legacy)
+	result, err := s.terminalResult(context.Background(), s, legacy)
 	if err != nil || result == nil || !strings.Contains(result.Content, "历史错误") || runtimeStoreCount(t, s, "messages") != before {
 		t.Fatalf("历史投影写入了数据或缺失：%+v %v", result, err)
 	}
@@ -156,7 +156,7 @@ func TestTerminalResultAutomaticCancellationStillHasResult(t *testing.T) {
 	s, _ := openRuntimeTestStore(t)
 	session, task, run := sessionStoreFixture(t, s, "result-system-stop", runtimeStoreTestTime)
 	run = acceptSessionTestRun(t, s, task, run, true)
-	_, err := s.change(context.Background(), run.ID, "system-stop", func(tx *sql.Tx, r *Run) error {
+	_, err := s.change(context.Background(), run.ID, "system-stop", func(tx sessionstore.Tx, r *Run) error {
 		r.CancelRequestedAt = stamp(s.now())
 		return s.event(context.Background(), tx, r, "wiki/context-invalidated", "", nil, nil)
 	})

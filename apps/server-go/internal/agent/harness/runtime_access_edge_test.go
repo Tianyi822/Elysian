@@ -2,7 +2,6 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"sync/atomic"
@@ -10,6 +9,8 @@ import (
 	"time"
 
 	"elysian/server/internal/agent/harness/model"
+	"elysian/server/internal/agent/harness/sessionstore"
+	hstate "elysian/server/internal/agent/harness/state"
 )
 
 func TestRuntimeAccessCancellationAndDecisionCannotDispatchTwice(t *testing.T) {
@@ -91,7 +92,7 @@ func TestRuntimeAccessQueueFullPreservesPendingRequest(t *testing.T) {
 	_, err := m.DecideAccess(ctx, a.ID, in)
 	runtimeErrorCode(t, err, "queue-full")
 	still := waitingApproval(t, m, run.ID)
-	if still.AccessDecision != nil || digestJSON(still.Access) != digestJSON(a.Access) || still.Status != "pending" {
+	if still.AccessDecision != nil || hstate.DigestJSON(still.Access) != hstate.DigestJSON(a.Access) || still.Status != "pending" {
 		t.Fatalf("queue rejection modified pending request: %+v", still)
 	}
 	remembered, err := m.SessionAuthorizations(ctx, session.ID)
@@ -125,10 +126,10 @@ func TestRuntimeAccessRecordsFaultBlocksDecisionsAndDispatch(t *testing.T) {
 			run := submitDemand(t, m, session, "record-fault-"+stage)
 			a := waitingApproval(t, m, run.ID)
 			m.mu.Lock()
-			m.store.setRecordHook(func(string) error { return errors.New("record disk unavailable") })
+			fixture(m).setRecordHook(func(string) error { return errors.New("record disk unavailable") })
 			if stage == "before-decision" {
-				_, err := m.store.change(ctx, run.ID, "test-record-failure", func(tx *sql.Tx, r *Run) error {
-					return m.store.event(ctx, tx, r, "test/replica-failed", "", nil, nil)
+				_, err := fixture(m).change(ctx, run.ID, "test-record-failure", func(tx sessionstore.Tx, r *Run) error {
+					return fixture(m).event(ctx, tx, r, "test/replica-failed", "", nil, nil)
 				})
 				if err != nil {
 					m.mu.Unlock()
@@ -136,6 +137,9 @@ func TestRuntimeAccessRecordsFaultBlocksDecisionsAndDispatch(t *testing.T) {
 				}
 			}
 			m.mu.Unlock()
+			if stage == "before-decision" {
+				runtimeEventually(t, func() bool { return fixture(m).recordsFault() != nil })
+			}
 			_, err := m.DecideAccess(ctx, a.ID, accessInput(a, "once", "fault-decision"))
 			if stage == "before-decision" {
 				runtimeErrorCode(t, err, "storage-unavailable")
@@ -146,11 +150,11 @@ func TestRuntimeAccessRecordsFaultBlocksDecisionsAndDispatch(t *testing.T) {
 			} else if err != nil {
 				t.Fatal("committed decision receipt was discarded after replica failure", err)
 			}
-			runtimeEventually(t, func() bool { return m.store.recordsFault() != nil })
-			if m.store.recordsFault() == nil || m.Info().Available || calls.Load() != 0 {
-				t.Fatalf("record failure did not freeze dispatch: fault=%v calls=%d", m.store.recordsFault(), calls.Load())
+			runtimeEventually(t, func() bool { return fixture(m).recordsFault() != nil })
+			if fixture(m).recordsFault() == nil || m.Info().Available || calls.Load() != 0 {
+				t.Fatalf("record failure did not freeze dispatch: fault=%v calls=%d", fixture(m).recordsFault(), calls.Load())
 			}
-			o, err := readOperation(ctx, m.store.db, a.OperationID)
+			o, err := readOperation(ctx, fixture(m), a.OperationID)
 			if err != nil || o.DispatchID != "" || o.Status == "dispatched" {
 				t.Fatalf("operation dispatched despite failed replica: %+v %v", o, err)
 			}

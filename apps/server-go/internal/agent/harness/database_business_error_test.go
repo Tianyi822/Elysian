@@ -2,7 +2,6 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"reflect"
@@ -11,6 +10,8 @@ import (
 	"testing"
 
 	"elysian/server/internal/agent/harness/model"
+	"elysian/server/internal/agent/harness/sessionstore"
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/harness/toolbridge"
 	"elysian/server/internal/agent/harness/worker"
 	"elysian/server/internal/agent/kardia"
@@ -60,11 +61,11 @@ func frozenDatabaseSpawn(context.Context) (worker.Process, error) {
 				continue
 			}
 			parameters, _ := json.Marshal(schema.Parameters)
-			snapshot.Tools = append(snapshot.Tools, Capability{Name: schema.Name, Description: schema.Description, Parameters: parameters, Source: "builtin", ReadOnly: schema.Metadata.ReadOnly, Metadata: schema.Metadata, CatalogDigest: digestJSON(schema)})
+			snapshot.Tools = append(snapshot.Tools, Capability{Name: schema.Name, Description: schema.Description, Parameters: parameters, Source: "builtin", ReadOnly: schema.Metadata.ReadOnly, Metadata: schema.Metadata, CatalogDigest: hstate.DigestJSON(schema)})
 		}
 		err := configureLoadingBudget(&snapshot, a.run, "")
 		if err == nil {
-			_, err = m.store.change(ctx, a.run.ID, "restore-legacy-fixture", func(tx *sql.Tx, r *Run) error {
+			_, err = fixture(m).change(ctx, a.run.ID, "restore-legacy-fixture", func(tx sessionstore.Tx, r *Run) error {
 				r.Snapshot = &snapshot
 				a.run.Snapshot = &snapshot
 				return saveRun(ctx, tx, r)
@@ -121,7 +122,7 @@ func TestNativeDatabaseBusinessErrorContinuesSameBatchAndPersists(t *testing.T) 
 	if calls.Items[1].Tool != "database_discover" || calls.Items[1].Status != StateFailed || calls.Items[1].Error == nil || calls.Items[1].Error.Code != "database-version-invalid" || calls.Items[2].Tool != toolSearchName || calls.Items[2].Status != StateSucceeded || calls.Items[3].Status != StateSucceeded {
 		t.Fatalf("同批续接记录不符：%+v", calls.Items)
 	}
-	lines, raw := readRecordLines(t, m.store, recordOwner{"session", session.ID})
+	lines, raw := readRecordLines(t, fixture(m), recordOwner{"session", session.ID})
 	var copied *Call
 	for _, line := range lines {
 		if line.Type == "calls" && line.Key == calls.Items[1].ID {
@@ -278,7 +279,7 @@ func TestSyncWritePrecheckRejectionContinuesRunWithPreciseReason(t *testing.T) {
 		call.Error.Code != "database-lifecycle-rejected" || call.Error.Message != "数据库登记版本已变化，请重新读取并审批" {
 		t.Fatalf("预检拒绝应保留精确码与文案：%+v", call)
 	}
-	lines, _ := readRecordLines(t, m.store, recordOwner{"session", session.ID})
+	lines, _ := readRecordLines(t, fixture(m), recordOwner{"session", session.ID})
 	var copied *Call
 	for _, line := range lines {
 		if line.Type == "calls" && line.Key == call.ID {

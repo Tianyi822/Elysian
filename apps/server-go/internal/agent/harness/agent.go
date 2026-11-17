@@ -3,7 +3,6 @@ package harness
 import (
 	"bytes"
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"strconv"
@@ -11,6 +10,8 @@ import (
 	"time"
 
 	"elysian/server/internal/agent/harness/model"
+	"elysian/server/internal/agent/harness/sessionstore"
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/harness/worker"
 	"elysian/server/internal/agent/jsonvalue"
 	"elysian/server/internal/agent/mcp"
@@ -79,7 +80,7 @@ func (m *Manager) agentAvailableLocked() error {
 	if m.closed {
 		return closedError()
 	}
-	if err := m.store.recordsFault(); err != nil {
+	if err := m.store.DispatchError(); err != nil {
 		return &Error{Status: 503, Code: "record-storage-unavailable", Message: err.Error()}
 	}
 	if m.blocked != "" {
@@ -125,7 +126,7 @@ func (a *agentExecution) NextModel(ctx context.Context) (worker.ModelResponse, e
 	if a.run.Resume != nil && a.pending == nil {
 		var raw string
 		var record ModelRequestRecord
-		err = m.store.db.QueryRowContext(ctx, "SELECT document FROM model_requests WHERE id=? AND run_id=?", a.run.Resume.ResponseID, a.run.ID).Scan(&raw)
+		err = readView(ctx, m.store).ModelRequest(ctx, a.run.Resume.ResponseID, a.run.ID, &raw)
 		if err == nil {
 			err = json.Unmarshal([]byte(raw), &record)
 		}
@@ -197,7 +198,7 @@ inferenceLoop:
 				continue
 			}
 			if call.Name == taskHistoryTool {
-				if !continuousRun(a.run) {
+				if !hstate.ContinuousRun(a.run) {
 					return out, bad("tool-denied", "该运行不支持任务历史检索")
 				}
 				if err := a.validateVisibleProposal(record, taskHistoryTool); err != nil {
@@ -333,14 +334,14 @@ func (a *agentExecution) mustStop(err error) bool {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	execution := m.executionLocked(a.run.ID)
-	if m.storageError || execution == nil || execution.unresponsive || m.blocked != "" || m.store.recordsFault() != nil {
+	if m.storageError || execution == nil || execution.unresponsive || m.blocked != "" || m.store.DispatchError() != nil {
 		return true
 	}
 	var e *Error
 	return errors.As(err, &e) && (e.Code == "storage-unavailable" || e.Code == "invalid-agent-operation" || a.run.WorkflowID != "" && (e.Code == "workflow-budget" || e.Code == "workflow-step-budget"))
 }
 
-func (a *agentExecution) commitFinal(ctx context.Context, tx *sql.Tx, r *Run) error {
+func (a *agentExecution) commitFinal(ctx context.Context, tx sessionstore.Tx, r *Run) error {
 	if r.WorkflowID != "" {
 		if a.workflowOutput == nil || a.workflowOutput.JSON == "" || a.workflowOutput.RequestID == "" {
 			return bad("workflow-output-missing", "工作流步骤尚未确认结构化输出")
@@ -355,7 +356,7 @@ func (a *agentExecution) commitFinal(ctx context.Context, tx *sql.Tx, r *Run) er
 		r.MemoryStatus = "updated"
 	}
 	r.Phase = "completed"
-	if err := a.manager.store.finalizeAgent(ctx, tx, r, a.finalAnswer, a.finalMemory); err != nil {
+	if err := tx.FinalizeAgent(ctx, r, a.finalAnswer, a.finalMemory); err != nil {
 		return err
 	}
 	if err := recordWikiFinal(ctx, tx, *r, a.finalMemory); err != nil {
@@ -373,7 +374,7 @@ type modelOutcome struct {
 func (a *agentExecution) requestModel(ctx context.Context, purpose string, request model.Request, refs []EvidenceRef, revision int) (ModelRequestRecord, error) {
 	// token 估算优先使用官方分词器/官方 usage 校准；网络调用必须在持有 Manager.mu 之前完成，
 	// 失败与超时静默回退本地估算，不阻断推理。图片请求不参与比例反推（官方 prompt 含图片 token）。
-	request.Continuous = continuousRun(a.run)
+	request.Continuous = hstate.ContinuousRun(a.run)
 	estimate := a.estimatePromptTokens(ctx, request)
 	localPayloadBytes, localImageTokens := requestEstimateParts(request)
 	m := a.manager
@@ -384,7 +385,7 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 		m.mu.Unlock()
 		return empty, context.Canceled
 	}
-	run, err := m.store.get(context.Background(), a.run.ID)
+	run, err := readView(context.Background(), m.store).Get(context.Background(), a.run.ID)
 	if err != nil {
 		m.storageFailedLocked()
 		m.mu.Unlock()
@@ -394,7 +395,7 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 		m.mu.Unlock()
 		return empty, context.Canceled
 	}
-	if err = m.validateWikiRun(ctx, m.store.db, run.ID); err != nil {
+	if err = m.validateWikiRun(ctx, m.store, run.ID); err != nil {
 		m.mu.Unlock()
 		return empty, err
 	}
@@ -426,12 +427,12 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 		m.mu.Unlock()
 		return empty, bad("result-budget", "本轮工具结果容量已用完")
 	}
-	if !continuousRun(run) && (modelLimitReached(run, 1, a.modelRequestReserve(purpose)) || run.Usage.Tokens+estimate > run.Limits.TokenBudget || purpose == "failure-summary" && run.Usage.Tokens+estimate+request.MaxTokens > run.Limits.TokenBudget) {
+	if !hstate.ContinuousRun(run) && (modelLimitReached(run, 1, a.modelRequestReserve(purpose)) || run.Usage.Tokens+estimate > run.Limits.TokenBudget || purpose == "failure-summary" && run.Usage.Tokens+estimate+request.MaxTokens > run.Limits.TokenBudget) {
 		m.mu.Unlock()
 		return empty, bad("model-budget", "模型请求次数或 token 预算已耗尽")
 	}
 	record := ModelRequestRecord{ID: m.deps.NewID(), RunID: run.ID, Index: run.Usage.ModelRequests, Purpose: purpose, Status: StateRunning, StartedAt: stamp(m.deps.Now()), ContextRefs: refs, MemoryRevision: revision, EstimatedTokens: estimate, HistorySeq: run.HistorySeq}
-	if continuousRun(run) {
+	if hstate.ContinuousRun(run) {
 		record.LogicalID = record.ID
 		record.Attempt = 1
 		if run.Wait != nil && run.Wait.RequestID != "" {
@@ -456,7 +457,7 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 	if purpose == "inference" {
 		record.ContextItemIDs = append([]string(nil), a.contextItemIDs...)
 	}
-	_, err = m.store.change(context.Background(), run.ID, "model-intent", func(tx *sql.Tx, r *Run) error {
+	_, err = m.store.ChangeRun(context.Background(), run.ID, "model-intent", func(tx sessionstore.Tx, r *Run) error {
 		g, e := wikiGeneration(ctx, tx, r.TaskID)
 		if e != nil {
 			return e
@@ -479,7 +480,7 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 		if err := saveModelRequest(context.Background(), tx, record); err != nil {
 			return err
 		}
-		return m.store.event(context.Background(), tx, r, "model/started", "", nil, map[string]any{"modelRequestId": record.ID, "purpose": purpose})
+		return tx.Event(context.Background(), r, "model/started", "", nil, map[string]any{"modelRequestId": record.ID, "purpose": purpose})
 	})
 	if err != nil {
 		var typed *Error
@@ -518,7 +519,7 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 			}
 			resultCh <- result
 		}()
-		if result.err = m.store.waitRecords(callCtx); result.err != nil {
+		if result.err = waitRecords(m.store, callCtx); result.err != nil {
 			result.err = &Error{Status: 503, Code: "record-storage-unavailable", Message: "记录副本同步未完成，尚未发出模型请求"}
 			return
 		}
@@ -586,7 +587,7 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 		// 已确认响应的 prompt_tokens 是官方实测：反推本地字节估算比例，供后续请求与压缩边界使用。
 		a.manager.notePromptUsage(a.run.Model, localPayloadBytes, *result.response.Usage.PromptTokens)
 	}
-	if result.err == nil && purpose == "inference" && continuousRun(run) {
+	if result.err == nil && purpose == "inference" && hstate.ContinuousRun(run) {
 		for _, call := range result.response.ToolCalls {
 			if blockedProposal(run, call.Name, call.Arguments) {
 				result.err = bad("method-blocked", "该方法按相同参数已连续失败，整批未执行；请读取相关新证据或更换方法")
@@ -594,9 +595,9 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 			}
 		}
 	}
-	if result.err == nil && purpose == "inference" && evidenceRecoveryRun(run) && result.response.FinishReason == "tool_calls" {
+	if result.err == nil && purpose == "inference" && hstate.EvidenceRecoveryRun(run) && result.response.FinishReason == "tool_calls" {
 
-		if continuousRun(run) {
+		if hstate.ContinuousRun(run) {
 			if identityErr := a.validateOperationBatch(callCtx, result.response.ToolCalls); identityErr != nil {
 				var conflict *Error
 				if errors.As(identityErr, &conflict) {
@@ -649,7 +650,7 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 	if m.closed || m.storageError || m.executionLocked(run.ID) != execution {
 		return record, context.Canceled
 	}
-	_, err = m.store.change(context.Background(), run.ID, "model-result", func(tx *sql.Tx, r *Run) error {
+	_, err = m.store.ChangeRun(context.Background(), run.ID, "model-result", func(tx sessionstore.Tx, r *Run) error {
 		if r.Status != StateRunning {
 			return context.Canceled
 		}
@@ -706,7 +707,7 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 		if err := saveModelRequest(context.Background(), tx, record); err != nil {
 			return err
 		}
-		return m.store.event(context.Background(), tx, r, "model/finished", "", nil, map[string]any{"modelRequestId": record.ID, "purpose": purpose, "status": record.Status, "error": record.Error})
+		return tx.Event(context.Background(), r, "model/finished", "", nil, map[string]any{"modelRequestId": record.ID, "purpose": purpose, "status": record.Status, "error": record.Error})
 	})
 	if err != nil {
 		if !errors.Is(err, context.Canceled) {
@@ -720,13 +721,13 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 	if ctx.Err() != nil {
 		return record, ctx.Err()
 	}
-	current, readErr := m.store.get(context.Background(), run.ID)
+	current, readErr := readView(context.Background(), m.store).Get(context.Background(), run.ID)
 	if readErr != nil {
 		m.storageFailedLocked()
 		return record, storageFailure(readErr)
 	}
 	if run.WorkflowID != "" {
-		workflow, readErr := readWorkflow(context.Background(), m.store.db, run.WorkflowID)
+		workflow, readErr := readWorkflow(context.Background(), m.store, run.WorkflowID)
 		if readErr != nil {
 			m.storageFailedLocked()
 			return record, storageFailure(readErr)
@@ -734,11 +735,11 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 		if workflow.Usage.Tokens > workflow.Limits.Tokens {
 			return record, bad("workflow-budget", "模型累计 token 用量超过工作流实例预算")
 		}
-		if !continuousRun(current) && current.Usage.ActualTokens != nil && *current.Usage.ActualTokens > current.Limits.TokenBudget {
+		if !hstate.ContinuousRun(current) && current.Usage.ActualTokens != nil && *current.Usage.ActualTokens > current.Limits.TokenBudget {
 			return record, bad("workflow-step-budget", "已确认的模型 token 用量超过步骤运行预算")
 		}
 	}
-	if !continuousRun(current) && current.Usage.Tokens > current.Limits.TokenBudget && len(record.Response.ToolCalls) > 0 {
+	if !hstate.ContinuousRun(current) && current.Usage.Tokens > current.Limits.TokenBudget && len(record.Response.ToolCalls) > 0 {
 		return record, bad("model-budget", "模型累计 token 用量超过预算")
 	}
 	return record, nil

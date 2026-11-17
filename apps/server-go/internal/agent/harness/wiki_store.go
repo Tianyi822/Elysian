@@ -2,9 +2,6 @@ package harness
 
 import (
 	"context"
-	"crypto/sha256"
-	"database/sql"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"regexp"
@@ -12,17 +9,15 @@ import (
 	"strconv"
 	"strings"
 	"time"
-	"unicode"
 	"unicode/utf8"
+
+	"elysian/server/internal/agent/harness/sessionstore"
+	"elysian/server/internal/agent/harness/state"
 )
 
 var wikiSlugPattern = regexp.MustCompile(`^[a-z0-9][a-z0-9._/-]{0,127}$`)
 var wikiLinkPattern = regexp.MustCompile(`\[\[([^\]]+)\]\]`)
 
-func wikiDigest(title, markdown string) string {
-	h := sha256.Sum256([]byte(title + "\x00" + markdown))
-	return hex.EncodeToString(h[:])
-}
 func wikiNow(m *Manager) string { return stamp(m.deps.Now()) }
 func wikiValidText(s string, n int) bool {
 	return strings.TrimSpace(s) != "" && len(s) <= n && utf8.ValidString(s) && !strings.ContainsRune(s, '\x00')
@@ -78,27 +73,12 @@ func normalizeWikiInput(in WikiPageInput) WikiPageInput {
 	return in
 }
 func marshalWiki(v any) (string, error) { b, e := json.Marshal(v); return string(b), e }
-func decodeWiki(raw string, p *WikiPage) error {
-	if err := json.Unmarshal([]byte(raw), p); err != nil {
-		return err
-	}
-	if p.Evidence == nil {
-		p.Evidence = []WikiEvidence{}
-	}
-	if p.Sources == nil {
-		p.Sources = []WikiRef{}
-	}
-	if p.Links == nil {
-		p.Links = []string{}
-	}
-	return nil
-}
 
 func (m *Manager) ensureWikiSpaceLocked(ctx context.Context, id string) (WikiSpace, error) {
 	var raw string
-	err := m.store.db.QueryRowContext(ctx, "SELECT document FROM wiki_spaces WHERE id=?", id).Scan(&raw)
-	if errors.Is(err, sql.ErrNoRows) {
-		return WikiSpace{}, &Error{404, "wiki-space-not-found", "Wiki 空间不存在"}
+	err := readView(ctx, m.store).WikiSpaceRecord(ctx, id, &raw)
+	if errors.Is(err, sessionstore.ErrNotFound) {
+		return WikiSpace{}, &Error{Status: 404, Code: "wiki-space-not-found", Message: "Wiki 空间不存在"}
 	}
 	if err != nil {
 		return WikiSpace{}, err
@@ -108,24 +88,22 @@ func (m *Manager) ensureWikiSpaceLocked(ctx context.Context, id string) (WikiSpa
 	return s, err
 }
 func (m *Manager) listWikiSpacesLocked(ctx context.Context) ([]WikiSpace, error) {
-	rows, err := m.store.db.QueryContext(ctx, "SELECT document FROM wiki_spaces ORDER BY kind DESC,name,id")
+	rows, err := readView(ctx, m.store).WikiSpaces(ctx)
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
+
 	out := []WikiSpace{}
-	for rows.Next() {
+	for _, record := range rows {
 		var raw string
 		var s WikiSpace
-		if err = rows.Scan(&raw); err != nil {
-			return nil, err
-		}
+		raw = record.Document
 		if err = json.Unmarshal([]byte(raw), &s); err != nil {
 			return nil, err
 		}
 		out = append(out, s)
 	}
-	return out, rows.Err()
+	return out, nil
 }
 func (m *Manager) CreateWikiSpace(ctx context.Context, name, kind string) (WikiSpace, error) {
 	m.mu.Lock()
@@ -141,20 +119,20 @@ func (m *Manager) CreateWikiSpace(ctx context.Context, name, kind string) (WikiS
 	}
 	s := WikiSpace{ID: m.deps.NewID(), Revision: 1, Name: strings.TrimSpace(name), Kind: kind, CreatedAt: wikiNow(m)}
 	raw, _ := marshalWiki(s)
-	err := m.store.write(ctx, "wiki-space-create", func(tx *sql.Tx) error {
+	err := writeStore(m.store, ctx, "wiki-space-create", func(tx sessionstore.Tx) error {
 		if kind == "global" {
 			var n int
-			if e := tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM wiki_spaces WHERE kind='global'").Scan(&n); e != nil {
+			if e := tx.WikiSpaceCount(ctx, &n); e != nil {
 				return e
 			}
 			if n > 0 {
-				return &Error{409, "wiki-global-exists", "全局 Wiki 空间已存在"}
+				return &Error{Status: 409, Code: "wiki-global-exists", Message: "全局 Wiki 空间已存在"}
 			}
 		}
-		if _, e := tx.ExecContext(ctx, "INSERT INTO wiki_spaces(id,name,kind,document) VALUES(?,?,?,?)", s.ID, s.Name, s.Kind, raw); e != nil {
+		if _, e := tx.InsertWikiSpace(ctx, s.ID, s.Name, s.Kind, raw); e != nil {
 			return e
 		}
-		_, e := tx.ExecContext(ctx, "INSERT INTO wiki_space_revisions(id,revision,document) VALUES(?,?,?)", s.ID, s.Revision, raw)
+		_, e := tx.InsertWikiSpaceRevision(ctx, s.ID, s.Revision, raw)
 		return e
 	})
 	return s, err
@@ -171,12 +149,12 @@ func (m *Manager) SetWikiSessionSpace(ctx context.Context, sessionID, spaceID st
 	if err := m.agentWritable(); err != nil {
 		return WikiSpace{}, err
 	}
-	session, err := readSession(ctx, m.store.db, sessionID)
+	session, err := readSession(ctx, m.store, sessionID)
 	if err != nil {
 		return WikiSpace{}, err
 	}
 	if session.ActiveRunID != "" || session.ActiveWorkflowID != "" {
-		return WikiSpace{}, &Error{409, "session-busy", "会话忙碌时不能修改记忆空间"}
+		return WikiSpace{}, &Error{Status: 409, Code: "session-busy", Message: "会话忙碌时不能修改记忆空间"}
 	}
 	var s WikiSpace
 	if spaceID != "" {
@@ -190,8 +168,8 @@ func (m *Manager) SetWikiSessionSpace(ctx context.Context, sessionID, spaceID st
 		IncludeGlobal bool   `json:"includeGlobal"`
 	}{spaceID, includeGlobal}
 	raw, _ := marshalWiki(doc)
-	err = m.store.write(ctx, "wiki-session-space", func(tx *sql.Tx) error {
-		if _, e := tx.ExecContext(ctx, "INSERT INTO wiki_session_spaces(session_id,document) VALUES(?,?) ON CONFLICT(session_id) DO UPDATE SET document=excluded.document", sessionID, raw); e != nil {
+	err = writeStore(m.store, ctx, "wiki-session-space", func(tx sessionstore.Tx) error {
+		if _, e := tx.SaveWikiSessionSelection(ctx, sessionID, raw); e != nil {
 			return e
 		}
 		session.LastActivityAt = wikiNow(m)
@@ -201,8 +179,8 @@ func (m *Manager) SetWikiSessionSpace(ctx context.Context, sessionID, spaceID st
 }
 func (m *Manager) wikiSessionSpacesLocked(ctx context.Context, sessionID string) ([]string, error) {
 	var raw string
-	err := m.store.db.QueryRowContext(ctx, "SELECT document FROM wiki_session_spaces WHERE session_id=?", sessionID).Scan(&raw)
-	if errors.Is(err, sql.ErrNoRows) {
+	err := readView(ctx, m.store).WikiSessionSelection(ctx, sessionID, &raw)
+	if errors.Is(err, sessionstore.ErrNotFound) {
 		return []string{}, nil
 	}
 	if err != nil {
@@ -221,7 +199,7 @@ func (m *Manager) wikiSessionSpacesLocked(ctx context.Context, sessionID string)
 	}
 	if d.IncludeGlobal {
 		var g string
-		if e := m.store.db.QueryRowContext(ctx, "SELECT id FROM wiki_spaces WHERE kind='global'").Scan(&g); e == nil {
+		if e := readView(ctx, m.store).DefaultWikiSpace(ctx, &g); e == nil {
 			ids = append(ids, g)
 		}
 	}
@@ -243,7 +221,7 @@ func (m *Manager) createWikiPageLocked(ctx context.Context, spaceID string, in W
 	if in.Kind == "observation" && in.ExpiresAt == "" {
 		in.ExpiresAt = stamp(m.deps.Now().Add(30 * 24 * time.Hour))
 	}
-	p := WikiPage{ID: m.deps.NewID(), SpaceID: spaceID, Slug: in.Slug, Revision: 1, Title: in.Title, Markdown: in.Markdown, Kind: in.Kind, Status: "active", Digest: wikiDigest(in.Title, in.Markdown), CreatedAt: now, UpdatedAt: now, ExpiresAt: in.ExpiresAt, Evidence: in.Evidence, Sources: in.Sources, Links: wikiLinks(in.Markdown)}
+	p := WikiPage{ID: m.deps.NewID(), SpaceID: spaceID, Slug: in.Slug, Revision: 1, Title: in.Title, Markdown: in.Markdown, Kind: in.Kind, Status: "active", Digest: state.WikiDigest(in.Title, in.Markdown), CreatedAt: now, UpdatedAt: now, ExpiresAt: in.ExpiresAt, Evidence: in.Evidence, Sources: in.Sources, Links: wikiLinks(in.Markdown)}
 	p.Maintenance = in.Maintenance
 	p.Tags, p.Aliases = in.Tags, in.Aliases
 	if p.Evidence == nil {
@@ -255,7 +233,7 @@ func (m *Manager) createWikiPageLocked(ctx context.Context, spaceID string, in W
 	if p.Links == nil {
 		p.Links = []string{}
 	}
-	err := m.store.write(ctx, "wiki-page-create", func(tx *sql.Tx) error {
+	err := writeStore(m.store, ctx, "wiki-page-create", func(tx sessionstore.Tx) error {
 		return publishWikiPage(ctx, tx, &p, 0)
 	})
 	return p, err
@@ -281,15 +259,15 @@ func (m *Manager) CreateWikiPage(ctx context.Context, spaceID string, in WikiPag
 }
 func (m *Manager) getWikiPageLocked(ctx context.Context, id string) (WikiPage, error) {
 	var raw string
-	err := m.store.db.QueryRowContext(ctx, "SELECT document FROM wiki_pages WHERE id=?", id).Scan(&raw)
-	if errors.Is(err, sql.ErrNoRows) {
-		return WikiPage{}, &Error{404, "wiki-page-not-found", "Wiki 页面不存在"}
+	err := readView(ctx, m.store).WikiPageRecord(ctx, id, &raw)
+	if errors.Is(err, sessionstore.ErrNotFound) {
+		return WikiPage{}, &Error{Status: 404, Code: "wiki-page-not-found", Message: "Wiki 页面不存在"}
 	}
 	if err != nil {
 		return WikiPage{}, err
 	}
 	var p WikiPage
-	if err := decodeWiki(raw, &p); err != nil {
+	if err := state.DecodeWiki(raw, &p); err != nil {
 		return p, err
 	}
 	err = m.markWikiEvidence(ctx, &p)
@@ -301,31 +279,7 @@ func (m *Manager) GetWikiPage(ctx context.Context, id string) (WikiPage, error) 
 	return m.getWikiPageLocked(ctx, id)
 }
 func (m *Manager) listWikiPagesLocked(ctx context.Context, spaceID string, includeWithdrawn bool) ([]WikiPage, error) {
-	q := `SELECT document FROM wiki_pages WHERE (?='' OR space_id=?)`
-	args := []any{spaceID, spaceID}
-	if !includeWithdrawn {
-		q += ` AND status<>'withdrawn'`
-	}
-	q += ` ORDER BY rowid DESC`
-	rows, err := m.store.db.QueryContext(ctx, q, args...)
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []WikiPage{}
-	for rows.Next() {
-		var raw string
-		var p WikiPage
-		if err = rows.Scan(&raw); err != nil {
-			return nil, err
-		}
-		if err = decodeWiki(raw, &p); err != nil {
-			return nil, err
-		}
-		out = append(out, p)
-	}
-	err = rows.Err()
-	rows.Close()
+	out, err := readView(ctx, m.store).ListWikiPages(ctx, spaceID, includeWithdrawn)
 	if err != nil {
 		return out, err
 	}
@@ -351,10 +305,10 @@ func (m *Manager) updateWikiPageLocked(ctx context.Context, id string, in WikiPa
 		return old, err
 	}
 	if old.Kind == "sources" && status != "withdrawn" {
-		return old, &Error{409, "wiki-source-immutable", "导入原文不可改写；请导入新的来源"}
+		return old, &Error{Status: 409, Code: "wiki-source-immutable", Message: "导入原文不可改写；请导入新的来源"}
 	}
 	if in.ExpectedRevision != old.Revision {
-		return old, &Error{409, "revision-conflict", "Wiki 页面版本已变化，请重新读取"}
+		return old, &Error{Status: 409, Code: "revision-conflict", Message: "Wiki 页面版本已变化，请重新读取"}
 	}
 	if err = validateWikiInput(in); err != nil {
 		return old, err
@@ -365,7 +319,7 @@ func (m *Manager) updateWikiPageLocked(ctx context.Context, id string, in WikiPa
 	p.Markdown = in.Markdown
 	p.Kind = in.Kind
 	p.Status = status
-	p.Digest = wikiDigest(p.Title, p.Markdown)
+	p.Digest = state.WikiDigest(p.Title, p.Markdown)
 	p.UpdatedAt = wikiNow(m)
 	p.ExpiresAt = in.ExpiresAt
 	if p.Kind == "observation" && p.ExpiresAt == "" {
@@ -381,7 +335,7 @@ func (m *Manager) updateWikiPageLocked(ctx context.Context, id string, in WikiPa
 	} else {
 		p.WithdrawnAt = ""
 	}
-	err = m.store.write(ctx, "wiki-page-revision", func(tx *sql.Tx) error {
+	err = writeStore(m.store, ctx, "wiki-page-revision", func(tx sessionstore.Tx) error {
 		if e := publishWikiPage(ctx, tx, &p, old.Revision); e != nil {
 			return e
 		}
@@ -412,43 +366,8 @@ func (m *Manager) WithdrawWikiPage(ctx context.Context, id string, expected int)
 	return m.updateWikiPageLocked(ctx, id, in, "withdrawn")
 }
 
-func wikiTokens(s string) map[string]int {
-	out := map[string]int{}
-	var word, han []rune
-	flushWord := func() {
-		if len(word) != 0 {
-			out[string(word)]++
-			word = nil
-		}
-	}
-	flushHan := func() {
-		if len(han) == 1 {
-			out[string(han)]++
-		}
-		for i := 0; i+1 < len(han); i++ {
-			out[string(han[i:i+2])]++
-		}
-		han = nil
-	}
-	for _, r := range strings.ToLower(s) {
-		switch {
-		case unicode.Is(unicode.Han, r):
-			flushWord()
-			han = append(han, r)
-		case unicode.IsLetter(r) || unicode.IsDigit(r):
-			flushHan()
-			word = append(word, r)
-		default:
-			flushWord()
-			flushHan()
-		}
-	}
-	flushWord()
-	flushHan()
-	return out
-}
 func wikiTextScore(q, p string) float64 {
-	a, b := wikiTokens(q), wikiTokens(p)
+	a, b := state.WikiTokens(q), state.WikiTokens(p)
 	if len(a) == 0 {
 		return 0
 	}
@@ -460,9 +379,7 @@ func wikiTextScore(q, p string) float64 {
 	}
 	return score / float64(len(a))
 }
-func wikiSearchText(p WikiPage) string {
-	return p.Title + "\n" + p.Slug + "\n" + strings.Join(p.Tags, " ") + "\n" + strings.Join(p.Aliases, " ") + "\n" + p.Markdown
-}
+
 func (m *Manager) wikiSearchLocked(ctx context.Context, spaceID, q string, limit int) (WikiSearchResult, error) {
 	if limit < 1 || limit > 100 {
 		limit = 8
@@ -487,7 +404,7 @@ func (m *Manager) wikiSearchLocked(ctx context.Context, spaceID, q string, limit
 				continue
 			}
 		}
-		if err := validateWikiSources(ctx, m.store.db, []WikiRef{{p.ID, p.Revision, p.Digest}}); err != nil {
+		if err := validateWikiSources(ctx, m.store, []WikiRef{{PageID: p.ID, Revision: p.Revision, Digest: p.Digest}}); err != nil {
 			var invalid *Error
 			if errors.As(err, &invalid) && invalid.Code == "wiki-source-withdrawn" {
 				continue
@@ -498,7 +415,7 @@ func (m *Manager) wikiSearchLocked(ctx context.Context, spaceID, q string, limit
 		if !matches[p.ID] {
 			continue
 		}
-		score := wikiTextScore(q, wikiSearchText(p))
+		score := wikiTextScore(q, state.WikiSearchText(p))
 		if score > 0 {
 			out.Items = append(out.Items, WikiSearchHit{Page: p, Score: score, Method: "sqlite-text"})
 		}
@@ -565,7 +482,7 @@ func (m *Manager) WikiCheck(ctx context.Context, spaceID string) (WikiCheck, err
 		}
 		for _, s := range p.Sources {
 			var digest string
-			if e := m.store.db.QueryRowContext(ctx, "SELECT digest FROM wiki_page_revisions WHERE page_id=? AND revision=?", s.PageID, s.Revision).Scan(&digest); e != nil || digest != s.Digest {
+			if e := readView(ctx, m.store).WikiRevisionDigest(ctx, s.PageID, s.Revision, &digest); e != nil || digest != s.Digest {
 				out.InvalidSources = append(out.InvalidSources, p.Slug+" -> "+s.PageID+":"+strconv.Itoa(s.Revision))
 			}
 		}
@@ -589,7 +506,7 @@ func (m *Manager) ExportWiki(ctx context.Context, spaceID string) (WikiExport, e
 		files["pages/"+p.ID+".md"] = "# " + p.Title + "\n\n" + p.Markdown + "\n"
 		index.WriteString("- [[" + p.ID + "]] " + p.Title + " (revision " + strconv.Itoa(p.Revision) + ", " + p.Status + ")\n")
 		sources[p.ID] = p.Evidence
-		revs, e := readDocuments[WikiPage](ctx, m.store.db, "SELECT document FROM wiki_page_revisions WHERE page_id=? ORDER BY revision", p.ID)
+		revs, e := readView(ctx, m.store).WikiExportPages(ctx, p.ID)
 		if e != nil {
 			return WikiExport{}, e
 		}
@@ -642,10 +559,10 @@ func (m *Manager) ImportWiki(ctx context.Context, spaceID string, files map[stri
 		c := WikiCandidate{ID: m.deps.NewID(), SpaceID: spaceID, Status: "pending", OriginKind: "markdown-import", OriginID: name, CreatedAt: wikiNow(m), Page: in}
 		out = append(out, c)
 	}
-	err := m.store.write(ctx, "wiki-import-candidate", func(tx *sql.Tx) error {
+	err := writeStore(m.store, ctx, "wiki-import-candidate", func(tx sessionstore.Tx) error {
 		for _, c := range out {
 			raw, _ := marshalWiki(c)
-			_, e := tx.ExecContext(ctx, "INSERT INTO wiki_candidates(id,space_id,state,origin_kind,origin_id,document) VALUES(?,?,?,?,?,?)", c.ID, c.SpaceID, c.Status, c.OriginKind, c.OriginID, raw)
+			_, e := tx.InsertWikiCandidate(ctx, c.ID, c.SpaceID, c.Status, c.OriginKind, c.OriginID, raw)
 			if e != nil {
 				return e
 			}
@@ -657,35 +574,9 @@ func (m *Manager) ImportWiki(ctx context.Context, spaceID string, files map[stri
 func (m *Manager) ListWikiCandidates(ctx context.Context, spaceID, status string) ([]WikiCandidate, error) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	q := `SELECT document FROM wiki_candidates WHERE (?='' OR space_id=?)`
-	args := []any{spaceID, spaceID}
-	if status != "" {
-		q += ` AND state=?`
-		args = append(args, status)
-	}
-	q += ` ORDER BY rowid DESC`
-	rows, err := m.store.db.QueryContext(ctx, q, args...)
+	out, err := readView(ctx, m.store).ListWikiCandidates(ctx, spaceID, status)
 	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	out := []WikiCandidate{}
-	for rows.Next() {
-		var raw string
-		var c WikiCandidate
-		if err = rows.Scan(&raw); err != nil {
-			return nil, err
-		}
-		if err = json.Unmarshal([]byte(raw), &c); err != nil {
-			return nil, err
-		}
-		out = append(out, c)
-	}
-	if err = rows.Err(); err != nil {
-		return nil, err
-	}
-	if err = rows.Close(); err != nil {
-		return nil, err
+		return out, err
 	}
 	for i := range out {
 		out[i].CurrentPage = nil
@@ -712,9 +603,9 @@ func (m *Manager) DecideWikiCandidate(ctx context.Context, id, decision string, 
 		return WikiCandidate{}, bad("invalid-revision", "确认修订必须为非负整数")
 	}
 	var raw string
-	err := m.store.db.QueryRowContext(ctx, "SELECT document FROM wiki_candidates WHERE id=?", id).Scan(&raw)
-	if errors.Is(err, sql.ErrNoRows) {
-		return WikiCandidate{}, &Error{404, "wiki-candidate-not-found", "Wiki 候选不存在"}
+	err := readView(ctx, m.store).WikiCandidateRecord(ctx, id, &raw)
+	if errors.Is(err, sessionstore.ErrNotFound) {
+		return WikiCandidate{}, &Error{Status: 404, Code: "wiki-candidate-not-found", Message: "Wiki 候选不存在"}
 	}
 	if err != nil {
 		return WikiCandidate{}, err
@@ -728,16 +619,16 @@ func (m *Manager) DecideWikiCandidate(ctx context.Context, id, decision string, 
 		if c.Status == decision {
 			return c, nil
 		}
-		return c, &Error{409, "wiki-candidate-decided", "Wiki 候选已处理"}
+		return c, &Error{Status: 409, Code: "wiki-candidate-decided", Message: "Wiki 候选已处理"}
 	}
-	err = m.store.write(ctx, "wiki-candidate-decision", func(tx *sql.Tx) error {
+	err = writeStore(m.store, ctx, "wiki-candidate-decision", func(tx sessionstore.Tx) error {
 		if decision == "approved" {
 			invalid, err := wikiArtifactInvalid(ctx, tx, "candidate", c.ID)
 			if err != nil {
 				return err
 			}
 			if invalid {
-				return &Error{409, "wiki-source-withdrawn", "候选来源已撤回，不能发布"}
+				return &Error{Status: 409, Code: "wiki-source-withdrawn", Message: "候选来源已撤回，不能发布"}
 			}
 			in := normalizeWikiInput(c.Page)
 			if len(revisions) == 1 {
@@ -750,33 +641,33 @@ func (m *Manager) DecideWikiCandidate(ctx context.Context, id, decision string, 
 			if in.Kind == "observation" && in.ExpiresAt == "" {
 				in.ExpiresAt = stamp(m.deps.Now().Add(30 * 24 * time.Hour))
 			}
-			p := WikiPage{ID: c.PageID, SpaceID: c.SpaceID, Slug: in.Slug, Revision: in.ExpectedRevision + 1, Title: in.Title, Markdown: in.Markdown, Kind: in.Kind, Status: "active", Digest: wikiDigest(in.Title, in.Markdown), CreatedAt: now, UpdatedAt: now, ExpiresAt: in.ExpiresAt, Evidence: in.Evidence, Sources: in.Sources, Links: wikiLinks(in.Markdown)}
+			p := WikiPage{ID: c.PageID, SpaceID: c.SpaceID, Slug: in.Slug, Revision: in.ExpectedRevision + 1, Title: in.Title, Markdown: in.Markdown, Kind: in.Kind, Status: "active", Digest: state.WikiDigest(in.Title, in.Markdown), CreatedAt: now, UpdatedAt: now, ExpiresAt: in.ExpiresAt, Evidence: in.Evidence, Sources: in.Sources, Links: wikiLinks(in.Markdown)}
 			p.Maintenance = in.Maintenance
 			p.Tags, p.Aliases = in.Tags, in.Aliases
 			if c.PageID == "" {
 				if in.ExpectedRevision != 0 {
-					return &Error{409, "revision-conflict", "新增页面基准 revision 必须为零"}
+					return &Error{Status: 409, Code: "revision-conflict", Message: "新增页面基准 revision 必须为零"}
 				}
 				p.ID = m.deps.NewID()
 			} else {
 				var oldRaw string
-				if e := tx.QueryRowContext(ctx, "SELECT document FROM wiki_pages WHERE id=? AND space_id=?", c.PageID, c.SpaceID).Scan(&oldRaw); e != nil {
+				if e := tx.WikiPageBySlug(ctx, c.PageID, c.SpaceID, &oldRaw); e != nil {
 					return e
 				}
 				var old WikiPage
-				if e := decodeWiki(oldRaw, &old); e != nil {
+				if e := state.DecodeWiki(oldRaw, &old); e != nil {
 					return e
 				}
 				if old.Status != "active" || old.Kind == "sources" {
-					return &Error{409, "wiki-page-protected", "来源原文或已撤回页面不能通过候选覆盖"}
+					return &Error{Status: 409, Code: "wiki-page-protected", Message: "来源原文或已撤回页面不能通过候选覆盖"}
 				}
 				if old.Revision != in.ExpectedRevision {
-					return &Error{409, "revision-conflict", "Wiki 页面版本已变化，请重新读取并复核"}
+					return &Error{Status: 409, Code: "revision-conflict", Message: "Wiki 页面版本已变化，请重新读取并复核"}
 				}
-				if e := validateWikiSources(ctx, tx, mergeWikiRefs(old.Sources, []WikiRef{{old.ID, old.Revision, old.Digest}})); e != nil {
+				if e := validateWikiSources(ctx, tx, state.MergeWikiRefs(old.Sources, []WikiRef{{PageID: old.ID, Revision: old.Revision, Digest: old.Digest}})); e != nil {
 					return e
 				}
-				p.Sources = mergeWikiRefs(p.Sources, old.Sources)
+				p.Sources = state.MergeWikiRefs(p.Sources, old.Sources)
 				p.CreatedAt = old.CreatedAt
 				p.Slug = old.Slug
 			}
@@ -789,27 +680,8 @@ func (m *Manager) DecideWikiCandidate(ctx context.Context, id, decision string, 
 		c.Status = decision
 		c.DecidedAt = wikiNow(m)
 		doc, _ := marshalWiki(c)
-		_, e := tx.ExecContext(ctx, "UPDATE wiki_candidates SET state=?,document=? WHERE id=?", c.Status, doc, c.ID)
+		_, e := tx.UpdateWikiCandidate(ctx, c.Status, doc, c.ID)
 		return e
 	})
 	return c, err
-}
-
-// validateWikiRun is called at model/approval/dispatch/finish boundaries. Any
-// invalidated source freezes the run before a new side effect can start.
-func (m *Manager) validateWikiRun(ctx context.Context, q interface {
-	QueryRowContext(context.Context, string, ...any) *sql.Row
-}, runID string) error {
-	var generation, invalidated int
-	err := q.QueryRowContext(ctx, "SELECT generation,invalidated FROM wiki_artifacts WHERE kind='run' AND id=?", runID).Scan(&generation, &invalidated)
-	if errors.Is(err, sql.ErrNoRows) {
-		return nil
-	}
-	if err != nil {
-		return err
-	}
-	if invalidated != 0 {
-		return &Error{409, "wiki-context-invalidated", "运行引用的 Wiki 页面已撤回，请重新开始任务"}
-	}
-	return nil
 }

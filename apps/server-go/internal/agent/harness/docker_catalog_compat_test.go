@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/tools"
 )
 
@@ -32,7 +33,7 @@ func dockerLegacyOperation(schema tools.PublicSchema) Operation {
 	}
 	return Operation{ArgumentsJSON: arguments, Capability: Capability{
 		Name: legacy.Name, Description: legacy.Description, Source: "builtin", ReadOnly: legacy.Metadata.ReadOnly,
-		Metadata: legacy.Metadata, Parameters: parameters, CatalogDigest: digestJSON(legacy),
+		Metadata: legacy.Metadata, Parameters: parameters, CatalogDigest: hstate.DigestJSON(legacy),
 	}}
 }
 
@@ -47,11 +48,11 @@ func TestDockerContainerCatalogCompatibilityOnlyAcceptsFrozenVersionChange(t *te
 		}
 		t.Run(schema.Name, func(t *testing.T) {
 			operation := dockerLegacyOperation(schema)
-			beforeOperation, beforeSchema := digestJSON(operation), digestJSON(schema)
+			beforeOperation, beforeSchema := hstate.DigestJSON(operation), hstate.DigestJSON(schema)
 			if !legacyDockerContainerCatalogCompatible(operation, schema) {
 				t.Fatal("约定的版本元数据升级应允许旧快照恢复")
 			}
-			if digestJSON(operation) != beforeOperation || digestJSON(schema) != beforeSchema {
+			if hstate.DigestJSON(operation) != beforeOperation || hstate.DigestJSON(schema) != beforeSchema {
 				t.Fatal("兼容核验改写了冻结快照或当前目录")
 			}
 			for _, mutation := range []string{"source", "digest", "description", "metadata", "parameters", "arguments", "readonly"} {
@@ -64,7 +65,7 @@ func TestDockerContainerCatalogCompatibilityOnlyAcceptsFrozenVersionChange(t *te
 					case "source":
 						operation.Capability.Source = "mcp-tool"
 					case "digest":
-						operation.Capability.CatalogDigest = digestJSON(current)
+						operation.Capability.CatalogDigest = hstate.DigestJSON(current)
 					case "description":
 						current.Description += " changed"
 					case "metadata":
@@ -94,7 +95,7 @@ func TestDockerExecFrozenV1SchemaSurvivesReceiptDocumentationUpdate(t *testing.T
 	text := tools.Schema{Type: tools.SchemaString}
 	old := tools.PublicSchema{Name: "docker_container_exec", Description: "在精确受管容器中执行argv命令，或通过databaseChange同步创建/删除受管逻辑库及登记；两者互斥。受管数据库禁止任意argv，先inspect取得revision。密码由后端处理，不传入参数。requestId精确重试复用。Redis remove仅清空DB0并保留登记。异步等待由系统监视器完成。", Parameters: tools.Schema{Type: tools.SchemaObject, Required: []string{"id", "requestId"}, Properties: map[string]tools.Schema{"id": text, "requestId": text, "argv": {Type: tools.SchemaArray, Items: &text}, "workdir": text, "databaseChange": {Type: tools.SchemaObject, Required: []string{"action", "name", "expectedRevision"}, Properties: map[string]tools.Schema{"action": {Type: tools.SchemaString, Enum: tools.EnumOf("create", "remove")}, "name": text, "expectedRevision": text, "charset": text}}}}.JSONSchema(), Metadata: tools.Metadata{Domain: "docker", Backend: "domain", Action: "exec", Effect: "execute", Exposure: "agent", ResourceType: "docker-container", ResourceKeyArgument: "id", Version: "1", Async: true, TaskDomain: "docker-container-operation", TaskRequestArgument: "requestId"}}
 	parameters, _ := json.Marshal(old.Parameters)
-	op := Operation{ArgumentsJSON: `{"id":"` + strings.Repeat("c", 64) + `","requestId":"` + strings.Repeat("a", 64) + `","argv":["true"]}`, Capability: Capability{Name: old.Name, Description: old.Description, Source: "builtin", Metadata: old.Metadata, Parameters: parameters, CatalogDigest: digestJSON(old)}}
+	op := Operation{ArgumentsJSON: `{"id":"` + strings.Repeat("c", 64) + `","requestId":"` + strings.Repeat("a", 64) + `","argv":["true"]}`, Capability: Capability{Name: old.Name, Description: old.Description, Source: "builtin", Metadata: old.Metadata, Parameters: parameters, CatalogDigest: hstate.DigestJSON(old)}}
 	bridge, _ := dockerCatalogBridge(t)
 	for _, schema := range bridge.Schemas() {
 		if schema.Name == old.Name {

@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"elysian/server/internal/agent/harness/model"
+	"elysian/server/internal/agent/harness/sessionstore"
 	"elysian/server/internal/agent/harness/worker"
 	"elysian/server/internal/agent/harness/workspace"
 	"elysian/server/internal/agent/jsonvalue"
@@ -117,15 +118,16 @@ func operationClient() agentTestClient {
 func reopenOperationManager(t *testing.T, m *Manager) *Manager {
 	t.Helper()
 	d := m.deps
-	if err := m.Close(context.Background()); err != nil {
+	if err := closeFixtureManager(m); err != nil {
 		t.Fatal(err)
 	}
-	next, err := New(d)
+	d.Store = mustFixtureStore(t, fixture(m).path)
+	next, err := newFixtureManager(t, d)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Cleanup(func() {
-		if err := next.Close(context.Background()); err != nil {
+		if err := closeFixtureManager(next, context.Background()); err != nil {
 			t.Error(err)
 		}
 	})
@@ -271,15 +273,15 @@ func TestOperationPendingAndApprovedSurviveRestart(t *testing.T) {
 				}
 			}
 			d := m.deps
-			if err := m.Close(context.Background()); err != nil {
+			if err := closeFixtureManager(m); err != nil {
 				t.Fatal(err)
 			}
 			d.DispatchGuard = nil
-			m, err := New(d)
+			m, err := newFixtureManager(t, d)
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(func() { _ = m.Close(context.Background()) })
+			t.Cleanup(func() { _ = closeFixtureManager(m, context.Background()) })
 			if !approved {
 				a = waitingApproval(t, m, run.ID)
 				if _, err = m.Decide(context.Background(), a.ID, "approved"); err != nil {
@@ -313,10 +315,9 @@ func TestOperationDenyCancelExpireAndRevoke(t *testing.T) {
 				_, err = m.Cancel(ctx, run.ID)
 			case "expire":
 				m.mu.Lock()
-				err = m.store.write(ctx, "expire-fixture", func(tx *sql.Tx) error {
+				err = fixture(m).write(ctx, "expire-fixture", func(tx sessionstore.Tx) error {
 					a.ExpiresAt = stamp(time.Now().Add(-time.Hour))
-					raw, _ := json.Marshal(a)
-					_, e := tx.ExecContext(ctx, "UPDATE approvals SET expires_at=?,document=? WHERE id=?", a.ExpiresAt, string(raw), a.ID)
+					e := tx.SaveApproval(ctx, a)
 					return e
 				})
 				m.mu.Unlock()
@@ -364,8 +365,8 @@ func TestOperationUnknownBarrierPersistsAndReconciliationDoesNotRewriteResult(t 
 	runtimeEventually(t, func() bool { r, _ := m.Get(ctx, run.ID); return r.Status == StateWaitingRecovery })
 	// 核实通道缺失也必须有界中断；模拟持久截止到期，避免真实等待两分钟。
 	m.mu.Lock()
-	err := m.store.write(ctx, "expire-recovery-test", func(tx *sql.Tx) error {
-		ops, err := readDocuments[Operation](ctx, tx, "SELECT document FROM operations WHERE run_id=?", run.ID)
+	err := fixture(m).write(ctx, "expire-recovery-test", func(tx sessionstore.Tx) error {
+		ops, err := tx.Operations(ctx, run.ID)
 		if err != nil {
 			return err
 		}
@@ -458,7 +459,7 @@ func TestOperationResultStorageFailureLeavesRestartBarrier(t *testing.T) {
 	run := submitAgentTest(t, m, s, "disk-failure-write", "执行写操作")
 	a := waitingApproval(t, m, run.ID)
 	m.mu.Lock()
-	m.store.beforeWrite = func(op string) error {
+	fixture(m).beforeWrite = func(op string) error {
 		if op == "operation-result" {
 			return errors.New("注入磁盘故障")
 		}
@@ -575,7 +576,7 @@ func TestOperationWorkspaceCannotCommitAnotherTask(t *testing.T) {
 	}
 	m.mu.Lock()
 	var count int
-	err = m.store.db.QueryRow("SELECT count(*) FROM workspace_versions").Scan(&count)
+	err = fixture(m).db.QueryRow("SELECT count(*) FROM workspace_versions").Scan(&count)
 	m.mu.Unlock()
 	if err != nil || count != 0 {
 		t.Fatalf("错误结果推进了工作区：%d %v", count, err)

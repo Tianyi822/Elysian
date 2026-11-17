@@ -2,13 +2,13 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"path/filepath"
 	"strconv"
 	"strings"
 	"testing"
 
+	"elysian/server/internal/agent/harness/sessionstore"
 	"elysian/server/internal/agent/harness/workspace"
 )
 
@@ -45,7 +45,7 @@ func TestWorkflowV2WikiSourcesSurviveForkJoinAndFenceRecovery(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	refs := []WikiRef{{page.ID, page.Revision, page.Digest}}
+	refs := []WikiRef{{PageID: page.ID, Revision: page.Revision, Digest: page.Digest}}
 	d := workflowV2WikiDefinition()
 	for i := range d.Steps[1].Parallel.Branches {
 		d.Steps[1].Parallel.Branches[i].Body.Steps[0].Capability = "test_write"
@@ -58,7 +58,7 @@ func TestWorkflowV2WikiSourcesSurviveForkJoinAndFenceRecovery(t *testing.T) {
 		t.Fatal(err)
 	}
 	m.mu.Lock()
-	err = m.store.write(ctx, "wiki-workflow-parent-fixture", func(tx *sql.Tx) error {
+	err = fixture(m).write(ctx, "wiki-workflow-parent-fixture", func(tx sessionstore.Tx) error {
 		if err := commitWorkspaceVersion(ctx, tx, base); err != nil {
 			return err
 		}
@@ -110,7 +110,7 @@ func TestWorkflowV2WikiSourcesSurviveForkJoinAndFenceRecovery(t *testing.T) {
 	verify := waitingApproval(t, m, w.ActiveRunID)
 	m.mu.Lock()
 	var joined workspace.Version
-	err = m.store.write(ctx, "wiki-workflow-assert", func(tx *sql.Tx) error {
+	err = fixture(m).write(ctx, "wiki-workflow-assert", func(tx sessionstore.Tx) error {
 		artifacts := []workflowWikiArtifact{{"run", w.ActiveRunID}}
 		for _, scope := range w.ExecutionTree.Scopes {
 			if scope.ParentNodeID == "" {
@@ -196,11 +196,11 @@ func TestWorkflowV2WikiWithdrawalFencesReadyCompositeWithoutRun(t *testing.T) {
 	w := createWorkflowV2Test(t, m, source, workflowV2WikiDefinition(), `{"left":{},"right":{}}`)
 	w = workflowWait(t, m, w.ID, StateWaitingApproval)
 	m.mu.Lock()
-	err = m.store.write(ctx, "wiki-workflow-gap-fixture", func(tx *sql.Tx) error {
+	err = fixture(m).write(ctx, "wiki-workflow-gap-fixture", func(tx sessionstore.Tx) error {
 		if err := saveWorkingMemory(ctx, tx, WorkingMemory{TaskID: w.TaskID, Revision: 1}); err != nil {
 			return err
 		}
-		if err := saveWorkflowWikiArtifact(ctx, tx, "memory", w.TaskID+":1", w.TaskID, []WikiRef{{page.ID, page.Revision, page.Digest}}); err != nil {
+		if err := saveWorkflowWikiArtifact(ctx, tx, "memory", w.TaskID+":1", w.TaskID, []WikiRef{{PageID: page.ID, Revision: page.Revision, Digest: page.Digest}}); err != nil {
 			return err
 		}
 		r, err := readRun(ctx, tx, w.ActiveRunID)
@@ -211,7 +211,7 @@ func TestWorkflowV2WikiWithdrawalFencesReadyCompositeWithoutRun(t *testing.T) {
 		if err = saveRun(ctx, tx, &r); err != nil {
 			return err
 		}
-		if err = m.store.finishWorkflowV2Run(ctx, tx, &r); err != nil {
+		if err = fixture(m).finishWorkflowV2Run(ctx, tx, &r); err != nil {
 			return err
 		}
 		return m.withdrawWikiSourcesTx(ctx, tx, page.ID)

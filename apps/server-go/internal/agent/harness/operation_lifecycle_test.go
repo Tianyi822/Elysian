@@ -27,11 +27,11 @@ func TestOperationApprovesAndLocksBeforeStartingCatalogueCheck(t *testing.T) {
 		checks.Add(1)
 		m.mu.Lock()
 		defer m.mu.Unlock()
-		leases, err := readDocuments[ResourceLease](ctx, m.store.db, "SELECT document FROM resource_leases WHERE operation_id=?", o.ID)
+		leases, err := readDocuments[ResourceLease](ctx, fixture(m).db, "SELECT document FROM resource_leases WHERE operation_id=?", o.ID)
 		if err != nil || len(leases) != 1 || leases[0].State != "held" {
 			t.Errorf("catalogue process started without held lifecycle lease: %+v %v", leases, err)
 		}
-		approvals, err := readDocuments[Approval](ctx, m.store.db, "SELECT document FROM approvals WHERE id=?", o.ApprovalID)
+		approvals, err := readDocuments[Approval](ctx, fixture(m).db, "SELECT document FROM approvals WHERE id=?", o.ApprovalID)
 		if err != nil || len(approvals) != 1 || approvals[0].Status != "consumed" {
 			t.Errorf("catalogue process started before approval consumption: %+v %v", approvals, err)
 		}

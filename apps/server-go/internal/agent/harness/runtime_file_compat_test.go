@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/tools"
 )
 
@@ -18,7 +19,7 @@ func legacyFileCatalogFixture(t *testing.T) (CapabilitySnapshot, Operation, tool
 	if err != nil {
 		t.Fatal(err)
 	}
-	operation := Operation{ArgumentsJSON: `{"root":"/var/www/project","path":"text.txt"}`, Capability: Capability{Name: old.Name, Description: old.Description, Parameters: raw, Metadata: metadata, ReadOnly: true, Source: "builtin", CatalogDigest: digestJSON(old)}}
+	operation := Operation{ArgumentsJSON: `{"root":"/var/www/project","path":"text.txt"}`, Capability: Capability{Name: old.Name, Description: old.Description, Parameters: raw, Metadata: metadata, ReadOnly: true, Source: "builtin", CatalogDigest: hstate.DigestJSON(old)}}
 	parameters.Properties["root"] = tools.Schema{Type: tools.SchemaString}
 	current := tools.PublicSchema{Name: old.Name, Description: old.Description, Parameters: parameters.JSONSchema(), Metadata: metadata}
 	return CapabilitySnapshot{}, operation, current
@@ -26,11 +27,11 @@ func legacyFileCatalogFixture(t *testing.T) (CapabilitySnapshot, Operation, tool
 
 func TestLegacyFileCatalogCompatibilityOnlyRemovesRootEnum(t *testing.T) {
 	snapshot, operation, current := legacyFileCatalogFixture(t)
-	before := digestJSON(operation)
+	before := hstate.DigestJSON(operation)
 	if !legacyFileCatalogCompatible(snapshot, operation, current) {
 		t.Fatal("legacy file catalog was rejected for the root-enum-only change")
 	}
-	if digestJSON(operation) != before {
+	if hstate.DigestJSON(operation) != before {
 		t.Fatal("compatibility check modified the frozen operation")
 	}
 	for _, name := range []string{"file_list", "file_read", "file_write", "file_copy", "file_move", "file_delete"} {
@@ -39,7 +40,7 @@ func TestLegacyFileCatalogCompatibilityOnlyRemovesRootEnum(t *testing.T) {
 		current.Name = name
 		var parameters map[string]any
 		_ = json.Unmarshal(operation.Capability.Parameters, &parameters)
-		operation.Capability.CatalogDigest = digestJSON(tools.PublicSchema{Name: name, Description: current.Description, Metadata: current.Metadata, Parameters: parameters})
+		operation.Capability.CatalogDigest = hstate.DigestJSON(tools.PublicSchema{Name: name, Description: current.Description, Metadata: current.Metadata, Parameters: parameters})
 		if !legacyFileCatalogCompatible(snapshot, operation, current) {
 			t.Errorf("legacy %s rejected", name)
 		}
@@ -64,7 +65,7 @@ func TestLegacyFileCatalogCompatibilityDoesNotBroadenAuthority(t *testing.T) {
 			case "schema":
 				current.Parameters["additionalProperties"] = true
 			case "digest":
-				operation.Capability.CatalogDigest = digestJSON(current)
+				operation.Capability.CatalogDigest = hstate.DigestJSON(current)
 			case "tool":
 				current.Name = "other_tool"
 			case "source":

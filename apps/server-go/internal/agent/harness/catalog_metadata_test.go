@@ -2,12 +2,12 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"fmt"
 	"testing"
 
 	"elysian/server/internal/agent/harness/model"
+	"elysian/server/internal/agent/harness/sessionstore"
 	"elysian/server/internal/agent/tools"
 )
 
@@ -103,8 +103,8 @@ func TestSnapshotKeepsAuthorizedCatalogAndDefersLargeModelToolsets(t *testing.T)
 				want++
 				modelCount = 1
 			}
-			if err != nil || len(snapshot.Tools) != want || len(snapshot.modelTools()) != modelCount {
-				t.Fatalf("catalog or visible tools changed: catalog=%d visible=%d want=%d/%d err=%v", len(snapshot.Tools), len(snapshot.modelTools()), want, modelCount, err)
+			if err != nil || len(snapshot.Tools) != want || len(snapshot.ModelTools()) != modelCount {
+				t.Fatalf("catalog or visible tools changed: catalog=%d visible=%d want=%d/%d err=%v", len(snapshot.Tools), len(snapshot.ModelTools()), want, modelCount, err)
 			}
 		})
 	}
@@ -129,8 +129,8 @@ func TestOversizedSavedToolSelectionRemainsEditable(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if err = m.store.write(ctx, "environment", func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, "INSERT INTO environments(session_id,revision,document) VALUES(?,?,?)", session.ID, env.Revision, string(raw))
+	if err = fixture(m).write(ctx, "environment", func(tx sessionstore.Tx) error {
+		_, err := tx.InsertEnvironment(ctx, session.ID, env.Revision, string(raw))
 		return err
 	}); err != nil {
 		t.Fatal(err)

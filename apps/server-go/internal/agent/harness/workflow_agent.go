@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 
 	"elysian/server/internal/agent/harness/model"
+	"elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/jsonvalue"
 	"elysian/server/internal/agent/mcp"
 )
@@ -73,7 +74,7 @@ func (a *agentExecution) finishWorkflowOutput(ctx context.Context) (*workflowAge
 		return nil, bad("workflow-output-invalid", "模型未提交唯一且完整的工作流结果函数")
 	}
 	output, err := jsonvalue.Canonical(response.ToolCalls[0].Arguments)
-	if err != nil || len(output) > a.run.Limits.ResultBytes || validateWorkflowJSON(string(schema), string(output)) != nil {
+	if err != nil || len(output) > a.run.Limits.ResultBytes || state.ValidateWorkflowJSON(string(schema), string(output)) != nil {
 		return nil, bad("workflow-output-invalid", "工作流结果不符合固定 JSON Schema 或超过容量限制")
 	}
 	return &workflowAgentOutput{JSON: string(output), RequestID: record.ID, EventSeq: record.EventSeq}, nil

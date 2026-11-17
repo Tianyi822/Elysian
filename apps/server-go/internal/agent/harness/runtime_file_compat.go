@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"path/filepath"
 
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/mcp"
 	"elysian/server/internal/agent/tools"
 )
@@ -26,7 +27,7 @@ func legacyFileCatalogCompatible(snapshot CapabilitySnapshot, operation Operatio
 		return false
 	}
 	frozen := tools.PublicSchema{Name: c.Name, Description: c.Description, Parameters: parameters, Metadata: c.Metadata}
-	if digestJSON(frozen) != c.CatalogDigest || mcp.Validate(c.Parameters, json.RawMessage(operation.ArgumentsJSON)) != nil {
+	if hstate.DigestJSON(frozen) != c.CatalogDigest || mcp.Validate(c.Parameters, json.RawMessage(operation.ArgumentsJSON)) != nil {
 		return false
 	}
 	properties, ok := parameters["properties"].(map[string]any)
@@ -48,5 +49,5 @@ func legacyFileCatalogCompatible(snapshot CapabilitySnapshot, operation Operatio
 		}
 	}
 	delete(root, "enum")
-	return digestJSON(frozen) == digestJSON(current)
+	return hstate.DigestJSON(frozen) == hstate.DigestJSON(current)
 }

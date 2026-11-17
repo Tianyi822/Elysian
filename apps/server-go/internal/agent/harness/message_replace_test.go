@@ -171,7 +171,7 @@ func TestAgentReplaceRewindsContextAndKeepsEarlierTurns(t *testing.T) {
 		t.Fatalf("原始记录丢失：%+v %v", old, err)
 	}
 	m.mu.Lock()
-	readRecordLines(t, m.store, recordOwner{"session", session.ID})
+	readRecordLines(t, fixture(m), recordOwner{"session", session.ID})
 	m.mu.Unlock()
 }
 
@@ -191,9 +191,9 @@ func TestMessageReplacementIsAtomicAndRejectsStaleTarget(t *testing.T) {
 	if _, _, err := s.acceptAgent(ctx, task, next, "replacement-input", "new-message", false); err == nil {
 		t.Fatal("事务应失败")
 	}
-	old, _ := readRun(ctx, s.db, first.ID)
+	old, _ := readRun(ctx, s, first.ID)
 	memory, _ := s.memory(ctx, task.ID, 0)
-	storedTask, _ := readTask(ctx, s.db, task.ID)
+	storedTask, _ := readTask(ctx, s, task.ID)
 	if old.SupersededByRunID != "" || memory.Revision != 1 || storedTask.Goal != task.Goal || runtimeStoreCount(t, s, "agent_record_outbox") != before {
 		t.Fatal("失败留下半次替换")
 	}

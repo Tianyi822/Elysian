@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"testing"
 
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/tools"
 )
 
@@ -20,7 +21,7 @@ func containerAppsWriteLegacyOperation() Operation {
 	parameters, _ := json.Marshal(legacy.Parameters)
 	return Operation{ArgumentsJSON: `{"slug":"demo","path":"a.txt","content":"hello","expectedDigest":"abc"}`, Capability: Capability{
 		Name: legacy.Name, Description: legacy.Description, Source: "builtin", ReadOnly: legacy.Metadata.ReadOnly,
-		Metadata: legacy.Metadata, Parameters: parameters, CatalogDigest: digestJSON(legacy),
+		Metadata: legacy.Metadata, Parameters: parameters, CatalogDigest: hstate.DigestJSON(legacy),
 	}}
 }
 
@@ -52,7 +53,7 @@ func TestContainerAppsWriteCatalogCompatibilityOnlyAcceptsFrozenUpgrade(t *testi
 			return o, c
 		}},
 		{"digest", func(o Operation, c tools.PublicSchema) (Operation, tools.PublicSchema) {
-			o.Capability.CatalogDigest = digestJSON(c)
+			o.Capability.CatalogDigest = hstate.DigestJSON(c)
 			return o, c
 		}},
 		{"description", func(o Operation, c tools.PublicSchema) (Operation, tools.PublicSchema) {

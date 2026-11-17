@@ -9,6 +9,8 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+
+	hstate "elysian/server/internal/agent/harness/state"
 )
 
 // Build an actual v4 database: only the old schema exists, and accepted
@@ -85,7 +87,7 @@ func TestWorkflowV4MigrationKeepsActiveV1ApprovalSemantics(t *testing.T) {
 					}
 					return nil
 				}
-				m.store.beforeWrite = func(op string) error {
+				fixture(m).beforeWrite = func(op string) error {
 					if op == "approval-decision" {
 						paused.Store(true)
 					}
@@ -96,10 +98,10 @@ func TestWorkflowV4MigrationKeepsActiveV1ApprovalSemantics(t *testing.T) {
 					t.Fatal(err)
 				}
 			}
-			if err := m.Close(ctx); err != nil {
+			if err := closeFixtureManager(m, ctx); err != nil {
 				t.Fatal(err)
 			}
-			path := workflowV4Fixture(t, m.deps.Path)
+			path := workflowV4Fixture(t, fixture(m).path)
 			db, err := sql.Open("sqlite", path)
 			if err != nil {
 				t.Fatal(err)
@@ -140,12 +142,12 @@ func TestWorkflowV4MigrationKeepsActiveV1ApprovalSemantics(t *testing.T) {
 				t.Fatal(err)
 			}
 			deps := m.deps
-			deps.Path, deps.DispatchGuard = path, nil
-			m, err = New(deps)
+			deps.Store, deps.DispatchGuard = mustFixtureStore(t, path), nil
+			m, err = newFixtureManager(t, deps)
 			if err != nil {
 				t.Fatal(err)
 			}
-			t.Cleanup(func() { _ = m.Close(context.Background()) })
+			t.Cleanup(func() { _ = closeFixtureManager(m, context.Background()) })
 			if state == "pending" {
 				workflowWait(t, m, w.ID, StateWaitingApproval)
 				if _, err = m.Decide(ctx, a.ID, "approved"); err != nil {
@@ -157,9 +159,9 @@ func TestWorkflowV4MigrationKeepsActiveV1ApprovalSemantics(t *testing.T) {
 				if e == nil {
 					w = fresh
 				}
-				return e == nil && (terminal(w.Status) || w.Status == StateRecoveryRequired)
+				return e == nil && (hstate.Terminal(w.Status) || w.Status == StateRecoveryRequired)
 			})
-			if w.Status != StateSucceeded || workflowV2(w) || w.ExecutionTree != nil || w.CurrentStepID != "act" || w.OutputJSON != `{"n":9007199254740993}` || calls.Load() != 1 {
+			if w.Status != StateSucceeded || hstate.WorkflowV2(w) || w.ExecutionTree != nil || w.CurrentStepID != "act" || w.OutputJSON != `{"n":9007199254740993}` || calls.Load() != 1 {
 				t.Fatalf("活动v1流程迁移后语义改变: calls=%d workflow=%+v", calls.Load(), w)
 			}
 			m = reopenOperationManager(t, m)

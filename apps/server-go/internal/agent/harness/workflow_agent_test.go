@@ -2,7 +2,6 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"strings"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"elysian/server/internal/agent/harness/model"
+	"elysian/server/internal/agent/harness/sessionstore"
 )
 
 const workflowAgentTestSchema = `{"type":"object","additionalProperties":false,"required":["ok","count"],"properties":{"ok":{"type":"boolean"},"count":{"type":"integer","minimum":9007199254740993}}}`
@@ -52,7 +52,7 @@ func workflowAgentRuns(t *testing.T, m *Manager, id string) []Run {
 	t.Helper()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	runs, err := readDocuments[Run](context.Background(), m.store.db, "SELECT document FROM runs WHERE workflow_id=? ORDER BY run_number", id)
+	runs, err := readDocuments[Run](context.Background(), fixture(m).db, "SELECT document FROM runs WHERE workflow_id=? ORDER BY run_number", id)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -238,7 +238,7 @@ func TestWorkflowAgentInstanceBudgetRejectsWithoutBlockingOtherAgents(t *testing
 		t.Fatal("模型请求没有开始")
 	}
 	m.mu.Lock()
-	err := m.store.write(context.Background(), "test-workflow-budget", func(tx *sql.Tx) error {
+	err := fixture(m).write(context.Background(), "test-workflow-budget", func(tx sessionstore.Tx) error {
 		current, err := readWorkflow(context.Background(), tx, w.ID)
 		if err != nil {
 			return err
@@ -342,7 +342,7 @@ func TestWorkflowAgentFinalMemoryBudgetFailureCannotSucceedStale(t *testing.T) {
 		t.Fatal("模型请求没有开始")
 	}
 	m.mu.Lock()
-	err := m.store.write(context.Background(), "test-workflow-memory-budget", func(tx *sql.Tx) error {
+	err := fixture(m).write(context.Background(), "test-workflow-memory-budget", func(tx sessionstore.Tx) error {
 		current, err := readWorkflow(context.Background(), tx, w.ID)
 		if err != nil {
 			return err
@@ -405,7 +405,7 @@ func TestWorkflowAgentActualUsageOverflowPersistsBeforeFailure(t *testing.T) {
 				t.Fatal("已确认的实际 token 未保存")
 			}
 			m.mu.Lock()
-			records, err := readDocuments[ModelRequestRecord](context.Background(), m.store.db, "SELECT document FROM model_requests WHERE run_id=? ORDER BY request_index", runs[0].ID)
+			records, err := readDocuments[ModelRequestRecord](context.Background(), fixture(m).db, "SELECT document FROM model_requests WHERE run_id=? ORDER BY request_index", runs[0].ID)
 			m.mu.Unlock()
 			if err != nil || len(records) != expectedCalls || records[len(records)-1].Purpose != phase || records[len(records)-1].Response == nil {
 				t.Fatalf("超额响应被回滚或丢弃：%+v %v", records, err)

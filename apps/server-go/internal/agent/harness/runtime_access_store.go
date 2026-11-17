@@ -2,26 +2,20 @@ package harness
 
 import (
 	"context"
-	"database/sql"
-	execconfig "elysian/server/internal/agent/execution/config"
 	"encoding/json"
 	"errors"
 	"time"
+
+	execconfig "elysian/server/internal/agent/execution/config"
+	"elysian/server/internal/agent/harness/sessionstore"
+	hstate "elysian/server/internal/agent/harness/state"
 )
 
-func saveSessionAuthorization(ctx context.Context, tx *sql.Tx, a SessionAuthorization) error {
-	raw, err := json.Marshal(a)
-	if err != nil {
-		return err
-	}
-	_, err = tx.ExecContext(ctx, `INSERT INTO session_authorizations(id,session_id,scope_key,state,document) VALUES(?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET state=excluded.state,document=excluded.document`, a.ID, a.SessionID, a.Access.ScopeKey, a.Status, string(raw))
-	return err
-}
 func (m *Manager) SessionAuthorizations(ctx context.Context, sessionID string) ([]SessionAuthorization, error) {
-	if _, err := readSession(ctx, m.store.db, sessionID); err != nil {
+	if _, err := readSession(ctx, m.store, sessionID); err != nil {
 		return nil, storageFailure(err)
 	}
-	rows, err := readDocuments[SessionAuthorization](ctx, m.store.db, "SELECT document FROM session_authorizations WHERE session_id=? AND state='active' ORDER BY rowid DESC", sessionID)
+	rows, err := readView(ctx, m.store).SessionAuthorizations(ctx, sessionID)
 	if rows == nil {
 		rows = []SessionAuthorization{}
 	}
@@ -31,7 +25,7 @@ func (m *Manager) matchingAuthorization(ctx context.Context, run Run, o Operatio
 	if o.Access == nil {
 		return nil, nil
 	}
-	rows, err := readDocuments[SessionAuthorization](ctx, m.store.db, "SELECT document FROM session_authorizations WHERE session_id=? AND scope_key=? AND state='active' ORDER BY rowid DESC LIMIT 1", run.SessionID, o.Access.ScopeKey)
+	rows, err := readView(ctx, m.store).MatchingAuthorizations(ctx, run.SessionID, o.Access.ScopeKey)
 	if err != nil {
 		return nil, storageFailure(err)
 	}
@@ -50,19 +44,19 @@ func (m *Manager) checkOperationAuthorization(ctx context.Context, o Operation) 
 	if o.Access == nil {
 		return nil
 	}
-	if o.Authorization == nil || o.Authorization.ID != o.ID || o.Authorization.Digest != o.Access.Digest || accessDigest(o) != o.Access.Digest {
+	if o.Authorization == nil || o.Authorization.ID != o.ID || o.Authorization.Digest != o.Access.Digest || hstate.AccessDigest(o) != o.Access.Digest {
 		return bad("authorization-required", "操作尚未获得匹配的运行时授权")
 	}
 	if id := o.Authorization.SessionAuthorizationID; id != "" {
 		var raw string
-		if err := m.store.db.QueryRowContext(ctx, "SELECT document FROM session_authorizations WHERE id=? AND state='active'", id).Scan(&raw); err != nil {
+		if err := readView(ctx, m.store).AuthorizationRecord(ctx, id, &raw); err != nil {
 			return bad("authorization-revoked", "本会话授权已撤回")
 		}
 		var a SessionAuthorization
 		if json.Unmarshal([]byte(raw), &a) != nil {
 			return bad("authorization-invalid", "会话授权记录无效")
 		}
-		run, err := m.store.get(ctx, o.RunID)
+		run, err := readView(ctx, m.store).Get(ctx, o.RunID)
 		if err != nil {
 			return err
 		}
@@ -82,7 +76,7 @@ func (m *Manager) DecideAccess(ctx context.Context, id string, in AccessDecision
 	if !requestPattern.MatchString(in.RequestID) || in.ExpectedRevision < 1 || in.ExpectedDigest == "" || (in.Decision != "once" && in.Decision != "session" && in.Decision != "denied") {
 		return a, bad("invalid-access-decision", "授权决定或请求编号无效")
 	}
-	if err := m.store.recordsFault(); err != nil {
+	if err := m.store.DispatchError(); err != nil {
 		return a, storageFailure(err)
 	}
 	if m.deps.DispatchGuard != nil {
@@ -90,9 +84,9 @@ func (m *Manager) DecideAccess(ctx context.Context, id string, in AccessDecision
 			return a, err
 		}
 	}
-	err := m.store.write(ctx, "access-decision", func(tx *sql.Tx) error {
+	err := writeStore(m.store, ctx, "access-decision", func(tx sessionstore.Tx) error {
 		var raw string
-		if err := tx.QueryRowContext(ctx, "SELECT document FROM approvals WHERE id=?", id).Scan(&raw); err != nil {
+		if err := tx.ApprovalRecord(ctx, id, &raw); err != nil {
 			return err
 		}
 		if err := json.Unmarshal([]byte(raw), &a); err != nil {
@@ -105,27 +99,27 @@ func (m *Manager) DecideAccess(ctx context.Context, id string, in AccessDecision
 			if *a.AccessDecision == in {
 				return nil
 			}
-			return &Error{409, "decision-conflict", "该申请已有其他决定"}
+			return &Error{Status: 409, Code: "decision-conflict", Message: "该申请已有其他决定"}
 		}
 		if a.Status != "pending" || approvalExpired(a, m.deps.Now()) || a.Access.Revision != in.ExpectedRevision || a.Access.Digest != in.ExpectedDigest {
-			return &Error{409, "access-conflict", "授权申请已变化、过期或处理，请重新读取"}
+			return &Error{Status: 409, Code: "access-conflict", Message: "授权申请已变化、过期或处理，请重新读取"}
 		}
 		r, err := readRun(ctx, tx, a.RunID)
 		if err != nil {
 			return err
 		}
 		if r.Status != StateWaitingApproval || r.CancelRequestedAt != "" || r.WorkflowID != "" || r.Snapshot == nil || r.Snapshot.AuthorizationMode != AuthorizationOnDemand {
-			return &Error{409, "run-state-conflict", "运行已不在授权等待状态"}
+			return &Error{Status: 409, Code: "run-state-conflict", Message: "运行已不在授权等待状态"}
 		}
 		if in.Decision == "session" && (r.Snapshot.PolicyVersion == PermissionPolicyVersion || !a.Access.SessionAllowed) {
 			return bad("session-authorization-denied", "该操作只能授权本次")
 		}
 		var queued int
-		if err = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM runs WHERE state='queued'").Scan(&queued); err != nil {
+		if err = tx.QueuedRunCount(ctx, &queued); err != nil {
 			return err
 		}
 		if queued >= r.Limits.QueueCapacity {
-			return &Error{429, "queue-full", "任务队列已满，授权保持待处理"}
+			return &Error{Status: 429, Code: "queue-full", Message: "任务队列已满，授权保持待处理"}
 		}
 		if err = m.validateWikiRun(ctx, tx, r.ID); err != nil {
 			return err
@@ -134,19 +128,19 @@ func (m *Manager) DecideAccess(ctx context.Context, id string, in AccessDecision
 		if err != nil {
 			return err
 		}
-		if o.Access == nil || accessDigest(o) != a.Access.Digest || !approvedOperationMatches(a.Operation, o) {
-			return &Error{409, "access-changed", "待执行操作与授权申请不符"}
+		if o.Access == nil || hstate.AccessDigest(o) != a.Access.Digest || !hstate.ApprovedOperationMatches(a.Operation, o) {
+			return &Error{Status: 409, Code: "access-changed", Message: "待执行操作与授权申请不符"}
 		}
 		now := stamp(m.deps.Now())
 		if in.Decision != "denied" {
 			o.Authorization = &OperationAuthorization{ID: o.ID, Digest: a.Access.Digest, Decision: in.Decision, CreatedAt: now}
 			if in.Decision == "session" {
 				var count int
-				if err = tx.QueryRowContext(ctx, "SELECT COUNT(*) FROM session_authorizations WHERE session_id=? AND state='active'", r.SessionID).Scan(&count); err != nil {
+				if err = tx.AuthorizationExists(ctx, r.SessionID, &count); err != nil {
 					return err
 				}
 				if count >= 128 {
-					return &Error{429, "authorizations-full", "本会话允许项达到 128 条，请先撤回不需要的授权"}
+					return &Error{Status: 429, Code: "authorizations-full", Message: "本会话允许项达到 128 条，请先撤回不需要的授权"}
 				}
 				var profile *execconfig.Profile
 				if o.Execution != nil {
@@ -172,7 +166,7 @@ func (m *Manager) DecideAccess(ctx context.Context, id string, in AccessDecision
 			return err
 		}
 		r.Status, r.Phase = StateQueued, StateQueued
-		return m.store.event(ctx, tx, &r, "access/"+in.Decision, "", nil, map[string]string{"approvalId": a.ID, "operationId": o.ID})
+		return tx.Event(ctx, &r, "access/"+in.Decision, "", nil, map[string]string{"approvalId": a.ID, "operationId": o.ID})
 	})
 	if err == nil {
 		m.signal()
@@ -196,9 +190,9 @@ func (m *Manager) RevokeSessionAuthorization(ctx context.Context, sessionID, id 
 		}
 	}
 	var affected []Operation
-	err := m.store.write(ctx, "session-authorization-revoke", func(tx *sql.Tx) error {
+	err := writeStore(m.store, ctx, "session-authorization-revoke", func(tx sessionstore.Tx) error {
 		var raw string
-		if err := tx.QueryRowContext(ctx, "SELECT document FROM session_authorizations WHERE id=? AND session_id=?", id, sessionID).Scan(&raw); err != nil {
+		if err := tx.SessionAuthorizationRecord(ctx, id, sessionID, &raw); err != nil {
 			return err
 		}
 		if err := json.Unmarshal([]byte(raw), &a); err != nil {
@@ -206,7 +200,7 @@ func (m *Manager) RevokeSessionAuthorization(ctx context.Context, sessionID, id 
 		}
 		replayed := a.Status == "revoked" && a.RevokeRequestID == in.RequestID && a.Revision == in.ExpectedRevision+1
 		if !replayed && (a.Status != "active" || a.Revision != in.ExpectedRevision) {
-			return &Error{409, "authorization-conflict", "会话授权已变化，请重新读取"}
+			return &Error{Status: 409, Code: "authorization-conflict", Message: "会话授权已变化，请重新读取"}
 		}
 		if !replayed {
 			a.Status = "revoked"
@@ -218,7 +212,7 @@ func (m *Manager) RevokeSessionAuthorization(ctx context.Context, sessionID, id 
 			}
 		}
 		var err error
-		affected, err = readDocuments[Operation](ctx, tx, "SELECT document FROM operations WHERE json_extract(document,'$.authorization.sessionAuthorizationId')=? AND (state IN ('dispatched','waiting-task') OR json_extract(document,'$.preparation.state')='pulling')", id)
+		affected, err = tx.AuthorizedOperations(ctx, id)
 		return err
 	})
 	m.mu.Unlock()
@@ -243,7 +237,7 @@ func (m *Manager) RevokeSessionAuthorization(ctx context.Context, sessionID, id 
 // Rejected requests are real tool results, without a dispatch, resource lease, or side effect.
 // The caller holds Manager.mu. Replaying the same model call reuses its completed result.
 func (m *Manager) finishAccessDenied(ctx context.Context, run Run, o Operation) error {
-	_, err := m.store.change(ctx, run.ID, "access-denied-result", func(tx *sql.Tx, r *Run) error {
+	_, err := m.store.ChangeRun(ctx, run.ID, "access-denied-result", func(tx sessionstore.Tx, r *Run) error {
 		if r.CancelRequestedAt != "" || r.Status != StateRunning {
 			return context.Canceled
 		}
@@ -269,12 +263,12 @@ func (m *Manager) finishAccessDenied(ctx context.Context, run Run, o Operation) 
 		}
 		r.Usage.Calls++
 		r.Resume = &RecoveryCursor{ResponseID: o.ModelRequestID, CallIndex: o.CallIndex + 1}
-		return m.store.event(ctx, tx, r, "access/denied", call.ID, &call.StepIndex, nil)
+		return tx.Event(ctx, r, "access/denied", call.ID, &call.StepIndex, nil)
 	})
 	return storageFailure(err)
 }
 func (m *Manager) accessWasDenied(ctx context.Context, run Run, o Operation) (bool, error) {
 	var count int
-	err := m.store.db.QueryRowContext(ctx, `SELECT COUNT(*) FROM operations WHERE run_id=? AND json_extract(document,'$.access.scopeKey')=? AND json_extract(document,'$.error.code')='access-denied'`, run.ID, o.Access.ScopeKey).Scan(&count)
+	err := readView(ctx, m.store).DeniedAccessCount(ctx, run.ID, o.Access.ScopeKey, &count)
 	return count > 0, err
 }

@@ -2,9 +2,11 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"testing"
 	"time"
+
+	"elysian/server/internal/agent/harness/sessionstore"
+	hstate "elysian/server/internal/agent/harness/state"
 )
 
 func TestResourceWaiterPromotesWithoutConsumingApprovalOrBudget(t *testing.T) {
@@ -15,7 +17,7 @@ func TestResourceWaiterPromotesWithoutConsumingApprovalOrBudget(t *testing.T) {
 	claim := ResourceClaim{Kind: "filesystem", Authority: "local", Key: "/shared", Access: "write", Subtree: true}
 	o := Operation{ID: "waiting-operation", RunID: r.ID, TaskID: r.TaskID, Status: StateWaitingApproval, ApprovalID: "approved-operation", ResourceClaims: []ResourceClaim{claim}, Capability: Capability{Source: "mcp-tool"}}
 	a := Approval{ID: o.ApprovalID, RunID: r.ID, OperationID: o.ID, Status: "approved", Operation: o}
-	_, err := s.change(ctx, r.ID, "resource-fixture", func(tx *sql.Tx, current *Run) error {
+	_, err := s.change(ctx, r.ID, "resource-fixture", func(tx sessionstore.Tx, current *Run) error {
 		current.Status = StateWaitingResource
 		current.Resume = &RecoveryCursor{ResponseID: "saved-model-response", CallIndex: 1}
 		current.Usage.Calls = 2
@@ -39,7 +41,7 @@ func TestResourceWaiterPromotesWithoutConsumingApprovalOrBudget(t *testing.T) {
 	if n, err := m.promoteResourceWaiters(ctx); err != nil || n != 0 {
 		t.Fatalf("conflicting waiter promoted: %d %v", n, err)
 	}
-	if err := s.write(ctx, "release-holder", func(tx *sql.Tx) error {
+	if err := s.write(ctx, "release-holder", func(tx sessionstore.Tx) error {
 		return settleResourceLease(ctx, tx, "holder", stamp(runtimeStoreTestTime), false, "", "")
 	}); err != nil {
 		t.Fatal(err)
@@ -51,15 +53,22 @@ func TestResourceWaiterPromotesWithoutConsumingApprovalOrBudget(t *testing.T) {
 	if err != nil || got.Status != StateQueued || got.Usage.Calls != 2 || got.Resume == nil || got.Resume.CallIndex != 1 {
 		t.Fatalf("promotion changed execution facts: %+v %v", got, err)
 	}
-	if err := s.write(ctx, "inspect-waiter", func(tx *sql.Tx) error {
+	if err := s.write(ctx, "inspect-waiter", func(tx sessionstore.Tx) error {
 		approvals, err := readApprovalTx(ctx, tx, r.ID)
 		if err != nil {
 			return err
 		}
-		if len(approvals) != 1 || approvals[0].Status != "approved" || digestJSON(approvals[0].Operation) != digestJSON(o) {
+		if len(approvals) != 1 || approvals[0].Status != "approved" || hstate.DigestJSON(approvals[0].Operation) != hstate.DigestJSON(o) {
 			t.Fatalf("promotion consumed or changed approval: %+v", approvals)
 		}
-		leases, err := readDocuments[ResourceLease](ctx, tx, "SELECT document FROM resource_leases WHERE id=?", o.ID)
+		leases, err := tx.ResourceLeases(ctx)
+		filtered := leases[:0]
+		for _, lease := range leases {
+			if lease.ID == o.ID {
+				filtered = append(filtered, lease)
+			}
+		}
+		leases = filtered
 		if err == nil && (len(leases) != 1 || leases[0].State != "waiting") {
 			t.Fatalf("promotion acquired lease early: %+v", leases)
 		}
@@ -74,7 +83,7 @@ func TestCancelResourceWaiterReleasesOnlyWaitingLease(t *testing.T) {
 	ctx := context.Background()
 	m := &Manager{store: s, deps: Deps{Now: func() time.Time { return runtimeStoreTestTime }}, wake: make(chan struct{}, 1)}
 	r := createRuntimeTestRun(t, s, "resource-cancel", runtimeStoreTestTime)
-	_, err := s.change(ctx, r.ID, "resource-fixture", func(tx *sql.Tx, current *Run) error {
+	_, err := s.change(ctx, r.ID, "resource-fixture", func(tx sessionstore.Tx, current *Run) error {
 		current.Status = StateWaitingResource
 		for _, state := range []string{"waiting", "unknown"} {
 			if err := saveResourceLease(ctx, tx, ResourceLease{ID: state, RunID: r.ID, State: state}); err != nil {

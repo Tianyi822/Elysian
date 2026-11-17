@@ -14,7 +14,7 @@ func TestEmbeddingConfigurationUsesAgentDirectoryAndIgnoresLegacy(t *testing.T) 
 	if err := os.WriteFile(filepath.Join(root, "config", "agent-embeddings.json"), []byte("损坏的旧配置应忽略"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	m := &Manager{deps: Deps{Path: filepath.Join(root, "data", "harness.sqlite")}}
+	m := &Manager{deps: Deps{EmbeddingConfigPath: filepath.Join(root, "config", "agent", "embeddings.json")}}
 	if path := m.embeddingConfigPath(); path != filepath.Join(root, "config", "agent", "embeddings.json") {
 		t.Fatalf("Embedding 缺省路径未进入 Agent 目录：%q", path)
 	}

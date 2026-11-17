@@ -2,7 +2,6 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"strings"
 	"sync"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"elysian/server/internal/agent/harness/model"
+	"elysian/server/internal/agent/harness/sessionstore"
 )
 
 const questionFixture = `{"questions":[{"id":"scope","header":"查询范围","question":"需要查看哪个范围？","recommendedOptionId":"panel","options":[{"id":"panel","label":"面板","description":"面板自身内存"},{"id":"system","label":"系统","description":"系统资源概览"}]},{"id":"period","header":"时间","question":"查看什么时间？","options":[{"id":"now","label":"现在","description":"实时采样"},{"id":"old","label":"历史","description":"已有历史采样"}]}]}`
@@ -101,9 +101,9 @@ func TestUserInputSuspendsRestoresAndResumesExactlyOnce(t *testing.T) {
 			if requests.Load() != 2 {
 				t.Fatalf("重复续接：%d", requests.Load())
 			}
-			readRecordLines(t, m.store, recordOwner{"session", session.ID})
+			readRecordLines(t, fixture(m), recordOwner{"session", session.ID})
 			var facts int
-			if err := m.store.db.QueryRow("SELECT COUNT(*) FROM agent_record_outbox WHERE fact_type='user_inputs' AND fact_key=?", q.ID).Scan(&facts); err != nil || facts < 2 {
+			if err := fixture(m).db.QueryRow("SELECT COUNT(*) FROM agent_record_outbox WHERE fact_type='user_inputs' AND fact_key=?", q.ID).Scan(&facts); err != nil || facts < 2 {
 				t.Fatalf("缺少 JSONL 同事务事实：%d %v", facts, err)
 			}
 			messages, err := m.Messages(context.Background(), session.ID, "0", 50)
@@ -254,19 +254,31 @@ func TestUserInputSchemaMigrationAndRoutes(t *testing.T) {
 		return userInputReply(questionFixture), nil
 	}, nil)
 	// 将空数据库恢复为真实 schema7 的结构，再执行升级，验证新表与记录触发器一起安装。
-	m.mu.Lock()
-	_, err := m.store.db.Exec("DROP TABLE user_inputs; DROP TABLE session_authorizations; PRAGMA user_version=7")
-	if err == nil {
-		err = migrateStore(m.store.db)
+	// 迁移发生在装配层启动 Manager 前，不在运行期间替换已注入的存储实例。
+	if err := m.Close(context.Background()); err != nil {
+		t.Fatal(err)
 	}
-	m.mu.Unlock()
+	_, err := fixture(m).db.Exec("DROP TABLE user_inputs; DROP TABLE session_authorizations; PRAGMA user_version=7")
+	if err == nil {
+		err = migrateStore(fixture(m).db)
+	}
 	if err != nil {
 		t.Fatal(err)
 	}
 	var version int
-	if err := m.store.db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != schemaVersion {
+	if err := fixture(m).db.QueryRow("PRAGMA user_version").Scan(&version); err != nil || version != schemaVersion {
 		t.Fatalf("版本 %d: %v", version, err)
 	}
+	m, err = New(m.deps)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() {
+		if err := m.Close(context.Background()); err != nil {
+			t.Error(err)
+		}
+	})
+	runtimeEventually(t, func() bool { return m.Info().Agent.Available })
 	run := submitAgentTest(t, m, session, "route-question", "请澄清")
 	q := waitUserInput(t, m, run.ID)
 	body, _ := json.Marshal(userAnswers())
@@ -281,7 +293,7 @@ func TestUserInputSchemaMigrationAndRoutes(t *testing.T) {
 	if result = runtimeRouteRequest(m.Router(), "POST", path, string(body)); result.Code != 200 {
 		t.Fatal("重复提交不是幂等回执")
 	}
-	readRecordLines(t, m.store, recordOwner{"session", session.ID})
+	readRecordLines(t, fixture(m), recordOwner{"session", session.ID})
 }
 
 func TestUserInputAnswerCancelRaceIsAtomic(t *testing.T) {
@@ -303,13 +315,13 @@ func TestUserInputAnswerCancelRaceIsAtomic(t *testing.T) {
 	wg.Wait()
 	runtimeFinished(t, m, run.ID)
 	var pending int
-	if err := m.store.db.QueryRow("SELECT COUNT(*) FROM user_inputs WHERE run_id=? AND state='pending'", run.ID).Scan(&pending); err != nil || pending != 0 {
+	if err := fixture(m).db.QueryRow("SELECT COUNT(*) FROM user_inputs WHERE run_id=? AND state='pending'", run.ID).Scan(&pending); err != nil || pending != 0 {
 		t.Fatal("取消留下待答问题", err)
 	}
 	// 终态清理同样适用于 Wiki 撤回等旁路。
-	if err := m.store.write(context.Background(), "check-question", func(tx *sql.Tx) error {
+	if err := fixture(m).write(context.Background(), "check-question", func(tx sessionstore.Tx) error {
 		var raw string
-		if err := tx.QueryRow("SELECT document FROM user_inputs WHERE id=?", q.ID).Scan(&raw); err != nil {
+		if err := tx.UserInputRecord(context.Background(), q.ID, run.ID, &raw); err != nil {
 			return err
 		}
 		var stored UserInputRequest

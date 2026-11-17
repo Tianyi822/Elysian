@@ -13,6 +13,7 @@ import (
 	"time"
 
 	"elysian/server/internal/agent/harness/model"
+	hstate "elysian/server/internal/agent/harness/state"
 )
 
 func TestChatTimelineRetainsThreeInferencesAndToolContent(t *testing.T) {
@@ -78,7 +79,7 @@ func TestChatTimelineRetainsThreeInferencesAndToolContent(t *testing.T) {
 	// 独立读取端点从原始记录重建相同顺序，且不夹带工具结果。
 	rec := httptest.NewRecorder()
 	m.Router().ServeHTTP(rec, httptest.NewRequest("GET", "/runs/"+run.ID+"/timeline", nil))
-	var restored ChatTimelineSnapshot
+	var restored hstate.ChatTimelineSnapshot
 	if rec.Code != 200 || json.Unmarshal(rec.Body.Bytes(), &restored) != nil || !reflect.DeepEqual(restored, *timeline) {
 		t.Fatalf("timeline route: %d %s", rec.Code, rec.Body.String())
 	}
@@ -105,7 +106,7 @@ func TestChatTimelineIncludesRunUsage(t *testing.T) {
 	for _, status := range []string{StateRunning, StateSucceeded, StateFailed, StateCancelled, StateInterrupted} {
 		t.Run(status, func(t *testing.T) {
 			timeline := projectChatTimeline(Run{ID: "r", Status: status, Usage: usage}, nil, nil, nil, nil)
-			if !reflect.DeepEqual(timeline.Usage, usage) || timeline.Done != terminal(status) {
+			if !reflect.DeepEqual(timeline.Usage, usage) || timeline.Done != hstate.Terminal(status) {
 				t.Fatalf("wrong usage snapshot: %+v", timeline)
 			}
 		})
@@ -265,7 +266,7 @@ func TestChatTimelineCacheHitUsageWeightsAllCompletedRequests(t *testing.T) {
 		{ID: "queued", Purpose: "inference", Status: StateQueued},
 	}
 	timeline := projectChatTimeline(Run{ID: "r", Status: StateRunning}, records, nil, nil, nil)
-	if !reflect.DeepEqual(timeline.CacheHitUsage, &ChatCacheHitUsage{InputTokens: 400, CachedTokens: 135}) {
+	if !reflect.DeepEqual(timeline.CacheHitUsage, &hstate.ChatCacheHitUsage{InputTokens: 400, CachedTokens: 135}) {
 		t.Fatalf("wrong input-weighted cache usage: %+v", timeline.CacheHitUsage)
 	}
 }
@@ -276,7 +277,7 @@ func TestChatTimelineCacheHitUsageUnknownAndExplicitZero(t *testing.T) {
 	for _, tc := range []struct {
 		name     string
 		records  []ModelRequestRecord
-		expected *ChatCacheHitUsage
+		expected *hstate.ChatCacheHitUsage
 	}{
 		{name: "no-requests"},
 		{name: "pending-only", records: []ModelRequestRecord{{Status: StateRunning}}},
@@ -289,8 +290,8 @@ func TestChatTimelineCacheHitUsageUnknownAndExplicitZero(t *testing.T) {
 		{name: "negative-input", records: []ModelRequestRecord{known, {Status: StateSucceeded, Response: &model.Response{Usage: model.Usage{PromptTokens: &negative, CachedTokens: &zero}}}}},
 		{name: "negative-cache", records: []ModelRequestRecord{known, {Status: StateSucceeded, Response: &model.Response{Usage: model.Usage{PromptTokens: &input, CachedTokens: &negative}}}}},
 		{name: "cache-exceeds-input", records: []ModelRequestRecord{known, {Status: StateSucceeded, Response: &model.Response{Usage: model.Usage{PromptTokens: &zero, CachedTokens: &one}}}}},
-		{name: "reported-zero", records: []ModelRequestRecord{{Status: StateSucceeded, Response: &model.Response{Usage: model.Usage{PromptTokens: &zero, CachedTokens: &zero}}}}, expected: &ChatCacheHitUsage{}},
-		{name: "zero-cache", records: []ModelRequestRecord{{Status: StateSucceeded, Response: &model.Response{Usage: model.Usage{PromptTokens: &input, CachedTokens: &zero}}}}, expected: &ChatCacheHitUsage{InputTokens: input}},
+		{name: "reported-zero", records: []ModelRequestRecord{{Status: StateSucceeded, Response: &model.Response{Usage: model.Usage{PromptTokens: &zero, CachedTokens: &zero}}}}, expected: &hstate.ChatCacheHitUsage{}},
+		{name: "zero-cache", records: []ModelRequestRecord{{Status: StateSucceeded, Response: &model.Response{Usage: model.Usage{PromptTokens: &input, CachedTokens: &zero}}}}, expected: &hstate.ChatCacheHitUsage{InputTokens: input}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			timeline := projectChatTimeline(Run{ID: "r", Status: StateSucceeded}, tc.records, nil, nil, nil)
@@ -317,7 +318,7 @@ func TestChatTimelineCacheHitUsageIntegerBounds(t *testing.T) {
 	request := func(input, cached *int) ModelRequestRecord {
 		return ModelRequestRecord{Status: StateSucceeded, Response: &model.Response{Usage: model.Usage{PromptTokens: input, CachedTokens: cached}}}
 	}
-	if usage := projectChatCacheHitUsage([]ModelRequestRecord{request(&limit, &limit)}); !reflect.DeepEqual(usage, &ChatCacheHitUsage{InputTokens: limit, CachedTokens: limit}) {
+	if usage := projectChatCacheHitUsage([]ModelRequestRecord{request(&limit, &limit)}); !reflect.DeepEqual(usage, &hstate.ChatCacheHitUsage{InputTokens: limit, CachedTokens: limit}) {
 		t.Fatalf("safe boundary was discarded: %+v", usage)
 	}
 	if usage := projectChatCacheHitUsage([]ModelRequestRecord{request(&limit, &zero), request(&one, &zero)}); usage != nil {

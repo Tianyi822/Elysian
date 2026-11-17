@@ -2,13 +2,13 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"errors"
 	"sync/atomic"
 	"testing"
 	"time"
 
 	"elysian/server/internal/agent/harness/model"
+	"elysian/server/internal/agent/harness/sessionstore"
 	"elysian/server/internal/agent/tools"
 )
 
@@ -115,7 +115,7 @@ func TestForceDeleteOperationCancelsLateAcceptedTask(t *testing.T) {
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		var count int
-		err := m.store.db.QueryRow("SELECT COUNT(*) FROM session_task_cleanup").Scan(&count)
+		err := fixture(m).db.QueryRow("SELECT COUNT(*) FROM session_task_cleanup").Scan(&count)
 		return err == nil && count == 0 && len(m.executions) == 0 && !m.storageError && m.blocked == ""
 	})
 	if _, err := m.Get(context.Background(), run.ID); !isNotFound(err) {
@@ -167,7 +167,7 @@ func TestForceDeleteWaitingTaskAndLateMonitor(t *testing.T) {
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		var n int
-		_ = m.store.db.QueryRow("SELECT COUNT(*) FROM session_task_cleanup").Scan(&n)
+		_ = fixture(m).db.QueryRow("SELECT COUNT(*) FROM session_task_cleanup").Scan(&n)
 		return n == 0
 	})
 	if !m.Info().Agent.Available {
@@ -188,11 +188,11 @@ func TestForceDeleteStatesAndRollback(t *testing.T) {
 			if err != nil {
 				t.Fatal(err)
 			}
-			_, err = m.store.change(ctx, run.ID, "fixture-state", func(tx *sql.Tx, r *Run) error { r.Status = state; return nil })
+			_, err = fixture(m).change(ctx, run.ID, "fixture-state", func(tx sessionstore.Tx, r *Run) error { r.Status = state; return nil })
 			if err != nil {
 				t.Fatal(err)
 			}
-			m.store.beforeWrite = func(op string) error {
+			fixture(m).beforeWrite = func(op string) error {
 				if op == "delete-session" {
 					return errors.New("模拟写失败")
 				}
@@ -201,7 +201,7 @@ func TestForceDeleteStatesAndRollback(t *testing.T) {
 			if err = m.DeleteSession(ctx, session.ID); err == nil {
 				t.Fatal("存储失败却报告成功")
 			}
-			m.store.beforeWrite = nil
+			fixture(m).beforeWrite = nil
 			if _, err = m.GetSession(ctx, session.ID); err != nil {
 				t.Fatal("失败删除丢失记录", err)
 			}
@@ -229,7 +229,7 @@ func TestForceDeleteTaskCleanupSurvivesRestart(t *testing.T) {
 	}
 	runtimeFinished(t, m, run.ID)
 	ref := tools.TaskReference{Domain: "fixture", ID: "durable-task", RequestID: "durable-request"}
-	err = m.store.write(ctx, "fixture-task", func(tx *sql.Tx) error {
+	err = fixture(m).write(ctx, "fixture-task", func(tx sessionstore.Tx) error {
 		return saveOperation(ctx, tx, Operation{ID: "durable-operation", RunID: run.ID, Status: StateWaitingTask, Task: &ref})
 	})
 	if err != nil {
@@ -239,7 +239,7 @@ func TestForceDeleteTaskCleanupSurvivesRestart(t *testing.T) {
 		t.Fatal(err)
 	}
 	cancelled := make(chan struct{})
-	if err = m.Close(ctx); err != nil {
+	if err = closeFixtureManager(m, ctx); err != nil {
 		t.Fatal(err)
 	}
 	m.deps.CancelTask = func(_ context.Context, got tools.TaskReference) error {
@@ -273,7 +273,7 @@ func TestForceDeleteActiveWorkflowCascadesScopes(t *testing.T) {
 	}
 	for _, table := range []string{"workflow_instances", "workflow_scopes", "workflow_nodes", "runs", "operations", "approvals"} {
 		var n int
-		if err := m.store.db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&n); err != nil || n != 0 {
+		if err := fixture(m).db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&n); err != nil || n != 0 {
 			t.Fatalf("%s 残留 %d：%v", table, n, err)
 		}
 	}
@@ -314,7 +314,7 @@ func TestForceDeleteSchema9MigrationPreservesHistory(t *testing.T) {
 	if err := migrateStore(s.db); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := readSession(context.Background(), s.db, session.ID); err != nil {
+	if _, err := readSession(context.Background(), s, session.ID); err != nil {
 		t.Fatal(err)
 	}
 	if _, err := s.get(context.Background(), run.ID); err != nil {

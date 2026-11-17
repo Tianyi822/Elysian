@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/jsonvalue"
 	"elysian/server/internal/agent/kardia"
 	"elysian/server/internal/agent/mcp"
@@ -40,7 +41,7 @@ func (m *Manager) initializeToolRuntime() error {
 }
 
 func (m *Manager) authorizeDispatch(ctx context.Context, s CapabilitySnapshot, o Operation) (context.Context, error) {
-	if err := m.store.waitRecords(ctx); err != nil {
+	if err := waitRecords(m.store, ctx); err != nil {
 		return nil, err
 	}
 	args, err := jsonvalue.Object([]byte(o.ArgumentsJSON))
@@ -49,17 +50,17 @@ func (m *Manager) authorizeDispatch(ctx context.Context, s CapabilitySnapshot, o
 	}
 	binding := tools.AuthorizationBinding{OperationID: o.ID, DispatchID: o.DispatchID, Tool: o.Capability.Name, ArgumentsDigest: tools.ArgumentsDigest(args), SnapshotDigest: s.Digest, CatalogID: s.Digest}
 	authorized, err := m.toolAuthority.Authorize(ctx, binding, o, func(checkCtx context.Context) error {
-		if err := m.store.recordsFault(); err != nil {
+		if err := m.store.DispatchError(); err != nil {
 			return err
 		}
-		stored, err := readOperation(checkCtx, m.store.db, o.ID)
+		stored, err := readOperation(checkCtx, m.store, o.ID)
 		if err != nil {
 			return err
 		}
-		if stored.Status != "dispatched" || stored.DispatchID != o.DispatchID || digestJSON(stored) != digestJSON(o) {
+		if stored.Status != "dispatched" || stored.DispatchID != o.DispatchID || hstate.DigestJSON(stored) != hstate.DigestJSON(o) {
 			return bad("dispatch-changed", "派发操作与持久化授权不符")
 		}
-		run, err := m.store.get(checkCtx, o.RunID)
+		run, err := m.store.Get(checkCtx, o.RunID)
 		if err != nil {
 			return err
 		}
@@ -169,7 +170,7 @@ func (m *Manager) registerRunCatalog(ctx context.Context, s CapabilitySnapshot) 
 		}, Handler: func(access *kardia.Context, args tools.Arguments) (any, error) {
 			ctx := tools.Lifetime(access)
 			o, ok := tools.Payload(ctx).(Operation)
-			if !ok || digestJSON(o.Capability) != digestJSON(c) || o.SnapshotDigest != s.Digest {
+			if !ok || hstate.DigestJSON(o.Capability) != hstate.DigestJSON(c) || o.SnapshotDigest != s.Digest {
 				return nil, bad("dispatch-changed", "工具处理器与固定授权不符")
 			}
 			if c.Source == toolDiscoverySource {
@@ -212,7 +213,7 @@ func (m *Manager) registerRunCatalog(ctx context.Context, s CapabilitySnapshot) 
 				if err := tools.ConsumeBackend(ctx, o.DispatchID); err != nil {
 					return nil, err
 				}
-				run, err := m.store.get(ctx, o.RunID)
+				run, err := readView(ctx, m.store).Get(ctx, o.RunID)
 				if err != nil {
 					return nil, err
 				}
@@ -224,7 +225,7 @@ func (m *Manager) registerRunCatalog(ctx context.Context, s CapabilitySnapshot) 
 			if err := m.deps.Catalog.Check(ctx, s, o); err != nil {
 				return nil, err
 			}
-			if err := m.store.waitRecords(ctx); err != nil {
+			if err := waitRecords(m.store, ctx); err != nil {
 				return CapabilityResult{BusinessError: &Failure{Code: "record-storage-unavailable", Message: "执行前记录副本同步失败，该操作未派发", Evidence: &tools.ExecutionEvidence{Execution: "not-started", Changes: "none", Recovery: "correct", Stage: "dispatch-gate"}}}, nil
 			}
 
@@ -245,7 +246,7 @@ func (m *Manager) executeRegistryOperation(ctx context.Context, s CapabilitySnap
 		matched := false
 		if m.deps.Tools != nil {
 			for _, schema := range m.deps.Tools.Schemas() {
-				if schema.Name == o.Capability.Name && (digestJSON(schema) == o.Capability.CatalogDigest || legacyFileCatalogCompatible(s, o, schema) || legacyDatabaseDiscoverCatalogCompatible(o, schema) || legacyDatabaseCreateCatalogCompatible(o, schema) || legacyDockerContainerCatalogCompatible(o, schema) || legacyContainerAppsWriteCatalogCompatible(o, schema)) {
+				if schema.Name == o.Capability.Name && (hstate.DigestJSON(schema) == o.Capability.CatalogDigest || legacyFileCatalogCompatible(s, o, schema) || legacyDatabaseDiscoverCatalogCompatible(o, schema) || legacyDatabaseCreateCatalogCompatible(o, schema) || legacyDockerContainerCatalogCompatible(o, schema) || legacyContainerAppsWriteCatalogCompatible(o, schema)) {
 					matched = true
 				}
 			}
@@ -264,7 +265,7 @@ func (m *Manager) executeRegistryOperation(ctx context.Context, s CapabilitySnap
 	}
 	value, err := m.executeRegistryWithRetry(ctx, s, o, args)
 	if err != nil {
-		if business, ok := tools.AsBusinessError(err); ok && ctx.Err() == nil && (recoverableBusinessError(o.Capability, business) || supportedRecoveryPolicy(s.RecoveryPolicy) && (business.NotDispatched || o.Capability.Source == "builtin" && business.NoBusinessEffect)) {
+		if business, ok := tools.AsBusinessError(err); ok && ctx.Err() == nil && (recoverableBusinessError(o.Capability, business) || hstate.SupportedRecoveryPolicy(s.RecoveryPolicy) && (business.NotDispatched || o.Capability.Source == "builtin" && business.NoBusinessEffect)) {
 			return CapabilityResult{BusinessError: businessFailure(business)}, nil
 		}
 		// 仅内置网页工具定义的安全业务错误可继续交给模型，不透传底层错误。

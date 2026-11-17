@@ -11,6 +11,7 @@ import (
 
 	"elysian/server/internal/agent/harness/model"
 	"elysian/server/internal/agent/harness/skills"
+	hstate "elysian/server/internal/agent/harness/state"
 )
 
 func skillReadParameters() json.RawMessage {
@@ -57,20 +58,18 @@ func (m *Manager) effectiveSkillsRead(ctx context.Context, run Run) ([]loadedSki
 	if run.Selection != nil {
 		replacement = run.Selection.ReplaceMessageID
 	}
-	rows, err := m.store.reader(ctx).QueryContext(ctx, `SELECT ci.document,c.document FROM context_items ci JOIN runs r ON r.id=ci.run_id JOIN calls c ON c.id=json_extract(ci.document,'$.callId') WHERE ci.task_id=? AND (?=0 OR r.run_number<=?) AND `+visibleRunSQL+` AND r.id NOT IN (SELECT run_id FROM messages WHERE id=? AND role='user') AND c.state='succeeded' ORDER BY ci.rowid`, run.TaskID, run.RunNumber, run.RunNumber, replacement)
+	rows, err := readView(ctx, m.store).SkillLoadHistory(ctx, run.TaskID, run.RunNumber, replacement)
 	if err != nil {
 		return nil, storageFailure(err)
 	}
-	defer rows.Close()
+
 	result := []loadedSkill{}
 	seen := map[string]bool{}
-	for rows.Next() {
+	for _, record := range rows {
 		var itemRaw, callRaw []byte
 		var item ContextItem
 		var call Call
-		if err = rows.Scan(&itemRaw, &callRaw); err != nil {
-			return nil, storageFailure(err)
-		}
+		itemRaw, callRaw = record.Context, record.Call
 		if err = json.Unmarshal(itemRaw, &item); err != nil {
 			return nil, storageFailure(err)
 		}
@@ -91,7 +90,7 @@ func (m *Manager) effectiveSkillsRead(ctx context.Context, run Run) ([]loadedSki
 		seen[key] = true
 		result = append(result, loadedSkill{item, call.Result})
 	}
-	return result, storageFailure(rows.Err())
+	return result, nil
 }
 
 func (m *Manager) checkRetainedSkillBudget(ctx context.Context, run Run) error {
@@ -129,7 +128,7 @@ func (m *Manager) executeSkillLoadV2(ctx context.Context, s CapabilitySnapshot, 
 	if !ok || e.Skills == nil {
 		return skillLoadFailure("skill-unavailable", "技能存储未就绪")
 	}
-	run, err := m.store.get(ctx, o.RunID)
+	run, err := readView(ctx, m.store).Get(ctx, o.RunID)
 	if err != nil {
 		return CapabilityResult{}, storageFailure(err)
 	}
@@ -213,7 +212,7 @@ func (m *Manager) executeSkillLoadV2(ctx context.Context, s CapabilitySnapshot, 
 		if used+needed > s.LoadingBudget.SkillBodyTokens {
 			return skillLoadFailure("skill-body-budget", fmt.Sprintf("完整技能正文估算需要 %d token，已使用 %d，预算为 %d；未加载且未截断", needed, used, s.LoadingBudget.SkillBodyTokens))
 		}
-		if len(raw) > limit || !continuousRun(run) && run.Usage.ResultBytes+len(raw) > run.Limits.RunResultBytes {
+		if len(raw) > limit || !hstate.ContinuousRun(run) && run.Usage.ResultBytes+len(raw) > run.Limits.RunResultBytes {
 			return skillLoadFailure("skill-result-budget", "完整技能正文超过工具结果字节限额，未加载且未截断")
 		}
 		return CapabilityResult{Value: raw, Context: &ContextItem{Source: "skill-load", Ref: o.Capability.Ref, Path: args.Path, Digest: contentDigest(body)}}, nil

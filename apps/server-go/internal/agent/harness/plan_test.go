@@ -2,7 +2,6 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"reflect"
@@ -12,6 +11,7 @@ import (
 	"time"
 
 	"elysian/server/internal/agent/harness/model"
+	"elysian/server/internal/agent/harness/sessionstore"
 	"elysian/server/internal/agent/harness/worker"
 )
 
@@ -109,7 +109,7 @@ func TestPlanAtomicReplayCheckpointAndRoundIsolation(t *testing.T) {
 	if err != nil || !reflect.DeepEqual(output.Timeline.Plan, got.Plan) {
 		t.Fatalf("时间线未携带同一计划：%+v %v", output, err)
 	}
-	lines, _ := readRecordLines(t, m.store, recordOwner{"session", session.ID})
+	lines, _ := readRecordLines(t, fixture(m), recordOwner{"session", session.ID})
 	found := false
 	for _, line := range lines {
 		if line.Type == "runs" && line.Key == run.ID {
@@ -242,7 +242,7 @@ func TestPlanWriteGuardsAndAtomicRollback(t *testing.T) {
 		t.Run(mode, func(t *testing.T) {
 			s, _ := openRuntimeTestStore(t)
 			run := createRuntimeTestRun(t, s, "plan-guard", runtimeStoreTestTime)
-			_, err := s.change(context.Background(), run.ID, "setup", func(tx *sql.Tx, r *Run) error {
+			_, err := s.change(context.Background(), run.ID, "setup", func(tx sessionstore.Tx, r *Run) error {
 				r.Status = StateRunning
 				if mode == "cancel" {
 					r.CancelRequestedAt = stamp(runtimeStoreTestTime)

@@ -2,11 +2,13 @@ package harness
 
 import (
 	"context"
-	"elysian/server/internal/shared"
-	"github.com/go-chi/chi/v5"
 	"net/http"
 	"net/url"
 	"strconv"
+
+	"elysian/server/internal/shared"
+
+	"github.com/go-chi/chi/v5"
 )
 
 // Wiki 仅开放浏览、人工编辑和历史引用，其他记忆管理接口退役。
@@ -24,7 +26,7 @@ func registerMemoryRoutes(r chi.Router, s wikiRuntimeService) {
 			return p, err
 		}
 		if p.SpaceID != chi.URLParam(req, "spaceId") {
-			return WikiPage{}, &Error{404, "wiki-page-not-found", "Wiki 页面不属于当前空间"}
+			return WikiPage{}, &Error{Status: 404, Code: "wiki-page-not-found", Message: "Wiki 页面不属于当前空间"}
 		}
 		return p, nil
 	}

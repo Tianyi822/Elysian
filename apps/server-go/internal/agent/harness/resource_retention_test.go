@@ -2,9 +2,10 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"testing"
 	"time"
+
+	"elysian/server/internal/agent/harness/sessionstore"
 )
 
 func TestResourceUnknownLeasePinsWorkflowHistoryAndProbeSurvivesCleanup(t *testing.T) {
@@ -22,7 +23,7 @@ func TestResourceUnknownLeasePinsWorkflowHistoryAndProbeSurvivesCleanup(t *testi
 		t.Fatal("fixture missing leaf run")
 	}
 	m.mu.Lock()
-	err := m.store.write(ctx, "resource-retention-fixture", func(tx *sql.Tx) error {
+	err := fixture(m).write(ctx, "resource-retention-fixture", func(tx sessionstore.Tx) error {
 		s, err := readSession(ctx, tx, w.SessionID)
 		if err != nil {
 			return err
@@ -42,10 +43,10 @@ func TestResourceUnknownLeasePinsWorkflowHistoryAndProbeSurvivesCleanup(t *testi
 		err = m.sweep(ctx)
 	}
 	if err == nil {
-		_, err = readWorkflow(ctx, m.store.db, w.ID)
+		_, err = readWorkflow(ctx, fixture(m), w.ID)
 	}
 	if err == nil {
-		err = m.store.write(ctx, "confirmed-lease-fixture", func(tx *sql.Tx) error {
+		err = fixture(m).write(ctx, "confirmed-lease-fixture", func(tx sessionstore.Tx) error {
 			return saveResourceLease(ctx, tx, ResourceLease{ID: "unknown-operation", RunID: runID, State: "released", Evidence: "外部已确认停止", Decision: "confirmed-stopped"})
 		})
 	}
@@ -54,9 +55,9 @@ func TestResourceUnknownLeasePinsWorkflowHistoryAndProbeSurvivesCleanup(t *testi
 	}
 	var sessions int
 	if err == nil {
-		err = m.store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM sessions WHERE id=?", w.SessionID).Scan(&sessions)
+		err = fixture(m).db.QueryRowContext(ctx, "SELECT COUNT(*) FROM sessions WHERE id=?", w.SessionID).Scan(&sessions)
 	}
-	leases, leaseErr := readDocuments[ResourceLease](ctx, m.store.db, "SELECT document FROM resource_leases WHERE id='unknown-probe'")
+	leases, leaseErr := readDocuments[ResourceLease](ctx, fixture(m).db, "SELECT document FROM resource_leases WHERE id='unknown-probe'")
 	m.mu.Unlock()
 	if err != nil || sessions != 0 {
 		t.Fatalf("未决资源或已核实后的清理边界错误: %d %v", sessions, err)

@@ -2,12 +2,11 @@ package harness
 
 import (
 	"context"
-	"database/sql"
-	"encoding/hex"
-	"encoding/json"
 	"errors"
 	"io"
 
+	"elysian/server/internal/agent/harness/sessionstore"
+	"elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/harness/workspace"
 )
 
@@ -55,7 +54,7 @@ func workspaceTask(ctx context.Context, q rowReader, taskID string, requireIdle 
 		return Task{}, &Error{Status: 409, Code: "session-busy", Message: "会话仍有任务排队、运行或等待审批，请结束后再修改工作区"}
 	}
 	var active int
-	if err = q.QueryRowContext(ctx, `SELECT COUNT(*) FROM runs WHERE task_id=? AND state NOT IN ('succeeded','failed','cancelled','interrupted')`, taskID).Scan(&active); err != nil {
+	if err = readView(ctx, q).TaskRunCount(ctx, taskID, &active); err != nil {
 		return Task{}, err
 	}
 	if active > 0 {
@@ -64,93 +63,23 @@ func workspaceTask(ctx context.Context, q rowReader, taskID string, requireIdle 
 	return task, nil
 }
 
-// readWorkspaceVersion 只读取宿主数据库指针，不扫描归档目录中的候选版本。
-// 返回零版本表示空工作区，绝不能用磁盘上的最大版本代替当前版本。
-func readWorkspaceVersion(ctx context.Context, q rowReader, taskID string) (workspace.Version, error) {
-	var revision int
-	var raw string
-	err := q.QueryRowContext(ctx, "SELECT revision,document FROM workspace_versions WHERE task_id=?", taskID).Scan(&revision, &raw)
-	if errors.Is(err, sql.ErrNoRows) {
-		return workspace.Version{TaskID: taskID}, nil
-	}
-	if err != nil {
-		return workspace.Version{}, err
-	}
-	var version workspace.Version
-	if err = json.Unmarshal([]byte(raw), &version); err != nil {
-		return workspace.Version{}, err
-	}
-	if version.TaskID != taskID || version.Revision != revision || validateWorkspaceVersion(version) != nil {
-		return workspace.Version{}, errors.New("工作区数据库版本指针损坏")
-	}
-	return version, nil
-}
-
-func validateWorkspaceVersion(version workspace.Version) error {
-	digest, err := hex.DecodeString(version.Digest)
-	if version.TaskID == "" || version.Revision < 1 || version.BaseRevision < 0 || version.Revision <= version.BaseRevision || version.Bytes < 0 || version.Bytes > workspace.DefaultTaskBytes || version.FileCount < 0 || version.FileCount > workspace.DefaultTaskFiles || err != nil || len(digest) != 32 {
-		return bad("invalid-workspace-version", "工作区候选版本无效")
-	}
-	return nil
-}
-
-func workspaceConflict() error {
-	return &Error{Status: 409, Code: "workspace-revision-conflict", Message: "任务工作区已变化，请重新读取后重试"}
-}
-
-// commitWorkspaceVersion 由父进程在结果事务内调用，使用 BaseRevision 做 CAS。
-// 调用者须已验证归档存在，并在同一事务内验证 Task/Run 身份与操作状态。
-func commitWorkspaceVersion(ctx context.Context, tx *sql.Tx, version workspace.Version) error {
-	if err := validateWorkspaceVersion(version); err != nil {
-		return err
-	}
-	current, err := readWorkspaceVersion(ctx, tx, version.TaskID)
-	if err != nil {
-		return err
-	}
-	if current.Revision != version.BaseRevision {
-		return workspaceConflict()
-	}
-	raw, err := json.Marshal(version)
-	if err != nil {
-		return err
-	}
-	var result sql.Result
-	if current.Revision == 0 {
-		result, err = tx.ExecContext(ctx, `INSERT INTO workspace_versions(task_id,revision,document) VALUES(?,?,?) ON CONFLICT(task_id) DO NOTHING`, version.TaskID, version.Revision, string(raw))
-	} else {
-		result, err = tx.ExecContext(ctx, `UPDATE workspace_versions SET revision=?,document=? WHERE task_id=? AND revision=?`, version.Revision, string(raw), version.TaskID, version.BaseRevision)
-	}
-	if err != nil {
-		return err
-	}
-	changed, err := result.RowsAffected()
-	if err != nil {
-		return err
-	}
-	if changed != 1 {
-		return workspaceConflict()
-	}
-	return nil
-}
-
 func (m *Manager) Workspace(ctx context.Context, taskID, path string) (WorkspaceView, error) {
 	m.mu.Lock()
 	backend, err := m.workspaceStoreLocked()
 	if err == nil {
-		_, err = workspaceTask(ctx, m.store.db, taskID, false)
+		_, err = workspaceTask(ctx, m.store, taskID, false)
 	}
 	var current workspace.Version
 	if err == nil {
-		current, err = readWorkspaceVersion(ctx, m.store.db, taskID)
+		current, err = readWorkspaceVersion(ctx, m.store, taskID)
 	}
 	var quarantined bool
 	var sources []WikiRef
 	if err == nil {
-		quarantined, err = wikiArtifactInvalid(ctx, m.store.db, "workspace", workspaceWikiKey(current))
+		quarantined, err = wikiArtifactInvalid(ctx, m.store, "workspace", state.WorkspaceWikiKey(current))
 	}
 	if err == nil {
-		sources, err = wikiArtifactRefs(ctx, m.store.db, "workspace", workspaceWikiKey(current))
+		sources, err = wikiArtifactRefs(ctx, m.store, "workspace", state.WorkspaceWikiKey(current))
 	}
 	m.mu.Unlock()
 	if err != nil {
@@ -198,13 +127,13 @@ func (m *Manager) mutateWorkspace(ctx context.Context, taskID string, expectedRe
 		err = m.deps.DispatchGuard()
 	}
 	if err == nil {
-		_, err = workspaceTask(ctx, m.store.db, taskID, true)
+		_, err = workspaceTask(ctx, m.store, taskID, true)
 	}
 	if err == nil {
 		var current workspace.Version
-		current, err = readWorkspaceVersion(ctx, m.store.db, taskID)
+		current, err = readWorkspaceVersion(ctx, m.store, taskID)
 		if err == nil && current.Revision != expectedRevision {
-			err = workspaceConflict()
+			err = state.WorkspaceConflict()
 		}
 	}
 	m.mu.Unlock()
@@ -226,7 +155,7 @@ func (m *Manager) mutateWorkspace(ctx context.Context, taskID string, expectedRe
 			return workspace.Version{}, err
 		}
 	}
-	err = m.store.write(ctx, "workspace-update", func(tx *sql.Tx) error {
+	err = writeStore(m.store, ctx, "workspace-update", func(tx sessionstore.Tx) error {
 		_, err := workspaceTask(ctx, tx, taskID, true)
 		if err != nil {
 			return err
@@ -252,14 +181,16 @@ func (m *Manager) mutateWorkspace(ctx context.Context, taskID string, expectedRe
 // workspace_cleanup 记录。该表以 task_id 为主键，重复补写幂等；任务标识不复用。
 func (m *Manager) recordOrphanWorkspace(ctx context.Context, taskID string) error {
 	var count int
-	if err := m.store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM tasks WHERE id=?", taskID).Scan(&count); err != nil {
+	if err := readView(ctx, m.store).TaskExists(ctx, taskID, &count); err != nil {
 		return err
 	}
 	if count != 0 {
 		return nil
 	}
-	_, err := m.store.db.ExecContext(ctx, "INSERT OR IGNORE INTO workspace_cleanup(task_id) VALUES(?)", taskID)
-	return err
+	return writeStore(m.store, ctx, "orphan-workspace", func(tx sessionstore.Tx) error {
+		_, err := tx.EnqueueWorkspaceCleanup(ctx, taskID)
+		return err
+	})
 }
 
 func workspaceFailure(err error) error {

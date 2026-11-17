@@ -2,12 +2,13 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"errors"
 	"strings"
 	"time"
 
+	"elysian/server/internal/agent/harness/sessionstore"
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/jsonvalue"
 	"elysian/server/internal/agent/tools"
 )
@@ -15,31 +16,7 @@ import (
 const evidenceRecoveryPolicy = "evidence-recovery/v1"
 const continuousRecoveryPolicy = "evidence-recovery/v2"
 
-func supportedRecoveryPolicy(policy string) bool {
-	return policy == evidenceRecoveryPolicy || policy == continuousRecoveryPolicy
-}
-
 const recoveryWindow = 2 * time.Minute
-
-type RunRecovery struct {
-	OperationID string `json:"operationId"`
-	Tool        string `json:"tool"`
-	StartedAt   string `json:"startedAt"`
-	Deadline    string `json:"deadline"`
-	NextCheckAt string `json:"nextCheckAt,omitempty"`
-	Checks      int    `json:"checks"`
-	Status      string `json:"status"` // verifying | recovered | unresolved
-	Message     string `json:"message"`
-}
-
-type ToolAttempt struct {
-	Number int      `json:"number"`
-	Error  *Failure `json:"error,omitempty"`
-}
-
-func evidenceRecoveryRun(r Run) bool {
-	return supportedRecoveryPolicy(r.RecoveryPolicy) && r.SessionID != "" && r.WorkflowID == "" && r.DriverVersion == "v2"
-}
 
 func businessFailure(b *tools.BusinessError) *Failure {
 	e := b.Evidence
@@ -55,7 +32,7 @@ func businessFailure(b *tools.BusinessError) *Failure {
 // can continue only when the host has captured all effects in a workspace
 // version; writable host/network grants require separate verification.
 func classifyRecoveryResult(s CapabilitySnapshot, o Operation, result CapabilityResult) CapabilityResult {
-	if !supportedRecoveryPolicy(s.RecoveryPolicy) || result.BusinessError == nil {
+	if !hstate.SupportedRecoveryPolicy(s.RecoveryPolicy) || result.BusinessError == nil {
 		return result
 	}
 	failure := *result.BusinessError
@@ -100,14 +77,14 @@ func (m *Manager) executeRegistryWithRetry(ctx context.Context, s CapabilitySnap
 	for attempt := 1; ; attempt++ {
 		value, err := m.toolRuntime.Execute(ctx, o.Capability.Name, args)
 		b, safe := tools.AsBusinessError(err)
-		if !supportedRecoveryPolicy(s.RecoveryPolicy) || !o.Capability.ReadOnly || o.Capability.Metadata.Async || !safe || !b.Retryable || ctx.Err() != nil {
+		if !hstate.SupportedRecoveryPolicy(s.RecoveryPolicy) || !o.Capability.ReadOnly || o.Capability.Metadata.Async || !safe || !b.Retryable || ctx.Err() != nil {
 			return value, err
 		}
 		m.mu.Lock()
-		_, saveErr := m.store.change(context.Background(), o.RunID, "tool-retry", func(tx *sql.Tx, r *Run) error {
+		_, saveErr := m.store.ChangeRun(context.Background(), o.RunID, "tool-retry", func(tx sessionstore.Tx, r *Run) error {
 			var call Call
 			var raw string
-			if err := tx.QueryRowContext(context.Background(), "SELECT document FROM calls WHERE id=?", o.CallID).Scan(&raw); err != nil {
+			if err := tx.LatestInstructionResult(context.Background(), o.CallID, &raw); err != nil {
 				return err
 			}
 			if err := json.Unmarshal([]byte(raw), &call); err != nil {
@@ -130,7 +107,7 @@ func (m *Manager) executeRegistryWithRetry(ctx context.Context, s CapabilitySnap
 				r.Recovery = &RunRecovery{OperationID: o.ID, Tool: o.Capability.Name, StartedAt: stamp(m.deps.Now()), Deadline: stamp(m.deps.Now().Add(time.Duration(r.Limits.CallTimeoutSeconds) * time.Second)), Checks: attempt, Status: "correcting", Message: "只读查询暂时失败，正在按原参数进行有界重试"}
 				r.Usage.Calls++
 			}
-			return m.store.event(context.Background(), tx, r, "recovery/tool-retry", o.CallID, nil, map[string]any{"attempt": attempt, "error": businessFailure(b)})
+			return tx.Event(context.Background(), r, "recovery/tool-retry", o.CallID, nil, map[string]any{"attempt": attempt, "error": businessFailure(b)})
 		})
 		m.mu.Unlock()
 		if saveErr != nil {
@@ -178,27 +155,27 @@ func recoveryArguments(c Call) string {
 // Rebuild from durable facts: restarts cannot reset the no-progress limit.
 // New read evidence counts once; search, planning and identical reads do not.
 func (a *agentExecution) checkRecoveryProgress(ctx context.Context) error {
-	if !evidenceRecoveryRun(a.run) {
+	if !hstate.EvidenceRecoveryRun(a.run) {
 		return nil
 	}
 	m := a.manager
 	m.mu.Lock()
 	defer m.mu.Unlock()
 
-	if continuousRun(a.run) {
+	if hstate.ContinuousRun(a.run) {
 		var failed bool
-		if err := m.store.db.QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM calls WHERE run_id=? AND state='failed')", a.run.ID).Scan(&failed); err != nil {
+		if err := readView(ctx, m.store).FailedCallExists(ctx, a.run.ID, &failed); err != nil {
 			return m.contextStoreErrorLocked(err)
 		}
 		if !failed {
 			return nil
 		}
 	}
-	calls, err := readDocuments[Call](ctx, m.store.db, "SELECT document FROM calls WHERE run_id=? ORDER BY step_index", a.run.ID)
+	calls, err := readView(ctx, m.store).RecoveryCalls(ctx, a.run.ID)
 	if err != nil {
 		return m.contextStoreErrorLocked(err)
 	}
-	if continuousRun(a.run) {
+	if hstate.ContinuousRun(a.run) {
 		return a.continuousProgress(ctx, calls)
 	}
 	counts, seen := map[string]int{}, map[string]bool{}
@@ -219,7 +196,7 @@ func (a *agentExecution) checkRecoveryProgress(ctx context.Context) error {
 		}
 		key := target + "|" + c.Tool + ":" + recoveryArguments(c)
 		if c.Status == StateSucceeded {
-			fact := key + ":" + digestJSON(c.Result)
+			fact := key + ":" + hstate.DigestJSON(c.Result)
 			if !seen[fact] {
 				for failed := range counts {
 					if strings.HasPrefix(failed, target+"|") {
@@ -245,14 +222,6 @@ func (a *agentExecution) checkRecoveryProgress(ctx context.Context) error {
 	return nil
 }
 
-func beginRecovery(r *Run, o *Operation, now time.Time) {
-	if o.Recovery == nil {
-		o.Recovery = &RunRecovery{OperationID: o.ID, Tool: o.Capability.Name, StartedAt: stamp(now), Deadline: stamp(now.Add(recoveryWindow)), Status: "verifying", Message: "正在核实操作是否结束及实际变更，期间不重复提交"}
-	}
-	r.Status, r.Phase = StateWaitingRecovery, StateWaitingRecovery
-	r.Recovery = o.Recovery
-}
-
 // One bounded observation is durably scheduled before I/O, including after restart.
 func (m *Manager) recoveryObservation(expected Operation) (bool, error) {
 	if expected.Recovery == nil {
@@ -269,7 +238,7 @@ func (m *Manager) recoveryObservation(expected Operation) (bool, error) {
 		return false, nil
 	}
 	allowed := false
-	_, err := m.store.change(context.Background(), expected.RunID, "recovery-observation", func(tx *sql.Tx, r *Run) error {
+	_, err := m.store.ChangeRun(context.Background(), expected.RunID, "recovery-observation", func(tx sessionstore.Tx, r *Run) error {
 		o, err := readOperation(context.Background(), tx, expected.ID)
 		if err != nil {
 			return err
@@ -281,7 +250,7 @@ func (m *Manager) recoveryObservation(expected Operation) (bool, error) {
 		if err != nil {
 			return errors.New("恢复核实截止时间无效")
 		}
-		if !continuousRun(*r) && !now.Before(deadline) && r.Status == StateWaitingRecovery {
+		if !hstate.ContinuousRun(*r) && !now.Before(deadline) && r.Status == StateWaitingRecovery {
 			o.Recovery.Status, o.Recovery.Message = "unresolved", "自动核实已超过两分钟，仍缺少可信结束证据；请核实实际状态后继续"
 			r.Recovery = o.Recovery
 			r.Status, r.Phase, r.EndReason, r.EndedAt = StateInterrupted, "completed", "outcome-unknown", stamp(now)
@@ -294,11 +263,11 @@ func (m *Manager) recoveryObservation(expected Operation) (bool, error) {
 			if err := saveOperation(context.Background(), tx, o); err != nil {
 				return err
 			}
-			return m.store.event(context.Background(), tx, r, "run/interrupted", o.CallID, nil, r.Error)
+			return tx.Event(context.Background(), r, "run/interrupted", o.CallID, nil, r.Error)
 		}
 		o.Recovery.Checks++
 		delay := time.Duration(min(15, 1<<min(o.Recovery.Checks, 4))) * time.Second
-		if continuousRun(*r) && !now.Before(deadline) {
+		if hstate.ContinuousRun(*r) && !now.Before(deadline) {
 			delay = 2 * time.Minute
 			o.Recovery.Message = "仍缺少可信结束证据，已保留保护并每两分钟核实；不会重复派发原操作"
 		}
@@ -338,7 +307,7 @@ func (m *Manager) verifyMissingTask(ctx context.Context, expected Operation) (to
 		}
 	}
 	var v tools.TaskVerification
-	err := m.store.write(ctx, "submission-verification-intent", func(tx *sql.Tx) error {
+	err := writeStore(m.store, ctx, "submission-verification-intent", func(tx sessionstore.Tx) error {
 		o, err := readOperation(ctx, tx, expected.ID)
 		if err != nil {
 			return err
@@ -357,11 +326,14 @@ func (m *Manager) verifyMissingTask(ctx context.Context, expected Operation) (to
 		return saveOperation(ctx, tx, o)
 	})
 	if err == nil {
-		err = m.store.recordsFault()
+		err = m.store.DispatchError()
 	}
 	m.mu.Unlock()
 	if err != nil {
 		return tools.TaskReference{}, err
+	}
+	if err := waitRecords(m.store, ctx); err != nil {
+		return tools.TaskReference{}, storageFailure(err)
 	}
 	ref, err := m.deps.VerifyTask(ctx, v)
 	if err != nil {
@@ -375,12 +347,12 @@ func (m *Manager) verifyMissingTask(ctx context.Context, expected Operation) (to
 	if m.closed || m.storageError {
 		return ref, closedError()
 	}
-	err = m.store.write(context.Background(), "submission-verification-result", func(tx *sql.Tx) error {
+	err = writeStore(m.store, context.Background(), "submission-verification-result", func(tx sessionstore.Tx) error {
 		o, err := readOperation(context.Background(), tx, expected.ID)
 		if err != nil {
 			return err
 		}
-		if o.Status != "unknown" || o.DispatchID != v.DispatchID || o.ArgumentsJSON != v.ArgumentsJSON || o.Task == nil || o.Task.RequestID != ref.RequestID || o.Task.ID != "" && digestJSON(o.Task) != digestJSON(&ref) {
+		if o.Status != "unknown" || o.DispatchID != v.DispatchID || o.ArgumentsJSON != v.ArgumentsJSON || o.Task == nil || o.Task.RequestID != ref.RequestID || o.Task.ID != "" && hstate.DigestJSON(o.Task) != hstate.DigestJSON(&ref) {
 			return bad("verification-changed", "核实操作身份已变化")
 		}
 		o.Task = &ref
@@ -397,12 +369,12 @@ func (m *Manager) VerifyRecovery(ctx context.Context, id string) (Run, error) {
 		m.mu.Unlock()
 		return Run{}, closedError()
 	}
-	r, err := m.store.get(ctx, id)
+	r, err := readView(ctx, m.store).Get(ctx, id)
 	if err != nil {
 		m.mu.Unlock()
 		return r, err
 	}
-	ops, err := verificationOperations(ctx, m.store.db, id)
+	ops, err := verificationOperations(ctx, m.store, id)
 	m.mu.Unlock()
 	if err != nil {
 		return r, err
@@ -436,5 +408,5 @@ func (m *Manager) VerifyRecovery(ctx context.Context, id string) (Run, error) {
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.store.get(ctx, id)
+	return readView(ctx, m.store).Get(ctx, id)
 }

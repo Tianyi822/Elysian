@@ -11,17 +11,18 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/go-chi/chi/v5"
-
 	"elysian/server/internal/agent/execution"
 	execconfig "elysian/server/internal/agent/execution/config"
 	"elysian/server/internal/agent/harness/model"
 	"elysian/server/internal/agent/harness/skills"
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/harness/workspace"
 	"elysian/server/internal/agent/mcp"
 	"elysian/server/internal/agent/tools"
 	"elysian/server/internal/middleware"
 	"elysian/server/internal/shared"
+
+	"github.com/go-chi/chi/v5"
 )
 
 // runtimeService 只声明 HTTP 所需能力；Worker 与存储的生命周期由宿主管理。
@@ -124,7 +125,7 @@ func newRuntimeRouter(service runtimeService, unavailableReason string) http.Han
 				return
 			}
 			status := req.URL.Query().Get("status")
-			if status != "" && !validState(status) {
+			if status != "" && !hstate.ValidState(status) {
 				writeRuntimeError(w, shared.InvalidRequest("运行状态无效"))
 				return
 			}

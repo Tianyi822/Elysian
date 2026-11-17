@@ -14,6 +14,8 @@ import (
 	"time"
 
 	"elysian/server/internal/agent/harness/model"
+	"elysian/server/internal/agent/harness/sessionstore"
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/tools"
 )
 
@@ -46,10 +48,10 @@ func TestContinuousModelWaitPreservesRunAndLogicalRequestAcrossRestart(t *testin
 	if attempts.Load() != 1 {
 		t.Fatal("忽略 Retry-After 提前重试")
 	}
-	if err := m.Close(context.Background()); err != nil {
+	if err := closeFixtureManager(m); err != nil {
 		t.Fatal(err)
 	}
-	reopened, err := New(m.deps)
+	reopened, err := newFixtureManager(t, m.deps)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -175,7 +177,7 @@ func TestContinuousReplicaFaultKeepsHistoryAndInflightReceiptThenResumes(t *test
 	}, continuousDeps)
 	invoker.execute = func(context.Context, string) (any, error) {
 		toolCalls.Add(1)
-		m.store.setRecordHook(func(string) error { return errors.New("disk unavailable") })
+		fixture(m).setRecordHook(func(string) error { return errors.New("disk unavailable") })
 		return map[string]bool{"confirmed": true}, nil
 	}
 	run := submitAgentTest(t, m, session, "continuous-replica", "检查")
@@ -187,11 +189,11 @@ func TestContinuousReplicaFaultKeepsHistoryAndInflightReceiptThenResumes(t *test
 	if sessions, err := m.ListSessions(context.Background(), "", 10); err != nil || len(sessions.Items) != 1 {
 		t.Fatal("副本异常掩盖了历史")
 	}
-	m.store.setRecordHook(nil)
-	m.store.wakeRecordWorker()
-	runtimeEventually(t, func() bool { return m.store.recordsFault() == nil })
+	fixture(m).setRecordHook(nil)
+	fixture(m).wakeRecordWorker()
+	runtimeEventually(t, func() bool { return fixture(m).recordsFault() == nil })
 	m.mu.Lock()
-	_, err = m.store.change(context.Background(), run.ID, "test-resume-due", func(tx *sql.Tx, r *Run) error {
+	_, err = fixture(m).change(context.Background(), run.ID, "test-resume-due", func(tx sessionstore.Tx, r *Run) error {
 		r.Wait.NextAt = stamp(m.deps.Now().Add(-time.Second))
 		return saveRun(context.Background(), tx, r)
 	})
@@ -233,7 +235,7 @@ func TestContinuousThousandCallsAndRepeatedCompaction(t *testing.T) {
 	var done Run
 	for time.Now().Before(deadline) {
 		done, _ = m.Get(context.Background(), run.ID)
-		if terminal(done.Status) {
+		if hstate.Terminal(done.Status) {
 			break
 		}
 		time.Sleep(20 * time.Millisecond)
@@ -279,7 +281,7 @@ func TestTaskHistoryIsBoundedAndTaskScoped(t *testing.T) {
 	run = acceptSessionTestRun(t, s, task, run, true)
 	_, otherTask, otherRun := sessionStoreFixture(t, s, "other", runtimeStoreTestTime)
 	otherRun = acceptSessionTestRun(t, s, otherTask, otherRun, true)
-	if _, err := s.change(context.Background(), run.ID, "history-events", func(tx *sql.Tx, r *Run) error {
+	if _, err := s.change(context.Background(), run.ID, "history-events", func(tx sessionstore.Tx, r *Run) error {
 		for i := 0; i < 30; i++ {
 			if err := s.event(context.Background(), tx, r, "test/fact", "", nil, map[string]string{"detail": strings.Repeat("a", 2000)}); err != nil {
 				return err
@@ -289,16 +291,16 @@ func TestTaskHistoryIsBoundedAndTaskScoped(t *testing.T) {
 	}); err != nil {
 		t.Fatal(err)
 	}
-	page, err := readTaskHistory(context.Background(), s.db, task.ID, json.RawMessage(`{}`))
+	page, err := readTaskHistory(context.Background(), s, task.ID, json.RawMessage(`{}`))
 	data, _ := json.Marshal(page)
 	if err != nil || len(page.Items) == 0 || len(page.Items) > 20 || len(data) > 16384 || !page.HasMore {
 		t.Fatalf("未限制历史大小：%d %d %v", len(page.Items), len(data), err)
 	}
-	next, err := readTaskHistory(context.Background(), s.db, task.ID, json.RawMessage(`{"cursor":"`+page.NextCursor+`"}`))
+	next, err := readTaskHistory(context.Background(), s, task.ID, json.RawMessage(`{"cursor":"`+page.NextCursor+`"}`))
 	if err != nil || len(next.Items) == 0 || bytes.Equal(page.Items[0], next.Items[0]) {
 		t.Fatal("历史游标未前进", err)
 	}
-	hidden, err := readTaskHistory(context.Background(), s.db, task.ID, json.RawMessage(`{"reference":"`+otherRun.ID+`:1"}`))
+	hidden, err := readTaskHistory(context.Background(), s, task.ID, json.RawMessage(`{"reference":"`+otherRun.ID+`:1"}`))
 	if err != nil || len(hidden.Items) != 0 {
 		t.Fatal("读取了其他任务证据")
 	}

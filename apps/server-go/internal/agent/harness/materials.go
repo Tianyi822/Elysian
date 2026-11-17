@@ -2,24 +2,16 @@ package harness
 
 import (
 	"context"
-	"database/sql"
 	"encoding/json"
 	"strconv"
 
 	execconfig "elysian/server/internal/agent/execution/config"
 	"elysian/server/internal/agent/harness/model"
+	"elysian/server/internal/agent/harness/sessionstore"
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/harness/worker"
 	"elysian/server/internal/agent/mcp"
 )
-
-type CapabilityRevocation struct {
-	Cursor    string `json:"cursor"`
-	Kind      string `json:"kind"`
-	ID        string `json:"id"`
-	Revision  int    `json:"revision"`
-	Reason    string `json:"reason"`
-	CreatedAt string `json:"createdAt"`
-}
 
 type CapabilityRevocationQuery struct {
 	Kind   string
@@ -46,27 +38,20 @@ func (m *Manager) CapabilityRevocations(ctx context.Context, query CapabilityRev
 	}
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if m.closed || m.store == nil || m.store.db == nil {
+	if m.closed || m.store == nil {
 		return page, closedError()
 	}
-	rows, err := m.store.db.QueryContext(ctx, `SELECT rowid,kind,id,revision,reason,created_at
-		FROM capability_revocations WHERE rowid>? AND (?='' OR kind=?) AND (?='' OR id=?)
-		ORDER BY rowid LIMIT ?`, cursor, query.Kind, query.Kind, query.ID, query.ID, query.Limit+1)
+	rows, err := readView(ctx, m.store).Revocations(ctx, cursor, query.Kind, query.ID, query.Limit+1)
 	if err != nil {
 		return page, storageFailure(err)
 	}
-	defer rows.Close()
-	for rows.Next() {
+
+	for _, record := range rows {
 		var rowID int64
 		var item CapabilityRevocation
-		if err := rows.Scan(&rowID, &item.Kind, &item.ID, &item.Revision, &item.Reason, &item.CreatedAt); err != nil {
-			return page, storageFailure(err)
-		}
+		rowID, item.Kind, item.ID, item.Revision, item.Reason, item.CreatedAt = record.Sequence, record.Kind, record.ID, record.Revision, record.Reason, record.CreatedAt
 		item.Cursor = strconv.FormatInt(rowID, 10)
 		page.Items = append(page.Items, item)
-	}
-	if err := rows.Err(); err != nil {
-		return Page[CapabilityRevocation]{}, storageFailure(err)
 	}
 	if len(page.Items) > query.Limit {
 		page.HasMore = true
@@ -91,7 +76,7 @@ func (a *agentExecution) selectedMaterials(ctx context.Context) (*worker.ModelRe
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var count int
-	if err := m.store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM model_requests WHERE run_id=? AND request_index=-1", a.run.ID).Scan(&count); err != nil {
+	if err := readView(ctx, m.store).ModelRequestCount(ctx, a.run.ID, &count); err != nil {
 		return nil, storageFailure(err)
 	}
 	if count > 0 {
@@ -134,15 +119,15 @@ func (a *agentExecution) selectedMaterials(ctx context.Context) (*worker.ModelRe
 			return nil, bad("prompt-not-found", "提示模板不在固定发现目录中")
 		}
 	}
-	if !continuousRun(a.run) && !(resourceBudgetRun(a.run) && a.run.Limits.MaxSteps == 0) && len(record.Response.ToolCalls) > a.run.Limits.MaxSteps {
+	if !hstate.ContinuousRun(a.run) && !(resourceBudgetRun(a.run) && a.run.Limits.MaxSteps == 0) && len(record.Response.ToolCalls) > a.run.Limits.MaxSteps {
 		return nil, bad("call-budget", "显式资料加载数量超过调用预算")
 	}
-	_, err := m.store.change(ctx, a.run.ID, "materials-intent", func(tx *sql.Tx, r *Run) error {
-		record.EventSeq = nextSeq(r.LastSeq)
+	_, err := m.store.ChangeRun(ctx, a.run.ID, "materials-intent", func(tx sessionstore.Tx, r *Run) error {
+		record.EventSeq = hstate.NextSeq(r.LastSeq)
 		if err := saveModelRequest(ctx, tx, record); err != nil {
 			return err
 		}
-		return m.store.event(ctx, tx, r, "materials/selected", "", nil, map[string]string{"modelRequestId": record.ID})
+		return tx.Event(ctx, r, "materials/selected", "", nil, map[string]string{"modelRequestId": record.ID})
 	})
 	if err != nil {
 		return nil, storageFailure(err)
@@ -184,7 +169,7 @@ func (m *Manager) checkRevocations(ctx context.Context, s CapabilitySnapshot, o 
 			continue
 		}
 		var n int
-		if err := m.store.db.QueryRowContext(ctx, "SELECT COUNT(*) FROM capability_revocations WHERE kind=? AND id=? AND (revision=0 OR revision=?)", entry.kind, entry.ref.ID, entry.ref.Revision).Scan(&n); err != nil {
+		if err := readView(ctx, m.store).ExtensionRevoked(ctx, entry.kind, entry.ref.ID, entry.ref.Revision, &n); err != nil {
 			return storageFailure(err)
 		}
 		if n > 0 {
@@ -205,13 +190,13 @@ func (m *Manager) Revoke(ctx context.Context, kind, id string, revision int, rea
 		m.mu.Unlock()
 		return closedError()
 	}
-	err := storageFailure(m.store.write(ctx, "capability-revoke", func(tx *sql.Tx) error {
-		_, err := tx.ExecContext(ctx, "INSERT INTO capability_revocations(kind,id,revision,reason,created_at) VALUES(?,?,?,?,?) ON CONFLICT DO NOTHING", kind, id, revision, reason, stamp(m.deps.Now()))
+	err := storageFailure(writeStore(m.store, ctx, "capability-revoke", func(tx sessionstore.Tx) error {
+		_, err := tx.RevokeCapability(ctx, kind, id, revision, reason, stamp(m.deps.Now()))
 		return err
 	}))
 	if err == nil && kind == "grant" {
 		for _, active := range m.executions {
-			run, readErr := m.store.get(ctx, active.runID)
+			run, readErr := readView(ctx, m.store).Get(ctx, active.runID)
 			if readErr != nil {
 				err = storageFailure(readErr)
 				break
@@ -261,11 +246,11 @@ func (m *Manager) checkProbeLocked(ctx context.Context, server mcp.Server) error
 	if m.closed || m.store == nil {
 		return closedError()
 	}
-	if err := m.store.recordsFault(); err != nil {
-		return &Error{503, "record-storage-unavailable", err.Error()}
+	if err := m.store.DispatchError(); err != nil {
+		return &Error{Status: 503, Code: "record-storage-unavailable", Message: err.Error()}
 	}
 	if m.blocked != "" {
-		return &Error{503, "runtime-unavailable", m.blocked}
+		return &Error{Status: 503, Code: "runtime-unavailable", Message: m.blocked}
 	}
 	if m.deps.DispatchGuard != nil {
 		if err := m.deps.DispatchGuard(); err != nil {
@@ -285,7 +270,7 @@ func (m *Manager) restoreExecutionRevocations(ctx context.Context) error {
 	if !ok || e.Executor == nil {
 		return nil
 	}
-	rows, err := m.store.db.QueryContext(ctx, "SELECT kind,id,revision FROM capability_revocations WHERE kind IN ('grant','mcp')")
+	rows, err := readView(ctx, m.store).ExecutionRevocations(ctx)
 	if err != nil {
 		return err
 	}
@@ -294,16 +279,12 @@ func (m *Manager) restoreExecutionRevocations(ctx context.Context) error {
 		revision int
 	}
 	var entries []revocation
-	for rows.Next() {
+	for _, record := range rows {
 		var r revocation
-		if err = rows.Scan(&r.kind, &r.id, &r.revision); err != nil {
-			rows.Close()
-			return err
-		}
+		r.kind, r.id, r.revision = record.Kind, record.ID, record.Revision
 		entries = append(entries, r)
 	}
-	err = rows.Err()
-	rows.Close()
+
 	if err != nil {
 		return err
 	}
