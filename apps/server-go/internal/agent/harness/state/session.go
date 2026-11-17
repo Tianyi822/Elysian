@@ -1,6 +1,8 @@
-package harness
+package state
 
-import "elysian/server/internal/agent/harness/model"
+import (
+	"elysian/server/internal/agent/harness/model"
+)
 
 // Session 固定用户选择的模型版本；登录 Cookie 不属于会话历史。
 type Session struct {
@@ -154,3 +156,104 @@ type ModelRequestRecord struct {
 	EventSeq        string          `json:"eventSeq,omitempty"`
 	HistorySeq      string          `json:"historySeq"`
 }
+
+type AttachmentRecord struct {
+	MessageAttachment
+	SessionID string
+}
+
+// ModelPointerPublic 防止内部凭据对象被快照长期持有。
+func (r *Run) ModelPointerPublic() {
+	if r.Model != nil {
+		public := r.Model.Public()
+		r.Model = &public
+	}
+}
+
+type UserInputOption struct {
+	ID          string `json:"id"`
+	Label       string `json:"label"`
+	Description string `json:"description"`
+}
+
+type UserInputQuestion struct {
+	ID                  string            `json:"id"`
+	Header              string            `json:"header"`
+	Question            string            `json:"question"`
+	Options             []UserInputOption `json:"options"`
+	RecommendedOptionID string            `json:"recommendedOptionId,omitempty"`
+}
+
+type UserInputAnswer struct {
+	OptionID string `json:"optionId,omitempty"`
+	Text     string `json:"text,omitempty"`
+}
+
+type AnswerUserInput struct {
+	RequestID string                     `json:"requestId"`
+	Answers   map[string]UserInputAnswer `json:"answers"`
+}
+
+type UserInputRequest struct {
+	ID              string                     `json:"id"`
+	RunID           string                     `json:"runId"`
+	ModelRequestID  string                     `json:"modelRequestId"`
+	ModelCallID     string                     `json:"modelCallId"`
+	CallID          string                     `json:"callId"`
+	Status          string                     `json:"status"`
+	Questions       []UserInputQuestion        `json:"questions"`
+	Answers         map[string]UserInputAnswer `json:"answers,omitempty"`
+	AnswerRequestID string                     `json:"answerRequestId,omitempty"`
+	CreatedAt       string                     `json:"createdAt"`
+	EndedAt         string                     `json:"endedAt,omitempty"`
+}
+
+type UserInputReceipt struct {
+	UserInput UserInputRequest `json:"userInput"`
+	Run       Run              `json:"run"`
+}
+
+const UserInputSource = "user-input"
+
+type CapabilityRevocation struct {
+	Cursor    string `json:"cursor"`
+	Kind      string `json:"kind"`
+	ID        string `json:"id"`
+	Revision  int    `json:"revision"`
+	Reason    string `json:"reason"`
+	CreatedAt string `json:"createdAt"`
+}
+
+type PlanStep struct {
+	ID     string `json:"id"`
+	Title  string `json:"title"`
+	Status string `json:"status"`
+}
+
+// RunPlan 是模型确认的步骤快照，不代表外部操作已获授权或执行成功。
+type RunPlan struct {
+	SourceRunID string     `json:"sourceRunId,omitempty"`
+	Revision    int        `json:"revision"`
+	UpdatedAt   string     `json:"updatedAt"`
+	Steps       []PlanStep `json:"steps"`
+}
+
+const PlanSource = "task-plan"
+
+// ASCII 约四字一 token，其他 Unicode 约一字一 token。仅用于组成展示，
+// 既有准入预算仍由 estimateRequest 的保守字节估算负责。
+func EstimateContextText(text string) int {
+	ascii, other := 0, 0
+	for _, r := range text {
+		if r < 128 {
+			ascii++
+		} else {
+			other++
+		}
+	}
+	return (ascii+3)/4 + other
+}
+
+func Bad(code, message string) error { return &Error{Status: 400, Code: code, Message: message} }
+
+const TaskHistorySource = "task-history"
