@@ -56,6 +56,24 @@ func TestHarnessCoreHasNoDomainOrAssemblyDependency(t *testing.T) {
 	}
 }
 
+func TestSessionStoreLayerDependencies(t *testing.T) {
+	const harness = "elysian/server/internal/agent/harness"
+	for _, pkg := range []string{harness, harness + "/state", harness + "/sessionstore"} {
+		info := harnessPackageDependencies(t, pkg)
+		for _, name := range info.Deps {
+			if name == "database/sql" || name == "database/sql/driver" || strings.HasPrefix(name, "modernc.org/sqlite") || name == harness+"/sessionstore/sqlite" {
+				t.Errorf("%s 只能依赖持久化契约，不能引用 %s", pkg, name)
+			}
+		}
+	}
+	info := harnessPackageDependencies(t, harness+"/sessionstore/sqlite")
+	for _, name := range info.Deps {
+		if name == harness || harnessDomainDependency(name) || harnessAssemblyDependency(name) {
+			t.Errorf("SQLite 实现不得反向调用运行内核、业务域或装配层：%s", name)
+		}
+	}
+}
+
 func TestHarnessToolBridgeUsesOnlyInjectedToolCapabilities(t *testing.T) {
 	info := harnessPackageDependencies(t, "./internal/agent/harness/toolbridge")
 	allowed := map[string]bool{

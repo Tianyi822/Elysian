@@ -39,7 +39,7 @@ printf 'Go 模块代理：%s\n' "$GOPROXY"
 output="$source_dir/out/gitee-release"
 mkdir -p "$output"
 (cd apps/server-go && go test ./internal/platformhelper ./internal/panel ./internal/cli/...)
-(cd apps/server-go && go test ./internal/agent/harness -run 'Test(SQLiteCancelled|StoreRead|StoreWrite)')
+(cd apps/server-go && go test ./internal/agent/harness/sessionstore/... -run 'Test(SessionStore|SQLiteCancelled|StoreRead|StoreWrite)')
 python3 -B scripts/release-download.test.py
 python3 -B scripts/publish-gitee.test.py
 for arch in amd64 arm64; do
