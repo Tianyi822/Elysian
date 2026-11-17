@@ -25,7 +25,7 @@ fetch_checked() {
   printf '%s  %s\n' "$digest" "$file" | sha256sum -c -
 }
 # Digests are pinned to the official Go index and Bun release, shared with install.sh.
-fetch_checked https://golang.google.cn/dl/go1.26.11.linux-amd64.tar.gz "$tools_dir/go.tar.gz" 9849f4e04ee35303714e34fbc3ac8ab44ea3e448a95aa182f91e3b9b79c710ec
+fetch_checked https://golang.google.cn/dl/go1.27.4.linux-amd64.tar.gz "$tools_dir/go.tar.gz" 7226736c2339719cda28fbf3a54d71aa63bcefe376e98cef00034268dab24840
 tar -xzf "$tools_dir/go.tar.gz" -C "$tools_dir"
 fetch_checked https://registry.npmmirror.com/-/binary/bun/bun-v1.4.2/bun-linux-x64.zip "$tools_dir/bun.zip" 36368faef7527875d5ffa52e53cd48021741f2a83eb6208a8dd64068d422a913
 unzip -q "$tools_dir/bun.zip" -d "$tools_dir"

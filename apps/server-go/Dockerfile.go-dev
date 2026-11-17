@@ -1,7 +1,7 @@
 # apps/server-go/Dockerfile.go-dev —— Go 开发测试镜像（宿主机编辑，容器内跑门禁与服务）
 # API 专用镜像：sshd/ufw/iproute2/sudo 依赖、联调账号与 sqlite 专用 uid（root 运行的
 # 服务为 SQLite 托管子进程降权）都在这里，与纯前端的根 Dockerfile.dev 分工。
-FROM golang:1.26.11-bookworm
+FROM golang:1.27.4-bookworm
 
 ENV DEBIAN_FRONTEND=noninteractive
 

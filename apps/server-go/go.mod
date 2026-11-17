@@ -1,12 +1,12 @@
 module elysian/server
 
-go 1.26.11
+go 1.27.4
 
 // 固定选型（go-plan §固定选型）：不引入其它框架。骨架阶段仅 chi 与 gorilla/websocket
 // 被公共层直接引用，其余各域实现者预钉版本；go.mod 为骨架/集成所有，域实现者只读。
 // gopkg.in/yaml.v3 为容器镜像构建引入（ADR-0021，纯 Go 单库，仅 Go 侧；TS 契约侧
 // 坚持零依赖），依赖与注释由集成侧变更。
-// SQLite v1.52.0 修复查询取消后的结果集泄漏；开发与发布统一 Go 1.26.11。
+// SQLite v1.52.0 修复查询取消后的结果集泄漏；开发与发布统一 Go 1.27.4。
 // Charmbracelet 的既有 v1 选型及 CJK/emoji 宽度依赖保持锁定。
 require (
 	github.com/creack/pty v1.1.23

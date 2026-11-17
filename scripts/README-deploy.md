@@ -36,7 +36,7 @@ sudo env ELYSIAN_RELEASE_SOURCE=github bash install-release.sh
 
 ## Gitee 发布与双端推送
 
-[.workflow/release.yml](../.workflow/release.yml) 使用 Gitee Go 的 `version: 1.0`、`triggers.push.tags.prefix: [v]` 与 `stages/steps`，与 GitHub 的 `.github/workflows` 相互独立。x64 Ubuntu GCC 云端任务使用经官方摘要校验的 Go 1.26.11、Bun 1.4.2，Go／npm 依赖走国内镜像，交叉编译 Linux amd64／arm64；ARM64 两个静态 Go 程序通过 QEMU 运行验证，GitHub 两架构继续原生安装准备冒烟。Bun 仅用于前端构建和打包，不编入辅助程序。
+[.workflow/release.yml](../.workflow/release.yml) 使用 Gitee Go 的 `version: 1.0`、`triggers.push.tags.prefix: [v]` 与 `stages/steps`，与 GitHub 的 `.github/workflows` 相互独立。x64 Ubuntu GCC 云端任务使用经官方摘要校验的 Go 1.27.4、Bun 1.4.2，Go／npm 依赖走国内镜像，交叉编译 Linux amd64／arm64；ARM64 两个静态 Go 程序通过 QEMU 运行验证，GitHub 两架构继续原生安装准备冒烟。Bun 仅用于前端构建和打包，不编入辅助程序。
 
 首次设置：在 [Gitee 仓库](https://gitee.com/Chentyit/Elysian) 开通 Gitee Go（账号需已绑定手机号），从仓库现有 `.workflow/release.yml` 导入流水线，启用自动触发并设置串行执行，避免同一提交并发发布。将具有本仓库发布权限的 Gitee `projects` Token 保存为密文通用变量 `ELYSIAN_GITEE_TOKEN`，并保留 YAML 中 `ref_variable` 对该变量名的关联；不得将值填入 YAML、Git URL、命令行或提交记录。若账号配置只支持会入库的普通明文参数，应先配置平台安全凭据注入，不能把 Token 当普通参数保存。手机号验证和凭据录入由账号持有人在 Gitee 完成。导入优先复用已有 YAML；若平台生成初始化提交，先将该提交合并回本地及 GitHub，避免推送冲突。
 
