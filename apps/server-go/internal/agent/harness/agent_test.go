@@ -123,7 +123,7 @@ func agentManager(t *testing.T, client agentTestClient, change func(*Deps)) (*Ma
 			t.Error(err)
 		}
 	})
-	runtimeEventually(t, func() bool { return m.Info().Agent.Available })
+	runtimeEventually(t, func() bool { info := m.Info(); return info.Agent.Available && info.Worker == "ready" })
 	session, err := m.CreateSession(context.Background(), CreateSessionInput{Title: "专用回归会话", ModelProfileID: profile.ID, ModelRevision: profile.Revision})
 	if err != nil {
 		t.Fatal(err)
@@ -851,7 +851,7 @@ func TestAgentContinuationClosesInterruptedToolGroupWithoutReplay(t *testing.T) 
 	if got := runtimeFinished(t, m, first.ID); got.Status != StateInterrupted {
 		t.Fatalf("Worker 中断未落状态：%+v", got)
 	}
-	runtimeEventually(t, func() bool { return m.Info().Agent.Available })
+	runtimeEventually(t, func() bool { info := m.Info(); return info.Agent.Available && info.Worker == "ready" })
 	second, _, err := m.ContinueTask(context.Background(), first.TaskID, AgentInput{RequestID: "group-continue", Content: "继续解释已确认结果"})
 	if err != nil {
 		t.Fatal(err)

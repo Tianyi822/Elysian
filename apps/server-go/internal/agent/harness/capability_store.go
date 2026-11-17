@@ -22,7 +22,7 @@ func digestJSON(v any) string {
 func nextSeq(s string) string { n, _ := strconv.ParseInt(s, 10, 64); return strconv.FormatInt(n+1, 10) }
 func (m *Manager) environment(ctx context.Context, id string) (Environment, error) {
 	var raw string
-	err := m.store.db.QueryRowContext(ctx, "SELECT document FROM environments WHERE session_id=? ORDER BY revision DESC LIMIT 1", id).Scan(&raw)
+	err := m.store.reader(ctx).QueryRowContext(ctx, "SELECT document FROM environments WHERE session_id=? ORDER BY revision DESC LIMIT 1", id).Scan(&raw)
 	if errors.Is(err, sql.ErrNoRows) {
 		names := []string{}
 		if m.deps.Tools != nil {
@@ -52,11 +52,14 @@ func (m *Manager) GetEnvironment(ctx context.Context, id string) (Environment, e
 	if m.closed {
 		return Environment{}, closedError()
 	}
-	if _, err := readSession(ctx, m.store.db, id); err != nil {
-		return Environment{}, storageFailure(err)
-	}
-	e, err := m.environment(ctx, id)
-	return e, storageFailure(err)
+	value, readErr := storeRead(ctx, m.store, "GetEnvironment", func(ctx context.Context) (Environment, error) {
+		if _, err := readSession(ctx, m.store.reader(ctx), id); err != nil {
+			return Environment{}, err
+		}
+		e, err := m.environment(ctx, id)
+		return e, err
+	})
+	return value, storageFailure(readErr)
 }
 func (m *Manager) PutEnvironment(ctx context.Context, id string, expected int, e Environment) (Environment, error) {
 	m.mu.Lock()
@@ -256,8 +259,11 @@ func (m *Manager) Operations(ctx context.Context, id string) ([]Operation, error
 	if m.closed {
 		return nil, closedError()
 	}
-	o, e := readDocuments[Operation](ctx, m.store.db, "SELECT document FROM operations WHERE run_id=? ORDER BY rowid", id)
-	return o, storageFailure(e)
+	value, readErr := storeRead(ctx, m.store, "Operations", func(ctx context.Context) ([]Operation, error) {
+		o, e := readDocuments[Operation](ctx, m.store.reader(ctx), "SELECT document FROM operations WHERE run_id=? ORDER BY rowid", id)
+		return o, e
+	})
+	return value, storageFailure(readErr)
 }
 func (m *Manager) ContextItems(ctx context.Context, id string) ([]ContextItem, error) {
 	m.mu.Lock()
@@ -265,8 +271,11 @@ func (m *Manager) ContextItems(ctx context.Context, id string) ([]ContextItem, e
 	if m.closed {
 		return nil, closedError()
 	}
-	o, e := readDocuments[ContextItem](ctx, m.store.db, "SELECT document FROM context_items WHERE run_id=? ORDER BY rowid", id)
-	return o, storageFailure(e)
+	value, readErr := storeRead(ctx, m.store, "ContextItems", func(ctx context.Context) ([]ContextItem, error) {
+		o, e := readDocuments[ContextItem](ctx, m.store.reader(ctx), "SELECT document FROM context_items WHERE run_id=? ORDER BY rowid", id)
+		return o, e
+	})
+	return value, storageFailure(readErr)
 }
 func (m *Manager) Approvals(ctx context.Context) ([]Approval, error) {
 	return m.ApprovalsFiltered(ctx, "")
@@ -474,8 +483,11 @@ func (m *Manager) BarriersFiltered(ctx context.Context, workflowID string) ([]Ex
 	if m.closed {
 		return nil, closedError()
 	}
-	o, e := readDocuments[ExecutionBarrier](ctx, m.store.db, "SELECT document FROM execution_barriers WHERE (?='' OR run_id IN (SELECT id FROM runs WHERE workflow_id=?)) ORDER BY rowid DESC LIMIT 200", workflowID, workflowID)
-	return o, storageFailure(e)
+	value, readErr := storeRead(ctx, m.store, "BarriersFiltered", func(ctx context.Context) ([]ExecutionBarrier, error) {
+		o, e := readDocuments[ExecutionBarrier](ctx, m.store.reader(ctx), "SELECT document FROM execution_barriers WHERE (?='' OR run_id IN (SELECT id FROM runs WHERE workflow_id=?)) ORDER BY rowid DESC LIMIT 200", workflowID, workflowID)
+		return o, e
+	})
+	return value, storageFailure(readErr)
 }
 func (m *Manager) Decide(ctx context.Context, id, decision string) (Approval, error) {
 	m.mu.Lock()

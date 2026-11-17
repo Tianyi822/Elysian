@@ -412,11 +412,14 @@ func (m *Manager) Get(ctx context.Context, id string) (Run, error) {
 	if m.closed {
 		return Run{}, closedError()
 	}
-	r, err := m.store.get(ctx, id)
-	if err == nil {
-		r.Continuation, err = continuation(ctx, m.store.db, r)
-	}
-	return r, storageFailure(err)
+	value, readErr := storeRead(ctx, m.store, "Get", func(ctx context.Context) (Run, error) {
+		r, err := m.store.get(ctx, id)
+		if err == nil {
+			r.Continuation, err = continuation(ctx, m.store.reader(ctx), r)
+		}
+		return r, err
+	})
+	return value, storageFailure(readErr)
 }
 func (m *Manager) List(ctx context.Context, q ListQuery) (Page[Run], error) {
 	m.mu.Lock()
@@ -424,8 +427,11 @@ func (m *Manager) List(ctx context.Context, q ListQuery) (Page[Run], error) {
 	if m.closed {
 		return Page[Run]{}, closedError()
 	}
-	p, err := m.store.list(ctx, q)
-	return p, storageFailure(err)
+	value, readErr := storeRead(ctx, m.store, "List", func(ctx context.Context) (Page[Run], error) {
+		p, err := m.store.list(ctx, q)
+		return p, err
+	})
+	return value, storageFailure(readErr)
 }
 func (m *Manager) Calls(ctx context.Context, id, cursor string, limit int) (Page[Call], error) {
 	m.mu.Lock()
@@ -433,8 +439,11 @@ func (m *Manager) Calls(ctx context.Context, id, cursor string, limit int) (Page
 	if m.closed {
 		return Page[Call]{}, closedError()
 	}
-	p, err := m.store.calls(ctx, id, cursor, limit)
-	return p, storageFailure(err)
+	value, readErr := storeRead(ctx, m.store, "Calls", func(ctx context.Context) (Page[Call], error) {
+		p, err := m.store.calls(ctx, id, cursor, limit)
+		return p, err
+	})
+	return value, storageFailure(readErr)
 }
 func (m *Manager) Events(ctx context.Context, id, after string, limit int) (Page[Event], error) {
 	m.mu.Lock()
@@ -442,8 +451,11 @@ func (m *Manager) Events(ctx context.Context, id, after string, limit int) (Page
 	if m.closed {
 		return Page[Event]{}, closedError()
 	}
-	p, err := m.store.events(ctx, id, after, limit)
-	return p, storageFailure(err)
+	value, readErr := storeRead(ctx, m.store, "Events", func(ctx context.Context) (Page[Event], error) {
+		p, err := m.store.events(ctx, id, after, limit)
+		return p, err
+	})
+	return value, storageFailure(readErr)
 }
 func closedError() error {
 	return &Error{Status: 503, Code: "runtime-stopped", Message: "任务运行内核已停止"}

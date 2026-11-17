@@ -393,7 +393,7 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
           if (version === listVersion) {
             if (userInitiated || listFeedback !== failureMessage(error)) notify(failureMessage(error))
             listFeedback = failureMessage(error)
-            set({ listError: userInitiated && listInitialized ? null : failureMessage(error) })
+            set({ listError: failureMessage(error) })
           }
         }
         finally { if (version === listVersion) set({ listLoading: false }) }

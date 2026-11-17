@@ -375,6 +375,8 @@ describe('基本聊天界面', () => {
     backend.api.getSession.mockRejectedValue(new Error(sessionError))
     const { readModels } = renderChat(backend, '/agent?session=server-session', modelError)
     const retry = await screen.findByRole('button', { name: '重新读取会话和模型' })
+    expect(screen.getByText('会话暂时无法读取')).toBeInTheDocument()
+    expect(screen.queryByText('今天想聊什么？')).not.toBeInTheDocument()
     await waitFor(() => expect(retry).toBeEnabled())
     const alert = screen.getByRole('alert')
     expect(alert).toHaveTextContent(sessionError)

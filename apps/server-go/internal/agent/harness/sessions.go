@@ -253,8 +253,11 @@ func (m *Manager) GetSession(ctx context.Context, id string) (Session, error) {
 	if m.closed {
 		return Session{}, closedError()
 	}
-	session, err := readSession(ctx, m.store.db, id)
-	return session, storageFailure(err)
+	value, readErr := storeRead(ctx, m.store, "GetSession", func(ctx context.Context) (Session, error) {
+		session, err := readSession(ctx, m.store.reader(ctx), id)
+		return session, err
+	})
+	return value, storageFailure(readErr)
 }
 func (m *Manager) ListSessions(ctx context.Context, cursor string, limit int) (Page[Session], error) {
 	m.mu.Lock()
@@ -262,8 +265,11 @@ func (m *Manager) ListSessions(ctx context.Context, cursor string, limit int) (P
 	if m.closed {
 		return Page[Session]{}, closedError()
 	}
-	page, err := m.store.sessions(ctx, cursor, limit)
-	return page, storageFailure(err)
+	value, readErr := storeRead(ctx, m.store, "ListSessions", func(ctx context.Context) (Page[Session], error) {
+		page, err := m.store.sessions(ctx, cursor, limit)
+		return page, err
+	})
+	return value, storageFailure(readErr)
 }
 func (m *Manager) ListSessionsByActivity(ctx context.Context, cursor string, limit int) (Page[Session], error) {
 	m.mu.Lock()
@@ -271,8 +277,11 @@ func (m *Manager) ListSessionsByActivity(ctx context.Context, cursor string, lim
 	if m.closed {
 		return Page[Session]{}, closedError()
 	}
-	page, err := m.store.sessionsByActivity(ctx, cursor, limit)
-	return page, storageFailure(err)
+	value, readErr := storeRead(ctx, m.store, "ListSessionsByActivity", func(ctx context.Context) (Page[Session], error) {
+		page, err := m.store.sessionsByActivity(ctx, cursor, limit)
+		return page, err
+	})
+	return value, storageFailure(readErr)
 }
 func (m *Manager) GetTask(ctx context.Context, id string) (Task, error) {
 	m.mu.Lock()
@@ -280,19 +289,22 @@ func (m *Manager) GetTask(ctx context.Context, id string) (Task, error) {
 	if m.closed {
 		return Task{}, closedError()
 	}
-	task, err := readTask(ctx, m.store.db, id)
-	if err != nil {
-		return task, storageFailure(err)
-	}
-	last, err := m.store.latestRun(ctx, id)
-	if err != nil {
-		return task, storageFailure(err)
-	}
-	task.LatestRun = last
-	if last != nil {
-		task.MemoryStatus = publicMemoryStatus(last)
-	}
-	return task, nil
+	value, readErr := storeRead(ctx, m.store, "GetTask", func(ctx context.Context) (Task, error) {
+		task, err := readTask(ctx, m.store.reader(ctx), id)
+		if err != nil {
+			return task, err
+		}
+		last, err := m.store.latestRun(ctx, id)
+		if err != nil {
+			return task, err
+		}
+		task.LatestRun = last
+		if last != nil {
+			task.MemoryStatus = publicMemoryStatus(last)
+		}
+		return task, nil
+	})
+	return value, storageFailure(readErr)
 }
 func (m *Manager) ListTasks(ctx context.Context, sessionID, cursor string, limit int) (Page[Task], error) {
 	m.mu.Lock()
@@ -300,20 +312,23 @@ func (m *Manager) ListTasks(ctx context.Context, sessionID, cursor string, limit
 	if m.closed {
 		return Page[Task]{}, closedError()
 	}
-	page, err := m.store.tasks(ctx, sessionID, cursor, limit)
-	if err == nil {
-		for i := range page.Items {
-			last, readErr := m.store.latestRun(ctx, page.Items[i].ID)
-			if readErr != nil {
-				return page, storageFailure(readErr)
-			}
-			page.Items[i].LatestRun = last
-			if last != nil {
-				page.Items[i].MemoryStatus = publicMemoryStatus(last)
+	value, readErr := storeRead(ctx, m.store, "ListTasks", func(ctx context.Context) (Page[Task], error) {
+		page, err := m.store.tasks(ctx, sessionID, cursor, limit)
+		if err == nil {
+			for i := range page.Items {
+				last, readErr := m.store.latestRun(ctx, page.Items[i].ID)
+				if readErr != nil {
+					return page, readErr
+				}
+				page.Items[i].LatestRun = last
+				if last != nil {
+					page.Items[i].MemoryStatus = publicMemoryStatus(last)
+				}
 			}
 		}
-	}
-	return page, storageFailure(err)
+		return page, err
+	})
+	return value, storageFailure(readErr)
 }
 func (m *Manager) Messages(ctx context.Context, id, after string, limit int) (Page[Message], error) {
 	m.mu.Lock()
@@ -321,21 +336,24 @@ func (m *Manager) Messages(ctx context.Context, id, after string, limit int) (Pa
 	if m.closed {
 		return Page[Message]{}, closedError()
 	}
-	page, err := m.store.messages(ctx, id, after, limit)
-	if err == nil {
-		for i := range page.Items {
-			v := &page.Items[i]
-			v.Quarantined, err = wikiArtifactInvalid(ctx, m.store.db, "message", v.ID)
-			if err != nil {
-				break
-			}
-			v.WikiSources, err = wikiArtifactRefs(ctx, m.store.db, "message", v.ID)
-			if err != nil {
-				break
+	value, readErr := storeRead(ctx, m.store, "Messages", func(ctx context.Context) (Page[Message], error) {
+		page, err := m.store.messages(ctx, id, after, limit)
+		if err == nil {
+			for i := range page.Items {
+				v := &page.Items[i]
+				v.Quarantined, err = wikiArtifactInvalid(ctx, m.store.reader(ctx), "message", v.ID)
+				if err != nil {
+					break
+				}
+				v.WikiSources, err = wikiArtifactRefs(ctx, m.store.reader(ctx), "message", v.ID)
+				if err != nil {
+					break
+				}
 			}
 		}
-	}
-	return page, storageFailure(err)
+		return page, err
+	})
+	return value, storageFailure(readErr)
 }
 func (m *Manager) Memory(ctx context.Context, id string, revision int) (WorkingMemory, error) {
 	m.mu.Lock()
@@ -343,25 +361,28 @@ func (m *Manager) Memory(ctx context.Context, id string, revision int) (WorkingM
 	if m.closed {
 		return WorkingMemory{}, closedError()
 	}
-	memory, err := m.store.memory(ctx, id, revision)
-	if err != nil {
-		return memory, storageFailure(err)
-	}
-	last, err := m.store.latestRun(ctx, id)
-	if err != nil {
-		return memory, storageFailure(err)
-	}
-	if last != nil {
-		memory.MemoryStatus = publicMemoryStatus(last)
-	}
-	invalid, e := wikiArtifactInvalid(ctx, m.store.db, "memory", id+":"+strconv.Itoa(memory.Revision))
-	if e != nil {
-		return memory, e
-	}
-	if invalid {
-		memory.MemoryStatus = "invalidated"
-	}
-	return memory, nil
+	value, readErr := storeRead(ctx, m.store, "Memory", func(ctx context.Context) (WorkingMemory, error) {
+		memory, err := m.store.memory(ctx, id, revision)
+		if err != nil {
+			return memory, err
+		}
+		last, err := m.store.latestRun(ctx, id)
+		if err != nil {
+			return memory, err
+		}
+		if last != nil {
+			memory.MemoryStatus = publicMemoryStatus(last)
+		}
+		invalid, e := wikiArtifactInvalid(ctx, m.store.reader(ctx), "memory", id+":"+strconv.Itoa(memory.Revision))
+		if e != nil {
+			return memory, e
+		}
+		if invalid {
+			memory.MemoryStatus = "invalidated"
+		}
+		return memory, nil
+	})
+	return value, storageFailure(readErr)
 }
 func (m *Manager) ModelRequests(ctx context.Context, id, cursor string, limit int) (Page[ModelRequestRecord], error) {
 	m.mu.Lock()
@@ -369,17 +390,20 @@ func (m *Manager) ModelRequests(ctx context.Context, id, cursor string, limit in
 	if m.closed {
 		return Page[ModelRequestRecord]{}, closedError()
 	}
-	page, err := m.store.modelRequests(ctx, id, cursor, limit)
-	if execution := m.executionLocked(id); err == nil && execution != nil && execution.agent != nil {
-		agent := execution.agent
-		for i := range page.Items {
-			if page.Items[i].ID == agent.reasoningRequestID && page.Items[i].Status == StateRunning {
-				page.Items[i].Reasoning = agent.reasoning
-				page.Items[i].Content = agent.content
+	value, readErr := storeRead(ctx, m.store, "ModelRequests", func(ctx context.Context) (Page[ModelRequestRecord], error) {
+		page, err := m.store.modelRequests(ctx, id, cursor, limit)
+		if execution := m.executionLocked(id); err == nil && execution != nil && execution.agent != nil {
+			agent := execution.agent
+			for i := range page.Items {
+				if page.Items[i].ID == agent.reasoningRequestID && page.Items[i].Status == StateRunning {
+					page.Items[i].Reasoning = agent.reasoning
+					page.Items[i].Content = agent.content
+				}
 			}
 		}
-	}
-	return page, storageFailure(err)
+		return page, err
+	})
+	return value, storageFailure(readErr)
 }
 
 func (m *Manager) CreateTask(ctx context.Context, sessionID string, input AgentInput) (Run, bool, error) {

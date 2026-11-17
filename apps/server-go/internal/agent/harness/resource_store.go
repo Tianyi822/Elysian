@@ -268,6 +268,9 @@ func (m *Manager) ResourceLeases(ctx context.Context) ([]ResourceLease, error) {
 	if m.closed {
 		return nil, closedError()
 	}
-	leases, err := readDocuments[ResourceLease](ctx, m.store.db, "SELECT document FROM resource_leases ORDER BY CASE WHEN state IN ('waiting','held','unknown') THEN 0 ELSE 1 END,sequence DESC LIMIT 200")
-	return leases, storageFailure(err)
+	value, readErr := storeRead(ctx, m.store, "ResourceLeases", func(ctx context.Context) ([]ResourceLease, error) {
+		leases, err := readDocuments[ResourceLease](ctx, m.store.reader(ctx), "SELECT document FROM resource_leases ORDER BY CASE WHEN state IN ('waiting','held','unknown') THEN 0 ELSE 1 END,sequence DESC LIMIT 200")
+		return leases, err
+	})
+	return value, storageFailure(readErr)
 }

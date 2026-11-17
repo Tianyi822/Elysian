@@ -25,7 +25,7 @@ fetch_checked() {
   printf '%s  %s\n' "$digest" "$file" | sha256sum -c -
 }
 # Digests are pinned to the official Go index and Bun release, shared with install.sh.
-fetch_checked https://golang.google.cn/dl/go1.23.12.linux-amd64.tar.gz "$tools_dir/go.tar.gz" d3847fef834e9db11bf64e3fb34db9c04db14e068eeb064f49af747010454f90
+fetch_checked https://golang.google.cn/dl/go1.26.11.linux-amd64.tar.gz "$tools_dir/go.tar.gz" 9849f4e04ee35303714e34fbc3ac8ab44ea3e448a95aa182f91e3b9b79c710ec
 tar -xzf "$tools_dir/go.tar.gz" -C "$tools_dir"
 fetch_checked https://registry.npmmirror.com/-/binary/bun/bun-v1.4.2/bun-linux-x64.zip "$tools_dir/bun.zip" 36368faef7527875d5ffa52e53cd48021741f2a83eb6208a8dd64068d422a913
 unzip -q "$tools_dir/bun.zip" -d "$tools_dir"
@@ -39,6 +39,7 @@ printf 'Go 模块代理：%s\n' "$GOPROXY"
 output="$source_dir/out/gitee-release"
 mkdir -p "$output"
 (cd apps/server-go && go test ./internal/platformhelper ./internal/panel ./internal/cli/...)
+(cd apps/server-go && go test ./internal/agent/harness -run 'Test(SQLiteCancelled|StoreRead|StoreWrite)')
 python3 -B scripts/release-download.test.py
 python3 -B scripts/publish-gitee.test.py
 for arch in amd64 arm64; do

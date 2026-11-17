@@ -278,7 +278,7 @@ export function AgentChatPage() {
     if (!files.length) { chat.reportInput('无法添加文件夹，请选择具体文件。'); return }
     addFiles(files, editing)
   }
-  const title = chat.remoteSession?.title || chat.messages[0]?.content || '新会话'
+  const title = chat.remoteSession?.title || chat.messages[0]?.content || (session?.remote ? '当前会话' : '新会话')
   const run = chat.run
 
   const closeList = () => {
@@ -349,10 +349,15 @@ export function AgentChatPage() {
       following.current = element.scrollHeight - element.scrollTop - element.clientHeight < 24
     }}>
       {!chat.messages.length && !chat.outgoingMessage && !waitingForMessage ? <div className="chat-empty">
+        {session?.remote ? <>
+          <h2 className="text-xl font-medium">{chat.syncError ? '会话暂时无法读取' : restoring || chat.loading ? '正在读取会话…' : '暂无消息'}</h2>
+          {!chat.syncError && (restoring || chat.loading) && <p className="mt-3 text-sm text-fg-muted">正在加载历史消息。</p>}
+        </> : <>
         <Bot size={38} className="mb-5 text-fg-muted" aria-hidden />
         <h2 className="text-2xl font-medium tracking-tight sm:text-[28px]">今天想聊什么？</h2>
         <p className="mt-3 text-sm text-fg-muted">选择模型，向 Ely 发送第一条消息。</p>
         {!!session?.messages.length && <p className="mt-3 text-xs text-fg-muted">本地预览消息未发送给模型。</p>}
+        </>}
       </div> : <div className="chat-messages" role="log" aria-label="会话消息">
         {chat.messages.filter(message => message.role === 'user').map((message, index, users) => {
           const answer = chat.messages.find(item => item.runId === message.runId && item.role === 'assistant' && item.origin === 'runtime') ?? chat.messages.find(item => item.runId === message.runId && item.role === 'assistant')

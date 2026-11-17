@@ -1694,7 +1694,7 @@ describe('多会话恢复与提交隔离', () => {
     await store.getState().loadSessions(backend.api, false, false, true)
     expect(notificationMessage()).toBe('会话列表连接失败')
     expect(useMessageStore.getState().messages).toHaveLength(2)
-    expect(store.getState().listError).toBeNull()
+    expect(store.getState().listError).toBe('会话列表连接失败')
     expect(store.getState().sessions).toEqual([backend.session])
     expect(store.getState().listLoading).toBe(false)
   })

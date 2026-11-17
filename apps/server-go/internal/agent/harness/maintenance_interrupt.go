@@ -19,7 +19,10 @@ func (m *Manager) maintenanceLoop() {
 	ticker := time.NewTicker(time.Second)
 	defer ticker.Stop()
 	for {
-		if m.deps.DispatchGuard != nil && updateMaintenanceError(m.deps.DispatchGuard()) {
+		m.mu.Lock()
+		guard := m.deps.DispatchGuard
+		m.mu.Unlock()
+		if guard != nil && updateMaintenanceError(guard()) {
 			m.mu.Lock()
 			if !m.closed && !m.storageError {
 				m.interruptForMaintenanceLocked()

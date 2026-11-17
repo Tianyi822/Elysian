@@ -54,47 +54,49 @@ const sessionActivityMillisSQL = `CAST(strftime('%s', substr(last_activity_at,1,
    ELSE 0 END`
 
 func (s *store) sessionsByActivity(ctx context.Context, cursorRaw string, n int) (Page[Session], error) {
-	page := Page[Session]{Items: []Session{}}
-	limit, err := pageSize(n, 50)
-	if err != nil {
-		return page, err
-	}
-	cursor, err := decodeSessionActivityCursor(cursorRaw)
-	if err != nil {
-		return page, err
-	}
-	var activityMS int64
-	if cursor.ActivityMS != nil {
-		activityMS = *cursor.ActivityMS
-	}
-	rows, err := s.db.QueryContext(ctx, `WITH activity_sessions AS (
+	return storeRead(ctx, s, "sessionsByActivity", func(ctx context.Context) (Page[Session], error) {
+		page := Page[Session]{Items: []Session{}}
+		limit, err := pageSize(n, 50)
+		if err != nil {
+			return page, err
+		}
+		cursor, err := decodeSessionActivityCursor(cursorRaw)
+		if err != nil {
+			return page, err
+		}
+		var activityMS int64
+		if cursor.ActivityMS != nil {
+			activityMS = *cursor.ActivityMS
+		}
+		rows, err := s.reader(ctx).QueryContext(ctx, `WITH activity_sessions AS (
  SELECT id,document,`+sessionActivityMillisSQL+` AS activity_ms FROM sessions
  ) SELECT activity_ms,id,document FROM activity_sessions
  WHERE (?='' OR activity_ms<? OR (activity_ms=? AND id<?))
  ORDER BY activity_ms DESC,id DESC LIMIT ?`, cursorRaw, activityMS, activityMS, cursor.ID, limit+1)
-	if err != nil {
-		return page, err
-	}
-	defer rows.Close()
-	var lastMS int64
-	var lastID string
-	for rows.Next() {
-		if len(page.Items) == limit {
-			page.HasMore = true
-			break
-		}
-		var raw string
-		var session Session
-		if err = rows.Scan(&lastMS, &lastID, &raw); err != nil {
+		if err != nil {
 			return page, err
 		}
-		if err = json.Unmarshal([]byte(raw), &session); err != nil {
-			return page, err
+		defer rows.Close()
+		var lastMS int64
+		var lastID string
+		for rows.Next() {
+			if len(page.Items) == limit {
+				page.HasMore = true
+				break
+			}
+			var raw string
+			var session Session
+			if err = rows.Scan(&lastMS, &lastID, &raw); err != nil {
+				return page, err
+			}
+			if err = json.Unmarshal([]byte(raw), &session); err != nil {
+				return page, err
+			}
+			page.Items = append(page.Items, session)
 		}
-		page.Items = append(page.Items, session)
-	}
-	if page.HasMore {
-		page.NextCursor = encodeSessionActivityCursor(lastMS, lastID)
-	}
-	return page, rows.Err()
+		if page.HasMore {
+			page.NextCursor = encodeSessionActivityCursor(lastMS, lastID)
+		}
+		return page, rows.Err()
+	})
 }

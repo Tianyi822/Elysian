@@ -239,10 +239,14 @@ type recordLine struct {
 func (s *store) recordsFault() error {
 	s.recordsStateMu.RLock()
 	defer s.recordsStateMu.RUnlock()
+	if s.writeErr != nil {
+		return s.writeErr
+	}
 	return s.recordsErr
 }
 
 func (s *store) failRecords(err error) error {
+	s.diagnose("records", "jsonl-persist", err)
 	s.recordsStateMu.Lock()
 	if s.recordsErr == nil {
 		s.recordsErr = fmt.Errorf("Agent JSONL 记录副本不可用，派发已暂停：%w", err)

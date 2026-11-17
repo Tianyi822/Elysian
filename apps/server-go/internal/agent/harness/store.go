@@ -6,6 +6,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -25,12 +26,16 @@ type store struct {
 	recordsMu      sync.Mutex
 	recordsStateMu sync.RWMutex
 	recordsErr     error
+	writeErr       error
+	diagnosticsMu  sync.Mutex
+	diagnostics    map[string]bool
 	// recordHook injects append/fsync crash points in tests only.
 	recordHook func(string) error
 	// beforeWrite 只供故障注入测试；生产恒 nil。
 	beforeWrite func(string) error
 	// failNextCommit 非空时使下一次提交按失败返回，只供故障注入测试；生产恒 nil。
-	failNextCommit error
+	failNextCommit   error
+	failNextRollback error
 }
 
 const schema = `
@@ -86,18 +91,23 @@ func openStore(path string, now func() time.Time) (*store, error) {
 		s.close()
 		return nil, err
 	}
-	s.db, err = sql.Open("sqlite", path)
+	// DSN 初始化每条物理连接，包含中断后替换的连接。URL 编码保护路径中的 ?/#。
+	dsn := &url.URL{Scheme: "file", Path: path}
+	pragmas := url.Values{}
+	for _, pragma := range []string{"busy_timeout(5000)", "foreign_keys(ON)", "journal_mode(WAL)", "synchronous(FULL)"} {
+		pragmas.Add("_pragma", pragma)
+	}
+	dsn.RawQuery = pragmas.Encode()
+	s.db, err = sql.Open("sqlite", dsn.String())
 	if err != nil {
 		s.close()
 		return nil, err
 	}
 	s.db.SetMaxOpenConns(1)
 	s.db.SetMaxIdleConns(1)
-	for _, p := range []string{"PRAGMA busy_timeout=5000", "PRAGMA foreign_keys=ON", "PRAGMA journal_mode=WAL", "PRAGMA synchronous=FULL"} {
-		if _, err = s.db.Exec(p); err != nil {
-			s.close()
-			return nil, fmt.Errorf("初始化运行数据库失败：%w", err)
-		}
+	if err = s.db.Ping(); err != nil {
+		s.close()
+		return nil, fmt.Errorf("初始化运行数据库失败：%w", err)
 	}
 	err = migrateStore(s.db)
 	if err != nil {
@@ -131,7 +141,20 @@ func (s *store) close() error {
 // write 结束后调用方可能仍持有事务内准备的候选产物：fn 返回错误意味着事务
 // 已回滚、数据库不引用任何候选；Commit 失败则提交结果未确认，数据库可能已经
 // 引用候选版本，错误以 unconfirmedCommit 包装返回，清理路径必须保留候选。
-func (s *store) write(ctx context.Context, op string, fn func(*sql.Tx) error) error {
+func (s *store) write(ctx context.Context, op string, fn func(*sql.Tx) error) (writeErr error) {
+	if scope, ok := ctx.Value(storeReadKey{}).(*storeReadScope); ok && scope.store == s {
+		return errors.New("只读作用域禁止写入")
+	}
+	stage := "write-hook"
+	defer func() {
+		s.diagnose(op, stage, writeErr)
+		beginFailed := stage == "write-begin" && writeErr != nil && !errors.Is(writeErr, context.Canceled) && !errors.Is(writeErr, context.DeadlineExceeded)
+		if beginFailed || commitUnconfirmed(writeErr) || sqliteCode(writeErr) != 0 {
+			s.recordsStateMu.Lock()
+			s.writeErr = errors.New("运行状态写入失败，已停止派发任务")
+			s.recordsStateMu.Unlock()
+		}
+	}()
 	if s.beforeWrite != nil {
 		if err := s.beforeWrite(op); err != nil {
 			return err
@@ -139,19 +162,32 @@ func (s *store) write(ctx context.Context, op string, fn func(*sql.Tx) error) er
 	}
 	s.recordsMu.Lock()
 	defer s.recordsMu.Unlock()
+	stage = "write-begin"
 	tx, err := s.db.BeginTx(ctx, nil)
 	if err != nil {
 		return err
 	}
-	defer tx.Rollback()
+	defer func() {
+		rollbackErr := tx.Rollback()
+		if s.failNextRollback != nil {
+			rollbackErr, s.failNextRollback = s.failNextRollback, nil
+		}
+		if rollbackErr != nil && !errors.Is(rollbackErr, sql.ErrTxDone) {
+			stage = "write-rollback"
+			writeErr = &unconfirmedCommit{op: op, err: errors.Join(writeErr, rollbackErr)}
+		}
+	}()
+	stage = "write-body"
 	if err = fn(tx); err != nil {
 		return err
 	}
 	if s.failNextCommit != nil {
+		stage = "write-commit"
 		err = s.failNextCommit
 		s.failNextCommit = nil
 		return &unconfirmedCommit{op: op, err: err}
 	}
+	stage = "write-commit"
 	if err = tx.Commit(); err != nil {
 		return &unconfirmedCommit{op: op, err: err}
 	}
@@ -264,20 +300,22 @@ func (s *store) change(ctx context.Context, id, op string, fn func(*sql.Tx, *Run
 	return r, err
 }
 func (s *store) get(ctx context.Context, id string) (Run, error) {
-	r, err := readRun(ctx, s.db, id)
-	if err != nil {
-		return r, err
-	}
-	var raw string
-	if err = s.db.QueryRowContext(ctx, "SELECT document FROM tasks WHERE id=?", r.TaskID).Scan(&raw); err != nil {
-		return r, err
-	}
-	var task Task
-	if err = json.Unmarshal([]byte(raw), &task); err != nil {
-		return r, err
-	}
-	r.Task = &task
-	return r, nil
+	return storeRead(ctx, s, "get", func(ctx context.Context) (Run, error) {
+		r, err := readRun(ctx, s.reader(ctx), id)
+		if err != nil {
+			return r, err
+		}
+		var raw string
+		if err = s.reader(ctx).QueryRowContext(ctx, "SELECT document FROM tasks WHERE id=?", r.TaskID).Scan(&raw); err != nil {
+			return r, err
+		}
+		var task Task
+		if err = json.Unmarshal([]byte(raw), &task); err != nil {
+			return r, err
+		}
+		r.Task = &task
+		return r, nil
+	})
 }
 func (s *store) request(ctx context.Context, key string) (Run, string, error) {
 	var id, input string
@@ -328,20 +366,22 @@ func saveCall(ctx context.Context, tx *sql.Tx, c Call) error {
 }
 
 func (s *store) queued(ctx context.Context) ([]string, error) {
-	rows, err := s.db.QueryContext(ctx, "SELECT id FROM runs WHERE state='queued' ORDER BY rowid")
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
-	ids := []string{}
-	for rows.Next() {
-		var id string
-		if err = rows.Scan(&id); err != nil {
+	return storeRead(ctx, s, "queued", func(ctx context.Context) ([]string, error) {
+		rows, err := s.reader(ctx).QueryContext(ctx, "SELECT id FROM runs WHERE state='queued' ORDER BY rowid")
+		if err != nil {
 			return nil, err
 		}
-		ids = append(ids, id)
-	}
-	return ids, rows.Err()
+		defer rows.Close()
+		ids := []string{}
+		for rows.Next() {
+			var id string
+			if err = rows.Scan(&id); err != nil {
+				return nil, err
+			}
+			ids = append(ids, id)
+		}
+		return ids, rows.Err()
+	})
 }
 
 func (s *store) recover(ctx context.Context) error {

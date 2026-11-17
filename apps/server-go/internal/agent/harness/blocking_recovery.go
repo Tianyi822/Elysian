@@ -84,7 +84,7 @@ func currentBlockingRecovery(ctx context.Context, db recoveryReader, runID strin
 // The manager lock is held by ChatSnapshot. This projection never verifies or
 // changes a historical operation; recovery still requires an explicit action.
 func (m *Manager) blockingRecovery(ctx context.Context, run Run) ([]BlockingRecovery, error) {
-	current, err := currentBlockingRecovery(ctx, m.store.db, run.ID)
+	current, err := currentBlockingRecovery(ctx, m.store.reader(ctx), run.ID)
 	if err != nil {
 		return nil, err
 	}
@@ -103,7 +103,7 @@ func (m *Manager) blockingRecovery(ctx context.Context, run Run) ([]BlockingReco
 			continue
 		}
 		item.Message = "此前操作结果尚未确认，本次操作未执行；请先核实阻塞来源"
-		o, err := readOperation(ctx, m.store.db, item.OperationID)
+		o, err := readOperation(ctx, m.store.reader(ctx), item.OperationID)
 		if errors.Is(err, sql.ErrNoRows) || isNotFound(err) {
 			item.Message = "阻塞来源的操作记录不可用，资源保护保留，请检查原任务"
 			continue
@@ -117,7 +117,7 @@ func (m *Manager) blockingRecovery(ctx context.Context, run Run) ([]BlockingReco
 		item.Tool = o.Capability.Name
 		verifiable, exists := verifiableRuns[item.RunID]
 		if !exists {
-			operations, err := verificationOperations(ctx, m.store.db, item.RunID)
+			operations, err := verificationOperations(ctx, m.store.reader(ctx), item.RunID)
 			if err != nil {
 				return nil, err
 			}

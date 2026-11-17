@@ -25,7 +25,7 @@
 set -euo pipefail
 
 # ---------- 版本锁定（下载一律带官方校验，版本不随行漂移） ----------
-GO_VERSION="1.23.12"   # 与 apps/server-go/go.mod 的 go 1.23 对齐；sha256 取自 go.dev 官方下载索引
+GO_VERSION="1.26.11"   # 与开发、测试及发布工具链对齐；sha256 取自 go.dev 官方下载索引
 BUN_VERSION="1.4.2"    # sha256 取自 GitHub Release（oven-sh/bun）官方 asset digest
 GO_INDEX_URLS=(
   "https://go.dev/dl/?mode=json&include=all"
@@ -996,11 +996,11 @@ install_go() {
     v="$("$go_bin" env GOVERSION 2>/dev/null || true)"
     [ -n "$v" ] || v="$("$go_bin" version 2>/dev/null | awk '{print $3}' || true)"
     minor="${v#go1.}"; minor="${minor%%.*}"
-    if [ "${v#go1.}" != "$v" ] && [ "${minor:-0}" -ge 23 ] 2>/dev/null; then
+    if [ "${v#go1.}" != "$v" ] && [ "${minor:-0}" -ge 26 ] 2>/dev/null; then
       ok "复用现有 Go：$v（$go_bin）"
       return 0
     fi
-    info "现有 Go（${v:-未知版本}）低于 1.23，改用官方锁定版本 ${GO_VERSION}"
+    info "现有 Go（${v:-未知版本}）低于 1.26，改用官方锁定版本 ${GO_VERSION}"
   fi
   local tgz="go${GO_VERSION}.linux-${GO_ARCH}.tar.gz"
   local work index want digest base tgz_urls=()

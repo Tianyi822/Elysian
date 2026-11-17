@@ -46,7 +46,7 @@ jobs:
           persist-credentials: false
       - uses: actions/setup-go@v5
         with:
-          go-version: '1.23.12'
+          go-version: '1.26.11'
           cache-dependency-path: apps/server-go/go.sum
       - uses: oven-sh/setup-bun@v2
         with:
@@ -63,6 +63,7 @@ jobs:
           ARCH: ${{ matrix.arch }}
         run: |
           (cd apps/server-go && go test ./internal/platformhelper ./internal/panel ./internal/cli/...)
+          (cd apps/server-go && go test ./internal/agent/harness -run 'Test(SQLiteCancelled|StoreRead|StoreWrite)')
           python3 -B scripts/release-download.test.py
           python3 -B scripts/publish-gitee.test.py
           "$RUNNER_TEMP/release/platform-helper" socket /run/caddy/admin.sock

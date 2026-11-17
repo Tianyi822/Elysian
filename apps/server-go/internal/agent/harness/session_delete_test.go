@@ -50,7 +50,7 @@ func TestForceDeleteRunningModelIgnoresLateResultAndKeepsOtherSessions(t *testin
 	if _, err := m.Get(context.Background(), run.ID); !isNotFound(err) {
 		t.Fatalf("运行未删除：%v", err)
 	}
-	runtimeEventually(t, func() bool { return m.Info().Agent.Available })
+	runtimeEventually(t, func() bool { info := m.Info(); return info.Agent.Available && info.Worker == "ready" })
 	other, err := m.CreateSession(context.Background(), CreateSessionInput{ModelProfileID: session.ModelProfileID, ModelRevision: session.ModelRevision})
 	if err != nil {
 		t.Fatal(err)

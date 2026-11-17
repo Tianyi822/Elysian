@@ -248,16 +248,19 @@ func (m *Manager) AttachmentContent(ctx context.Context, id string) (string, []b
 	if m.closed {
 		return "", nil, closedError()
 	}
-	var mimeType string
-	var content []byte
-	err := m.store.db.QueryRowContext(ctx, "SELECT mime_type,content FROM agent_attachments WHERE id=?", id).Scan(&mimeType, &content)
-	if errors.Is(err, sql.ErrNoRows) {
-		return "", nil, bad("attachment-not-found", "附件不存在")
+	type attachment struct {
+		mimeType string
+		content  []byte
 	}
-	if err != nil {
-		return "", nil, storageFailure(err)
-	}
-	return mimeType, content, nil
+	value, err := storeRead(ctx, m.store, "AttachmentContent", func(ctx context.Context) (attachment, error) {
+		var value attachment
+		err := m.store.reader(ctx).QueryRowContext(ctx, "SELECT mime_type,content FROM agent_attachments WHERE id=?", id).Scan(&value.mimeType, &value.content)
+		if errors.Is(err, sql.ErrNoRows) {
+			return value, bad("attachment-not-found", "附件不存在")
+		}
+		return value, err
+	})
+	return value.mimeType, value.content, storageFailure(err)
 }
 
 // DeleteAttachment 仅允许删除未绑定会话的附件；已随消息发送的字节属于会话历史。

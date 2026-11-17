@@ -71,82 +71,85 @@ func (m *Manager) ChatSnapshot(ctx context.Context, id string) (ChatOutput, erro
 	if m.closed {
 		return ChatOutput{}, closedError()
 	}
-	run, err := m.store.get(ctx, id)
-	if err != nil {
-		return ChatOutput{}, storageFailure(err)
-	}
-	records, err := readDocuments[ModelRequestRecord](ctx, m.store.db, "SELECT document FROM model_requests WHERE run_id=? ORDER BY request_index", id)
-	if err != nil {
-		return ChatOutput{}, storageFailure(err)
-	}
-	if execution := m.executionLocked(id); execution != nil && execution.agent != nil {
-		a := execution.agent
-		for i := range records {
-			if records[i].ID == a.reasoningRequestID && records[i].Status == StateRunning {
-				records[i].Reasoning, records[i].Content = a.reasoning, a.content
-			}
+	value, readErr := storeRead(ctx, m.store, "ChatSnapshot", func(ctx context.Context) (ChatOutput, error) {
+		run, err := m.store.get(ctx, id)
+		if err != nil {
+			return ChatOutput{}, err
 		}
-	}
-	operations, err := readDocuments[Operation](ctx, m.store.db, "SELECT json_remove(document,'$.pendingResult') FROM operations WHERE run_id=? ORDER BY rowid", id)
-	if err != nil {
-		return ChatOutput{}, storageFailure(err)
-	}
-	// 工具结果仅在展开详情时经 Calls 读取，避免每 100ms 重传大结果。
-	calls, err := readDocuments[Call](ctx, m.store.db, "SELECT json_remove(document,'$.result','$.args','$.argumentsJson') FROM calls WHERE run_id=? ORDER BY step_index", id)
-	if err != nil {
-		return ChatOutput{}, storageFailure(err)
-	}
-	approvals, err := readDocuments[Approval](ctx, m.store.db, "SELECT json_remove(document,'$.operation') FROM approvals WHERE run_id=? ORDER BY rowid", id)
-	if err != nil {
-		return ChatOutput{}, storageFailure(err)
-	}
-	out := chatOutput(run, records)
-	timeline := projectChatTimeline(run, records, operations, calls, approvals)
-	timeline.BlockingRecovery, err = m.blockingRecovery(ctx, run)
-	if err != nil {
-		return ChatOutput{}, storageFailure(err)
-	}
-	timeline.BudgetPolicy, timeline.BudgetStop = run.BudgetPolicy, run.BudgetStop
-	timeline.Continuation, err = continuation(ctx, m.store.db, run)
-	if err != nil {
-		return ChatOutput{}, storageFailure(err)
-	}
-	timeline.TerminalResult, err = m.store.terminalResult(ctx, m.store.db, run)
-	if err != nil {
-		return ChatOutput{}, storageFailure(err)
-	}
-	questions, err := readDocuments[UserInputRequest](ctx, m.store.db, "SELECT document FROM user_inputs WHERE run_id=? ORDER BY rowid", id)
-	if err != nil {
-		return ChatOutput{}, storageFailure(err)
-	}
-	for i := range timeline.Entries {
-		entry := &timeline.Entries[i]
-		if entry.Kind == "tool" && entry.Status == "unknown" {
-			message := "任务结果未确认，须核实实际状态"
-			if entry.Error != nil {
-				message = entry.Error.Message
-			}
-			entry.Progress = &tools.TaskProgress{State: "unknown", Message: message}
-			continue // Persisted uncertainty takes precedence over stale running progress.
+		records, err := readDocuments[ModelRequestRecord](ctx, m.store.reader(ctx), "SELECT document FROM model_requests WHERE run_id=? ORDER BY request_index", id)
+		if err != nil {
+			return ChatOutput{}, err
 		}
-		if entry.Kind == "tool" && (entry.Status == StateWaitingTask || entry.Status == "unknown") {
-			for _, operation := range operations {
-				if operation.ModelRequestID == entry.ModelRequestID && operation.ModelCallID == entry.ModelCallID && operation.Task != nil {
-					if observation, ok := m.taskProgress[operation.ID]; ok && observation.Task == *operation.Task {
-						entry.Progress = cloneTaskProgress(observation.Progress)
-					}
+		if execution := m.executionLocked(id); execution != nil && execution.agent != nil {
+			a := execution.agent
+			for i := range records {
+				if records[i].ID == a.reasoningRequestID && records[i].Status == StateRunning {
+					records[i].Reasoning, records[i].Content = a.reasoning, a.content
 				}
 			}
 		}
-		for _, question := range questions {
-			if entry.Kind == "tool" && entry.ModelRequestID == question.ModelRequestID && entry.ModelCallID == question.ModelCallID {
-				copy := question
-				entry.Kind, entry.UserInput = "user-input", &copy
+		operations, err := readDocuments[Operation](ctx, m.store.reader(ctx), "SELECT json_remove(document,'$.pendingResult') FROM operations WHERE run_id=? ORDER BY rowid", id)
+		if err != nil {
+			return ChatOutput{}, err
+		}
+		// 工具结果仅在展开详情时经 Calls 读取，避免每 100ms 重传大结果。
+		calls, err := readDocuments[Call](ctx, m.store.reader(ctx), "SELECT json_remove(document,'$.result','$.args','$.argumentsJson') FROM calls WHERE run_id=? ORDER BY step_index", id)
+		if err != nil {
+			return ChatOutput{}, err
+		}
+		approvals, err := readDocuments[Approval](ctx, m.store.reader(ctx), "SELECT json_remove(document,'$.operation') FROM approvals WHERE run_id=? ORDER BY rowid", id)
+		if err != nil {
+			return ChatOutput{}, err
+		}
+		out := chatOutput(run, records)
+		timeline := projectChatTimeline(run, records, operations, calls, approvals)
+		timeline.BlockingRecovery, err = m.blockingRecovery(ctx, run)
+		if err != nil {
+			return ChatOutput{}, err
+		}
+		timeline.BudgetPolicy, timeline.BudgetStop = run.BudgetPolicy, run.BudgetStop
+		timeline.Continuation, err = continuation(ctx, m.store.reader(ctx), run)
+		if err != nil {
+			return ChatOutput{}, err
+		}
+		timeline.TerminalResult, err = m.store.terminalResult(ctx, m.store.reader(ctx), run)
+		if err != nil {
+			return ChatOutput{}, err
+		}
+		questions, err := readDocuments[UserInputRequest](ctx, m.store.reader(ctx), "SELECT document FROM user_inputs WHERE run_id=? ORDER BY rowid", id)
+		if err != nil {
+			return ChatOutput{}, err
+		}
+		for i := range timeline.Entries {
+			entry := &timeline.Entries[i]
+			if entry.Kind == "tool" && entry.Status == "unknown" {
+				message := "任务结果未确认，须核实实际状态"
+				if entry.Error != nil {
+					message = entry.Error.Message
+				}
+				entry.Progress = &tools.TaskProgress{State: "unknown", Message: message}
+				continue // Persisted uncertainty takes precedence over stale running progress.
+			}
+			if entry.Kind == "tool" && (entry.Status == StateWaitingTask || entry.Status == "unknown") {
+				for _, operation := range operations {
+					if operation.ModelRequestID == entry.ModelRequestID && operation.ModelCallID == entry.ModelCallID && operation.Task != nil {
+						if observation, ok := m.taskProgress[operation.ID]; ok && observation.Task == *operation.Task {
+							entry.Progress = cloneTaskProgress(observation.Progress)
+						}
+					}
+				}
+			}
+			for _, question := range questions {
+				if entry.Kind == "tool" && entry.ModelRequestID == question.ModelRequestID && entry.ModelCallID == question.ModelCallID {
+					copy := question
+					entry.Kind, entry.UserInput = "user-input", &copy
+				}
 			}
 		}
-	}
-	out.Timeline = &timeline
-	return out, nil
+		out.Timeline = &timeline
+		return out, nil
+	})
+	return value, storageFailure(readErr)
 }
 
 func projectChatTimeline(run Run, records []ModelRequestRecord, operations []Operation, calls []Call, approvals []Approval) ChatTimelineSnapshot {
