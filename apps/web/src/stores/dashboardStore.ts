@@ -17,7 +17,9 @@ export function mergeResourceSampleIntoWindow(
   resources: readonly ResourceSamplePoint[] | undefined,
   range: TimeRange,
   point: ResourceSamplePoint,
-): ResourceSamplePoint[] {
+): readonly ResourceSamplePoint[] {
+  // A reconnect can replay an older sample; it must never rewind the live window.
+  if (resources?.length && point.ts < resources.at(-1)!.ts) return resources
   const cutoff = point.ts - timeRangeDurationMs(range)
   const inWindow = (resources ?? []).filter((p) => p.ts >= cutoff && p.ts <= point.ts)
   const last = inWindow.at(-1)
@@ -32,6 +34,7 @@ export type DashboardState = {
   refreshing: boolean
   /** 当前时间窗内的资源采样序列（毫秒时间戳横轴）。 */
   resources?: readonly ResourceSamplePoint[]
+  resourcesRange?: TimeRange
   range: TimeRange
   errorMessage?: string
   load: (gateway: ElysianGateway) => Promise<void>
@@ -50,7 +53,7 @@ export async function loadDashboard(gateway: ElysianGateway, range: TimeRange) {
 let detachLive: Unsubscribe | undefined
 let boundGateway: ElysianGateway | undefined
 let readSequence = 0
-let pendingRead: { gateway: ElysianGateway; range: TimeRange; auth: number; promise: Promise<void> } | undefined
+let pendingRead: { gateway: ElysianGateway; range: TimeRange; auth: number; live: ResourceSamplePoint[]; promise: Promise<void> } | undefined
 
 function reloadResources(gateway: ElysianGateway, range: TimeRange, manual = false): Promise<void> {
   const auth = captureAuthGeneration()
@@ -60,14 +63,21 @@ function reloadResources(gateway: ElysianGateway, range: TimeRange, manual = fal
   }
   const sequence = ++readSequence
   const hadData = useDashboardStore.getState().resources !== undefined
-  const operation = { gateway, range, auth, promise: Promise.resolve() }
+  const operation = { gateway, range, auth, live: [] as ResourceSamplePoint[], promise: Promise.resolve() }
   pendingRead = operation
   const current = () => sequence === readSequence && auth === captureAuthGeneration() && useDashboardStore.getState().range === range
   useDashboardStore.setState({ status: hadData ? 'ready' : 'loading', refreshing: manual, errorMessage: undefined })
   operation.promise = (async () => {
     try {
       const { resources } = await loadDashboard(gateway, range)
-      if (current()) useDashboardStore.setState({ status: 'ready', resources, errorMessage: undefined })
+      if (current()) {
+        const displayed = useDashboardStore.getState()
+        const historyEnd = resources.at(-1)?.ts ?? Date.now() - timeRangeDurationMs(range)
+        // Minute rollups can trail already displayed live samples even before this request.
+        const tail = displayed.resourcesRange === range ? displayed.resources?.filter(point => point.ts > historyEnd) ?? [] : []
+        const merged = [...tail, ...operation.live].reduce<readonly ResourceSamplePoint[]>((points, point) => mergeResourceSampleIntoWindow(points, range, point), resources)
+        useDashboardStore.setState({ status: 'ready', resources: merged, resourcesRange: range, errorMessage: undefined })
+      }
     } catch (error) {
       if (current()) useDashboardStore.setState({ status: hadData ? 'ready' : 'error', errorMessage: error instanceof Error ? error.message : '读取仪表盘数据失败' })
     } finally {
@@ -84,15 +94,15 @@ function attachLiveEvents(): void {
   if (detachLive) return
   detachLive = onStreamEvent((event) => {
     const { status } = useDashboardStore.getState()
-    if (status !== 'ready') return
+    if (status !== 'ready' && status !== 'loading') return
 
     if (event.name === 'resource/sample') {
       const ts = Date.parse(event.at)
-      const atMs = Number.isFinite(ts) ? ts : Date.now()
+      if (!Number.isFinite(ts)) return
       const { cpu, memory, networkIo, networkRx, networkTx, diskIo, diskRead, diskWrite } =
         event.payload
       const point: ResourceSamplePoint = {
-        ts: atMs,
+        ts,
         cpu,
         memory,
         networkIo,
@@ -102,8 +112,12 @@ function attachLiveEvents(): void {
         diskRead,
         diskWrite,
       }
+      const pending = pendingRead
+      if (pending?.auth === captureAuthGeneration()) pending.live.push(point)
+      // Advance the visible window while replacement history is loading (or has failed).
+      if (status !== 'ready') return
       useDashboardStore.setState((state) => ({
-        resources: mergeResourceSampleIntoWindow(state.resources, state.range, point),
+        resources: mergeResourceSampleIntoWindow(state.resources, state.resourcesRange ?? state.range, point),
       }))
     }
   })

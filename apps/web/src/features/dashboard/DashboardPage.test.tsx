@@ -25,6 +25,7 @@ beforeEach(async () => {
     refreshing: false,
     range: '5m',
     resources: undefined,
+    resourcesRange: undefined,
     errorMessage: undefined,
   })
   useEventStreamStore.getState().disconnect()
