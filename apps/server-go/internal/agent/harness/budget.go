@@ -132,7 +132,7 @@ func budgetContinuationCandidate(r Run) bool {
 }
 
 // continuation 与接受事务共用判定，避免客户端把过期按钮或未知回执解释成授权。
-func continuation(ctx context.Context, q rowReader, r Run) (*Continuation, error) {
+func continuation(ctx context.Context, q recoveryReader, r Run) (*Continuation, error) {
 	if !budgetContinuationCandidate(r) {
 		return nil, nil
 	}
@@ -161,6 +161,13 @@ func continuation(ctx context.Context, q rowReader, r Run) (*Continuation, error
 		if err := q.QueryRowContext(ctx, `SELECT EXISTS(SELECT 1 FROM operations o JOIN resource_leases l ON l.operation_id=json_extract(o.document,'$.resourceWait.operationId') WHERE o.run_id=? AND l.state IN ('held','unknown')) OR EXISTS(SELECT 1 FROM operations o JOIN execution_barriers b ON b.operation_id=json_extract(o.document,'$.resourceWait.operationId') WHERE o.run_id=? AND b.state IN ('dispatched','unknown'))`, r.ID, r.ID).Scan(&unknown); err != nil {
 			return nil, err
 		}
+	}
+	if !unknown {
+		blockers, err := currentBlockingRecovery(ctx, q, r.ID)
+		if err != nil {
+			return nil, err
+		}
+		unknown = len(blockers) != 0
 	}
 	if unknown {
 		out.BlockedReason = "存在结果未知或尚未释放的操作，请先核实实际状态"

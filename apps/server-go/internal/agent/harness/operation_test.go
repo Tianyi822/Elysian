@@ -393,12 +393,11 @@ func TestOperationUnknownBarrierPersistsAndReconciliationDoesNotRewriteResult(t 
 		t.Fatalf("重启丢失屏障：%+v %v", barriers, err)
 	}
 	run2 := submitAgentTest(t, m, s, "blocked-write", "再执行")
-	a = waitingApproval(t, m, run2.ID)
-	if _, err = m.Decide(ctx, a.ID, "approved"); err != nil {
-		t.Fatal(err)
-	}
 	if got := runtimeFinished(t, m, run2.ID); got.Status != StateInterrupted || got.EndReason != "resource-outcome-unknown" {
 		t.Fatalf("未知阻塞未结束前台等待：%+v", got)
+	}
+	if approvals, err := m.ApprovalsByRun(ctx, "", run2.ID); err != nil || len(approvals) != 0 {
+		t.Fatalf("已知未知屏障不应再次请求审批：%+v %v", approvals, err)
 	}
 	if got, err := m.Get(ctx, run2.ID); err != nil || got.Usage.Calls != 1 || executions.Load() != 1 {
 		t.Fatalf("屏障未阻止派发或资源等待消耗工具预算：%+v %v", got, err)

@@ -59,7 +59,7 @@ type AgentChatState = {
   removeAttachment(id: string): void
   send(api: AgentConversationAdapter, model?: AgentModelProfile, continueFromRunId?: string): Promise<boolean>
   continueTask(api: AgentConversationAdapter, model?: AgentModelProfile): Promise<boolean>
-  refresh(api: AgentConversationAdapter, signal?: AbortSignal): Promise<void>
+  refresh(api: AgentConversationAdapter, signal?: AbortSignal, refreshRunIds?: readonly string[]): Promise<void>
   watchOutput(api: AgentConversationAdapter, runId: string, signal: AbortSignal): Promise<void>
 }
 
@@ -771,7 +771,7 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
           if (valid()) set({ syncError: '实时连接暂时中断，正在重新连接；已接收的内容已保留。' })
         }
       },
-      async refresh(api, signal) {
+      async refresh(api, signal, refreshRunIds) {
         const session = current()
         if (!session.remote) return
         const lifetime = lifecycle
@@ -833,7 +833,7 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
           // 只有成功读过终态的旧轮才跳过；生成中快照仍需补齐，以服务端快照替换而非累加。
           const runIds = [...new Set([...messages.map(message => message.runId), ...(run ? [run.id] : [])])]
           for (const id of runIds) {
-            if (id !== run?.id && completedReasoning.has(id)) continue
+            if (id !== run?.id && !refreshRunIds?.includes(id) && !get().timelines[id]?.blockingRecovery?.length && completedReasoning.has(id)) continue
             if (id === run?.id && isChatRunActive(run) && get().liveOutput?.runId === id) continue
             const before = get().timelines[id]
             const timeline = await api.timeline(id, signal)

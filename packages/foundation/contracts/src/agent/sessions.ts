@@ -317,6 +317,16 @@ export type AgentResourceWait = {
   message: string
   unknown: boolean
 }
+/** 当前仍有效的阻塞来源；不以历史等待记录推断保护已解除。 */
+export type AgentBlockingRecovery = {
+  runId: string
+  operationId: string
+  /** 独立资源探测没有来源 Run，以租约身份保留保护说明。 */
+  leaseId?: string
+  tool: string
+  message: string
+  verifiable: boolean
+}
 type AgentChatTimelineEntryBase = {
   id: string
   modelRequestId: string
@@ -358,6 +368,8 @@ export type AgentRunPlan = { sourceRunId?: string; revision: number; updatedAt: 
 
 /** 只读展示投影，条目按推理请求及工具调用顺序排列；终答由公开消息确认。 */
 export type AgentChatTimelineSnapshot = {
+  /** 新服务端始终返回数组；空数组表示没有待核实的外部阻塞。 */
+  blockingRecovery?: readonly AgentBlockingRecovery[]
  recoveryPolicy?: 'evidence-recovery/v1'
  recovery?: AgentRecovery
   budgetPolicy?: 'resource-budget/v1'

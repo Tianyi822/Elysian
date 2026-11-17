@@ -195,6 +195,43 @@ describe('智能体本地会话', () => {
     controller.abort()
     await watching
   })
+  it('核实后显式刷新历史终态，普通轮询继续复用其余历史缓存', async () => {
+    const store = localMemory().makeStore()
+    const backend = chatTestApi()
+    await store.getState().ensureSession()
+    store.getState().setDraft('第一轮')
+    await store.getState().send(backend.api, chatTestModel)
+    store.getState().setDraft('第二轮')
+    await store.getState().send(backend.api, chatTestModel)
+    backend.api.timeline.mockClear()
+    const recovered: AgentChatTimelineSnapshot = { runId: 'run-1', status: 'interrupted', done: true, entries: [], blockingRecovery: [] }
+    backend.timelines.set('run-1', recovered)
+    await store.getState().refresh(backend.api)
+    expect(backend.api.timeline.mock.calls.map(([id]) => id)).toEqual(['run-2'])
+    backend.api.timeline.mockClear()
+    await store.getState().refresh(backend.api, undefined, ['run-1', 'another-session-run'])
+    expect(backend.api.timeline.mock.calls.map(([id]) => id)).toEqual(['run-1', 'run-2'])
+    expect(store.getState().timelines['run-1']).toEqual(recovered)
+  })
+  it('核实后刷新同一会话所有仍显示屏障的历史轮次', async () => {
+    const store = localMemory().makeStore()
+    const backend = chatTestApi()
+    await store.getState().ensureSession()
+    store.getState().setDraft('第一轮')
+    await store.getState().send(backend.api, chatTestModel)
+    const blocked: AgentChatTimelineSnapshot = { runId: 'run-1', status: 'interrupted', done: true, entries: [], blockingRecovery: [
+      { runId: 'old-run', operationId: 'old-op', tool: 'docker_container_create_service', message: '待核实', verifiable: true },
+    ] }
+    backend.timelines.set('run-1', blocked)
+    await store.getState().refresh(backend.api)
+    store.getState().setDraft('第二轮')
+    await store.getState().send(backend.api, chatTestModel)
+    backend.api.timeline.mockClear()
+    backend.timelines.set('run-1', { ...blocked, blockingRecovery: [] })
+    await store.getState().refresh(backend.api, undefined, ['run-2', 'old-run'])
+    expect(backend.api.timeline.mock.calls.map(([id]) => id)).toEqual(['run-1', 'run-2'])
+    expect(store.getState().timelines['run-1']?.blockingRecovery).toEqual([])
+  })
   it.each([
     ['succeeded', null, null],
     ['cancelled', 'info', '已停止回复。'],

@@ -77,6 +77,22 @@ function resourceWait(value: unknown): AgentResourceWait {
   return wait
 }
 
+function blockingRecovery(value: unknown): NonNullable<AgentChatTimelineSnapshot['blockingRecovery']> {
+  if (!Array.isArray(value)) throw invalid()
+  const seen = new Set<string>()
+  return value.map(item => {
+    const row = object(item)
+    const leaseId = row.leaseId === undefined ? undefined : string(row.leaseId)
+    const blocker = { runId: string(row.runId), operationId: string(row.operationId), ...(leaseId === undefined ? {} : { leaseId }), tool: string(row.tool), message: string(row.message), verifiable: boolean(row.verifiable) }
+    const identity = leaseId === undefined ? blocker.operationId : `lease:${leaseId}`
+    if (leaseId === undefined ? !blocker.runId.trim() || !blocker.operationId.trim() : !leaseId.trim() || leaseId.length > 128 || !!blocker.operationId || blocker.verifiable) throw invalid()
+    if (blocker.runId.length > 128 || blocker.operationId.length > 128 ||
+      (blocker.verifiable && !blocker.tool.trim()) || blocker.tool.length > 128 || !blocker.message.trim() || blocker.message.length > 512 || seen.has(identity)) throw invalid()
+    seen.add(identity)
+    return blocker
+  })
+}
+
 export function parseChatTimeline(value: unknown, runId: string): AgentChatTimelineSnapshot {
   const row = object(value)
   if (row.runId !== runId || !Array.isArray(row.entries)) throw invalid()
@@ -118,6 +134,7 @@ export function parseChatTimeline(value: unknown, runId: string): AgentChatTimel
   if (finalResponseId && !entries.some(entry => entry.kind === 'content' && entry.modelRequestId === finalResponseId)) throw invalid()
   return { ...(row.recovery === undefined ? {} : { recovery: parseRecovery(row.recovery) }), runId, status: status(row.status), done: boolean(row.done), finalResponseId, entries,
     ...parseBudgetFields(row, runId),
+    ...(row.blockingRecovery === undefined ? {} : { blockingRecovery: blockingRecovery(row.blockingRecovery) }),
     ...(terminalResult === undefined ? {} : { terminalResult }),
     ...(row.plan === undefined ? {} : { plan: parseRunPlan(row.plan) }),
     ...(row.error === undefined ? {} : { error: failure(row.error) }),

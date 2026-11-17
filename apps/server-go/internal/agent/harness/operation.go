@@ -433,6 +433,37 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 			return err
 		}
 	}
+	if o.ApprovalID == "" {
+		wait, readErr := unknownResourceWait(dbCtx, m.store.db, o, stamp(m.deps.Now()))
+		if readErr != nil {
+			m.mu.Unlock()
+			return storageFailure(readErr)
+		}
+		if wait != nil {
+			blocked := false
+			_, err = m.store.change(dbCtx, run.ID, "operation-blocked-before-approval", func(tx *sql.Tx, r *Run) error {
+				if r.CancelRequestedAt != "" || r.Status != StateRunning {
+					return context.Canceled
+				}
+				now := stamp(m.deps.Now())
+				current, err := unknownResourceWait(dbCtx, tx, o, now)
+				if err != nil || current == nil {
+					return err
+				}
+				blocked = true
+				o.Status, o.ResourceWait = StateWaitingResource, current
+				return interruptResourceWaiter(dbCtx, tx, m.store, r, o, now)
+			})
+			if err != nil {
+				m.mu.Unlock()
+				return storageFailure(err)
+			}
+			if blocked {
+				m.mu.Unlock()
+				return worker.ErrSuspended
+			}
+		}
+	}
 	if !direct && o.ApprovalID == "" {
 		var count int
 		if err = m.store.db.QueryRowContext(dbCtx, "SELECT COUNT(*) FROM approvals WHERE state='pending'").Scan(&count); err != nil {

@@ -26,52 +26,73 @@ func resourceWaitReason(ctx context.Context, tx *sql.Tx, o Operation, now string
 	if created != "" {
 		wait.Since = created
 	}
-	taskControl := o.Capability.Metadata.Async && o.Capability.Metadata.Action == "cancel" && o.Capability.Metadata.TaskDomain != "" && o.Capability.Metadata.TaskIDArgument != ""
-	globalFence := externalOperation(o) && !taskControl
-	if globalFence {
-		barriers, err := readDocuments[ExecutionBarrier](ctx, tx, "SELECT document FROM execution_barriers WHERE state='unknown' ORDER BY rowid LIMIT 1")
-		if err != nil {
-			return nil, err
-		}
-		if len(barriers) > 0 {
-			wait.RunID, wait.OperationID, wait.Unknown, wait.Resource, wait.Message = barriers[0].RunID, barriers[0].OperationID, true, "external:*", "此前操作结果待核实，禁止自动重投"
-			return wait, nil
-		}
+	if unknown, err := unknownResourceWait(ctx, tx, o, wait.Since); err != nil || unknown != nil {
+		return unknown, err
 	}
-	leases, err := readDocuments[ResourceLease](ctx, tx, "SELECT document FROM resource_leases WHERE id<>? AND (state IN ('held','unknown') OR (state='waiting' AND sequence<(SELECT sequence FROM resource_leases WHERE id=?))) ORDER BY CASE state WHEN 'unknown' THEN 0 ELSE 1 END,sequence", o.ID, o.ID)
+	leases, err := readDocuments[ResourceLease](ctx, tx, "SELECT document FROM resource_leases WHERE id<>? AND (state='held' OR (state='waiting' AND sequence<(SELECT sequence FROM resource_leases WHERE id=?))) ORDER BY sequence", o.ID, o.ID)
 	if err != nil {
 		return nil, err
 	}
 	for _, lease := range leases {
-		var conflicts bool
-		if globalFence && lease.State == "unknown" {
-			conflicts = true
-		}
-		for _, a := range o.ResourceClaims {
-			for _, b := range lease.Claims {
-				if resourceClaimsConflict(a, b) {
-					conflicts = true
-					wait.Resource = b.Kind + ":" + b.Authority + ":" + b.Key
-					break
-				}
-			}
-		}
+		resource, conflicts := resourceWaitConflict(o, lease)
 		if !conflicts {
 			continue
 		}
-		wait.RunID, wait.OperationID, wait.Unknown = lease.RunID, lease.OperationID, lease.State == "unknown"
-		if wait.Resource == "" {
-			wait.Resource = "external:*"
-		}
-		if len(wait.Resource) > 512 {
-			wait.Resource = wait.Resource[:512]
-		}
-		if wait.Unknown {
-			wait.Message = "此前操作结果待核实，禁止自动重投"
-		}
+		wait.RunID, wait.OperationID, wait.Resource = lease.RunID, lease.OperationID, resource
 		return wait, nil
 	}
 	return wait, nil
+}
+
+// Unknown protection is inspected before asking for approval and again in the
+// dispatch transaction. This read does not acquire a lease or authorize work.
+func unknownResourceWait(ctx context.Context, db interface {
+	QueryContext(context.Context, string, ...any) (*sql.Rows, error)
+}, o Operation, now string) (*ResourceWait, error) {
+	wait := &ResourceWait{Since: now, Unknown: true, Message: "此前操作结果待核实，禁止自动重投"}
+	taskControl := o.Capability.Metadata.Async && o.Capability.Metadata.Action == "cancel" && o.Capability.Metadata.TaskDomain != "" && o.Capability.Metadata.TaskIDArgument != ""
+	globalFence := externalOperation(o) && !taskControl
+	if globalFence {
+		barriers, err := readDocuments[ExecutionBarrier](ctx, db, "SELECT document FROM execution_barriers WHERE state='unknown' ORDER BY rowid LIMIT 1")
+		if err != nil {
+			return nil, err
+		}
+		if len(barriers) > 0 {
+			wait.RunID, wait.OperationID, wait.Resource = barriers[0].RunID, barriers[0].OperationID, "external:*"
+			return wait, nil
+		}
+	}
+	leases, err := readDocuments[ResourceLease](ctx, db, "SELECT document FROM resource_leases WHERE id<>? AND state='unknown' ORDER BY sequence", o.ID)
+	if err != nil {
+		return nil, err
+	}
+	for _, lease := range leases {
+		resource, conflicts := resourceWaitConflict(o, lease)
+		if !globalFence && !conflicts {
+			continue
+		}
+		if globalFence {
+			resource = "external:*"
+		}
+		wait.RunID, wait.OperationID, wait.Resource = lease.RunID, lease.OperationID, resource
+		return wait, nil
+	}
+	return nil, nil
+}
+
+func resourceWaitConflict(o Operation, lease ResourceLease) (string, bool) {
+	for _, a := range o.ResourceClaims {
+		for _, b := range lease.Claims {
+			if resourceClaimsConflict(a, b) {
+				resource := b.Kind + ":" + b.Authority + ":" + b.Key
+				if len(resource) > 512 {
+					resource = resource[:512]
+				}
+				return resource, true
+			}
+		}
+	}
+	return "external:*", false
 }
 
 func resourceWaitSnapshot(wait *ResourceWait, endedAt string) *ResourceWait {

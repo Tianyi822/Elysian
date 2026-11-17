@@ -45,22 +45,23 @@ type ChatCacheHitUsage struct {
 }
 
 type ChatTimelineSnapshot struct {
-	Recovery        *RunRecovery        `json:"recovery,omitempty"`
-	RecoveryPolicy  string              `json:"recoveryPolicy,omitempty"`
-	BudgetPolicy    string              `json:"budgetPolicy,omitempty"`
-	BudgetStop      *BudgetStop         `json:"budgetStop,omitempty"`
-	Continuation    *Continuation       `json:"continuation,omitempty"`
-	TerminalResult  *TerminalResult     `json:"terminalResult,omitempty"`
-	Plan            *RunPlan            `json:"plan,omitempty"`
-	RunID           string              `json:"runId"`
-	Status          string              `json:"status"`
-	Done            bool                `json:"done"`
-	Error           *Failure            `json:"error,omitempty"`
-	Usage           Usage               `json:"usage"`
-	ContextUsage    *ChatContextUsage   `json:"contextUsage,omitempty"`
-	CacheHitUsage   *ChatCacheHitUsage  `json:"cacheHitUsage,omitempty"`
-	FinalResponseID string              `json:"finalResponseId,omitempty"`
-	Entries         []ChatTimelineEntry `json:"entries"`
+	BlockingRecovery []BlockingRecovery  `json:"blockingRecovery"`
+	Recovery         *RunRecovery        `json:"recovery,omitempty"`
+	RecoveryPolicy   string              `json:"recoveryPolicy,omitempty"`
+	BudgetPolicy     string              `json:"budgetPolicy,omitempty"`
+	BudgetStop       *BudgetStop         `json:"budgetStop,omitempty"`
+	Continuation     *Continuation       `json:"continuation,omitempty"`
+	TerminalResult   *TerminalResult     `json:"terminalResult,omitempty"`
+	Plan             *RunPlan            `json:"plan,omitempty"`
+	RunID            string              `json:"runId"`
+	Status           string              `json:"status"`
+	Done             bool                `json:"done"`
+	Error            *Failure            `json:"error,omitempty"`
+	Usage            Usage               `json:"usage"`
+	ContextUsage     *ChatContextUsage   `json:"contextUsage,omitempty"`
+	CacheHitUsage    *ChatCacheHitUsage  `json:"cacheHitUsage,omitempty"`
+	FinalResponseID  string              `json:"finalResponseId,omitempty"`
+	Entries          []ChatTimelineEntry `json:"entries"`
 }
 
 // ChatSnapshot 在同一把运行锁内读取事实与当前增量，避免终态和请求记录跨拍。
@@ -101,6 +102,10 @@ func (m *Manager) ChatSnapshot(ctx context.Context, id string) (ChatOutput, erro
 	}
 	out := chatOutput(run, records)
 	timeline := projectChatTimeline(run, records, operations, calls, approvals)
+	timeline.BlockingRecovery, err = m.blockingRecovery(ctx, run)
+	if err != nil {
+		return ChatOutput{}, storageFailure(err)
+	}
 	timeline.BudgetPolicy, timeline.BudgetStop = run.BudgetPolicy, run.BudgetStop
 	timeline.Continuation, err = continuation(ctx, m.store.db, run)
 	if err != nil {

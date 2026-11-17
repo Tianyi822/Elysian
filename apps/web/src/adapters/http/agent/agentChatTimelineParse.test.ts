@@ -147,3 +147,24 @@ describe('时间线响应校验', () => {
     expect(() => parseChatTimeline(value, 'r')).toThrow('格式无效')
   })
 })
+
+
+it('只接受服务端明确给出的阻塞恢复身份，不从历史等待推导或截断未解屏障', () => {
+  const blocker = { runId: 'old-run', operationId: 'old-operation', tool: 'docker_container_create_service', message: '此前操作结果待核实', verifiable: true }
+  const value = { runId: 'r', status: 'interrupted', done: true, entries: [] }
+  const parse = (blockingRecovery: unknown) => parseChatTimeline({ ...value, blockingRecovery }, 'r')
+  expect(parse([blocker]).blockingRecovery).toEqual([blocker])
+  expect(parse([]).blockingRecovery).toEqual([])
+  expect(parse(undefined)).not.toHaveProperty('blockingRecovery')
+  const manyBlockers = Array.from({ length: 33 }, (_, i) => ({ ...blocker, operationId: `op-${i}` }))
+  expect(parse(manyBlockers).blockingRecovery).toEqual(manyBlockers)
+  const missingOperation = { ...blocker, tool: '', verifiable: false }
+  expect(parse([missingOperation]).blockingRecovery).toEqual([missingOperation])
+  const probe = { ...blocker, runId: '', operationId: '', leaseId: 'probe-lease', verifiable: false }
+  expect(parse([probe]).blockingRecovery).toEqual([probe])
+  expect(() => parse([{ ...probe, verifiable: true }])).toThrow('格式无效')
+  for (const invalid of [null, {}, [null], [blocker, blocker],
+    [{ ...blocker, verifiable: undefined }], [{ ...blocker, verifiable: 'true' }], [{ ...blocker, runId: '' }], [{ ...blocker, operationId: ' ' }], [{ ...blocker, tool: '' }], [{ ...blocker, tool: 'x'.repeat(129) }], [{ ...blocker, message: 'x'.repeat(513) }]]) {
+    expect(() => parse(invalid)).toThrow('格式无效')
+  }
+})

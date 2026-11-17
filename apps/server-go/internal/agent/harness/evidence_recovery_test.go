@@ -73,6 +73,7 @@ func TestMissingTaskVerificationRetriesDurableIntentWithoutRevivingHistory(t *te
 			}
 			o, _ = readOperation(m.ctx, m.store.db, o.ID)
 			o.Task.ID = ""
+			o.Task.Domain = "docker-container-operation"
 			o.DispatchID = "original-dispatch"
 			o.Capability = Capability{Name: "docker_container_create_service", Source: "builtin", Metadata: tools.Metadata{Async: true, Version: "3"}}
 			o.ArgumentsJSON = `{"name":"mysql84","requestId":"original"}`

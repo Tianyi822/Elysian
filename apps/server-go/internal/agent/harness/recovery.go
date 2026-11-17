@@ -379,24 +379,23 @@ func (m *Manager) VerifyRecovery(ctx context.Context, id string) (Run, error) {
 		m.mu.Unlock()
 		return r, err
 	}
-	ops, err := readDocuments[Operation](ctx, m.store.db, "SELECT document FROM operations WHERE run_id=? AND state='unknown'", id)
+	ops, err := verificationOperations(ctx, m.store.db, id)
 	m.mu.Unlock()
 	if err != nil {
 		return r, err
 	}
 	for _, o := range ops {
-		if o.Task == nil {
-			continue
+		if !m.canVerifyOperation(o) {
+			return r, bad("verification-unavailable", "此操作没有可用的核实通道，资源保护保留，请检查原任务")
 		}
+	}
+	for _, o := range ops {
 		if o.Task.ID == "" {
 			ref, err := m.verifyMissingTask(ctx, o)
 			if err != nil {
 				return r, err
 			}
 			o.Task = &ref
-		}
-		if m.deps.InspectTask == nil {
-			continue
 		}
 		status, err := m.deps.InspectTask(ctx, *o.Task)
 		if err != nil {
