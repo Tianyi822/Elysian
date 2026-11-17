@@ -1,4 +1,4 @@
-import type { AgentExecutionEvidence, AgentRecovery, AgentRunReport, AgentToolAttempt, RuntimeFailure } from '@elysian/contracts'
+import type { AgentCurrentReport, AgentRunWait, AgentStorageHealth, AgentExecutionEvidence, AgentRecovery, AgentRunReport, AgentToolAttempt, RuntimeFailure } from '@elysian/contracts'
 
 const invalid = () => new Error('Agent 恢复记录格式无效')
 const object = (v: unknown): Record<string, unknown> => { if (!v || typeof v !== 'object' || Array.isArray(v)) throw invalid(); return v as Record<string, unknown> }
@@ -28,5 +28,25 @@ export function parseAttempts(v: unknown): readonly AgentToolAttempt[] {
 export function parseRunReport(v: unknown): AgentRunReport {
   const row = object(v)
   if (!Array.isArray(row.steps) || row.steps.length > 20 || !Array.isArray(row.remaining)) throw invalid()
-  return { outcome: string(row.outcome), reason: string(row.reason), completed: integer(row.completed), failed: integer(row.failed), unconfirmed: integer(row.unconfirmed), next: string(row.next), remaining: row.remaining.map(string), steps: row.steps.map(item => { const s = object(item); return { callId: string(s.callId), tool: string(s.tool), status: string(s.status), attempts: integer(s.attempts), ...(s.error === undefined ? {} : { error: parseRecoveryFailure(s.error) }) } }), ...(row.analysis === undefined ? {} : { analysis: string(row.analysis) }) }
+  return { ...(row.objective===undefined?{}:{objective:string(row.objective)}), ...(row.stage===undefined?{}:{stage:string(row.stage)}), outcome: string(row.outcome), reason: string(row.reason), completed: integer(row.completed), failed: integer(row.failed), unconfirmed: integer(row.unconfirmed), next: string(row.next), remaining: row.remaining.map(string), steps: row.steps.map(item => { const s = object(item); return { callId: string(s.callId), tool: string(s.tool), status: string(s.status), attempts: integer(s.attempts), ...(s.error === undefined ? {} : { error: parseRecoveryFailure(s.error) }) } }), ...(row.analysis === undefined ? {} : { analysis: string(row.analysis) }) }
+}
+
+export function parseRunWait(value: unknown): AgentRunWait {
+ const row=object(value)
+ if (!['waiting-model','waiting-storage'].includes(string(row.kind)) || !Number.isFinite(Date.parse(string(row.nextAt))) || integer(row.attempts)<1) throw invalid()
+ return {kind:row.kind as AgentRunWait['kind'],nextAt:string(row.nextAt),attempts:integer(row.attempts),...(row.requestId===undefined?{}:{requestId:string(row.requestId)}),...(row.reason===undefined?{}:{reason:parseRecoveryFailure(row.reason)})}
+}
+export function parseCurrentReport(value: unknown): AgentCurrentReport {
+ const row=object(value)
+ return {...parseRunReport(row),evidenceVersion:string(row.evidenceVersion),asOf:string(row.asOf)}
+}
+export function parseStorageHealth(value: unknown): AgentStorageHealth {
+ const row=object(value)
+ for(const key of ['read','write','records']) if(!['ready','unavailable'].includes(string(row[key]))) throw invalid()
+ if(row.recovery!==undefined&&!['retrying','verification-required'].includes(string(row.recovery)))throw invalid()
+ return {read:row.read as AgentStorageHealth['read'],write:row.write as AgentStorageHealth['write'],records:row.records as AgentStorageHealth['records'],...(row.recovery===undefined?{}:{recovery:row.recovery as AgentStorageHealth['recovery']})}
+}
+export function parseContinuousFields(row: Record<string,unknown>){
+ if(row.recoveryPolicy!==undefined&&!['evidence-recovery/v1','evidence-recovery/v2'].includes(String(row.recoveryPolicy)))throw invalid()
+ return {...(row.recoveryPolicy===undefined?{}:{recoveryPolicy:row.recoveryPolicy as 'evidence-recovery/v1'|'evidence-recovery/v2'}),...(row.wait===undefined?{}:{wait:parseRunWait(row.wait)}),...(row.currentReport===undefined?{}:{currentReport:parseCurrentReport(row.currentReport)})}
 }

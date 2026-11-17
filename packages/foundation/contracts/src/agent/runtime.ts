@@ -6,11 +6,11 @@ export * from './sessions.ts'
 
 /** 真实任务的运行协议，与仪表盘 AgentRun 演示模型分别维护。 */
 export const RUNTIME_RUN_STATUSES = [
-  'queued', 'running', 'waiting-input', 'waiting-approval', 'waiting-resource', 'waiting-task', 'waiting-recovery', 'recovery-required', 'succeeded', 'failed', 'cancelled', 'interrupted',
+  'queued', 'running', 'waiting-input', 'waiting-approval', 'waiting-resource', 'waiting-task', 'waiting-recovery', 'waiting-model', 'waiting-storage', 'recovery-required', 'succeeded', 'failed', 'cancelled', 'interrupted',
 ] as const
 export type RuntimeRunStatus = (typeof RUNTIME_RUN_STATUSES)[number]
 export const RUNTIME_RUN_STATUS_LABELS: Record<RuntimeRunStatus, string> = {
-  queued: '排队中', running: '执行中', 'waiting-input': '等待回答', 'waiting-approval': '等待审批', 'waiting-resource': '等待资源', 'waiting-task': '等待平台任务', 'waiting-recovery': '正在核实', 'recovery-required': '等待人工恢复', succeeded: '已成功', failed: '已失败',
+  queued: '排队中', running: '执行中', 'waiting-input': '等待回答', 'waiting-approval': '等待审批', 'waiting-resource': '等待资源', 'waiting-task': '等待平台任务', 'waiting-recovery': '正在核实', 'waiting-model': '等待模型恢复', 'waiting-storage': '等待存储恢复', 'recovery-required': '等待人工恢复', succeeded: '已成功', failed: '已失败',
   cancelled: '已取消', interrupted: '运行中断',
 }
 
@@ -41,7 +41,7 @@ export type AgentExecutionEvidence = { execution?: 'not-started' | 'finished' | 
 export type RuntimeFailure = { code: string; message: string; evidence?: AgentExecutionEvidence }
 export type AgentRecovery = { operationId: string; tool: string; startedAt: string; deadline: string; nextCheckAt?: string; checks: number; status: 'verifying' | 'recovered' | 'unresolved' | 'correcting' | 'exhausted'; message: string }
 export type AgentToolAttempt = { number: number; error?: RuntimeFailure }
-export type AgentRunReport = { outcome: string; reason: string; completed: number; failed: number; unconfirmed: number; steps: readonly { callId: string; tool: string; status: string; attempts: number; error?: RuntimeFailure }[]; remaining: readonly string[]; next: string; analysis?: string }
+export type AgentRunReport = { objective?: string; stage?: string; outcome: string; reason: string; completed: number; failed: number; unconfirmed: number; steps: readonly { callId: string; tool: string; status: string; attempts: number; error?: RuntimeFailure }[]; remaining: readonly string[]; next: string; analysis?: string }
 export type RuntimeUsage = {
   calls: number
   resultBytes: number
@@ -85,11 +85,17 @@ export type RuntimeLimits = {
 export type AgentBudgetStop = { resource: 'tokens' | 'active-time' | 'results'; used: number; limit: number }
 export type AgentContinuation = { sourceRunId: string; allowed: boolean; blockedReason?: string }
 
+export type AgentRunWait = { kind: 'waiting-model' | 'waiting-storage'; nextAt: string; attempts: number; requestId?: string; reason?: RuntimeFailure }
+export type AgentCurrentReport = AgentRunReport & { evidenceVersion: string; asOf: string }
+export type AgentStorageHealth = { read: 'ready' | 'unavailable'; write: 'ready' | 'unavailable'; records: 'ready' | 'unavailable'; recovery?: 'retrying' | 'verification-required' }
+
 export type RuntimeRun = {
-  recoveryPolicy?: 'evidence-recovery/v1'
+ wait?: AgentRunWait
+ currentReport?: AgentCurrentReport
+  recoveryPolicy?: 'evidence-recovery/v1' | 'evidence-recovery/v2'
   recovery?: AgentRecovery
   report?: AgentRunReport
-  budgetPolicy?: 'resource-budget/v1'
+  budgetPolicy?: 'resource-budget/v1' | 'resource-budget/v2'
   budgetStop?: AgentBudgetStop
   /** 服务端按最新轮次及执行屏障计算的只读投影，提交时再次核对。 */
   continuation?: AgentContinuation
@@ -136,7 +142,7 @@ export type RuntimeRun = {
   model?: AgentModelProfile
   historySeq?: string
   initialMemoryRevision?: number
-  phase?: 'running' | 'preparing-runtime' | 'queued' | 'inference' | 'checkpoint' | 'final-memory' | 'workflow-output' | 'waiting-input' | 'waiting-approval' | 'waiting-resource' | 'waiting-task' | 'waiting-recovery' | 'failure-summary' | 'completed'
+  phase?: 'running' | 'preparing-runtime' | 'queued' | 'inference' | 'checkpoint' | 'final-memory' | 'workflow-output' | 'waiting-input' | 'waiting-approval' | 'waiting-resource' | 'waiting-task' | 'waiting-recovery' | 'waiting-model' | 'waiting-storage' | 'recovering' | 'policy-frozen' | 'failure-summary' | 'completed'
   memoryStatus?: RuntimeMemoryStatus
   warning?: RuntimeFailure
 }
@@ -181,6 +187,7 @@ export type RuntimeToolSchema = {
   parameters: Readonly<Record<string, RuntimeJSONValue>>
 }
 export type RuntimeInfo = {
+ storageHealth?: AgentStorageHealth
   available: boolean
   worker: string
   storage: string
@@ -239,5 +246,5 @@ export type RuntimeListQuery = {
 export type RuntimeAPIError = { error: string; code: string }
 
 export function runtimeRunIsActive(status: RuntimeRunStatus): boolean {
-  return status === 'queued' || status === 'running' || status === 'waiting-input' || status === 'waiting-approval' || status === 'waiting-resource' || status === 'waiting-task' || status === 'waiting-recovery' || status === 'recovery-required'
+  return status === 'queued' || status === 'running' || status === 'waiting-input' || status === 'waiting-approval' || status === 'waiting-resource' || status === 'waiting-task' || status === 'waiting-recovery' || status === 'waiting-model' || status === 'waiting-storage' || status === 'recovery-required'
 }

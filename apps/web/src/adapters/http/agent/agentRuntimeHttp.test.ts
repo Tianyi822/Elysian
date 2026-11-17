@@ -25,6 +25,13 @@ const INFO_BODY = {
 }
 
 describe('parseAgentRuntimeInfo', () => {
+  it('在运行时根级读取分层存储健康并拒绝无效值', () => {
+    const storageHealth = { read: 'ready', write: 'ready', records: 'unavailable', recovery: 'retrying' }
+    const info = parseAgentRuntimeInfo({ ...INFO_BODY, storageHealth })
+    expect(info.storageHealth).toEqual(storageHealth)
+    expect(info.batch).toEqual({ available: true })
+    expect(() => parseAgentRuntimeInfo({ ...INFO_BODY, storageHealth: { ...storageHealth, write: 'unknown' } })).toThrow('Agent 恢复记录格式无效')
+  })
   it('解析 12 能力位、限额与工具描述，缺 reason 的能力位保持只有 available', () => {
     const info = parseAgentRuntimeInfo(INFO_BODY)
     expect(info.available).toBe(true)

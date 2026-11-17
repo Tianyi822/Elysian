@@ -1,4 +1,4 @@
-import type { AgentRecovery, AgentRunReport, AgentToolAttempt, AgentBudgetStop, AgentContinuation, RuntimeFailure, RuntimeJSONValue, RuntimeMemoryStatus, RuntimeRunStatus, RuntimeUsage } from './runtime.ts'
+import type { AgentRecovery, AgentRunWait, AgentCurrentReport, AgentRunReport, AgentToolAttempt, AgentBudgetStop, AgentContinuation, RuntimeFailure, RuntimeJSONValue, RuntimeMemoryStatus, RuntimeRunStatus, RuntimeUsage } from './runtime.ts'
 import type { AgentPermissionMode, AgentPromptRef, AgentResourceRef, AgentRevisionRef } from './capabilities.ts'
 import type { AgentWikiRef } from './memory.ts'
 
@@ -368,11 +368,13 @@ export type AgentRunPlan = { sourceRunId?: string; revision: number; updatedAt: 
 
 /** 只读展示投影，条目按推理请求及工具调用顺序排列；终答由公开消息确认。 */
 export type AgentChatTimelineSnapshot = {
+ wait?: AgentRunWait
+ currentReport?: AgentCurrentReport
   /** 新服务端始终返回数组；空数组表示没有待核实的外部阻塞。 */
   blockingRecovery?: readonly AgentBlockingRecovery[]
- recoveryPolicy?: 'evidence-recovery/v1'
+ recoveryPolicy?: 'evidence-recovery/v1' | 'evidence-recovery/v2'
  recovery?: AgentRecovery
-  budgetPolicy?: 'resource-budget/v1'
+  budgetPolicy?: 'resource-budget/v1' | 'resource-budget/v2'
   budgetStop?: AgentBudgetStop
   continuation?: AgentContinuation
   /** 失败或系统中断的运行时结果，也承接缺少公开答复的历史轮次。 */

@@ -1,4 +1,4 @@
-import { parseExecutionEvidence, parseRecovery, parseRecoveryFailure, parseRunReport, parseAttempts } from './agentRecoveryParse'
+import { parseContinuousFields, parseExecutionEvidence, parseRecovery, parseRecoveryFailure, parseRunReport, parseAttempts } from './agentRecoveryParse'
 import { RUNTIME_RUN_STATUSES, type AgentTaskProgress, type AgentResourceWait, type AgentChatCacheHitUsage, type AgentChatContextBreakdown, type AgentChatContextUsage, type AgentChatTimelineEntry, type AgentChatTimelineSnapshot, type AgentChatToolStatus, type RuntimeCall, type RuntimeJSONValue, type RuntimeRunStatus, type RuntimeUsage } from '@elysian/contracts'
 import { parseRunPlan } from './agentPlanParse'
 import { parseBudgetFields } from './agentBudgetParse'
@@ -133,7 +133,8 @@ export function parseChatTimeline(value: unknown, runId: string): AgentChatTimel
   })()
   if (finalResponseId && !entries.some(entry => entry.kind === 'content' && entry.modelRequestId === finalResponseId)) throw invalid()
   return { ...(row.recovery === undefined ? {} : { recovery: parseRecovery(row.recovery) }), runId, status: status(row.status), done: boolean(row.done), finalResponseId, entries,
-    ...parseBudgetFields(row, runId),
+    ...parseContinuousFields(row),
+ ...parseBudgetFields(row, runId),
     ...(row.blockingRecovery === undefined ? {} : { blockingRecovery: blockingRecovery(row.blockingRecovery) }),
     ...(terminalResult === undefined ? {} : { terminalResult }),
     ...(row.plan === undefined ? {} : { plan: parseRunPlan(row.plan) }),

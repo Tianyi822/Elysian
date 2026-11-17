@@ -1,3 +1,4 @@
+import { parseStorageHealth } from './agentRecoveryParse'
 import type { AgentRuntimeInfo, RuntimeCapability, RuntimeJSONValue, RuntimeLimits, RuntimeToolSchema } from '@elysian/contracts'
 import { RUNTIME_TOOL_NAMES } from '@elysian/contracts'
 import { requestAgentJson } from './agentShared'
@@ -85,6 +86,7 @@ export function parseAgentRuntimeInfo(value: unknown): AgentRuntimeInfo {
     available: row.available,
     worker: row.worker,
     storage: row.storage,
+    ...(row.storageHealth === undefined ? {} : { storageHealth: parseStorageHealth(row.storageHealth) }),
     ...(row.reason === undefined ? {} : { reason: row.reason }),
     tools: row.tools.map(parseRuntimeToolSchema),
     limits: parseAgentRuntimeLimits(row.limits),

@@ -28,6 +28,7 @@ function RecoveryActions({ timeline, api, sessionId }: Props & { sessionId?: str
   }, [api])
   const fieldId = useId()
   const recovery = timeline.recovery
+  const wait = timeline.done ? undefined : timeline.wait
   const unknown = recovery?.status !== 'recovered' && !timeline.continuation?.allowed && timeline.entries.some(entry => entry.kind === 'tool' && entry.status === 'unknown')
   // resourceWait 是历史执行事实；只用服务端投影的当前屏障决定恢复入口。
   // 核实接口以 Run 为单位，合并入口但保留每个操作的事实；有不支持的操作时不提供无效动作。
@@ -37,7 +38,7 @@ function RecoveryActions({ timeline, api, sessionId }: Props & { sessionId?: str
       const operations = timeline.blockingRecovery!.filter(blocker => blocker.runId === runId)
       return { runId, operations, verifiable: operations.every(operation => operation.verifiable) }
     })
-  if (!recovery && !unknown && !blockers.length) return null
+  if (!wait && !recovery && !unknown && !blockers.length) return null
 
   const act = async (operation: () => Promise<void>, failure: string, sourceRunId = timeline.runId) => {
     if (acting.current) return
@@ -58,6 +59,7 @@ function RecoveryActions({ timeline, api, sessionId }: Props & { sessionId?: str
     if (api.verifyRecovery) void act(() => api.verifyRecovery!(runId), '核实暂不可用，操作保护保留。', runId)
   }
   return <div className="chat-recovery break-words text-sm text-fg-muted" aria-label="操作恢复">
+    {wait && <div role="status"><p>{wait.kind === 'waiting-model' ? '模型通道暂时不可用' : '记录同步暂时不可用'}，任务进度已保存。</p><p>{wait.reason?.message}</p><p>将在 {new Date(wait.nextAt).toLocaleTimeString('zh-CN')} 自动检查并继续，无需点击继续任务。等待期间不重复执行已提交操作。</p></div>}
     {recovery && <p role="status">{recovery.status === 'correcting' ? '正在修正' : recovery.status === 'verifying' ? '正在核实' : recovery.status === 'recovered' ? '恢复完成' : recovery.status === 'exhausted' ? '本轮修正已结束' : '核实尚未完成'} · {recovery.tool}：{recovery.message}</p>}
     {!!blockers.length && <div className="space-y-2">
       <p>此前操作的结果尚未确认，本次操作未执行。请先核实阻塞来源，再继续任务。</p>

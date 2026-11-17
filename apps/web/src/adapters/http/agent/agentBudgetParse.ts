@@ -7,7 +7,7 @@ const object = (value: unknown): Record<string, unknown> => {
 }
 
 export function parseBudgetFields(row: Record<string, unknown>, runId: string) {
-  if (row.budgetPolicy !== undefined && row.budgetPolicy !== 'resource-budget/v1') throw invalid()
+  if (row.budgetPolicy !== undefined && !['resource-budget/v1','resource-budget/v2'].includes(String(row.budgetPolicy))) throw invalid()
   const budgetStop: AgentBudgetStop | undefined = row.budgetStop === undefined ? undefined : (() => {
     const stop = object(row.budgetStop)
     if (!['tokens', 'active-time', 'results'].includes(String(stop.resource)) ||
@@ -23,7 +23,7 @@ export function parseBudgetFields(row: Record<string, unknown>, runId: string) {
     return { sourceRunId: runId, allowed: next.allowed, ...(next.blockedReason ? { blockedReason: String(next.blockedReason) } : {}) }
   })()
   return {
-    ...(row.budgetPolicy === undefined ? {} : { budgetPolicy: 'resource-budget/v1' as const }),
+    ...(row.budgetPolicy === undefined ? {} : { budgetPolicy: row.budgetPolicy as 'resource-budget/v1' | 'resource-budget/v2' }),
     ...(budgetStop === undefined ? {} : { budgetStop }),
     ...(continuation === undefined ? {} : { continuation }),
   }

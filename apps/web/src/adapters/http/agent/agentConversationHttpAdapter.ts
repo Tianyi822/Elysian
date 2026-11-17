@@ -9,7 +9,7 @@ import { fetchWithSession } from '../unauthorized'
 import { withRequestDeadline } from '../requestDeadline'
 import { createAgentChatGovernance } from './agentChatGovernance'
 import { parseChatCall, parseChatTimeline } from './agentChatTimelineParse'
-import { parseRecovery, parseRecoveryFailure, parseRunReport } from './agentRecoveryParse'
+import { parseContinuousFields, parseRecovery, parseRecoveryFailure, parseRunReport } from './agentRecoveryParse'
 import type { RuntimeCall } from '@elysian/contracts'
 
 const invalid = () => new Error('Agent 会话响应格式无效')
@@ -44,12 +44,13 @@ function parseRun(value: unknown): AgentChatRun {
   const row = object(value)
   if (!(RUNTIME_RUN_STATUSES as readonly unknown[]).includes(row.status)) throw invalid()
   const failure = parseRecoveryFailure
-  const phases = ['queued', 'inference', 'checkpoint', 'final-memory', 'workflow-output', 'waiting-input', 'waiting-approval', 'waiting-resource', 'waiting-task', 'waiting-recovery', 'failure-summary', 'completed']
+  const phases = ['queued', 'inference', 'checkpoint', 'final-memory', 'workflow-output', 'waiting-input', 'waiting-approval', 'waiting-resource', 'waiting-task', 'waiting-recovery', 'waiting-model','waiting-storage','recovering','policy-frozen','failure-summary', 'completed']
   if (row.phase !== undefined && !phases.includes(string(row.phase))) throw invalid()
   return {
     id: string(row.id), requestId: optional(row.requestId), taskId: string(row.taskId), sessionId: optional(row.sessionId), status: row.status as AgentChatRun['status'],
     phase: row.phase as AgentChatRun['phase'], cancelRequestedAt: optional(row.cancelRequestedAt),
-    ...parseBudgetFields(row, string(row.id)),
+    ...parseContinuousFields(row),
+ ...parseBudgetFields(row, string(row.id)),
     ...(row.plan === undefined ? {} : { plan: parseRunPlan(row.plan) }),
     ...(row.recovery === undefined ? {} : { recovery: parseRecovery(row.recovery) }),
     ...(row.report === undefined ? {} : { report: parseRunReport(row.report) }),
