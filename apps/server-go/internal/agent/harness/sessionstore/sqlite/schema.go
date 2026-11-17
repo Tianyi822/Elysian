@@ -1,0 +1,278 @@
+package sqlite
+
+import (
+	"database/sql"
+	"encoding/json"
+	"errors"
+)
+
+// schemaVersion is bumped whenever a durable execution fact or a memory
+// reference changes shape. v6 adds a transactional JSONL record outbox.
+// v7 adds the agent chat attachment table; its BLOB bytes never enter the
+// JSONL record copy — only reference descriptors ride on Message/Run documents.
+// v8 保存可恢复的用户澄清请求。
+// v9 保存运行时授权，并为独立 MCP 探测补齐独立 JSONL 归属。
+// v10 保存强制删除后的域任务取消清单。
+const schemaVersion = 11
+
+const capabilitySchema = `
+CREATE TABLE workspace_cleanup (task_id TEXT PRIMARY KEY);
+CREATE TABLE capability_revocations (kind TEXT NOT NULL,id TEXT NOT NULL,revision INTEGER NOT NULL,reason TEXT NOT NULL,created_at TEXT NOT NULL,PRIMARY KEY(kind,id,revision));
+CREATE TABLE environments (session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+ revision INTEGER NOT NULL, document TEXT NOT NULL, PRIMARY KEY(session_id,revision));
+CREATE TABLE operations (id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+ model_request_id TEXT NOT NULL, call_index INTEGER NOT NULL, state TEXT NOT NULL, document TEXT NOT NULL,
+ UNIQUE(run_id,model_request_id,call_index));
+CREATE TABLE approvals (id TEXT PRIMARY KEY, operation_id TEXT NOT NULL UNIQUE REFERENCES operations(id) ON DELETE CASCADE,
+ run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE, state TEXT NOT NULL, expires_at TEXT NOT NULL, document TEXT NOT NULL);
+CREATE TABLE execution_barriers (id TEXT PRIMARY KEY, operation_id TEXT NOT NULL UNIQUE REFERENCES operations(id),
+ run_id TEXT NOT NULL REFERENCES runs(id), state TEXT NOT NULL, document TEXT NOT NULL);
+CREATE TABLE context_items (id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+ task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, document TEXT NOT NULL);
+CREATE TABLE workspace_versions (task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,
+ revision INTEGER NOT NULL, document TEXT NOT NULL);
+`
+
+const sessionSchema = `
+CREATE TABLE sessions (
+ id TEXT PRIMARY KEY, last_activity_at TEXT NOT NULL, active_run_id TEXT NOT NULL DEFAULT '',
+ last_seq INTEGER NOT NULL DEFAULT 0, document TEXT NOT NULL
+);
+CREATE TABLE messages (
+ id TEXT PRIMARY KEY, session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE,
+ task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE,
+ run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+ seq INTEGER NOT NULL, role TEXT NOT NULL, document TEXT NOT NULL,
+ UNIQUE(session_id,seq), UNIQUE(run_id,role)
+);
+CREATE TABLE working_memories (
+ task_id TEXT NOT NULL REFERENCES tasks(id) ON DELETE CASCADE, revision INTEGER NOT NULL,
+ document TEXT NOT NULL, PRIMARY KEY(task_id,revision)
+);
+CREATE TABLE model_requests (
+ id TEXT PRIMARY KEY, run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,
+ request_index INTEGER NOT NULL, state TEXT NOT NULL, document TEXT NOT NULL,
+ UNIQUE(run_id,request_index)
+);
+ALTER TABLE tasks ADD COLUMN session_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE runs ADD COLUMN session_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE runs ADD COLUMN request_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE runs ADD COLUMN canonical_input TEXT NOT NULL DEFAULT '';
+ALTER TABLE runs ADD COLUMN run_number INTEGER NOT NULL DEFAULT 1;
+UPDATE runs SET request_id=(SELECT request_id FROM tasks WHERE tasks.id=runs.task_id),
+ canonical_input=(SELECT input FROM tasks WHERE tasks.id=runs.task_id);
+CREATE UNIQUE INDEX runs_request_id ON runs(request_id);
+CREATE UNIQUE INDEX runs_task_number ON runs(task_id,run_number);
+CREATE INDEX tasks_session ON tasks(session_id);
+CREATE INDEX runs_session ON runs(session_id);
+CREATE INDEX sessions_activity ON sessions(last_activity_at);
+`
+
+// attachmentSchema 暂存上传后未绑定会话的图片字节；接受任务时在同一事务内置位
+// session_id，会话删除经外键级联带走，孤儿由周期 sweep 按 24 小时清理。
+// session_id 可空（NULL 表示未绑定）：外键约束下非空值必须命中 sessions 行，
+// 不能用空串充当「未绑定」，孤儿判定因此统一走 IS NULL。
+const attachmentSchema = `
+CREATE TABLE agent_attachments (
+ id TEXT PRIMARY KEY,
+ session_id TEXT REFERENCES sessions(id) ON DELETE CASCADE,
+ mime_type TEXT NOT NULL,
+ bytes INTEGER NOT NULL,
+ width INTEGER NOT NULL,
+ height INTEGER NOT NULL,
+ name TEXT NOT NULL,
+ created_at TEXT NOT NULL,
+ content BLOB NOT NULL
+);
+CREATE INDEX agent_attachments_session ON agent_attachments(session_id);
+`
+
+func migrateStore(db *sql.DB) error {
+	var version int
+	if err := db.QueryRow("PRAGMA user_version").Scan(&version); err != nil {
+		return err
+	}
+	if version > schemaVersion {
+		return errors.New("运行数据库版本高于当前程序，拒绝降级打开")
+	}
+	if version == schemaVersion {
+		return nil
+	}
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer tx.Rollback()
+	if version == 0 {
+		if _, err = tx.Exec(schema); err != nil {
+			return err
+		}
+	}
+	if version < 2 {
+		if _, err = tx.Exec(sessionSchema); err != nil {
+			return err
+		}
+		rows, err := tx.Query("SELECT id,request_id,document FROM runs")
+		if err != nil {
+			return err
+		}
+		type row struct{ id, request, raw string }
+		var records []row
+		for rows.Next() {
+			var r row
+			if err = rows.Scan(&r.id, &r.request, &r.raw); err != nil {
+				rows.Close()
+				return err
+			}
+			records = append(records, r)
+		}
+		err = rows.Err()
+		rows.Close()
+		if err != nil {
+			return err
+		}
+		for _, record := range records {
+			var document map[string]any
+			if err = json.Unmarshal([]byte(record.raw), &document); err != nil {
+				return err
+			}
+			document["requestId"], document["runNumber"] = record.request, 1
+			encoded, marshalErr := json.Marshal(document)
+			if marshalErr != nil {
+				return marshalErr
+			}
+			if _, err = tx.Exec("UPDATE runs SET document=? WHERE id=?", string(encoded), record.id); err != nil {
+				return err
+			}
+		}
+	}
+	if version < 3 {
+		if _, err = tx.Exec(capabilitySchema); err != nil {
+			return err
+		}
+	}
+	if version < 4 {
+		if _, err = tx.Exec(workflowSchema); err != nil {
+			return err
+		}
+	}
+	if _, err = tx.Exec(wikiSchema); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(resourceSchema); err != nil {
+		return err
+	}
+	if _, err = tx.Exec(workflowV2Schema); err != nil {
+		return err
+	}
+	if version < 8 {
+		if _, err = tx.Exec(userInputSchema); err != nil {
+			return err
+		}
+		if version >= 6 {
+			if err = installRecordTriggers(tx, userInputRecordSpec); err != nil {
+				return err
+			}
+		}
+	}
+	if version < 9 {
+		if _, err = tx.Exec(sessionAuthorizationSchema); err != nil {
+			return err
+		}
+		if version >= 6 {
+			if err = migrateProbeRecordOwners(tx); err != nil {
+				return err
+			}
+		}
+	}
+	if version < 6 {
+		if err = migrateRecordOutbox(tx); err != nil {
+			return err
+		}
+	}
+	if version < 7 {
+		if _, err = tx.Exec(attachmentSchema); err != nil {
+			return err
+		}
+	}
+	if version < 10 {
+		if _, err = tx.Exec(sessionTaskCleanupSchema); err != nil {
+			return err
+		}
+	}
+	if version < 11 {
+		for _, spec := range recordSpecs {
+			if _, err = tx.Exec("DROP TRIGGER IF EXISTS agent_record_" + spec.table + "_update"); err != nil {
+				return err
+			}
+			condition := " WHEN " + recordDocument(spec.table, "NEW") + " IS NOT " + recordDocument(spec.table, "OLD")
+			statement := "CREATE TRIGGER agent_record_" + spec.table + "_update AFTER UPDATE ON " + spec.table + condition + " BEGIN " + recordInsertSQL(spec, "NEW", "update", "") + "; END"
+			if _, err = tx.Exec(statement); err != nil {
+				return err
+			}
+		}
+	}
+
+	if _, err = tx.Exec("PRAGMA user_version=11"); err != nil {
+		return err
+	}
+	return tx.Commit()
+}
+
+const wikiSchema = `
+CREATE TABLE IF NOT EXISTS wiki_spaces(id TEXT PRIMARY KEY,name TEXT NOT NULL,kind TEXT NOT NULL,document TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS wiki_space_revisions(id TEXT NOT NULL,revision INTEGER NOT NULL,document TEXT NOT NULL,PRIMARY KEY(id,revision));
+CREATE TABLE IF NOT EXISTS wiki_cleared_sources(run_id TEXT PRIMARY KEY,cleared_at TEXT NOT NULL);
+CREATE UNIQUE INDEX IF NOT EXISTS wiki_global_space ON wiki_spaces(kind) WHERE kind='global';
+CREATE TABLE IF NOT EXISTS wiki_pages(id TEXT PRIMARY KEY,space_id TEXT NOT NULL REFERENCES wiki_spaces(id),slug TEXT NOT NULL,
+ current_revision INTEGER NOT NULL,status TEXT NOT NULL,document TEXT NOT NULL,UNIQUE(space_id,slug));
+CREATE TABLE IF NOT EXISTS wiki_page_revisions(page_id TEXT NOT NULL REFERENCES wiki_pages(id),revision INTEGER NOT NULL,
+ digest TEXT NOT NULL,document TEXT NOT NULL,PRIMARY KEY(page_id,revision));
+CREATE TABLE IF NOT EXISTS wiki_candidates(id TEXT PRIMARY KEY,space_id TEXT NOT NULL REFERENCES wiki_spaces(id),state TEXT NOT NULL,
+ origin_kind TEXT NOT NULL,origin_id TEXT NOT NULL,document TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS wiki_session_spaces(session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,document TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS wiki_run_spaces(run_id TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,document TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS wiki_visible_pages(owner_kind TEXT NOT NULL,owner_id TEXT NOT NULL,page_id TEXT NOT NULL,revision INTEGER NOT NULL,digest TEXT NOT NULL,PRIMARY KEY(owner_kind,owner_id,page_id));
+CREATE TABLE IF NOT EXISTS wiki_recalls(run_id TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,document TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS wiki_task_contexts(task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,generation INTEGER NOT NULL DEFAULT 0);
+CREATE TABLE IF NOT EXISTS wiki_artifacts(kind TEXT NOT NULL,id TEXT NOT NULL,task_id TEXT NOT NULL DEFAULT '',run_id TEXT NOT NULL DEFAULT '',
+ generation INTEGER NOT NULL DEFAULT 0,invalidated INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(kind,id));
+CREATE INDEX IF NOT EXISTS wiki_artifacts_task ON wiki_artifacts(task_id,invalidated);
+CREATE TABLE IF NOT EXISTS wiki_dependencies(kind TEXT NOT NULL,id TEXT NOT NULL,page_id TEXT NOT NULL,revision INTEGER NOT NULL,digest TEXT NOT NULL,
+ PRIMARY KEY(kind,id,page_id,revision),FOREIGN KEY(kind,id) REFERENCES wiki_artifacts(kind,id) ON DELETE CASCADE);
+CREATE INDEX IF NOT EXISTS wiki_dependencies_page ON wiki_dependencies(page_id,revision);
+CREATE TABLE IF NOT EXISTS wiki_jobs(id TEXT PRIMARY KEY,kind TEXT NOT NULL,origin_kind TEXT NOT NULL,origin_id TEXT NOT NULL,
+ state TEXT NOT NULL,document TEXT NOT NULL,input TEXT NOT NULL,UNIQUE(kind,origin_kind,origin_id));
+CREATE INDEX IF NOT EXISTS wiki_jobs_state ON wiki_jobs(state);
+CREATE VIRTUAL TABLE IF NOT EXISTS wiki_fts USING fts5(page_id UNINDEXED,space_id UNINDEXED,title,body,tokenize='unicode61');
+` + embeddingSchema
+
+const workflowSchema = `
+CREATE TABLE workflow_definitions(id TEXT NOT NULL, revision INTEGER NOT NULL, document TEXT NOT NULL, PRIMARY KEY(id,revision));
+CREATE TABLE workflow_instances(id TEXT PRIMARY KEY, request_id TEXT NOT NULL UNIQUE, canonical_input TEXT NOT NULL,
+ session_id TEXT NOT NULL REFERENCES sessions(id) ON DELETE CASCADE, state TEXT NOT NULL, ready_at TEXT NOT NULL, document TEXT NOT NULL);
+CREATE TABLE workflow_attempts(workflow_id TEXT NOT NULL REFERENCES workflow_instances(id) ON DELETE CASCADE,
+ step_id TEXT NOT NULL, number INTEGER NOT NULL, run_id TEXT NOT NULL UNIQUE REFERENCES runs(id) ON DELETE CASCADE,
+ state TEXT NOT NULL, document TEXT NOT NULL, PRIMARY KEY(workflow_id,step_id,number));
+CREATE TABLE workflow_events(workflow_id TEXT NOT NULL REFERENCES workflow_instances(id) ON DELETE CASCADE,seq INTEGER NOT NULL,document TEXT NOT NULL,PRIMARY KEY(workflow_id,seq));
+CREATE TABLE workflow_recoveries(workflow_id TEXT NOT NULL REFERENCES workflow_instances(id) ON DELETE CASCADE,request_id TEXT NOT NULL,canonical_input TEXT NOT NULL,document TEXT NOT NULL,PRIMARY KEY(workflow_id,request_id));
+ALTER TABLE sessions ADD COLUMN active_workflow_id TEXT NOT NULL DEFAULT '';
+ALTER TABLE runs ADD COLUMN workflow_id TEXT NOT NULL DEFAULT '';
+CREATE INDEX runs_workflow ON runs(workflow_id);
+ALTER TABLE approvals RENAME TO approvals_v3;
+CREATE TABLE approvals(id TEXT PRIMARY KEY,operation_id TEXT REFERENCES operations(id) ON DELETE CASCADE,run_id TEXT NOT NULL REFERENCES runs(id) ON DELETE CASCADE,state TEXT NOT NULL,expires_at TEXT NOT NULL,document TEXT NOT NULL);
+INSERT INTO approvals SELECT * FROM approvals_v3;
+DROP TABLE approvals_v3;
+CREATE UNIQUE INDEX approval_active_operation ON approvals(operation_id) WHERE state IN ('pending','approved');
+CREATE INDEX workflow_ready ON workflow_instances(state,ready_at);
+`
+
+const workflowV2Schema = `
+CREATE TABLE IF NOT EXISTS workflow_scopes(id TEXT PRIMARY KEY,workflow_id TEXT NOT NULL REFERENCES workflow_instances(id) ON DELETE CASCADE,
+ parent_node_id TEXT NOT NULL,task_id TEXT NOT NULL REFERENCES tasks(id),ordinal INTEGER NOT NULL,state TEXT NOT NULL,document TEXT NOT NULL);
+CREATE INDEX IF NOT EXISTS workflow_scopes_parent ON workflow_scopes(parent_node_id,ordinal);
+CREATE TABLE IF NOT EXISTS workflow_nodes(id TEXT PRIMARY KEY,workflow_id TEXT NOT NULL REFERENCES workflow_instances(id) ON DELETE CASCADE,
+ scope_id TEXT NOT NULL REFERENCES workflow_scopes(id) ON DELETE CASCADE,step_id TEXT NOT NULL,
+ state TEXT NOT NULL,document TEXT NOT NULL,UNIQUE(scope_id,step_id));
+CREATE INDEX IF NOT EXISTS workflow_nodes_ready ON workflow_nodes(workflow_id,state);
+`
