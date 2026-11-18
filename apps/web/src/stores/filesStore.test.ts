@@ -1,6 +1,7 @@
 import { waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FileEntry } from '@elysian/contracts'
+import { advanceAuthGeneration } from '../adapters/http/unauthorized'
 import { createMockGateway } from '../adapters/mock/gateway'
 import { FileTransferError } from '../adapters/filesTransferError'
 import { useFilesStore } from './filesStore'
@@ -12,7 +13,27 @@ beforeEach(async () => {
   useFilesStore.getState().cancelDownload()
   useFilesStore.getState().cancelUpload()
   await useMessageStore.getState().clear()
-  useFilesStore.setState({ status: 'ready', path: '/tmp', entries: [], sizes: { '/tmp': 0 }, computingPaths: [], searchKeyword: '', searchResults: [], searching: false, download: undefined, upload: undefined })
+  useFilesStore.setState({ status: 'ready', path: '/tmp', entries: [], sizes: { '/tmp': 0 }, sizeErrors: {}, computingPaths: [], searchKeyword: '', searchResults: [], searching: false, download: undefined, upload: undefined })
+})
+
+describe('目录大小统计', () => {
+  it('旧会话的排队目录不再发送，迟到回执不能覆盖新会话', async () => {
+    const gateway = createMockGateway({ eventStream: 'memory' })
+    const finish: Array<(bytes: number) => void> = []
+    const size = vi.spyOn(gateway.files, 'size').mockImplementation(() => new Promise((resolve) => finish.push(resolve)))
+    const paths = ['/a', '/b', '/c', '/d', '/not-dispatched']
+    const old = useFilesStore.getState().computeSizes(gateway, paths)
+    expect(size).toHaveBeenCalledTimes(4)
+
+    advanceAuthGeneration()
+    size.mockResolvedValueOnce(9)
+    await useFilesStore.getState().computeSizes(gateway, ['/a'])
+    finish.forEach((resolve) => resolve(1))
+    expect(await old).toEqual([])
+    expect(useFilesStore.getState().sizes).toEqual({ '/a': 9 })
+    expect(useFilesStore.getState().computingPaths).toEqual([])
+    expect(size).not.toHaveBeenCalledWith('/not-dispatched')
+  })
 })
 
 describe('文件传输状态', () => {
@@ -89,7 +110,7 @@ describe('文件传输状态', () => {
     const gateway = createMockGateway({ eventStream: 'memory' })
     let finishSize: (size: number) => void = () => {}
     vi.spyOn(gateway.files, 'size').mockImplementation(() => new Promise((resolve) => { finishSize = resolve }))
-    const sizing = useFilesStore.getState().computeSize(gateway, '/etc')
+    const sizing = useFilesStore.getState().computeSizes(gateway, ['/etc'])
     vi.spyOn(gateway.files, 'checkUpload').mockResolvedValue({ state: 'replace', token: 'same', existing: entry('data.txt') })
     const upload = vi.spyOn(gateway.files, 'uploadFile').mockResolvedValue(entry('data.txt'))
     const list = vi.spyOn(gateway.files, 'list').mockResolvedValue([])

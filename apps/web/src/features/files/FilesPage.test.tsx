@@ -17,6 +17,7 @@ beforeEach(() => {
     path: '/',
     entries: [],
     sizes: {},
+    sizeErrors: {},
     computingPaths: [],
     clipboard: undefined,
     searchKeyword: '',
@@ -68,6 +69,31 @@ describe('文件管理页', () => {
     // 行名以条目名开头锚定：所有者文本里也含「root」，裸匹配会命中所有行。
     expect(within(rowOf(region, '^bin ')).getByText('555/root')).toBeInTheDocument()
     expect(within(rowOf(region, '^root ')).getByText('700/root')).toBeInTheDocument()
+  })
+
+  it('搜索框右侧紧跟刷新，上一级在工具栏最右侧，不显示总行数', async () => {
+    const user = userEvent.setup()
+    const gateway = createMockGateway({ eventStream: 'memory', eventIntervalMs: 60_000 })
+    const list = vi.spyOn(gateway.files, 'list')
+    renderApp('/files/var', { gateway })
+    const region = await screen.findByRole('region', { name: '文件列表' })
+    const search = within(region).getByRole('searchbox', { name: '搜索文件或目录' })
+    const refresh = within(region).getByRole('button', { name: '刷新' })
+    const parent = within(region).getByRole('button', { name: '上一级' })
+    const toolbar = search.closest<HTMLElement>('.dt-toolbar-normal')!
+
+    expect(search.closest('label')?.nextElementSibling).toContainElement(refresh)
+    expect(toolbar.lastElementChild).toContainElement(parent)
+    expect(screen.getAllByRole('button', { name: '刷新' })).toEqual([refresh])
+    expect(screen.getAllByRole('button', { name: '上一级' })).toEqual([parent])
+    expect(within(region).queryByText(/^\d+\s*行$/)).not.toBeInTheDocument()
+
+    list.mockRejectedValueOnce(new Error('目录暂不可读'))
+    await user.click(refresh)
+    expect(await screen.findByRole('alert')).toHaveTextContent('目录暂不可读')
+    expect(list.mock.calls).toEqual([['/var'], ['/var']])
+    expect(rowOf(region, 'log')).toBeInTheDocument()
+    expect(refresh).toBeEnabled()
   })
 
   it('双击目录进入子目录：路径标题与列表随之变化，上一级可用', async () => {
@@ -243,32 +269,23 @@ describe('文件管理页', () => {
     ).toBeInTheDocument()
   })
 
-  it('目录大小统计失败时发通知，按钮回到可重试', async () => {
+  it('目录大小统计失败在大小列标红并发通知，重试成功后清除错误', async () => {
     const user = userEvent.setup()
     const gateway = createMockGateway({ eventStream: 'memory', eventIntervalMs: 60_000 })
-    const mockFiles = new MockFilesAdapter()
-    gateway.files = {
-      list: (path) => mockFiles.list(path),
-      size: () => Promise.reject(new Error('磁盘不可达')),
-      copyEntry: (src, dest) => mockFiles.copyEntry(src, dest),
-      moveEntry: (src, dest) => mockFiles.moveEntry(src, dest),
-      renameEntry: (path, newName) => mockFiles.renameEntry(path, newName),
-      compressEntry: (path) => mockFiles.compressEntry(path),
-      chmod: (path, input) => mockFiles.chmod(path, input),
-      search: (keyword) => mockFiles.search(keyword),
-      prepareDownload: (...args) => mockFiles.prepareDownload(...args),
-      startDownload: (...args) => mockFiles.startDownload(...args),
-      checkUpload: (...args) => mockFiles.checkUpload(...args),
-      uploadFile: (...args) => mockFiles.uploadFile(...args),
-    }
+    const size = vi.spyOn(gateway.files, 'size')
+      .mockRejectedValueOnce(new Error('磁盘不可达'))
+      .mockResolvedValueOnce(1024)
     renderApp('/files', { gateway })
     const region = await screen.findByRole('region', { name: '文件列表' })
+    const sizeCell = within(within(rowOf(region, '^bin ')).getAllByRole('cell').at(-1)!)
 
-    await user.click(within(rowOf(region, '^bin ')).getByRole('button', { name: '计算 bin 的目录大小' }))
-    expect(messageHistoryText()).toMatch(/磁盘不可达/)
-    expect(
-      await within(rowOf(region, '^bin ')).findByRole('button', { name: '计算 bin 的目录大小' }),
-    ).toBeInTheDocument()
+    await user.click(sizeCell.getByRole('button', { name: '计算 bin 的目录大小' }))
+    expect(await sizeCell.findByText('计算失败：磁盘不可达')).toHaveClass('text-danger')
+    expect(messageHistoryText()).toMatch(/统计目录大小失败（\/bin）：磁盘不可达/)
+    await user.click(sizeCell.getByRole('button', { name: /重试计算 bin 的目录大小/ }))
+    expect(await sizeCell.findByText('1.0 KB')).toBeInTheDocument()
+    expect(sizeCell.queryByText(/磁盘不可达/)).not.toBeInTheDocument()
+    expect(size).toHaveBeenCalledTimes(2)
   })
 
   it('右键行弹出菜单：复制、粘贴、移动、重命名、压缩齐备，无剪贴板时粘贴禁用', async () => {
@@ -467,7 +484,7 @@ describe('文件管理页', () => {
     expect(within(rowOf(region, 'auth.log')).getByText('640/root')).toBeInTheDocument()
   })
 
-  it('计数文本移除，搜索框输入即全树检索并给出匹配数', async () => {
+  it('搜索框输入即全树检索，不显示结果行数', async () => {
     const user = userEvent.setup()
     renderApp('/files')
     await screen.findByRole('region', { name: '文件列表' })
@@ -483,7 +500,7 @@ describe('文件管理页', () => {
       within(region).getAllByRole('cell', { name: '/var/log/nginx' }).length,
     ).toBeGreaterThanOrEqual(2)
     expect(within(region).getByRole('row', { name: /access\.log/ })).toBeInTheDocument()
-    expect(screen.getByText(`${useFilesStore.getState().searchResults.length} 行`)).toBeInTheDocument()
+    expect(within(region).queryByText(/^\d+\s*行$/)).not.toBeInTheDocument()
   })
 
   it('双击搜索结果里的目录进入该目录，并清空搜索回到目录列表', async () => {
@@ -607,28 +624,43 @@ describe('文件管理页', () => {
     expect(screen.queryByText('已选 1 项')).not.toBeInTheDocument()
   })
 
-  it('批量计算目录大小在首次失败后停止，成功项清除勾选并保留其余目标', async () => {
+  it('全选直接并发统计未计算的目录，不弹窗，单项失败不阻塞其他目录', async () => {
     const user = userEvent.setup()
     const gateway = createMockGateway({ eventStream: 'memory', eventIntervalMs: 60_000 })
-    const size = vi.spyOn(gateway.files, 'size')
-      .mockResolvedValueOnce(1024)
-      .mockRejectedValueOnce(new Error('没有读取权限'))
+    const directories = ['cached', 'dir-a', 'dir-b', 'dir-c', 'dir-d', 'dir-e']
+    const entry = { mode: '755', owner: 'root', modifiedAt: '2026-11-18T00:00:00Z' }
+    vi.spyOn(gateway.files, 'list').mockResolvedValue([
+      ...directories.map((name) => ({ ...entry, name, kind: 'directory' as const })),
+      { ...entry, name: 'file.txt', kind: 'file', sizeBytes: 7 },
+    ])
+    useFilesStore.setState({ sizes: { '/cached': 0 } })
+    const requests = new Map<string, { resolve(bytes: number): void; reject(error: Error): void }>()
+    const size = vi.spyOn(gateway.files, 'size').mockImplementation((path) => new Promise((resolve, reject) => {
+      requests.set(path, { resolve, reject })
+    }))
     renderApp('/files', { gateway })
     const region = await screen.findByRole('region', { name: '文件列表' })
-    for (const name of ['^etc', '^home', '^var']) {
-      await user.click(within(rowOf(region, name)).getByRole('checkbox'))
-    }
+    await user.click(within(region).getByRole('checkbox', { name: /全选/ }))
     await user.click(await screen.findByRole('button', { name: '计算目录大小' }))
-    await user.click(await screen.findByRole('button', { name: '确认计算目录大小' }))
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect([...requests.keys()]).toEqual(['/dir-a', '/dir-b', '/dir-c', '/dir-d'])
+    expect(within(rowOf(region, '^dir-a')).getByText('计算中')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '计算目录大小' })).toBeDisabled()
 
-    const report = await screen.findByRole('dialog', { name: '计算目录大小结果' })
-    await waitFor(() => expect(within(report).getByText(/home/).parentElement).toHaveTextContent('失败 · 没有读取权限'))
-    expect(size.mock.calls.map((call) => call[0])).toEqual(['/etc', '/home'])
-    expect(useFilesStore.getState().sizes['/etc']).toBe(1024)
-    expect(within(report).getByText(/var/).parentElement).toHaveTextContent('未执行')
-    await user.click(within(report).getByRole('button', { name: '关闭' }))
-    expect(within(rowOf(region, '^etc')).getByRole('checkbox')).toHaveAttribute('aria-checked', 'false')
-    expect(within(rowOf(region, '^home')).getByRole('checkbox')).toHaveAttribute('aria-checked', 'true')
-    expect(within(rowOf(region, '^var')).getByRole('checkbox')).toHaveAttribute('aria-checked', 'true')
+    await act(async () => { requests.get('/dir-b')!.reject(new Error('没有读取权限')) })
+    expect(within(rowOf(region, '^dir-b')).getByText('计算失败：没有读取权限')).toHaveClass('text-danger')
+    expect(messageHistoryText()).toContain('统计目录大小失败（/dir-b）：没有读取权限')
+    expect(size.mock.calls.map(([path]) => path)).toEqual(['/dir-a', '/dir-b', '/dir-c', '/dir-d', '/dir-e'])
+    await act(async () => { requests.get('/dir-e')!.resolve(0) })
+    expect(within(rowOf(region, '^dir-e')).getByText('0 B')).toBeInTheDocument()
+    expect(within(rowOf(region, '^dir-a')).getByText('计算中')).toBeInTheDocument()
+
+    await act(async () => {
+      for (const path of ['/dir-a', '/dir-c', '/dir-d']) requests.get(path)!.resolve(1024)
+    })
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    expect(within(rowOf(region, '^dir-a')).getByRole('checkbox')).toHaveAttribute('aria-checked', 'false')
+    expect(within(rowOf(region, '^dir-b')).getByRole('checkbox')).toHaveAttribute('aria-checked', 'true')
+    expect(within(rowOf(region, '^file.txt')).getByText('7 B')).toBeInTheDocument()
   })
 })

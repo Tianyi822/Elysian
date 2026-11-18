@@ -1,0 +1,10 @@
+.files-data-table .files-parent-button { height: var(--dt-control-height); }
+
+@container (width < 26rem) {
+  .files-data-table .files-parent-button {
+    width: var(--dt-control-height);
+    padding-inline: 0;
+    border-radius: 50%;
+  }
+  .files-data-table .files-parent-label { display: none; }
+}

@@ -13,6 +13,7 @@ import { FileTransferError, isFileUploadConflict } from '../adapters/filesTransf
  */
 const MOCK_NOTE = isDockerRuntime() ? '' : 'mock，待接入真实执行'
 const MOCK_SUFFIX = MOCK_NOTE ? `（${MOCK_NOTE}）` : ''
+const SIZE_REQUEST_CONCURRENCY = 4
 
 /** 剪贴板里暂存的条目与意图：copy 粘贴出副本，move 粘贴后源条目移除。 */
 export type FilesClipboard = {
@@ -52,6 +53,7 @@ export type FilesState = {
   errorMessage?: string
   /** 已算出的目录总大小（字节），按目录绝对路径记录；换目录不清，刷新即回种子。 */
   sizes: Record<string, number>
+  sizeErrors: Record<string, string | undefined>
   /** 正在统计大小的目录路径。 */
   computingPaths: readonly string[]
   /** 文件剪贴板：只存内存，粘贴一次即清空，刷新即回空。 */
@@ -63,7 +65,7 @@ export type FilesState = {
   /** 同一目录的重新列举在途：旧列表留在屏上，只由它驱动刷新按钮。 */
   reloading: boolean
   load(gateway: ElysianGateway, path: string, options?: { silent?: boolean }): Promise<void>
-  computeSize(gateway: ElysianGateway, path: string): Promise<{ status: 'succeeded' | 'failed'; error?: string }>
+  computeSizes(gateway: ElysianGateway, paths: readonly string[]): Promise<string[]>
   copyToClipboard(path: string): void
   moveToClipboard(path: string): void
   clearClipboard(): void
@@ -91,13 +93,14 @@ export type FilesState = {
 /**
  * 文件管理页的界面状态。目录路径的真源是路由（files/*），
  * 这里只保存「这个目录的列举结果」；连续双击产生的并发加载按次序号丢弃过期结果。
- * 目录大小不在列举里给出，按需经 computeSize 求和，结果按路径缓存。
+ * 目录大小不在列举里给出，按需经 computeSizes 求和，结果按路径缓存。
  */
 export const useFilesStore = create<FilesState>((set, get) => {
   let loadSequence = 0
   let pendingLoad: { gateway: ElysianGateway; path: string; auth: number; promise: Promise<void> } | undefined
   let searchSequence = 0
   let sizeGeneration = 0
+  let sizeAuth = captureAuthGeneration()
   let downloadSequence = 0
   let downloadController: AbortController | undefined
   let uploadController: AbortController | undefined
@@ -112,11 +115,22 @@ export const useFilesStore = create<FilesState>((set, get) => {
     useMessageStore.getState().notify({ tone, message })
   }
 
+  const invalidateSizes = () => {
+    ++sizeGeneration
+    set({ sizes: {}, sizeErrors: {}, computingPaths: [] })
+  }
+  const syncSizeAuth = (auth: number) => {
+    if (auth === sizeAuth) return
+    sizeAuth = auth
+    invalidateSizes()
+  }
+
   return {
     status: 'idle',
     path: '/',
     entries: [],
     sizes: {},
+    sizeErrors: {},
     computingPaths: [],
     clipboard: undefined,
     searchKeyword: '',
@@ -127,6 +141,7 @@ export const useFilesStore = create<FilesState>((set, get) => {
     upload: undefined,
     load(gateway, path, options) {
       const auth = captureAuthGeneration()
+      syncSizeAuth(auth)
       if (pendingLoad?.gateway === gateway && pendingLoad.path === path && pendingLoad.auth === auth) {
         if (!options?.silent) set({ reloading: true })
         return pendingLoad.promise
@@ -147,28 +162,45 @@ export const useFilesStore = create<FilesState>((set, get) => {
       })()
       return operation.promise
     },
-    async computeSize(gateway, path) {
+    async computeSizes(gateway, paths) {
+      const auth = captureAuthGeneration()
+      syncSizeAuth(auth)
       const generation = sizeGeneration
       const { computingPaths, sizes } = get()
-      if (sizes[path] !== undefined) return { status: 'succeeded' }
-      if (computingPaths.includes(path)) return { status: 'failed', error: '目录正在计算大小，请等待完成。' }
-      set({ computingPaths: [...computingPaths, path] })
-      try {
-        const total = await gateway.files.size(path)
-        if (generation !== sizeGeneration) return { status: 'failed', error: '文件已发生变化，请重新计算目录大小。' }
-        set((state) => ({ sizes: { ...state.sizes, [path]: total } }))
-        return { status: 'succeeded' }
-      } catch (error) {
-        const message = error instanceof Error ? error.message : '未知错误'
-        notify(`统计目录大小失败：${message}`, 'danger')
-        return { status: 'failed', error: message }
-      } finally {
-        if (generation === sizeGeneration) {
-          set((state) => ({
-            computingPaths: state.computingPaths.filter((item) => item !== path),
-          }))
+      const alreadyPending = new Set(computingPaths)
+      const pending = [...new Set(paths)].filter((path) => sizes[path] === undefined && !alreadyPending.has(path))
+      if (!pending.length) return []
+      set({ computingPaths: [...computingPaths, ...pending] })
+      const current = () => generation === sizeGeneration && auth === captureAuthGeneration()
+      let next = 0
+      const succeeded: string[] = []
+      const calculate = async () => {
+        while (current() && next < pending.length) {
+          const path = pending[next++]!
+          let total: number | undefined
+          let message: string | undefined
+          try {
+            total = await gateway.files.size(path)
+          } catch (error) {
+            message = error instanceof Error && error.message ? error.message : '未知错误'
+          }
+          if (!current()) return
+          set((state) => {
+            const sizeErrors = { ...state.sizeErrors }
+            if (message !== undefined) sizeErrors[path] = message
+            else delete sizeErrors[path]
+            return {
+              computingPaths: state.computingPaths.filter((item) => item !== path),
+              sizeErrors,
+              sizes: total === undefined ? state.sizes : { ...state.sizes, [path]: total },
+            }
+          })
+          if (message !== undefined) notify(`统计目录大小失败（${path}）：${message}`, 'danger')
+          else succeeded.push(path)
         }
       }
+      await Promise.all(Array.from({ length: Math.min(SIZE_REQUEST_CONCURRENCY, pending.length) }, calculate))
+      return current() ? succeeded : []
     },
     copyToClipboard(path) {
       set({ clipboard: { path, intent: 'copy' } })
@@ -359,8 +391,7 @@ export const useFilesStore = create<FilesState>((set, get) => {
         else notify(controller.signal.aborted ? `上传已取消，已上传 ${complete} / ${items.length} 个文件，请刷新确认文件状态。` : `已上传 ${complete} / ${items.length} 个文件`, controller.signal.aborted ? 'info' : 'success')
         // 即使最后一项失败或取消，先前成功及结果不确定的项仍需要回读。
         if (attemptedUpload) {
-          ++sizeGeneration
-          set({ sizes: {}, computingPaths: [] })
+          invalidateSizes()
           if (!sessionExpired) {
             const keyword = get().searchKeyword
             await Promise.all([reload(gateway), keyword.trim() ? get().search(gateway, keyword) : Promise.resolve()])

@@ -1,12 +1,12 @@
-import { useEffect, useMemo, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useNavigate, useParams } from 'react-router'
+import * as Tooltip from '@radix-ui/react-tooltip'
 import { FILE_KIND_LABELS } from '@elysian/contracts'
 import type { FileEntry, FileSearchResult } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { formatDateTime } from '../../components/format'
 import { ArrowUpFromLine, File, Folder, Loader2 } from '../../components/icons'
 import { DataTable, type DataTableColumn } from '../../components/DataTable'
-import { TableBatchActions } from '../../components/TableBatchActions'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
 import { RefreshButton } from '../../components/RefreshState'
 import { useFilesStore } from '../../stores/filesStore'
@@ -19,9 +19,7 @@ import { RenameDialog } from './RenameDialog'
 import { PermissionDialog } from './PermissionDialog'
 import { CTL_PRIMARY, CTL_TOOLBAR } from '../../components/formControl'
 import { Button } from '../../components/Button'
-
-/** 「上一级」等主要按钮：形状与色阶全部走控件层。 */
-const TOOLBAR_ACTION_CLASS = CTL_PRIMARY
+import './filesToolbar.css'
 
 /** 重命名与权限对话框的挂起状态：两张表（目录列表与搜索结果）共用同一份。 */
 type DialogTarget = { entry: FileEntry; path: string } | null
@@ -87,32 +85,41 @@ export function FilesPage() {
     if (searchKeyword.trim()) void search(gateway, searchKeyword)
   }
 
+  const refreshButton = <RefreshButton className="dt-toolbar-control-icon" onPress={() => void load(gateway, path)} busy={reloading} />
+  const parentButton = (
+    <Tooltip.Root>
+      <Tooltip.Trigger asChild>
+        <Button variant="primary" type="button" aria-label="上一级" onClick={() => go(parentFilesPath(path))}
+          disabled={path === '/'} className="files-parent-button shrink-0 whitespace-nowrap">
+          <ArrowUpFromLine aria-hidden size={16} />
+          <span className="files-parent-label">上一级</span>
+        </Button>
+      </Tooltip.Trigger>
+      <Tooltip.Portal>
+        <Tooltip.Content side="bottom" sideOffset={6} className="z-[80] rounded border border-control-line bg-surface-raised px-2 py-1 text-xs text-fg shadow-lg">
+          上一级<Tooltip.Arrow className="fill-surface-raised" />
+        </Tooltip.Content>
+      </Tooltip.Portal>
+    </Tooltip.Root>
+  )
+
   return (
     <section aria-label="文件管理">
-      <div className={`${CTL_TOOLBAR} mb-4 flex flex-wrap items-center justify-between gap-3`}>
-        <div className="flex items-center gap-2">
-          <Button variant="primary"
-            type="button"
-            onClick={() => go(parentFilesPath(path))}
-            disabled={path === '/'}
-            className={TOOLBAR_ACTION_CLASS}
-          >
-            <ArrowUpFromLine aria-hidden size={13} />
-            上一级
-          </Button>
+      {(clipboard || status !== 'ready') && (
+        <div className={`${CTL_TOOLBAR} mb-4 flex items-center gap-2`}>
           {clipboard ? (
             <Button variant="primary"
               type="button"
               onClick={() => void paste(gateway, path)}
               title={`粘贴 ${clipboard.path}${clipboard.intent === 'move' ? '（移动）' : ''}`}
-              className={TOOLBAR_ACTION_CLASS}
+              className={CTL_PRIMARY}
             >
               粘贴
             </Button>
           ) : null}
-          <RefreshButton onPress={() => void load(gateway, path)} busy={reloading} />
+          {status !== 'ready' && <>{refreshButton}{parentButton}</>}
         </div>
-      </div>
+      )}
       <input
         ref={uploadInput}
         type="file"
@@ -134,7 +141,7 @@ export function FilesPage() {
             title="目录读取失败"
             description={errorMessage}
             action={
-              <Button variant="primary" type="button" onClick={() => go('/')} className={TOOLBAR_ACTION_CLASS}>
+              <Button variant="primary" type="button" onClick={() => go('/')} className={CTL_PRIMARY}>
                 返回根目录
               </Button>
             }
@@ -147,6 +154,8 @@ export function FilesPage() {
             keyword={searchKeyword}
             searching={searching}
             reloading={reloading}
+            searchAction={refreshButton}
+            toolbar={parentButton}
             onSearch={(keyword) => void search(gateway, keyword)}
             onOpen={go}
             onRename={openRename}
@@ -187,6 +196,8 @@ function FileTable({
   keyword,
   searching,
   reloading,
+  searchAction,
+  toolbar,
   onSearch,
   onOpen,
   onRename,
@@ -201,6 +212,8 @@ function FileTable({
   keyword: string
   searching: boolean
   reloading: boolean
+  searchAction: ReactNode
+  toolbar: ReactNode
   onSearch(keyword: string): void
   onOpen(path: string): void
   onRename(entry: FileEntry, entryPath: string): void
@@ -215,12 +228,15 @@ function FileTable({
   const [selected, setSelected] = useState<(string | number)[]>([])
   const sizes = useFilesStore((state) => state.sizes)
   const computingPaths = useFilesStore((state) => state.computingPaths)
+  const computeSizes = useFilesStore((state) => state.computeSizes)
   const rows = useMemo<readonly FileTableRow[]>(
     () => isSearching ? (searching ? [] : results) : orderFileEntries(entries),
     [entries, results, isSearching, searching],
   )
   const rowPath = (entry: FileTableRow) => 'path' in entry ? entry.path : joinFilesPath(path, entry.name)
   const selectionKey = `${path}\0${keyword}`
+  const selectionScope = useRef({ key: selectionKey })
+  if (selectionScope.current.key !== selectionKey) selectionScope.current = { key: selectionKey }
 
   useEffect(() => {
     setSelected([])
@@ -241,7 +257,19 @@ function FileTable({
     if (isSearching) onOpen(entry.kind === 'directory' ? entryPath : parentFilesPath(entryPath))
     else if (entry.kind === 'directory') onOpen(entryPath)
   }
-  const selectedRows = rows.filter((entry) => selected.includes(rowPath(entry)))
+  const selectedIds = new Set(selected)
+  const pendingSizes = new Set(computingPaths)
+  const sizeTargets = rows.flatMap((entry) => {
+    const id = rowPath(entry)
+    return entry.kind === 'directory' && selectedIds.has(id) && sizes[id] === undefined && !pendingSizes.has(id) ? [id] : []
+  })
+  const calculateSelected = async () => {
+    const scope = selectionScope.current
+    const succeeded = new Set(await computeSizes(gateway, sizeTargets))
+    if (scope === selectionScope.current && succeeded.size) {
+      setSelected((previous) => previous.filter((id) => !succeeded.has(String(id))))
+    }
+  }
   const columns: DataTableColumn<FileTableRow>[] = [
     {
       key: 'name',
@@ -290,9 +318,9 @@ function FileTable({
       header: '大小',
       width: 'minmax(0,.9fr)',
       accessor: (entry) => entry.sizeBytes ?? sizes[rowPath(entry)],
-      cell: (entry) => entry.kind === 'file' && entry.sizeBytes !== undefined
-        ? <span className="tabular-nums text-fg-muted">{formatEntrySize(entry.sizeBytes)}</span>
-        : <DirectorySizeCell dirPath={rowPath(entry)} name={entry.name} />,
+      cell: (entry) => entry.kind === 'directory'
+        ? <DirectorySizeCell dirPath={rowPath(entry)} name={entry.name} />
+        : <span className="tabular-nums text-fg-muted">{entry.sizeBytes === undefined ? '—' : formatEntrySize(entry.sizeBytes)}</span>,
     },
   ]
 
@@ -303,6 +331,9 @@ function FileTable({
       getRowId={rowPath}
       getRowLabel={(entry) => isSearching ? `${entry.name}（${rowPath(entry)}）` : entry.name}
       ariaLabel={isSearching ? '搜索结果' : '文件列表'}
+      className="files-data-table dt-toolbar-inline-actions"
+      searchAction={searchAction}
+      toolbar={toolbar}
       query={keyword}
       onQueryChange={onSearch}
       filterMode="external"
@@ -312,22 +343,11 @@ function FileTable({
       selectionKey={selectionKey}
       busy={reloading || searching}
       bulkActions={() => (
-        <TableBatchActions
-          selectedRows={selectedRows}
-          getRowId={rowPath}
-          getRowLabel={(entry) => isSearching ? `${entry.name}（${rowPath(entry)}）` : entry.name}
-          onSucceeded={(ids) => setSelected((previous) => previous.filter((id) => !ids.includes(id)))}
-          disabled={transferBusy || searching || reloading}
-          actions={[{
-            key: 'compute-size',
-            label: '计算目录大小',
-            description: '逐项统计所选目录的大小，已计算的目录和文件会跳过。',
-            eligible: (entry) => entry.kind !== 'directory' ? '文件无需计算目录大小'
-              : computingPaths.includes(rowPath(entry)) ? '目录正在计算大小'
-                : sizes[rowPath(entry)] !== undefined ? '目录大小已计算' : undefined,
-            execute: async (items) => useFilesStore.getState().computeSize(gateway, rowPath(items[0]!)),
-          }]}
-        />
+        <Button unstyled type="button" className="dt-action dt-action-primary whitespace-nowrap"
+          disabled={transferBusy || searching || reloading || !sizeTargets.length}
+          onClick={() => void calculateSelected()}>
+          计算目录大小
+        </Button>
       )}
       emptyState={searching
         ? <LoadingState label="正在搜索…" />
@@ -366,26 +386,27 @@ function FileTable({
 function DirectorySizeCell({ dirPath, name }: { dirPath: string; name: string }) {
   const gateway = useGateway()
   const size = useFilesStore((s) => s.sizes[dirPath])
+  const error = useFilesStore((s) => s.sizeErrors[dirPath])
   const computing = useFilesStore((s) => s.computingPaths.includes(dirPath))
-  const computeSize = useFilesStore((s) => s.computeSize)
+  const computeSizes = useFilesStore((s) => s.computeSizes)
 
   if (computing) {
     return (
-      <span className="inline-flex items-center gap-1.5">
-        <Loader2 aria-hidden size={13} className="animate-spin" />
+      <span className="inline-flex items-center gap-1.5 text-fg-muted">
+        <Loader2 aria-hidden size={13} className="shrink-0 animate-spin motion-reduce:animate-none" />
         计算中
       </span>
     )
   }
-  if (size !== undefined) return <>{formatEntrySize(size)}</>
+  if (size !== undefined) return <span className="tabular-nums text-fg-muted">{formatEntrySize(size)}</span>
   return (
     <Button variant="link"
       type="button"
-      onClick={() => void computeSize(gateway, dirPath)}
-      aria-label={`计算 ${name} 的目录大小`}
-      className="text-accent-fg underline-offset-2 transition-colors hover:underline"
+      onClick={() => void computeSizes(gateway, [dirPath])}
+      aria-label={error ? `重试计算 ${name} 的目录大小：${error}` : `计算 ${name} 的目录大小`}
+      className="max-w-full whitespace-normal text-left underline-offset-2 transition-colors hover:underline"
     >
-      计算
+      {error ? <span className="text-danger">计算失败：{error}</span> : '计算'}
     </Button>
   )
 }

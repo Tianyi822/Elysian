@@ -12,7 +12,7 @@ beforeEach(() => {
   useFilesStore.getState().cancelDownload()
   useFilesStore.getState().cancelUpload()
   resetFilesData()
-  useFilesStore.setState({ status: 'idle', path: '/', entries: [], sizes: {}, computingPaths: [], clipboard: undefined, searchKeyword: '', searchResults: [], searching: false, errorMessage: undefined, download: undefined, upload: undefined })
+  useFilesStore.setState({ status: 'idle', path: '/', entries: [], sizes: {}, sizeErrors: {}, computingPaths: [], clipboard: undefined, searchKeyword: '', searchResults: [], searching: false, errorMessage: undefined, download: undefined, upload: undefined })
 })
 
 function gateway() {
