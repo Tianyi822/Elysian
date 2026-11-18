@@ -7,6 +7,7 @@ import { formatDateTime } from '../../components/format'
 import { ArrowUpFromLine, File, Folder, Loader2 } from '../../components/icons'
 import { DataTable, type DataTableColumn } from '../../components/DataTable'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
+import { StaleDataBanner } from '../../components/states/StaleDataBanner'
 import { RefreshButton } from '../../components/RefreshState'
 import { useFilesStore } from '../../stores/filesStore'
 import { joinFilesPath, normalizeFilesPath, parentFilesPath } from './filesPath'
@@ -125,7 +126,7 @@ export function FilesPage() {
           if (files.length) void uploadFiles(gateway, uploadTarget.current, files)
         }}
       />
-      {status === 'ready' && errorMessage ? <p role="alert" className="mb-3 text-xs text-danger">刷新失败：{errorMessage}。已保留上次读取结果。<Button variant="link" type="button" className="ml-2 underline" onClick={() => void load(gateway, path)}>重试</Button></p> : null}
+      {status === 'ready' && errorMessage ? <StaleDataBanner className="mb-3" error={errorMessage} onRetry={() => void load(gateway, path)} /> : null}
       <FilesBackgroundMenu onUpload={() => chooseUpload(path)} disabled={status !== 'ready' || transferBusy}>
         {status === 'loading' || status === 'idle' ? (
           <LoadingState label="正在读取目录内容…" />

@@ -9,6 +9,7 @@ import { formatLoginTime } from '../../components/format'
 import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
+import { StaleDataBanner } from '../../components/states/StaleDataBanner'
 import { RefreshButton } from '../../components/RefreshState'
 import { Trash2 } from '../../components/icons'
 import { useRuntimeLogStore } from '../../stores/runtimeLogStore'
@@ -95,7 +96,7 @@ export function RuntimeLogPanel() {
 
   return (
     <div className="flex h-full flex-col gap-3">
-      {errorMessage ? <p role="alert" className="text-xs text-danger">刷新失败：{errorMessage}。已保留上次读取结果。<Button variant="link" type="button" className="ml-2 underline" onClick={() => void load(gateway)}>重试</Button></p> : null}
+      {errorMessage ? <StaleDataBanner error={errorMessage} onRetry={() => void load(gateway)} /> : null}
       {/* 数据来源、体积和保留口径与控件分开。 */}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-fg-subtle">
         {/* 宿主机本地开发读的是内存演示种子（真实日志由服务端的日志片提供），明示出来。 */}

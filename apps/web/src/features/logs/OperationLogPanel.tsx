@@ -16,6 +16,7 @@ import { GooeySelect } from '../../components/GooeySelect'
 import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
+import { StaleDataBanner } from '../../components/states/StaleDataBanner'
 import { useOperationLogStore } from '../../stores/operationLogStore'
 import { useLogReportNotifications } from './useLogReportNotifications'
 import { useDebouncedSearch } from './useDebouncedSearch'
@@ -27,7 +28,6 @@ import { LogMessageCell } from './LogMessageCell'
 import { LogLoadOlder } from './LogLoadOlder'
 import { LogTable } from './LogTable'
 import type { LogColumn } from './LogTable'
-import { Button } from '../../components/Button'
 import './logFilters.css'
 
 /**
@@ -163,7 +163,7 @@ export function OperationLogPanel() {
 
   return (
     <div className="flex h-full flex-col">
-      {errorMessage ? <p role="alert" className="text-xs text-danger">刷新失败：{errorMessage}。已保留上次读取结果。<Button variant="link" type="button" className="ml-2 underline" onClick={() => void load(gateway)}>重试</Button></p> : null}
+      {errorMessage ? <StaleDataBanner error={errorMessage} onRetry={() => void load(gateway)} /> : null}
       {/* 关于数据来源与保留口径的事实说明，与控件分行：演示态在宿主机本地开发才出现。 */}
       <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-fg-subtle">
         {/* 容器内条目来自服务端真实采集（客户端无法投稿），宿主机本地开发是内存演示，明示出来。 */}

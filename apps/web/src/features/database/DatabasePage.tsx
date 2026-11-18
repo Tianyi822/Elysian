@@ -20,6 +20,7 @@ import type { DatabasePortMapping } from '@elysian/contracts'
 import { useClipboardCopy } from '../../components/CopyButton'
 import { CTL_PRIMARY, CTL_TOOLBAR } from '../../components/formControl'
 import { ErrorState, EmptyState, LoadingState } from '../../components/states/StateViews'
+import { StaleDataBanner } from '../../components/states/StaleDataBanner'
 import { RefreshButton } from '../../components/RefreshState'
 import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
@@ -115,7 +116,7 @@ export function DatabasePage() {
   return (
     <>
       <section aria-label="数据库实例" className="mb-6">
-        {status === 'ready' && errorMessage ? <p role="alert" className="mb-3 text-xs text-danger">刷新失败：{errorMessage}。已保留上次读取结果。<Button variant="link" type="button" className="ml-2 underline" onClick={() => void refresh(gateway, true)}>重试</Button></p> : null}
+        {status === 'ready' && errorMessage ? <StaleDataBanner className="mb-3" error={errorMessage} onRetry={() => void refresh(gateway, true)} /> : null}
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-base font-semibold">{engine} 数据库容器</h2>
           <div className={`${CTL_TOOLBAR} flex flex-wrap items-center gap-2`}>

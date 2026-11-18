@@ -10,12 +10,12 @@ import { RefreshButton } from '../../components/RefreshState'
 import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
+import { StaleDataBanner } from '../../components/states/StaleDataBanner'
 import { useLoginLogStore } from '../../stores/loginLogStore'
 import type { LoginLogStatusFilter } from '../../stores/loginLogStore'
 import { useLogReportNotifications } from './useLogReportNotifications'
 import { useDebouncedSearch } from './useDebouncedSearch'
 import { LogLoadOlder } from './LogLoadOlder'
-import { Button } from '../../components/Button'
 import './logFilters.css'
 
 /** 登录状态 → 状态标签色调：成功绿、失败红，文字标签同时常驻。 */
@@ -77,7 +77,7 @@ export function LoginLogPanel() {
 
   return (
     <div>
-      {errorMessage ? <p role="alert" className="text-xs text-danger">刷新失败：{errorMessage}。已保留上次读取结果。<Button variant="link" type="button" className="ml-2 underline" onClick={() => void load(gateway)}>重试</Button></p> : null}
+      {errorMessage ? <StaleDataBanner error={errorMessage} onRetry={() => void load(gateway)} /> : null}
       {isDockerRuntime() ? null : <p role="status" className="mb-3 text-sm text-fg-muted">演示数据</p>}
       {notices.length > 0 ? (
         <p role="status" className="mb-3 text-xs text-fg-muted">

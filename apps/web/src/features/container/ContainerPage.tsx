@@ -6,6 +6,7 @@ import { CONTAINER_STATUS_LABELS } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../utils/isDockerRuntime'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
+import { StaleDataBanner } from '../../components/states/StaleDataBanner'
 import { RefreshButton } from '../../components/RefreshState'
 import { CTL_TOOLBAR } from '../../components/formControl'
 import { Button } from '../../components/Button'
@@ -106,7 +107,7 @@ export function ContainerPage() {
 
   return (
     <div className="mb-6">
-      {errorMessage ? <p role="alert" className="mb-3 text-xs text-danger">刷新失败：{errorMessage}。已保留上次读取结果。<Button variant="link" type="button" className="ml-2 underline" onClick={() => void load(gateway)}>重试</Button></p> : null}
+      {errorMessage ? <StaleDataBanner className="mb-3" error={errorMessage} onRetry={() => void load(gateway)} /> : null}
       {liveStatus === 'connecting' ? (
         <p
           role="status"

@@ -90,10 +90,16 @@ describe('文件管理页', () => {
 
     list.mockRejectedValueOnce(new Error('目录暂不可读'))
     await user.click(refresh)
-    expect(await screen.findByRole('alert')).toHaveTextContent('目录暂不可读')
+    const banner = await screen.findByRole('alert')
+    expect(banner).toHaveTextContent('刷新失败：目录暂不可读。已保留上次读取结果。')
     expect(list.mock.calls).toEqual([['/var'], ['/var']])
     expect(rowOf(region, 'log')).toBeInTheDocument()
     expect(refresh).toBeEnabled()
+
+    await user.click(within(banner).getByRole('button', { name: '重试' }))
+    await waitFor(() => expect(banner).not.toBeInTheDocument())
+    expect(list.mock.calls).toEqual([['/var'], ['/var'], ['/var']])
+    expect(rowOf(region, 'log')).toBeInTheDocument()
   })
 
   it('双击目录进入子目录：路径标题与列表随之变化，上一级可用', async () => {
@@ -160,6 +166,7 @@ describe('文件管理页', () => {
     const alert = await screen.findByRole('region', { name: '目录读取失败' })
     expect(within(alert).getByText('目录读取失败')).toBeInTheDocument()
     expect(within(alert).getByText(/目录不存在/)).toBeInTheDocument()
+    expect(screen.queryByText(/已保留上次读取结果/)).not.toBeInTheDocument()
 
     await user.click(within(alert).getByRole('button', { name: '返回根目录' }))
     expect(await screen.findByRole('heading', { level: 1, name: '/' })).toBeInTheDocument()

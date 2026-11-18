@@ -8,6 +8,7 @@ import { useGateway } from '../../adapters/GatewayProvider'
 import { RefreshCw } from '../../components/icons'
 import { SearchInput } from '../../components/SearchInput'
 import { EmptyState } from '../../components/states/StateViews'
+import { StaleDataBanner } from '../../components/states/StaleDataBanner'
 import { RefreshButton } from '../../components/RefreshState'
 import { useWebsitesStore } from '../../stores/websitesStore'
 import { accessConfigEntryVisible, useDependencyProbeStore } from '../../stores/dependencyProbeStore'
@@ -125,7 +126,7 @@ export function WebsitesPanel() {
 
   return (
     <div>
-      {refreshError ? <p role="alert" className="mb-3 text-xs text-danger">刷新失败：{refreshError}。已保留上次读取结果。<Button variant="link" type="button" className="ml-2 underline" onClick={() => void refresh(gateway)}>重试</Button></p> : null}
+      {refreshError ? <StaleDataBanner className="mb-3" error={refreshError} onRetry={() => void refresh(gateway)} /> : null}
       <div className={`${CTL_TOOLBAR} rect-toolbar shell-first-row mb-4 flex flex-wrap items-center gap-2 panel-surface px-4 py-3`}>
         <Button variant="primary" type="button" onClick={openCreate} className={TOOL_BUTTON_CLASS}>
           添加项目

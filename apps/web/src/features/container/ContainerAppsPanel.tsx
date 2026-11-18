@@ -5,6 +5,7 @@ import { validateContainerAppDisplayName, validateContainerAppSlug } from '@elys
 import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../utils/isDockerRuntime'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
+import { StaleDataBanner } from '../../components/states/StaleDataBanner'
 import { RefreshButton } from '../../components/RefreshState'
 import { CTL_FIELD, CTL_PRIMARY, CTL_SECONDARY, CTL_TOOLBAR } from '../../components/formControl'
 import { DialogSurface } from '../../components/DialogSurface'
@@ -75,7 +76,7 @@ export function ContainerAppsPanel() {
         </div>
       </div>
       {/* 清单原位更新，工具栏与已有卡片始终保留。 */}
-      {errorMessage ? <p role="alert" className="mb-3 text-xs text-danger">刷新失败：{errorMessage}。已保留上次读取结果。<Button variant="link" type="button" className="ml-2 underline" onClick={() => void refresh(gateway)}>重试</Button></p> : null}
+      {errorMessage ? <StaleDataBanner className="mb-3" error={errorMessage} onRetry={() => void refresh(gateway)} /> : null}
       <div className="relative rounded-xl" aria-busy={refreshing}>
         {apps.length === 0 ? (
           <EmptyState
