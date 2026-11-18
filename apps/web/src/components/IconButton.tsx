@@ -1,6 +1,7 @@
 import * as Tooltip from '@radix-ui/react-tooltip'
 import type { FocusEventHandler, KeyboardEventHandler, PointerEventHandler, ReactNode } from 'react'
 import { Button } from './Button'
+import { TOOLTIP_CONTENT_CLASS } from './tooltipStyles'
 
 /**
  * 图标按钮。图标按钮必须带 tooltip，这是项目红线，所以统一从这个组件出，
@@ -54,6 +55,9 @@ export function IconButton({
   onFocus,
   onBlur,
   tooltipSide,
+  tooltipClassName = TOOLTIP_CONTENT_CLASS,
+  tooltipArrow = true,
+  asChild = false,
 }: {
   label: string
   onPress?: () => void
@@ -64,6 +68,10 @@ export function IconButton({
   tooltip?: boolean
   /** 提示浮层出现的方位；缺省由 Radix 决定（通常在上方）。 */
   tooltipSide?: 'top' | 'right' | 'bottom' | 'left'
+  tooltipClassName?: string
+  tooltipArrow?: boolean
+  /** 复用现有按钮或 Radix 触发器，只加提示；子元素负责按钮属性和样式。 */
+  asChild?: boolean
   /** 忙碌中的动作禁用按钮；tooltip 与 aria-label 保持可及。 */
   disabled?: boolean
   /** 读屏播报「忙」：动作仍在途，与 disabled 分开表达——有些忙碌态并不禁止点击。 */
@@ -79,7 +87,7 @@ export function IconButton({
   const variantClass = formControl
     ? styleFor(variant, tone).replace(/\bsize-\d+\b/g, '').trim()
     : styleFor(variant, tone)
-  const button = (
+  const button = asChild ? children : (
     <Button unstyled
       type="button"
       aria-label={label}
@@ -105,10 +113,10 @@ export function IconButton({
         <Tooltip.Content
           side={tooltipSide}
           sideOffset={6}
-          className="z-[80] rounded border border-control-line bg-surface-raised px-2 py-1 text-xs text-fg shadow-lg"
+          className={tooltipClassName}
         >
           {label}
-          <Tooltip.Arrow className="fill-surface-raised" />
+          {tooltipArrow && <Tooltip.Arrow className="fill-surface-raised" />}
         </Tooltip.Content>
       </Tooltip.Portal>
     </Tooltip.Root>

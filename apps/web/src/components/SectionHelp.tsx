@@ -1,3 +1,4 @@
+import { TOOLTIP_CONTENT_CLASS } from './tooltipStyles'
 import * as Popover from '@radix-ui/react-popover'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import { CircleHelp } from './icons'
@@ -14,7 +15,7 @@ export function SectionHelp({ label, children }: { label: string; children: stri
           </Button>
         </Popover.Trigger>
       </Tooltip.Trigger>
-      <Tooltip.Portal><Tooltip.Content sideOffset={6} className="z-[80] rounded border border-control-line bg-surface-raised px-2 py-1 text-xs text-fg shadow-lg">{label}</Tooltip.Content></Tooltip.Portal>
+      <Tooltip.Portal><Tooltip.Content sideOffset={6} className={TOOLTIP_CONTENT_CLASS}>{label}</Tooltip.Content></Tooltip.Portal>
     </Tooltip.Root>
     <Popover.Portal>
       <Popover.Content aria-label={label} sideOffset={8} align="start" className="z-[70] w-72 max-w-[calc(100vw-2rem)] rounded-lg border border-control-line bg-surface-raised p-3 text-xs leading-5 text-fg shadow-xl">

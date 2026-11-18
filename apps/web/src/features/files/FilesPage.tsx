@@ -1,6 +1,5 @@
 import { useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
 import { useNavigate, useParams } from 'react-router'
-import * as Tooltip from '@radix-ui/react-tooltip'
 import { FILE_KIND_LABELS } from '@elysian/contracts'
 import type { FileEntry, FileSearchResult } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
@@ -19,6 +18,7 @@ import { RenameDialog } from './RenameDialog'
 import { PermissionDialog } from './PermissionDialog'
 import { CTL_PRIMARY, CTL_TOOLBAR } from '../../components/formControl'
 import { Button } from '../../components/Button'
+import { IconButton } from '../../components/IconButton'
 import './filesToolbar.css'
 
 /** 重命名与权限对话框的挂起状态：两张表（目录列表与搜索结果）共用同一份。 */
@@ -87,20 +87,13 @@ export function FilesPage() {
 
   const refreshButton = <RefreshButton className="dt-toolbar-control-icon" onPress={() => void load(gateway, path)} busy={reloading} />
   const parentButton = (
-    <Tooltip.Root>
-      <Tooltip.Trigger asChild>
-        <Button variant="primary" type="button" aria-label="上一级" onClick={() => go(parentFilesPath(path))}
-          disabled={path === '/'} className="files-parent-button shrink-0 whitespace-nowrap">
-          <ArrowUpFromLine aria-hidden size={16} />
-          <span className="files-parent-label">上一级</span>
-        </Button>
-      </Tooltip.Trigger>
-      <Tooltip.Portal>
-        <Tooltip.Content side="bottom" sideOffset={6} className="z-[80] rounded border border-control-line bg-surface-raised px-2 py-1 text-xs text-fg shadow-lg">
-          上一级<Tooltip.Arrow className="fill-surface-raised" />
-        </Tooltip.Content>
-      </Tooltip.Portal>
-    </Tooltip.Root>
+    <IconButton asChild label="上一级" tooltipSide="bottom">
+      <Button variant="primary" type="button" aria-label="上一级" onClick={() => go(parentFilesPath(path))}
+        disabled={path === '/'} className="files-parent-button shrink-0 whitespace-nowrap">
+        <ArrowUpFromLine aria-hidden size={16} />
+        <span className="files-parent-label">上一级</span>
+      </Button>
+    </IconButton>
   )
 
   return (

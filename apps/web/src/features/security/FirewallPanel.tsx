@@ -1,3 +1,4 @@
+import { TOOLTIP_CONTENT_CLASS } from '../../components/tooltipStyles'
 import { useEffect, useMemo, useState, type ReactNode } from 'react'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import { ToggleSwitch } from '../../components/ToggleSwitch'
@@ -67,7 +68,7 @@ function PortCell({ rule }: { rule: FirewallRule }) {
         </span>
       </Tooltip.Trigger>
       <Tooltip.Portal>
-        <Tooltip.Content sideOffset={6} className="z-[80] rounded border border-control-line bg-surface-raised px-2 py-1 text-xs text-fg shadow-lg">
+        <Tooltip.Content sideOffset={6} className={TOOLTIP_CONTENT_CLASS}>
           已开启防扫描
           <Tooltip.Arrow className="fill-surface-raised" />
         </Tooltip.Content>

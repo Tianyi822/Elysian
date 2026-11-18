@@ -1,4 +1,3 @@
-import * as Tooltip from '@radix-ui/react-tooltip'
 import { useEffect, useState } from 'react'
 import { Download } from '../../components/icons'
 import { SearchInput } from '../../components/SearchInput'
@@ -10,6 +9,7 @@ import { EmptyState, ErrorState, LoadingState } from '../../components/states/St
 import { RefreshButton } from '../../components/RefreshState'
 import { CTL_TOOLBAR } from '../../components/formControl'
 import { Button } from '../../components/Button'
+import { IconButton } from '../../components/IconButton'
 import { ChipGroup } from '../../components/ChipGroup'
 import { TableCreateButton } from '../../components/TableCreateButton'
 import { DockerDependencyEntry } from './DockerDependencyEntry'
@@ -35,20 +35,13 @@ const STATUS_FILTERS: ReadonlyArray<{ value: ContainerStatus | 'all'; label: str
 
 function ImagePullButton({ onPress }: { onPress: () => void }) {
   const label = '拉取镜像'
-  return <Tooltip.Root>
-    <Tooltip.Trigger asChild>
-      <Button type="button" onClick={onPress} aria-label={label}
-        className="image-pull-button h-[var(--dt-control-height)] whitespace-nowrap text-xs"
-        leftIcon={<Download aria-hidden size={14} />}>
-        <span className="image-pull-label">{label}</span>
-      </Button>
-    </Tooltip.Trigger>
-    <Tooltip.Portal>
-      <Tooltip.Content side="bottom" sideOffset={6} className="z-[80] rounded border border-control-line bg-surface-raised px-2 py-1 text-xs text-fg shadow-lg">
-        {label}<Tooltip.Arrow className="fill-surface-raised" />
-      </Tooltip.Content>
-    </Tooltip.Portal>
-  </Tooltip.Root>
+  return <IconButton asChild label={label} tooltipSide="bottom">
+    <Button type="button" onClick={onPress} aria-label={label}
+      className="image-pull-button h-[var(--dt-control-height)] whitespace-nowrap text-xs"
+      leftIcon={<Download aria-hidden size={14} />}>
+      <span className="image-pull-label">{label}</span>
+    </Button>
+  </IconButton>
 }
 
 export function ContainerPage() {

@@ -1,3 +1,4 @@
+import { TOOLTIP_CONTENT_CLASS } from '../../components/tooltipStyles'
 import { useState } from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import * as Tooltip from '@radix-ui/react-tooltip'
@@ -13,7 +14,6 @@ import { Button } from '../../components/Button'
 
 type SessionRow = { id: string; title: string; active: boolean; server: boolean }
 
-const TOOLTIP_CONTENT_CLASS = 'z-[80] rounded border border-control-line bg-surface-raised px-2 py-1 text-xs text-fg shadow-lg'
 
 /**
  * 服务端会话行的编辑入口：hover 或键盘聚焦行内任意控件时经 CSS 显现（不占布局空间）。

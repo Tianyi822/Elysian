@@ -1,3 +1,4 @@
+import { TOOLTIP_CONTENT_CLASS } from '../../components/tooltipStyles'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import { useEffect, useRef } from 'react'
 import { LOG_ENTRY_FETCH_LIMIT, formatLogBytes, logRetentionText } from '@elysian/contracts'
@@ -147,7 +148,7 @@ export function RuntimeLogPanel() {
               </Button>
             </Tooltip.Trigger>
             <Tooltip.Portal>
-              <Tooltip.Content side="bottom" sideOffset={6} className="z-[80] rounded border border-control-line bg-surface-raised px-2 py-1 text-xs text-fg shadow-lg">
+              <Tooltip.Content side="bottom" sideOffset={6} className={TOOLTIP_CONTENT_CLASS}>
                 清空日志<Tooltip.Arrow className="fill-surface-raised" />
               </Tooltip.Content>
             </Tooltip.Portal>

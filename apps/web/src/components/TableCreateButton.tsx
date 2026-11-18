@@ -1,3 +1,4 @@
+import { TOOLTIP_CONTENT_CLASS } from './tooltipStyles'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import { Button } from './Button'
 import { Plus } from './icons'
@@ -12,7 +13,7 @@ export function TableCreateButton({ label, ariaLabel = label, onPress }: { label
       </Button>
     </Tooltip.Trigger>
     <Tooltip.Portal>
-      <Tooltip.Content side="bottom" sideOffset={6} className="z-[80] rounded border border-control-line bg-surface-raised px-2 py-1 text-xs text-fg shadow-lg">
+      <Tooltip.Content side="bottom" sideOffset={6} className={TOOLTIP_CONTENT_CLASS}>
         {ariaLabel}<Tooltip.Arrow className="fill-surface-raised" />
       </Tooltip.Content>
     </Tooltip.Portal>

@@ -1,3 +1,4 @@
+import { WIDE_TOOLTIP_CONTENT_CLASS } from '../../components/tooltipStyles'
 import { useState } from 'react'
 import * as Popover from '@radix-ui/react-popover'
 import * as Tooltip from '@radix-ui/react-tooltip'
@@ -92,7 +93,7 @@ function CollapsedTrigger({
       <Tooltip.Root>
         <Tooltip.Trigger asChild>{trigger}</Tooltip.Trigger>
         <Tooltip.Portal>
-          <Tooltip.Content side="right" sideOffset={10} className="z-[80] rounded-lg border border-control-line bg-surface-raised px-3 py-1.5 text-xs text-fg shadow-lg">{label}</Tooltip.Content>
+          <Tooltip.Content side="right" sideOffset={10} className={WIDE_TOOLTIP_CONTENT_CLASS}>{label}</Tooltip.Content>
         </Tooltip.Portal>
       </Tooltip.Root>
     )
@@ -105,7 +106,7 @@ function CollapsedTrigger({
           <Popover.Trigger asChild>{trigger}</Popover.Trigger>
         </Tooltip.Trigger>
         <Tooltip.Portal>
-          <Tooltip.Content side="right" sideOffset={10} className="z-[80] rounded-lg border border-control-line bg-surface-raised px-3 py-1.5 text-xs text-fg shadow-lg">{label}</Tooltip.Content>
+          <Tooltip.Content side="right" sideOffset={10} className={WIDE_TOOLTIP_CONTENT_CLASS}>{label}</Tooltip.Content>
         </Tooltip.Portal>
       </Tooltip.Root>
       <Popover.Portal>

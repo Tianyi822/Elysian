@@ -73,6 +73,7 @@ describe('日志正文单元格', () => {
     await user.tab()
     const trigger = expandButton()
     expect(trigger).toHaveFocus()
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('查看完整内容')
 
     await user.keyboard('{Enter}')
     expect(await screen.findByLabelText('完整日志内容')).toHaveTextContent(TEXT)

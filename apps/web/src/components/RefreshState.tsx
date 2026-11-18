@@ -1,3 +1,4 @@
+import { TOOLTIP_CONTENT_CLASS } from './tooltipStyles'
 import { RefreshCw } from './icons'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import { Button } from './Button'
@@ -28,7 +29,7 @@ export function RefreshButton({
           leftIcon={<RefreshCw size={14} aria-hidden />} />
       </Tooltip.Trigger>
       <Tooltip.Portal>
-        <Tooltip.Content side="bottom" sideOffset={6} className="z-[80] rounded border border-control-line bg-surface-raised px-2 py-1 text-xs text-fg shadow-lg">
+        <Tooltip.Content side="bottom" sideOffset={6} className={TOOLTIP_CONTENT_CLASS}>
           {label}<Tooltip.Arrow className="fill-surface-raised" />
         </Tooltip.Content>
       </Tooltip.Portal>

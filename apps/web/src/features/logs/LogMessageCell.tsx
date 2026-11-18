@@ -1,9 +1,10 @@
 import * as Popover from '@radix-ui/react-popover'
-import * as Tooltip from '@radix-ui/react-tooltip'
 import type { ReactNode } from 'react'
 import { CopyButton } from '../../components/CopyButton'
 import { Maximize2 } from '../../components/icons'
 import { Button } from '../../components/Button'
+import { IconButton } from '../../components/IconButton'
+import { TOOLTIP_BODY_CLASS } from '../../components/tooltipStyles'
 
 /**
  * 日志正文单元格：正文单行省略，鼠标悬停单元格或键盘聚焦时右侧浮现展开图标，
@@ -12,9 +13,7 @@ import { Button } from '../../components/Button'
  * 三处刻意的选择：
  * - 展开图标用 `opacity-0` 而不是隐藏 DOM，所以它始终可聚焦、可被读屏发现；
  * - 单元格文本不写 `title`：原生提示会与悬浮窗抢同一块位置；
- * - 触发器是原生 button（Tooltip 套 Popover 套 button，与 SystemLoadBadge 同款），
- *   不用 IconButton——它不是 forwardRef、也不透传 rest props，Radix 经 Slot 传下来的
- *   ref 与 aria-* 会整份丢掉，点图标将没有任何反应。
+ * - IconButton 只提供提示，Popover 触发器继续把 ref 和 aria 属性传给原按钮。
  */
 export function LogMessageCell({
   text,
@@ -33,28 +32,17 @@ export function LogMessageCell({
       <div className="flex items-center gap-2">
         <span className="block min-w-0 flex-1 truncate">{text}</span>
         <Popover.Root>
-          <Tooltip.Root>
-            <Tooltip.Trigger asChild>
-              <Popover.Trigger asChild>
-                <Button variant="ghost" size="icon"
-                  type="button"
-                  aria-label={triggerLabel}
-                  className="inline-flex size-6 shrink-0 items-center justify-center rounded text-fg-subtle opacity-0 transition-opacity hover:bg-surface-raised hover:text-fg focus-visible:opacity-100 group-hover/cell:opacity-100"
-                >
-                  <Maximize2 aria-hidden size={14} />
-                </Button>
-              </Popover.Trigger>
-            </Tooltip.Trigger>
-            <Tooltip.Portal>
-              <Tooltip.Content
-                sideOffset={6}
-                className="z-50 rounded border border-control-line bg-surface-raised px-2 py-1 text-xs text-fg shadow-lg"
+          <IconButton asChild label={triggerLabel} tooltipClassName={`z-50 ${TOOLTIP_BODY_CLASS}`}>
+            <Popover.Trigger asChild>
+              <Button variant="ghost" size="icon"
+                type="button"
+                aria-label={triggerLabel}
+                className="inline-flex size-6 shrink-0 items-center justify-center rounded text-fg-subtle opacity-0 transition-opacity hover:bg-surface-raised hover:text-fg focus-visible:opacity-100 group-hover/cell:opacity-100"
               >
-                {triggerLabel}
-                <Tooltip.Arrow className="fill-surface-raised" />
-              </Tooltip.Content>
-            </Tooltip.Portal>
-          </Tooltip.Root>
+                <Maximize2 aria-hidden size={14} />
+              </Button>
+            </Popover.Trigger>
+          </IconButton>
           <Popover.Portal>
             <Popover.Content
               side="bottom"

@@ -1,3 +1,4 @@
+import { TOOLTIP_CONTENT_CLASS } from './tooltipStyles'
 import * as Dialog from '@radix-ui/react-dialog'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
@@ -147,7 +148,7 @@ export function MessageCenter() {
             returnFocus.current = document.activeElement instanceof HTMLElement && document.activeElement !== trigger.current && document.activeElement !== document.body ? document.activeElement : null
           }} />
       </Tooltip.Trigger>
-      <Tooltip.Portal><Tooltip.Content side="bottom" sideOffset={6} className="z-[80] rounded border border-control-line bg-surface-raised px-2 py-1 text-xs text-fg shadow-lg">消息（F8）<Tooltip.Arrow className="fill-surface-raised" /></Tooltip.Content></Tooltip.Portal>
+      <Tooltip.Portal><Tooltip.Content side="bottom" sideOffset={6} className={TOOLTIP_CONTENT_CLASS}>消息（F8）<Tooltip.Arrow className="fill-surface-raised" /></Tooltip.Content></Tooltip.Portal>
     </Tooltip.Root>
     <div className="sr-only" aria-live={state.announcement?.tone === 'danger' ? 'assertive' : 'polite'} aria-atomic="true">
       {state.announcement && <span key={state.announcement.id + state.announcement.occurredAt}>新消息：{state.announcement.message}</span>}

@@ -1,3 +1,4 @@
+import { TOOLTIP_BODY_CLASS } from './tooltipStyles'
 import * as Popover from '@radix-ui/react-popover'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import { useId, useState } from 'react'
@@ -146,7 +147,7 @@ export function SystemLoadBadge({ memory: view, load, navigation = false, collap
         <Tooltip.Portal>
           <Tooltip.Content
             sideOffset={6}
-            className="z-50 max-w-64 rounded border border-control-line bg-surface-raised px-2 py-1 text-xs text-fg shadow-lg"
+            className={`z-50 max-w-64 ${TOOLTIP_BODY_CLASS}`}
           >
             系统负载 · {hint}
             <Tooltip.Arrow className="fill-surface-raised" />
