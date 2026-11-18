@@ -87,6 +87,8 @@ export interface DataTableProps<T> {
   onSelectionChange?: (ids: Id[]) => void;
   /** Buttons shown in the bar when rows are selected */
   bulkActions?: (selectedIds: Id[]) => ReactNode;
+  /** Action next to the search field, shown only in the normal toolbar. */
+  searchAction?: ReactNode;
   /** Right side of the toolbar, replacing the row count when provided */
   toolbar?: ReactNode;
   /** Persistent navigation, retained while selection replaces search/actions. */
@@ -244,6 +246,7 @@ export function DataTable<T>({
   selected: controlledSelected,
   onSelectionChange,
   bulkActions,
+  searchAction,
   toolbar,
   toolbarNavigation,
   pageSize = 20,
@@ -482,6 +485,25 @@ export function DataTable<T>({
     </motion.div>
   );
 
+  const searchField = (
+    <label className={cx("dt-toolbar-search relative flex min-w-0 max-w-[320px] flex-1 items-center", !!toolbar && !searchAction && "basis-[220px]")}>
+      <svg viewBox="0 0 24 24" className="pointer-events-none absolute left-3 h-4 w-4 text-fg-subtle" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" aria-hidden>
+        <circle cx="11" cy="11" r="6.5" />
+        <path d="m16 16 4 4" />
+      </svg>
+      <input
+        {...guardProps}
+        ref={node => { inputRef.current = node; if (node && restoreSearchFocus.current) { restoreSearchFocus.current = false; node.focus({ preventScroll: true }); } }}
+        type="search"
+        value={query}
+        onChange={(e) => setQuery(e.target.value)}
+        placeholder={searchPlaceholder}
+        aria-label={searchLabel ?? searchPlaceholder}
+        className="h-10 w-full rounded-xl bg-surface-raised pl-9 pr-3 text-[16px] text-fg outline-none transition-shadow placeholder:text-fg-subtle focus:ring-2 focus:ring-focus/50   sm:h-9 sm:text-[13.5px]  [&::-webkit-search-cancel-button]:hidden"
+      />
+    </label>
+  );
+
   const normalBar = (
     <motion.div
       key="tools"
@@ -492,26 +514,12 @@ export function DataTable<T>({
       transition={{ duration: 0.2, ease: EASE_OUT }}
       className={cx("dt-toolbar-normal flex w-full items-center justify-between gap-3", toolbar ? "min-h-11 flex-wrap" : "h-full")}
     >
-      {searchable ? (
-        <label className={cx("dt-toolbar-search relative flex min-w-0 max-w-[320px] flex-1 items-center", !!toolbar && "basis-[220px]")}>
-          <svg viewBox="0 0 24 24" className="pointer-events-none absolute left-3 h-4 w-4 text-fg-subtle" fill="none" stroke="currentColor" strokeWidth={1.8} strokeLinecap="round" aria-hidden>
-            <circle cx="11" cy="11" r="6.5" />
-            <path d="m16 16 4 4" />
-          </svg>
-          <input
-            {...guardProps}
-            ref={node => { inputRef.current = node; if (node && restoreSearchFocus.current) { restoreSearchFocus.current = false; node.focus({ preventScroll: true }); } }}
-            type="search"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={searchPlaceholder}
-            aria-label={searchLabel ?? searchPlaceholder}
-            className="h-10 w-full rounded-xl bg-surface-raised pl-9 pr-3 text-[16px] text-fg outline-none transition-shadow placeholder:text-fg-subtle focus:ring-2 focus:ring-focus/50   sm:h-9 sm:text-[13.5px]  [&::-webkit-search-cancel-button]:hidden"
-          />
-        </label>
-      ) : (
-        <span className={`text-[13px] ${muted}`}>{processed.length} 行</span>
-      )}
+      {searchable ? (searchAction ? (
+        <div className="dt-toolbar-search-group flex min-w-0 flex-1 items-center gap-2">
+          {searchField}
+          <div className="shrink-0">{searchAction}</div>
+        </div>
+      ) : searchField) : <span className={`text-[13px] ${muted}`}>{processed.length} 行</span>}
       <div className="dt-toolbar-actions ml-auto flex max-w-full shrink-0 flex-wrap items-center gap-2">
         {searchable && !toolbar && <span className={`hidden text-[12.5px] tabular-nums sm:block ${muted}`}>{processed.length} 行</span>}
         {toolbar}

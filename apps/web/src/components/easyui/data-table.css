@@ -45,7 +45,7 @@
   height: auto;
   min-height: 0;
 }
-.dt-toolbar-navigation-layout :is(.dt-toolbar-search, .dt-selection-count) { grid-column: 1; grid-row: 1; }
+.dt-toolbar-navigation-layout :is(.dt-toolbar-search, .dt-toolbar-search-group, .dt-selection-count) { grid-column: 1; grid-row: 1; }
 .dt-toolbar-navigation-layout :is(.dt-toolbar-actions, .dt-selection-clear) { grid-column: 3; grid-row: 1; margin-left: 0; justify-self: end; }
 .dt-toolbar-navigation-actions {
   position: absolute;
@@ -84,7 +84,7 @@
   .dt-toolbar-navigation-layout > :is(.dt-toolbar-normal, .dt-toolbar-selection) { grid-row: 2 / span 2; }
   .dt-toolbar-navigation-layout :is(.dt-toolbar-actions, .dt-selection-clear) { grid-column: 1; }
   .dt-toolbar-navigation-layout .dt-toolbar-actions { justify-self: start; }
-  .dt-toolbar-navigation-layout :is(.dt-toolbar-search, .dt-selection-count) { grid-row: 2; }
+  .dt-toolbar-navigation-layout :is(.dt-toolbar-search, .dt-toolbar-search-group, .dt-selection-count) { grid-row: 2; }
   .dt-toolbar-navigation-layout .dt-toolbar-search { width: 100%; max-width: none; }
   .dt-toolbar-navigation-layout.dt-toolbar-selection-active {
     grid-template-rows: var(--dt-control-height) minmax(44px, auto);
