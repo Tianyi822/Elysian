@@ -2,7 +2,10 @@ package database
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
@@ -11,691 +14,729 @@ import (
 	"elysian/server/internal/shared"
 )
 
-// databaseService.test.ts 对等测试：创建次序、adopt/managed/remove 语义、
-// forget、防火墙开口与版本漂移。
+// service_test.go：容器列表筛选投影、创建登记、核对、删容器、reveal 管理员、
+// 登记清理与旧格式登记夹具（adopted / stateEmpty / 同容器多行）。
 
-// fakeDocker 可编程的 Docker 后端假件。
+// fakeDocker 实现 dockerBackend 的假件（纯 Docker 事实，无任何协议方法）。
 type fakeDocker struct {
-	mu               sync.Mutex
-	inspectInfos     map[string]map[string]any
-	assertEngineErrs map[string]error // engine|versionTag → err
-	createCalls      []createInput
-	createResult     createResult
-	createErr        error
-	attachCalls      []string
-	detachCalls      []string
-	removeCalls      [][2]string
-	removeErr        error
-	memoryValue      *memoryView
+	mu             sync.Mutex
+	inspectFn      func(ctx context.Context, id string) (map[string]any, error)
+	assertEngineFn func(ctx context.Context, id, engine, versionTag string) (map[string]any, error)
+	memoryFn       func(ctx context.Context, id string) (*memoryView, error)
+	createCalls    []createInput
+	createResult   createResult
+	createErr      error
+	createFn       func(createInput) (createResult, error)
+	removeCalls    []string
+	removeErr      error
 }
 
-func newFakeDocker() *fakeDocker {
-	return &fakeDocker{
-		inspectInfos: map[string]map[string]any{},
-		createResult: createResult{containerID: strings.Repeat("c", 64), volumeName: "elysian-db-" + strings.Repeat("0", 36), started: true},
-	}
-}
-
-func (f *fakeDocker) addContainer(id, image string, running bool, networks map[string]any) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if networks == nil {
-		networks = map[string]any{"elysian-db-local": map[string]any{"IPAddress": "172.28.0.5"}}
-	}
-	f.inspectInfos[id] = map[string]any{
-		"Id":              id,
-		"State":           map[string]any{"Running": running},
-		"Config":          map[string]any{"Image": image, "Labels": map[string]any{}},
-		"NetworkSettings": map[string]any{"Networks": networks},
-		"Image":           testImageID,
-		"Mounts":          []any{},
-	}
-}
-
-func (f *fakeDocker) inspect(_ context.Context, id string) (map[string]any, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if info, ok := f.inspectInfos[id]; ok {
-		return info, nil
+func (f *fakeDocker) inspect(ctx context.Context, id string) (map[string]any, error) {
+	if f.inspectFn != nil {
+		return f.inspectFn(ctx, id)
 	}
 	return nil, &shared.InvalidRequestError{Status: 404, Message: "数据库容器已不存在"}
 }
 
-func (f *fakeDocker) assertEngine(_ context.Context, id, engine, versionTag string) (map[string]any, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	if err, ok := f.assertEngineErrs[engine+"|"+versionTag]; ok {
-		return nil, err
+func (f *fakeDocker) assertEngine(ctx context.Context, id, engine, versionTag string) (map[string]any, error) {
+	if f.assertEngineFn != nil {
+		return f.assertEngineFn(ctx, id, engine, versionTag)
 	}
-	if info, ok := f.inspectInfos[id]; ok {
-		if !inspectRunning(info) {
-			return nil, &shared.InvalidRequestError{Status: 409, Message: "数据库容器未运行"}
-		}
-		return info, nil
+	if f.inspectFn != nil {
+		return f.inspectFn(ctx, id)
 	}
 	return nil, &shared.InvalidRequestError{Status: 404, Message: "数据库容器已不存在"}
 }
 
-func (f *fakeDocker) address(_ context.Context, id, _ string) (databaseAddress, error) {
+func (f *fakeDocker) create(ctx context.Context, input createInput) (createResult, error) {
 	f.mu.Lock()
-	defer f.mu.Unlock()
-	info, ok := f.inspectInfos[id]
-	if !ok {
-		return databaseAddress{}, &shared.InvalidRequestError{Status: 404, Message: "数据库容器已不存在"}
-	}
-	if !inspectRunning(info) {
-		return databaseAddress{}, &shared.InvalidRequestError{Status: 409, Message: "数据库容器未运行"}
-	}
-	return databaseAddress{Host: "172.28.0.5", Port: 0}, nil
-}
-
-func (f *fakeDocker) attach(_ context.Context, id, network string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.attachCalls = append(f.attachCalls, id+"|"+network)
-	return nil
-}
-
-func (f *fakeDocker) detach(_ context.Context, id, network string) error {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	f.detachCalls = append(f.detachCalls, id+"|"+network)
-	return nil
-}
-
-func (f *fakeDocker) create(_ context.Context, input createInput) (createResult, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
 	f.createCalls = append(f.createCalls, input)
-	if f.createErr != nil {
-		return createResult{}, f.createErr
+	fn := f.createFn
+	result, err := f.createResult, f.createErr
+	f.mu.Unlock()
+	if fn != nil {
+		return fn(input)
 	}
-	// 模拟真实 Docker：容器创建后即可 inspect（running）。
-	image := engineRepository[input.engine] + ":" + input.versionTag
-	f.inspectInfos[f.createResult.containerID] = map[string]any{
-		"Id":     f.createResult.containerID,
-		"State":  map[string]any{"Running": f.createResult.started},
-		"Config": map[string]any{"Image": image, "Labels": map[string]any{}},
-		"NetworkSettings": map[string]any{"Networks": map[string]any{
-			"elysian-db-local": map[string]any{"IPAddress": "172.28.0.5"},
-		}},
-		"Image":  testImageID,
-		"Mounts": []any{},
+	if err != nil {
+		return createResult{}, err
 	}
-	return f.createResult, nil
+	_ = ctx
+	return result, nil
 }
 
-func (f *fakeDocker) removeManaged(_ context.Context, containerID, volumeName, _, _ string) error {
+func (f *fakeDocker) removeManaged(_ context.Context, containerID, volumeName, engine, versionTag string) error {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.removeCalls = append(f.removeCalls, [2]string{containerID, volumeName})
+	f.removeCalls = append(f.removeCalls, containerID+"|"+volumeName+"|"+engine+"|"+versionTag)
 	return f.removeErr
 }
 
-func (f *fakeDocker) memory(_ context.Context, _ string) (*memoryView, error) {
-	f.mu.Lock()
-	defer f.mu.Unlock()
-	return f.memoryValue, nil
-}
-
-// callTrace 记录 protocol 调用次序。
-type callTrace struct {
-	mu    sync.Mutex
-	items []string
-}
-
-func (t *callTrace) add(step string) {
-	t.mu.Lock()
-	defer t.mu.Unlock()
-	t.items = append(t.items, step)
-}
-
-// fakeProtocol 可编程的协议后端假件。
-type fakeProtocol struct {
-	trace       *callTrace
-	versionText string
-	verifyErr   error
-	createErr   error
-	versionErr  error
-	dropErr     error
-}
-
-func (p *fakeProtocol) version(_ context.Context, _ string, _ databaseAddress, _ databaseSecret) (string, error) {
-	p.trace.add("version")
-	if p.versionErr != nil {
-		return "", p.versionErr
+func (f *fakeDocker) memory(ctx context.Context, id string) (*memoryView, error) {
+	if f.memoryFn != nil {
+		return f.memoryFn(ctx, id)
 	}
-	return p.versionText, nil
+	return nil, nil
 }
 
-func (p *fakeProtocol) create(_ context.Context, _ databaseRecord, _ databaseAddress, _ string) error {
-	p.trace.add("create")
-	return p.createErr
-}
-
-func (p *fakeProtocol) verify(_ context.Context, _ databaseRecord, _ databaseAddress) error {
-	p.trace.add("verify")
-	return p.verifyErr
-}
-
-func (p *fakeProtocol) drop(_ context.Context, _ databaseRecord, _ databaseAddress) error {
-	p.trace.add("drop")
-	return p.dropErr
-}
-
-func (p *fakeProtocol) hasOtherDatabases(_ context.Context, _ databaseRecord, _ databaseAddress) (bool, error) {
-	return false, nil
-}
-
-func (p *fakeProtocol) metrics(_ context.Context, _ databaseRecord, _ databaseAddress) (databaseMetrics, error) {
-	sizeGb := 0.5
-	return databaseMetrics{SizeGb: &sizeGb}, nil
-}
-
-func (p *fakeProtocol) session(_ databaseRecord, _ databaseAddress) (Session, error) {
-	return nil, errors.New("session 由终端测试覆盖")
-}
-
-// fakePortOpener 记录 note 的端口开放假件。
+// fakePortOpener 记录防火墙开放调用。
 type fakePortOpener struct {
-	calls   []string
-	outcome contract.FirewallPortSync
+	mu    sync.Mutex
+	ports []int
+	notes []string
 }
 
 func (f *fakePortOpener) EnsurePortRule(_ context.Context, port int, note string) contract.FirewallPortSync {
-	f.calls = append(f.calls, note)
-	outcome := f.outcome
-	outcome.Port = port
-	return outcome
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.ports = append(f.ports, port)
+	f.notes = append(f.notes, note)
+	return contract.FirewallPortSync{State: contract.FirewallPortSyncOpened, Port: port}
 }
 
-// serviceFixture 组装被测服务。
+func (f *fakePortOpener) called() int {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return len(f.ports)
+}
+
+// serviceFixture 组合服务与假件。
 type serviceFixture struct {
-	service    *databaseService
-	docker     *fakeDocker
-	protocol   *fakeProtocol
-	portOpener *fakePortOpener
-	registry   *memoryDatabaseRegistry
+	service   *databaseService
+	docker    *fakeDocker
+	registry  *memoryDatabaseRegistry
+	firewall  *fakePortOpener
+	container string
 }
 
-func newServiceFixture(versionText string) *serviceFixture {
-	docker := newFakeDocker()
-	trace := &callTrace{}
-	protocol := &fakeProtocol{trace: trace, versionText: versionText}
-	portOpener := &fakePortOpener{outcome: contract.FirewallPortSync{State: contract.FirewallPortSyncOpened}}
-	registry := newMemoryDatabaseRegistry(nil)
+// newServiceFixture 构造服务；containers 为容器清单，rows 为登记种子。
+func newServiceFixture(selfID string, containers []contract.Container, rows []databaseRecord) *serviceFixture {
+	docker := &fakeDocker{}
+	firewall := &fakePortOpener{}
+	registry := newMemoryDatabaseRegistry(rows)
 	service := newDatabaseService(serviceDeps{
-		registry: registry,
-		docker:   docker,
-		protocol: protocol,
-		listImages: func(context.Context) ([]contract.ContainerImage, error) {
-			return testImageList(), nil
-		},
-		listContainers: func(context.Context) ([]contract.Container, error) { return nil, nil },
-		portOpener:     portOpener,
+		registry:        registry,
+		docker:          docker,
+		listContainers:  func(context.Context) ([]contract.Container, error) { return containers, nil },
+		selfContainerID: selfID,
+		portOpener:      firewall,
 	})
-	return &serviceFixture{service: service, docker: docker, protocol: protocol, portOpener: portOpener, registry: registry}
+	return &serviceFixture{service: service, docker: docker, registry: registry, firewall: firewall}
 }
 
-func newCreateRequest(target createTarget, scope string, hostPort *int) createRequest {
-	return createRequest{
-		Engine: engineMySQL, VersionTag: "8.4", Name: "orders",
-		User:        databaseSecret{Username: "reader", Password: "strong-password-123"},
-		AccessScope: scope, HostPort: hostPort, Target: target,
+// containerBody 构造 inspect 应答体。
+func containerBody(id string, ref string, running bool, labels map[string]string, networks []string, ports map[string]any, mounts []any) map[string]any {
+	labelsAny := map[string]any{}
+	for key, value := range labels {
+		labelsAny[key] = value
 	}
+	networksAny := map[string]any{}
+	for _, name := range networks {
+		networksAny[name] = map[string]any{"IPAddress": "172.28.0.5"}
+	}
+	body := map[string]any{
+		"Id":              id,
+		"Name":            "/" + id[:12] + "-db",
+		"Created":         "2026-09-28T08:00:00.000000000Z",
+		"State":           map[string]any{"Running": running},
+		"Image":           "sha256:bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+		"Config":          map[string]any{"Image": ref, "Labels": labelsAny},
+		"NetworkSettings": map[string]any{"Networks": networksAny, "Ports": ports},
+	}
+	if mounts != nil {
+		body["Mounts"] = mounts
+	}
+	return body
 }
 
-func TestCreateOrderAndProjection(t *testing.T) {
-	fixture := newServiceFixture("8.4.7")
-	request := newCreateRequest(createTarget{Kind: "new", ImageID: testImageID, ContainerName: "mysql-db"}, scopeLocalhost, nil)
-	response, err := fixture.service.Create(context.Background(), request)
-	if err != nil {
-		t.Fatalf("创建失败：%v", err)
-	}
-	fixture.protocol.trace.mu.Lock()
-	sequence := strings.Join(fixture.protocol.trace.items, ",")
-	fixture.protocol.trace.mu.Unlock()
-	// 次序：重试环 version → 建库 create → verify → 投影再核对（version,verify）。
-	if sequence != "version,create,verify,version,verify" {
-		t.Fatalf("创建次序应为 version→create→verify→投影核对，实际 %s", sequence)
-	}
-	if response.Instance.HasCredentials == nil || !*response.Instance.HasCredentials {
-		t.Fatal("实例应带 hasCredentials")
-	}
-	if response.Instance.CredentialUsername != "reader" {
-		t.Fatalf("credentialUsername 应为 reader，实际 %s", response.Instance.CredentialUsername)
-	}
-	if response.FirewallPort != nil {
-		t.Fatal("localhost 创建不应触发防火墙开口")
-	}
-	// 列表投影不含密码（registry 文件本身存明文凭证，是 TS 版同构行为）。
-	instances, listErr := fixture.service.List(context.Background())
-	if listErr != nil {
-		t.Fatal(listErr)
-	}
-	data, _ := jsonMarshal(instances)
-	if strings.Contains(string(data), "strong-password-123") {
-		t.Fatalf("列表投影不得含密码明文：%s", data)
-	}
-	rows, err := fixture.registry.list()
-	if err != nil {
-		t.Fatal(err)
-	}
-	secret, err := fixture.service.Reveal(context.Background(), rows[0].ID)
-	if err != nil {
-		t.Fatalf("reveal 失败：%v", err)
-	}
-	if secret.Username != "reader" || secret.Password != "strong-password-123" {
-		t.Fatalf("reveal 应回普通账号：%+v", secret)
-	}
+func testVolumeMount(volume string) []any {
+	return []any{map[string]any{"Type": "volume", "Name": volume}}
 }
 
-func TestCreateAnyHostOpensFirewallPort(t *testing.T) {
-	fixture := newServiceFixture("8.4")
-	port := 43306
-	request := newCreateRequest(createTarget{Kind: "new", ImageID: testImageID, ContainerName: "mysql-db"}, scopeAnyHost, &port)
-	response, err := fixture.service.Create(context.Background(), request)
-	if err != nil {
-		t.Fatalf("创建失败：%v", err)
-	}
-	if response.FirewallPort == nil || response.FirewallPort.State != contract.FirewallPortSyncOpened {
-		t.Fatalf("any-host 创建应带回防火墙开口结果：%+v", response.FirewallPort)
-	}
-	if len(fixture.portOpener.calls) != 1 || fixture.portOpener.calls[0] != "Elysian 数据库 orders" {
-		t.Fatalf("开口 note 应为「Elysian 数据库 orders」：%v", fixture.portOpener.calls)
-	}
-}
-
-func TestCreateLocalhostAndAdoptDoNotOpenPort(t *testing.T) {
-	// localhost new。
-	fixture := newServiceFixture("8.4")
-	if _, err := fixture.service.Create(context.Background(), newCreateRequest(createTarget{Kind: "new", ImageID: testImageID, ContainerName: "mysql-db"}, scopeLocalhost, nil)); err != nil {
-		t.Fatalf("localhost 创建失败：%v", err)
-	}
-	if len(fixture.portOpener.calls) != 0 {
-		t.Fatal("localhost 不应触发开口")
-	}
-	// adopt。
-	fixture = newServiceFixture("8.4")
-	containerID := strings.Repeat("d", 64)
-	fixture.docker.addContainer(containerID, "mysql:8.4", true, nil)
-	admin := databaseSecret{Username: "root", Password: "admin-password"}
-	request := newCreateRequest(createTarget{Kind: "adopt", ContainerID: containerID, Admin: &admin}, scopeContainerNet, nil)
-	if _, err := fixture.service.Create(context.Background(), request); err != nil {
-		t.Fatalf("adopt 创建失败：%v", err)
-	}
-	if len(fixture.portOpener.calls) != 0 {
-		t.Fatal("adopt 不应触发开口")
-	}
-	if len(fixture.docker.attachCalls) != 1 || !strings.HasSuffix(fixture.docker.attachCalls[0], networkDBSharedName) {
-		t.Fatalf("adopt 应接入共享网络：%v", fixture.docker.attachCalls)
-	}
-	fixture.protocol.trace.mu.Lock()
-	trace := strings.Join(fixture.protocol.trace.items, ",")
-	fixture.protocol.trace.mu.Unlock()
-	for _, step := range fixture.protocol.trace.items {
-		if step == "create" {
-			t.Fatal("adopt 路径不应执行 protocol.create")
-		}
-	}
-	if !strings.Contains(trace, "verify") {
-		t.Fatal("adopt 仍应 verify")
-	}
-	_ = trace
-}
-
-func TestVersionDriftKeepsNeedsAttention(t *testing.T) {
-	fixture := newServiceFixture("9.0")
-	request := newCreateRequest(createTarget{Kind: "new", ImageID: testImageID, ContainerName: "mysql-db"}, scopeLocalhost, nil)
-	_, err := fixture.service.Create(context.Background(), request)
-	if err == nil {
-		t.Fatal("版本漂移应失败")
-	}
-	if !strings.Contains(err.Error(), "数据库创建未完成；容器 cccccccccccc 已登记为待处理：数据库实际版本与所选版本不一致") {
-		t.Fatalf("错误应带待处理包装文案，实际 %v", err)
-	}
-	rows, _ := fixture.registry.list()
-	if len(rows) != 1 || rows[0].State != stateNeedsAttention {
-		t.Fatalf("登记应保留在 needs-attention：%+v", rows)
-	}
-}
-
-func TestRemoveManagedLastDatabaseMarksEmpty(t *testing.T) {
-	fixture := newServiceFixture("8.4")
-	if _, err := fixture.service.Create(context.Background(), newCreateRequest(createTarget{Kind: "new", ImageID: testImageID, ContainerName: "mysql-db"}, scopeLocalhost, nil)); err != nil {
-		t.Fatal(err)
-	}
-	rows, _ := fixture.registry.list()
-	if err := fixture.service.Remove(context.Background(), rows[0].ID); err != nil {
-		t.Fatalf("remove 失败：%v", err)
-	}
-	rows, _ = fixture.registry.list()
-	if len(rows) != 1 || rows[0].State != stateEmpty {
-		t.Fatalf("managed 最后一个库删除后应标记 empty：%+v", rows)
-	}
-	instance, err := fixture.service.List(context.Background())
-	if err != nil {
-		t.Fatal(err)
-	}
-	if !instance[0].EmptyContainer || instance[0].MetricsError != "逻辑库已删除；容器与持久卷仍保留，可在此容器新建库或显式删除容器及数据。" {
-		t.Fatalf("空容器投影不符：%+v", instance[0])
-	}
-	// 空容器可再建新库（managed target）。
-	request := newCreateRequest(createTarget{Kind: "managed", ContainerID: rows[0].ContainerID}, scopeLocalhost, nil)
-	request.Name = "orders2"
-	if _, err := fixture.service.Create(context.Background(), request); err != nil {
-		t.Fatalf("空容器上再建库失败：%v", err)
-	}
-}
-
-func TestRemoveContainerRequiresManagedAndNoSiblings(t *testing.T) {
-	fixture := newServiceFixture("8.4")
-	response, err := fixture.service.Create(context.Background(), newCreateRequest(createTarget{Kind: "new", ImageID: testImageID, ContainerName: "mysql-db"}, scopeLocalhost, nil))
-	if err != nil {
-		t.Fatal(err)
-	}
-	id := response.Instance.ID
-	if err := fixture.service.RemoveContainer(context.Background(), id); err != nil {
-		t.Fatalf("removeContainer 失败：%v", err)
-	}
-	if len(fixture.docker.removeCalls) != 1 || fixture.docker.removeCalls[0][0] != strings.Repeat("c", 64) {
-		t.Fatalf("应调用 removeManaged 删容器与卷：%v", fixture.docker.removeCalls)
-	}
-	rows, _ := fixture.registry.list()
-	if len(rows) != 0 {
-		t.Fatalf("登记应被删除：%+v", rows)
-	}
-	// adopt 的登记不能删容器。
-	fixture = newServiceFixture("8.4")
-	containerID := strings.Repeat("d", 64)
-	fixture.docker.addContainer(containerID, "mysql:8.4", true, nil)
-	admin := databaseSecret{Username: "root", Password: "admin-password"}
-	adoptResponse, err := fixture.service.Create(context.Background(), newCreateRequest(createTarget{Kind: "adopt", ContainerID: containerID, Admin: &admin}, scopeContainerNet, nil))
-	if err != nil {
-		t.Fatal(err)
-	}
-	err = fixture.service.RemoveContainer(context.Background(), adoptResponse.Instance.ID)
-	var invalid *shared.InvalidRequestError
-	if !errors.As(err, &invalid) || invalid.Status != 403 || invalid.Message != "只能删除面板创建的数据库容器和专属卷" {
-		t.Fatalf("adopt 删容器应 403，实际 %v", err)
-	}
-}
-
-func TestRemoveContainerSkipsCheckWhenContainerGone(t *testing.T) {
-	fixture := newServiceFixture("8.4")
-	response, err := fixture.service.Create(context.Background(), newCreateRequest(createTarget{Kind: "new", ImageID: testImageID, ContainerName: "mysql-db"}, scopeLocalhost, nil))
-	if err != nil {
-		t.Fatal(err)
-	}
-	// 外部删容器：inspect 404。
-	delete(fixture.docker.inspectInfos, strings.Repeat("c", 64))
-	if err := fixture.service.RemoveContainer(context.Background(), response.Instance.ID); err != nil {
-		t.Fatalf("外部删容器后 removeContainer 应继续清孤儿卷：%v", err)
-	}
-	if len(fixture.docker.removeCalls) != 1 {
-		t.Fatal("仍应调用 removeManaged 清孤儿卷")
-	}
-}
-
-func TestRemoveContainerSkipsProtocolCheckWhenStopped(t *testing.T) {
-	fixture := newServiceFixture("8.4")
-	response, err := fixture.service.Create(context.Background(), newCreateRequest(createTarget{Kind: "new", ImageID: testImageID, ContainerName: "mysql-db"}, scopeLocalhost, nil))
-	if err != nil {
-		t.Fatal(err)
-	}
-	containerID := strings.Repeat("c", 64)
-	fixture.docker.inspectInfos[containerID]["State"] = map[string]any{"Running": false}
-	before := len(fixture.protocol.trace.items)
-	if err := fixture.service.RemoveContainer(context.Background(), response.Instance.ID); err != nil {
-		t.Fatalf("停止态容器应可删除容器与专属卷：%v", err)
-	}
-	if len(fixture.protocol.trace.items) != before {
-		t.Fatalf("停止态不应连协议核对：%v", fixture.protocol.trace.items[before:])
-	}
-	if len(fixture.docker.removeCalls) != 1 || fixture.docker.removeCalls[0][0] != containerID {
-		t.Fatalf("应调用 removeManaged 删容器与卷：%v", fixture.docker.removeCalls)
-	}
-	rows, _ := fixture.registry.list()
-	if len(rows) != 0 {
-		t.Fatalf("登记应被删除：%+v", rows)
-	}
-}
-
-func TestRemoveContainerStillRejectsOtherConflicts(t *testing.T) {
-	fixture := newServiceFixture("8.4")
-	response, err := fixture.service.Create(context.Background(), newCreateRequest(createTarget{Kind: "new", ImageID: testImageID, ContainerName: "mysql-db"}, scopeLocalhost, nil))
-	if err != nil {
-		t.Fatal(err)
-	}
-	id := response.Instance.ID
-	fixture.protocol.versionText = "8.0.1"
-	err = fixture.service.RemoveContainer(context.Background(), id)
-	var invalid *shared.InvalidRequestError
-	if !errors.As(err, &invalid) || invalid.Status != 409 || invalid.Message != "数据库实际版本与登记版本不一致" {
-		t.Fatalf("运行态版本漂移仍应 409，实际 %v", err)
-	}
-	if len(fixture.docker.removeCalls) != 0 {
-		t.Fatal("版本漂移不得派发删除")
-	}
-	fixture.protocol.versionText = "8.4.7"
-	rows, _ := fixture.registry.list()
-	sibling := rows[0]
-	sibling.ID, sibling.Name = "sibling", "orders2"
-	if err := fixture.registry.put(sibling); err != nil {
-		t.Fatal(err)
-	}
-	err = fixture.service.RemoveContainer(context.Background(), id)
-	if !errors.As(err, &invalid) || invalid.Status != 409 || invalid.Message != "容器中还有其他已登记数据库" {
-		t.Fatalf("兄弟登记仍应 409，实际 %v", err)
-	}
-	if len(fixture.docker.removeCalls) != 0 {
-		t.Fatal("兄弟登记不得派发删除")
-	}
-}
-
-func TestRemoveAdoptedDetachesOnlyOnLastRegistration(t *testing.T) {
-	fixture := newServiceFixture("8.4")
-	containerID := strings.Repeat("d", 64)
-	fixture.docker.addContainer(containerID, "mysql:8.4", true, nil)
-	admin := databaseSecret{Username: "root", Password: "admin-password"}
-	first, err := fixture.service.Create(context.Background(), createRequest{
-		Engine: engineMySQL, VersionTag: "8.4", Name: "first",
-		User:        databaseSecret{Username: "reader", Password: "strong-password-123"},
-		AccessScope: scopeContainerNet, Target: createTarget{Kind: "adopt", ContainerID: containerID, Admin: &admin},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	second, err := fixture.service.Create(context.Background(), createRequest{
-		Engine: engineMySQL, VersionTag: "8.4", Name: "second",
-		User:        databaseSecret{Username: "reader", Password: "strong-password-123"},
-		AccessScope: scopeContainerNet, Target: createTarget{Kind: "adopt", ContainerID: containerID, Admin: &admin},
-	})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if err := fixture.service.Remove(context.Background(), first.Instance.ID); err != nil {
-		t.Fatal(err)
-	}
-	if len(fixture.docker.detachCalls) != 0 {
-		t.Fatalf("同容器还有登记时不应 detach：%v", fixture.docker.detachCalls)
-	}
-	if err := fixture.service.Remove(context.Background(), second.Instance.ID); err != nil {
-		t.Fatal(err)
-	}
-	if len(fixture.docker.detachCalls) != 1 || !strings.HasSuffix(fixture.docker.detachCalls[0], networkDBSharedName) {
-		t.Fatalf("最后一个登记移除时才 detach：%v", fixture.docker.detachCalls)
-	}
-	// managed 全程不 detach。
-	fixture = newServiceFixture("8.4")
-	if _, err := fixture.service.Create(context.Background(), newCreateRequest(createTarget{Kind: "new", ImageID: testImageID, ContainerName: "mysql-db"}, scopeLocalhost, nil)); err != nil {
-		t.Fatal(err)
-	}
-	rows, _ := fixture.registry.list()
-	if err := fixture.service.Remove(context.Background(), rows[0].ID); err != nil {
-		t.Fatal(err)
-	}
-	if len(fixture.docker.detachCalls) != 0 {
-		t.Fatal("managed 不应 detach")
-	}
-}
-
-func TestRemoveAfterExternalContainerDeletion(t *testing.T) {
-	fixture := newServiceFixture("8.4")
-	containerID := strings.Repeat("d", 64)
-	fixture.docker.addContainer(containerID, "mysql:8.4", true, nil)
-	admin := databaseSecret{Username: "root", Password: "admin-password"}
-	response, err := fixture.service.Create(context.Background(), newCreateRequest(createTarget{Kind: "adopt", ContainerID: containerID, Admin: &admin}, scopeContainerNet, nil))
-	if err != nil {
-		t.Fatal(err)
-	}
-	delete(fixture.docker.inspectInfos, containerID)
-	if err := fixture.service.Remove(context.Background(), response.Instance.ID); err != nil {
-		t.Fatalf("容器被外部删除后 remove 应幂等清登记：%v", err)
-	}
-	rows, _ := fixture.registry.list()
-	if len(rows) != 0 {
-		t.Fatalf("登记应被删除：%+v", rows)
-	}
-	if len(fixture.docker.detachCalls) != 1 {
-		t.Fatal("仍应尝试 detach")
-	}
-}
-
-func TestForgetRemovesPendingAdoptedRegistration(t *testing.T) {
-	fixture := newServiceFixture("8.4")
-	containerID := strings.Repeat("d", 64)
-	registry := newMemoryDatabaseRegistry([]databaseRecord{{
-		ID: "reg-1", Engine: engineMySQL, Name: "orders", VersionTag: "8.4",
-		ContainerID: containerID, Source: sourceAdopted, AccessScope: scopeContainerNet,
-		Admin: databaseSecret{Username: "root", Password: "admin"}, User: databaseSecret{Username: "reader", Password: "strong-password-123"},
-		CreatedAt: "2026-09-28T00:00:00.000Z", State: stateNeedsAttention,
-	}})
-	fixture.registry = registry
-	fixture.service = newDatabaseService(serviceDeps{
-		registry: registry, docker: fixture.docker, protocol: fixture.protocol,
-		listImages:     func(context.Context) ([]contract.ContainerImage, error) { return nil, nil },
-		listContainers: func(context.Context) ([]contract.Container, error) { return nil, nil },
-	})
-	if err := fixture.service.Forget(context.Background(), "reg-1"); err != nil {
-		t.Fatalf("forget 失败：%v", err)
-	}
-	if len(fixture.docker.detachCalls) != 1 {
-		t.Fatal("forget 应 detach 共享网络")
-	}
-	rows, _ := registry.list()
-	if len(rows) != 0 {
-		t.Fatal("登记应被移除")
-	}
-	// 非 adopted 的登记不允许 forget。
-	registry = newMemoryDatabaseRegistry([]databaseRecord{{
-		ID: "reg-2", Engine: engineMySQL, Name: "orders", VersionTag: "8.4",
-		ContainerID: containerID, Source: sourceManaged, AccessScope: scopeLocalhost,
-		Admin: databaseSecret{Username: "root", Password: "admin"}, User: databaseSecret{Username: "reader", Password: "strong-password-123"},
-		CreatedAt: "2026-09-28T00:00:00.000Z", State: stateNeedsAttention,
-	}})
-	fixture.service = newDatabaseService(serviceDeps{
-		registry: registry, docker: fixture.docker, protocol: fixture.protocol,
-		listImages:     func(context.Context) ([]contract.ContainerImage, error) { return nil, nil },
-		listContainers: func(context.Context) ([]contract.Container, error) { return nil, nil },
-	})
-	err := fixture.service.Forget(context.Background(), "reg-2")
-	var invalid *shared.InvalidRequestError
-	if !errors.As(err, &invalid) || invalid.Status != 409 || invalid.Message != "只允许移除接管失败的待处理登记" {
-		t.Fatalf("非 adopted forget 应 409，实际 %v", err)
-	}
-}
-
-func TestConcurrentCreateSameKeyRejected(t *testing.T) {
-	fixture := newServiceFixture("8.4")
-	// 直接占用进程内并发去重键，等价于另一笔同键创建在途。
-	fixture.service.mu.Lock()
-	fixture.service.inProgress["MySQL:orders:mysql-db"] = true
-	fixture.service.mu.Unlock()
-	request := newCreateRequest(createTarget{Kind: "new", ImageID: testImageID, ContainerName: "mysql-db"}, scopeLocalhost, nil)
-	_, err := fixture.service.Create(context.Background(), request)
-	var invalid *shared.InvalidRequestError
-	if !errors.As(err, &invalid) || invalid.Status != 409 || invalid.Message != "相同数据库正在创建" {
-		t.Fatalf("并发同键应 409「相同数据库正在创建」，实际 %v", err)
+func enginePortBindings(hostIP string, hostPort string) map[string]any {
+	return map[string]any{
+		"3306/tcp": []any{map[string]any{"HostIp": hostIP, "HostPort": hostPort}},
 	}
 }
 
 func TestValidateCreateRequestMessages(t *testing.T) {
-	cases := []struct {
-		body    map[string]any
-		message string
-	}{
-		{map[string]any{"engine": "Oracle"}, "数据库引擎不受支持"},
-		{map[string]any{"engine": "MySQL", "versionTag": "latest", "name": "a", "user": map[string]any{"username": "reader", "password": "p"}, "accessScope": "localhost", "target": map[string]any{"kind": "new"}}, "必须指定明确的数据库版本标签"},
-		{map[string]any{"engine": "Redis", "versionTag": "7.4", "name": "x", "user": map[string]any{"username": "reader", "password": "p"}, "accessScope": "localhost", "target": map[string]any{"kind": "new"}}, "Redis 逻辑库只能使用 DB 0"},
-		{map[string]any{"engine": "MySQL", "versionTag": "8.4", "name": "orders", "user": map[string]any{"username": "root", "password": "p"}, "accessScope": "localhost", "target": map[string]any{"kind": "adopt", "containerId": strings.Repeat("d", 64)}}, "普通账号不得使用管理员账号名"},
-		{map[string]any{"engine": "MySQL", "versionTag": "8.4", "name": "orders", "user": map[string]any{"username": "reader", "password": "p"}, "accessScope": "localhost", "target": map[string]any{"kind": "new"}}, "普通账号或密码无效"},
-		{map[string]any{"engine": "MySQL", "versionTag": "8.4", "name": "orders", "user": map[string]any{"username": "reader", "password": "long-enough-password"}, "accessScope": "bogus", "target": map[string]any{"kind": "new"}}, "访问范围无效"},
-		{map[string]any{"engine": "MySQL", "versionTag": "8.4", "name": "orders", "user": map[string]any{"username": "reader", "password": "long-enough-password"}, "accessScope": "any-host", "target": map[string]any{"kind": "new", "imageId": testImageID, "containerName": "db"}}, "任意主机访问必须指定宿主端口"},
-		{map[string]any{"engine": "MySQL", "versionTag": "8.4", "name": "orders", "user": map[string]any{"username": "reader", "password": "long-enough-password"}, "accessScope": "any-host", "hostPort": float64(43306), "target": map[string]any{"kind": "new", "imageId": testImageID, "containerName": "db"}}, "任意主机访问必须再次确认"},
-		{map[string]any{"engine": "MySQL", "versionTag": "8.4", "name": "orders", "user": map[string]any{"username": "reader", "password": "long-enough-password"}, "accessScope": "localhost", "target": map[string]any{"kind": "other"}}, "必须指定新建或接管容器"},
-		{map[string]any{"engine": "MySQL", "versionTag": "8.4", "name": "orders", "charset": "gbk", "user": map[string]any{"username": "reader", "password": "long-enough-password"}, "accessScope": "localhost", "target": map[string]any{"kind": "new", "imageId": testImageID, "containerName": "db"}}, "字符集无效"},
+	valid := func(mutate func(map[string]any)) map[string]any {
+		body := map[string]any{"engine": "MySQL", "versionTag": "8.4", "accessScope": "container-network",
+			"imageId": testImageIDBare, "containerName": "mysql-main"}
+		if mutate != nil {
+			mutate(body)
+		}
+		return body
 	}
-	for _, testCase := range cases {
-		_, err := validateCreateRequest(testCase.body)
-		var invalid *shared.InvalidRequestError
-		if !errors.As(err, &invalid) || invalid.Status != 400 || invalid.Message != testCase.message {
-			t.Fatalf("校验消息应为 %q，实际 %v", testCase.message, err)
+	if request, err := validateCreateRequest(valid(nil)); err != nil || request.ContainerName != "mysql-main" || request.ImageID != testImageIDBare {
+		t.Fatalf("合法请求应通过：%v %+v", err, request)
+	}
+	for _, testCase := range []struct {
+		name   string
+		mutate func(map[string]any)
+		want   string
+	}{
+		{"引擎", func(b map[string]any) { b["engine"] = "Oracle" }, "数据库引擎不受支持"},
+		{"版本", func(b map[string]any) { b["versionTag"] = "latest" }, "必须指定明确的数据库版本标签"},
+		{"参数", func(b map[string]any) { delete(b, "containerName") }, "创建容器参数无效"},
+		{"范围", func(b map[string]any) { b["accessScope"] = "everywhere" }, "访问范围无效"},
+		{"公网端口", func(b map[string]any) { b["accessScope"] = "any-host" }, "任意主机访问必须指定宿主端口"},
+		{"公网确认", func(b map[string]any) { b["accessScope"] = "any-host"; b["hostPort"] = float64(43306) }, "任意主机访问必须再次确认"},
+	} {
+		t.Run(testCase.name, func(t *testing.T) {
+			_, err := validateCreateRequest(valid(testCase.mutate))
+			var invalid *shared.InvalidRequestError
+			if !errors.As(err, &invalid) || invalid.Message != testCase.want {
+				t.Fatalf("应拒绝「%s」，实际 %v", testCase.want, err)
+			}
+		})
+	}
+}
+
+func TestCreateNewContainerRegistersAdminAndActivates(t *testing.T) {
+	hostPort := 43306
+	fixture := newServiceFixture("", []contract.Container{}, nil)
+	fixture.docker.createResult = createResult{containerID: testContainerID, volumeName: stoppedManagedVolumeName, started: true}
+	fixture.docker.inspectFn = func(_ context.Context, id string) (map[string]any, error) {
+		return containerBody(id, "mysql:8.4", true, map[string]string{"elysian.database.engine": "MySQL", "elysian.database.version": "8.4"}, []string{"elysian-db-shared"}, enginePortBindings("0.0.0.0", "43306"), testVolumeMount(stoppedManagedVolumeName)), nil
+	}
+	request := createRequest{Engine: engineMySQL, VersionTag: "8.4", ContainerName: "mysql-main", ImageID: testImageIDBare, AccessScope: scopeAnyHost, HostPort: &hostPort}
+	response, err := fixture.service.Create(context.Background(), request)
+	if err != nil {
+		t.Fatalf("创建失败：%v", err)
+	}
+	if len(fixture.docker.createCalls) != 1 || fixture.docker.createCalls[0].bootstrapPwd == "" || fixture.docker.createCalls[0].engine != engineMySQL {
+		t.Fatalf("create 调用不符：%+v", fixture.docker.createCalls)
+	}
+	rows, err := fixture.registry.list()
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("登记行不符：%v %d", err, len(rows))
+	}
+	row := rows[0]
+	if row.Engine != engineMySQL || row.VersionTag != "8.4" || row.ContainerID != testContainerID || row.VolumeName != stoppedManagedVolumeName ||
+		row.Source != sourceManaged || row.AccessScope != scopeAnyHost || row.State != stateActive || row.ContainerName != "mysql-main" {
+		t.Fatalf("登记行内容不符：%+v", row)
+	}
+	if row.Admin.Username != "root" || row.Admin.Password == "" {
+		t.Fatalf("管理员凭据应由后端生成：%+v", row.Admin)
+	}
+	if row.User != (databaseSecret{}) {
+		t.Fatalf("普通账号不再初始化，应为零值：%+v", row.User)
+	}
+	instance := response.Instance
+	if instance.ID != testContainerID || instance.ContainerID != testContainerID || instance.Source != sourceManaged ||
+		instance.CredentialUsername != "root" || !instance.CredentialsVerified || instance.Version != "8.4" {
+		t.Fatalf("实例投影不符：%+v", instance)
+	}
+	if fixture.firewall.called() != 1 || fixture.firewall.ports[0] != 43306 || !strings.Contains(fixture.firewall.notes[0], "mysql-main") {
+		t.Fatalf("any-host 应幂等开放宿主端口：%+v", fixture.firewall)
+	}
+	if response.FirewallPort == nil || response.FirewallPort.Port != 43306 {
+		t.Fatalf("回执应携带防火墙事实：%+v", response.FirewallPort)
+	}
+}
+
+func TestCreateRedisUsesDefaultAdminWithoutOrdinaryUser(t *testing.T) {
+	fixture := newServiceFixture("", []contract.Container{}, nil)
+	fixture.docker.createResult = createResult{containerID: testContainerID, volumeName: stoppedManagedVolumeName, started: true}
+	fixture.docker.inspectFn = func(_ context.Context, id string) (map[string]any, error) {
+		return containerBody(id, "redis:7.4", true, map[string]string{"elysian.database.engine": "Redis", "elysian.database.version": "7.4"}, []string{"elysian-db-shared"}, nil, testVolumeMount(stoppedManagedVolumeName)), nil
+	}
+	request := createRequest{Engine: engineRedis, VersionTag: "7.4", ContainerName: "redis-main", ImageID: testImageIDBare, AccessScope: scopeContainerNet}
+	response, err := fixture.service.Create(context.Background(), request)
+	if err != nil {
+		t.Fatalf("Redis 创建失败：%v", err)
+	}
+	rows, _ := fixture.registry.list()
+	if rows[0].Admin.Username != "default" || rows[0].User != (databaseSecret{}) {
+		t.Fatalf("Redis 管理员应为 default 且无普通账号：%+v", rows[0])
+	}
+	if response.Instance.CredentialUsername != "default" {
+		t.Fatalf("投影管理员名不符：%+v", response.Instance)
+	}
+	if fixture.firewall.called() != 0 {
+		t.Fatal("非 any-host 不应开放防火墙端口")
+	}
+}
+
+func TestCreateStartFailureKeepsPendingRegistration(t *testing.T) {
+	fixture := newServiceFixture("", []contract.Container{}, nil)
+	fixture.docker.createResult = createResult{containerID: testContainerID, volumeName: stoppedManagedVolumeName, started: false, startFailure: "面板数据库网络 elysian-db-shared 不存在"}
+	request := createRequest{Engine: engineMySQL, VersionTag: "8.4", ContainerName: "mysql-main", ImageID: testImageIDBare, AccessScope: scopeContainerNet}
+	_, err := fixture.service.Create(context.Background(), request)
+	if err == nil || !strings.Contains(err.Error(), "已登记为待处理") || !strings.Contains(err.Error(), "面板数据库网络") {
+		t.Fatalf("启动失败应保留待处理登记并说明原因：%v", err)
+	}
+	rows, _ := fixture.registry.list()
+	if len(rows) != 1 || rows[0].State != stateNeedsAttention {
+		t.Fatalf("登记应保留待处理状态：%+v", rows)
+	}
+}
+
+func TestCreateRejectsDuplicateRegisteredContainerName(t *testing.T) {
+	fixture := newServiceFixture("", []contract.Container{}, []databaseRecord{{ID: "row-1", Engine: engineMySQL, ContainerID: strings.Repeat("c", 64), ContainerName: "mysql-main"}})
+	request := createRequest{Engine: engineMySQL, VersionTag: "8.4", ContainerName: "mysql-main", ImageID: testImageIDBare, AccessScope: scopeContainerNet}
+	_, err := fixture.service.Create(context.Background(), request)
+	var invalid *shared.InvalidRequestError
+	if !errors.As(err, &invalid) || invalid.Status != 409 || invalid.Message != "数据库容器已登记" {
+		t.Fatalf("同名容器应 409：%v", err)
+	}
+}
+
+func TestConcurrentCreateSameKeyRejected(t *testing.T) {
+	fixture := newServiceFixture("", []contract.Container{}, nil)
+	release := make(chan struct{})
+	started := make(chan struct{})
+	request := createRequest{Engine: engineMySQL, VersionTag: "8.4", ContainerName: "mysql-main", ImageID: testImageIDBare, AccessScope: scopeContainerNet}
+	fixture.docker.createFn = func(createInput) (createResult, error) {
+		started <- struct{}{}
+		<-release
+		return createResult{containerID: testContainerID, volumeName: stoppedManagedVolumeName, started: true}, nil
+	}
+	fixture.docker.inspectFn = func(_ context.Context, id string) (map[string]any, error) {
+		return containerBody(id, "mysql:8.4", true, map[string]string{"elysian.database.engine": "MySQL"}, []string{"elysian-db-shared"}, nil, testVolumeMount(stoppedManagedVolumeName)), nil
+	}
+	done := make(chan error, 1)
+	go func() {
+		_, err := fixture.service.Create(context.Background(), request)
+		done <- err
+	}()
+	<-started
+	// 第一个创建未结束时，同键创建在去重守卫处 409。
+	_, secondErr := fixture.service.Create(context.Background(), request)
+	var invalid *shared.InvalidRequestError
+	if !errors.As(secondErr, &invalid) || invalid.Status != 409 || invalid.Message != "相同数据库正在创建" {
+		close(release)
+		t.Fatalf("相同键并发创建应 409：%v", secondErr)
+	}
+	close(release)
+	if err := <-done; err != nil {
+		t.Fatalf("首个创建应正常完成：%v", err)
+	}
+}
+
+func TestListFiltersDatabaseImagesAndAggregatesRegistry(t *testing.T) {
+	selfID := strings.Repeat("d", 64)
+	mysqlID := testContainerID
+	mariadbID := strings.Repeat("1", 64)
+	redisID := strings.Repeat("2", 64)
+	adoptedID := strings.Repeat("3", 64)
+	foreignID := strings.Repeat("4", 64)
+	containers := []contract.Container{
+		{ID: selfID, ImageRef: "mysql:8.4"},
+		{ID: foreignID, ImageRef: "nginx:1.27"},
+		{ID: mysqlID, ImageRef: "mysql:8.4"},
+		{ID: mariadbID, ImageRef: "library/mariadb:11.4"},
+		{ID: redisID, ImageRef: "docker.io/library/redis:7.4"},
+		{ID: adoptedID, ImageRef: "mysql@sha256:" + strings.Repeat("e", 64)},
+	}
+	rows := []databaseRecord{
+		{ID: "row-managed", Engine: engineMySQL, Name: "orders", VersionTag: "8.4", ContainerID: mysqlID,
+			VolumeName: stoppedManagedVolumeName, Source: sourceManaged, AccessScope: scopeAnyHost,
+			Admin: databaseSecret{Username: "root", Password: "admin-secret"}, CreatedAt: "2026-09-28T09:00:00.000Z", State: stateActive, ContainerName: "mysql-main"},
+		{ID: "row-adopted", Engine: engineMySQL, Name: "legacy", VersionTag: "8.0", ContainerID: adoptedID,
+			Source: sourceAdopted, Admin: databaseSecret{Username: "root", Password: "adopted-secret"},
+			CreatedAt: "2026-09-27T09:00:00.000Z", State: stateNeedsAttention, ContainerName: "legacy-db"},
+	}
+	fixture := newServiceFixture(selfID, containers, rows)
+	inspect := func(_ context.Context, id string) (map[string]any, error) {
+		switch id {
+		case mysqlID:
+			return containerBody(mysqlID, "mysql:8.4", true, map[string]string{
+				"elysian.managed": "true", "elysian.database": "true", "elysian.database.engine": "MySQL",
+				"elysian.database.version": "8.4", "elysian.database.volume": stoppedManagedVolumeName,
+			}, []string{"elysian-db-shared"}, enginePortBindings("0.0.0.0", "43306"), testVolumeMount(stoppedManagedVolumeName)), nil
+		case mariadbID:
+			return containerBody(mariadbID, "library/mariadb:11.4", true, nil, []string{"bridge"}, enginePortBindings("127.0.0.1", "43307"), nil), nil
+		case redisID:
+			return containerBody(redisID, "docker.io/library/redis:7.4", false, nil, []string{"bridge"}, map[string]any{"6379/tcp": nil}, nil), nil
+		case adoptedID:
+			return containerBody(adoptedID, "mysql@sha256:"+strings.Repeat("e", 64), true, nil, []string{"bridge"}, nil, nil), nil
+		case selfID, foreignID:
+			return containerBody(id, "nginx:1.27", true, nil, nil, nil, nil), nil
+		}
+		return nil, &shared.InvalidRequestError{Status: 404, Message: "数据库容器已不存在"}
+	}
+	memoryByID := map[string]*memoryView{mysqlID: {UsedGb: 0.5, TotalGb: 2}}
+	fixture.docker.inspectFn = inspect
+	fixture.docker.memoryFn = func(_ context.Context, id string) (*memoryView, error) { return memoryByID[id], nil }
+	instances, err := fixture.service.List(context.Background())
+	if err != nil {
+		t.Fatalf("列表失败：%v", err)
+	}
+	if len(instances) != 4 {
+		t.Fatalf("应命中 4 个数据库容器（面板自身与 nginx 排除），实际 %d：%+v", len(instances), instances)
+	}
+	byID := map[string]containerInstance{}
+	for _, instance := range instances {
+		byID[instance.ID] = instance
+	}
+	mysql := byID[mysqlID]
+	if mysql.Engine != engineMySQL || mysql.Name != mysqlID[:12]+"-db" || mysql.Status != statusRunning || mysql.Version != "8.4" ||
+		mysql.Image != "mysql:8.4" || mysql.Source != sourceManaged || mysql.VolumeName != stoppedManagedVolumeName ||
+		mysql.CredentialUsername != "root" || !mysql.CredentialsVerified || mysql.NeedsAttention ||
+		mysql.UpdatedAt != "2026-09-28T09:00:00.000Z" {
+		t.Fatalf("受管容器投影不符：%+v", mysql)
+	}
+	if mysql.Memory == nil || mysql.Memory.UsedGb != 0.5 || mysql.Memory.TotalGb != 2 {
+		t.Fatalf("内存投影不符：%+v", mysql.Memory)
+	}
+	if mysql.Address == nil || mysql.Address.Host != "0.0.0.0" || mysql.Address.Port != 43306 {
+		t.Fatalf("连接地址应取引擎端口绑定：%+v", mysql.Address)
+	}
+	if len(mysql.Ports) != 1 || mysql.Ports[0].HostPort == nil || *mysql.Ports[0].HostPort != 43306 || mysql.Ports[0].Protocol != "tcp" {
+		t.Fatalf("端口投影不符：%+v", mysql.Ports)
+	}
+	if len(mysql.Networks) != 1 || mysql.Networks[0] != "elysian-db-shared" {
+		t.Fatalf("网络投影不符：%+v", mysql.Networks)
+	}
+	mariadb := byID[mariadbID]
+	if mariadb.Engine != engineMariaDB || mariadb.Status != statusRunning || mariadb.Source != "" || mariadb.CredentialsVerified {
+		t.Fatalf("未登记 mariadb 容器投影不符：%+v", mariadb)
+	}
+	if mariadb.Address == nil || mariadb.Address.Host != "127.0.0.1" {
+		t.Fatalf("回环绑定地址投影不符：%+v", mariadb.Address)
+	}
+	redis := byID[redisID]
+	if redis.Engine != engineRedis || redis.Status != statusStopped || redis.Address != nil || redis.Memory != nil {
+		t.Fatalf("停止态容器投影不符：%+v", redis)
+	}
+	adopted := byID[adoptedID]
+	if adopted.Engine != engineMySQL || adopted.Version != "8.0" || adopted.Source != sourceAdopted ||
+		!adopted.NeedsAttention || !adopted.CredentialsVerified || adopted.CredentialUsername != "root" {
+		t.Fatalf("旧 adopted 登记投影不符：%+v", adopted)
+	}
+	// 冻结键序：id → engine → name → version → status → image → containerId → …
+	raw, err := json.Marshal(mysql)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(raw)
+	order := []string{`"id":`, `"engine":`, `"name":`, `"version":`, `"status":`, `"image":`, `"containerId":`, `"source":`, `"versionTag":`, `"ports":`, `"networks":`, `"volumeName":`, `"address":`, `"credentialUsername":`, `"credentialsVerified":`, `"memory":`, `"needsAttention":`, `"updatedAt":`}
+	last := -1
+	for _, key := range order {
+		index := strings.Index(text, key)
+		if index < 0 {
+			t.Fatalf("键 %s 缺失：%s", key, text)
+		}
+		if index <= last {
+			t.Fatalf("键序违反冻结契约：%s 顺序错误：%s", key, text)
+		}
+		last = index
+	}
+}
+
+func TestListSkipsVanishedContainerAndFailsOnOtherInspectErrors(t *testing.T) {
+	fixture := newServiceFixture("", []contract.Container{{ID: testContainerID, ImageRef: "mysql:8.4"}}, nil)
+	fixture.docker.inspectFn = func(context.Context, string) (map[string]any, error) {
+		return nil, &shared.InvalidRequestError{Status: 404, Message: "数据库容器已不存在"}
+	}
+	instances, err := fixture.service.List(context.Background())
+	if err != nil || len(instances) != 0 {
+		t.Fatalf("清单与详情之间消失的容器应跳过：%v %d", err, len(instances))
+	}
+	fixture.docker.inspectFn = func(context.Context, string) (map[string]any, error) {
+		return nil, errors.New("引擎传输失败")
+	}
+	if _, err := fixture.service.List(context.Background()); err == nil {
+		t.Fatal("其他 inspect 故障应让整页失败重试")
+	}
+}
+
+func TestListFindsDatabaseContainersCreatedByImageID(t *testing.T) {
+	imageID, otherImageID := strings.Repeat("e", 64), strings.Repeat("f", 64)
+	otherContainerID := strings.Repeat("a", 64)
+	fixture := newServiceFixture("", []contract.Container{
+		{ID: testContainerID, ImageRef: "sha256:" + imageID, ImageID: imageID},
+		{ID: otherContainerID, ImageRef: "sha256:" + otherImageID, ImageID: otherImageID},
+	}, nil)
+	reads := 0
+	fixture.service.deps.listImages = func(context.Context) ([]contract.ContainerImage, error) {
+		reads++
+		return []contract.ContainerImage{
+			{ID: imageID, Name: "local/db", Tag: "current", OtherTags: []string{"mysql:latest", "docker.io/library/mysql:8.4"}},
+			{ID: otherImageID, Name: "nginx", Tag: "1.27"},
+		}, nil
+	}
+	fixture.docker.inspectFn = func(_ context.Context, id string) (map[string]any, error) {
+		if id != testContainerID {
+			t.Fatalf("unexpected container inspection: %s", id)
+		}
+		return containerBody(id, "sha256:"+imageID, true, nil, nil, nil, nil), nil
+	}
+	rows, err := fixture.service.List(context.Background())
+	if err != nil || len(rows) != 1 || reads != 1 || rows[0].Engine != engineMySQL || rows[0].Version != "8.4" || rows[0].Source != "" {
+		t.Fatalf("pinned-image container projection: %+v reads=%d %v", rows, reads, err)
+	}
+}
+
+func TestListRetainsCleanupAfterContainerDeletionPartiallySucceeds(t *testing.T) {
+	row := managedRow(stoppedManagedVolumeName)
+	containers := []contract.Container{{ID: row.ContainerID, ImageRef: "mysql:8.4"}}
+	fixture := newServiceFixture("", containers, []databaseRecord{row})
+	fixture.docker.removeErr = errors.New("删除持久卷失败")
+	ctx := context.Background()
+	if err := fixture.service.RemoveContainer(ctx, row.ContainerID); err == nil {
+		t.Fatal("expected volume removal failure")
+	}
+	// The initial list can race with Docker deleting the container. A later list
+	// has no container ID at all; both must retain the same cleanup row.
+	for range 2 {
+		rows, err := fixture.service.List(ctx)
+		if err != nil || len(rows) != 1 || rows[0].ID != row.ContainerID || rows[0].Status != statusMissing || rows[0].VolumeName != row.VolumeName || !rows[0].NeedsAttention || rows[0].CredentialsVerified {
+			t.Fatalf("dangling registration projection: %+v %v", rows, err)
+		}
+		fixture.service.deps.listContainers = func(context.Context) ([]contract.Container, error) { return nil, nil }
+	}
+	fixture.docker.removeErr = nil
+	if err := fixture.service.RemoveContainer(ctx, row.ContainerID); err != nil {
+		t.Fatal(err)
+	}
+	rows, err := fixture.service.List(ctx)
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("cleanup left a dangling row: %+v %v", rows, err)
+	}
+}
+
+func TestReconcileChecksDockerFactsAndClearsAttention(t *testing.T) {
+	rows := []databaseRecord{{ID: "row-1", Engine: engineMySQL, VersionTag: "8.4", ContainerID: testContainerID,
+		VolumeName: stoppedManagedVolumeName, Source: sourceManaged, AccessScope: scopeAnyHost,
+		Admin: databaseSecret{Username: "root", Password: "admin-secret"}, CreatedAt: "2026-09-28T09:00:00.000Z", State: stateNeedsAttention, ContainerName: "mysql-main"}}
+	fixture := newServiceFixture("", nil, rows)
+	fixture.docker.assertEngineFn = func(_ context.Context, id, engine, versionTag string) (map[string]any, error) {
+		if engine != engineMySQL || versionTag != "8.4" {
+			return nil, &shared.InvalidRequestError{Status: 409, Message: "容器镜像与所选引擎或版本不一致"}
+		}
+		return containerBody(id, "mysql:8.4", true, nil, nil, nil, testVolumeMount(stoppedManagedVolumeName)), nil
+	}
+	instance, err := fixture.service.Reconcile(context.Background(), testContainerID)
+	if err != nil {
+		t.Fatalf("核对失败：%v", err)
+	}
+	if instance.Status != statusRunning || instance.NeedsAttention {
+		t.Fatalf("核对通过应回运行中实例行：%+v", instance)
+	}
+	current, _ := fixture.registry.list()
+	if current[0].State != stateActive {
+		t.Fatalf("待处理状态应清除：%+v", current[0])
+	}
+	// 专属卷未挂载时拒绝。
+	fixture.docker.assertEngineFn = func(_ context.Context, id, _, _ string) (map[string]any, error) {
+		return containerBody(id, "mysql:8.4", true, nil, nil, nil, nil), nil
+	}
+	_, err = fixture.service.Reconcile(context.Background(), testContainerID)
+	var invalid *shared.InvalidRequestError
+	if !errors.As(err, &invalid) || invalid.Status != 409 || invalid.Message != "容器没有挂载登记的数据库持久卷" {
+		t.Fatalf("专属卷缺失应 409：%v", err)
+	}
+}
+
+func TestReconcileOnUnknownContainerReturns404(t *testing.T) {
+	fixture := newServiceFixture("", nil, nil)
+	_, err := fixture.service.Reconcile(context.Background(), testContainerID)
+	var invalid *shared.InvalidRequestError
+	if !errors.As(err, &invalid) || invalid.Status != 404 || invalid.Message != "数据库不存在" {
+		t.Fatalf("无登记容器应 404：%v", err)
+	}
+}
+
+func TestRevealReturnsAdminCredentialWithoutProtocol(t *testing.T) {
+	rows := []databaseRecord{{ID: "row-1", Engine: engineMySQL, ContainerID: testContainerID,
+		Admin: databaseSecret{Username: "root", Password: "admin-secret"}, Source: sourceManaged, State: stateActive, CreatedAt: "2026-09-28T09:00:00.000Z"}}
+	fixture := newServiceFixture("", nil, rows)
+	secret, err := fixture.service.Reveal(context.Background(), testContainerID)
+	if err != nil || secret.Username != "root" || secret.Password != "admin-secret" {
+		t.Fatalf("reveal 应直读登记行管理员凭据：%v %+v", err, secret)
+	}
+	if len(fixture.docker.createCalls) != 0 {
+		t.Fatal("reveal 不得发起协议或网络副作用")
+	}
+	if _, err := fixture.service.Reveal(context.Background(), strings.Repeat("9", 64)); err == nil {
+		t.Fatal("未登记容器应 404")
+	}
+	empty := newServiceFixture("", nil, []databaseRecord{{ID: "row-2", Engine: engineMySQL, ContainerID: testContainerID, State: stateEmpty, CreatedAt: "2026-09-28T09:00:00.000Z"}})
+	_, err = empty.service.Reveal(context.Background(), testContainerID)
+	var invalid *shared.InvalidRequestError
+	if !errors.As(err, &invalid) || invalid.Status != 409 || invalid.Message != "没有已保存的管理员凭据" {
+		t.Fatalf("无凭据登记应 409：%v", err)
+	}
+}
+
+func TestRemoveContainerAggregatesRowsAndKeepsIdentityChecks(t *testing.T) {
+	volume := stoppedManagedVolumeName
+	rows := []databaseRecord{
+		{ID: "row-a", Engine: engineMySQL, VersionTag: "8.4", ContainerID: testContainerID, VolumeName: volume,
+			Source: sourceManaged, Admin: databaseSecret{Username: "root", Password: "admin-secret"}, CreatedAt: "2026-09-28T09:00:00.000Z", State: stateActive, ContainerName: "mysql-main"},
+		{ID: "row-b", Engine: engineMySQL, VersionTag: "8.4", ContainerID: testContainerID, VolumeName: volume,
+			Source: sourceManaged, Admin: databaseSecret{Username: "root", Password: "admin-secret"}, CreatedAt: "2026-09-28T10:00:00.000Z", State: stateEmpty, ContainerName: "mysql-main"},
+	}
+	fixture := newServiceFixture("", nil, rows)
+	fixture.docker.removeErr = &shared.InvalidRequestError{Status: 409, Message: "容器或持久卷不属于面板管理的数据库"}
+	if err := fixture.service.RemoveContainer(context.Background(), testContainerID); err == nil {
+		t.Fatal("身份核对失败应拒绝删除")
+	}
+	if len(fixture.docker.removeCalls) != 1 {
+		t.Fatalf("removeManaged 应恰好调用一次：%v", fixture.docker.removeCalls)
+	}
+	if kept, _ := fixture.registry.list(); len(kept) != 2 {
+		t.Fatalf("删除失败不得清理登记：%d", len(kept))
+	}
+	fixture.docker.removeErr = nil
+	if err := fixture.service.RemoveContainer(context.Background(), testContainerID); err != nil {
+		t.Fatalf("删除失败：%v", err)
+	}
+	if fixture.docker.removeCalls[0] != testContainerID+"|"+volume+"|"+engineMySQL+"|8.4" {
+		t.Fatalf("removeManaged 参数不符：%v", fixture.docker.removeCalls)
+	}
+	if kept, _ := fixture.registry.list(); len(kept) != 0 {
+		t.Fatalf("成功后应移除该容器全部登记行：%+v", kept)
+	}
+}
+
+func TestRemoveContainerRejectsAdoptedOnlyRows(t *testing.T) {
+	rows := []databaseRecord{{ID: "row-adopted", Engine: engineMySQL, VersionTag: "8.0", ContainerID: testContainerID,
+		Source: sourceAdopted, Admin: databaseSecret{Username: "root", Password: "adopted-secret"}, CreatedAt: "2026-09-27T09:00:00.000Z", State: stateActive, ContainerName: "legacy-db"}}
+	fixture := newServiceFixture("", nil, rows)
+	err := fixture.service.RemoveContainer(context.Background(), testContainerID)
+	var invalid *shared.InvalidRequestError
+	if !errors.As(err, &invalid) || invalid.Status != 403 || invalid.Message != "只能删除面板创建的数据库容器和专属卷" {
+		t.Fatalf("非受管容器应 403：%v", err)
+	}
+	if len(fixture.docker.removeCalls) != 0 {
+		t.Fatal("拒绝路径不得派发删除")
+	}
+}
+
+func TestForgetOnlyWhenContainerGone(t *testing.T) {
+	rows := []databaseRecord{{ID: "row-adopted", Engine: engineMySQL, ContainerID: testContainerID,
+		Source: sourceAdopted, Admin: databaseSecret{Username: "root", Password: "adopted-secret"}, CreatedAt: "2026-09-27T09:00:00.000Z", State: stateNeedsAttention, ContainerName: "legacy-db"}}
+	fixture := newServiceFixture("", nil, rows)
+	fixture.docker.inspectFn = func(_ context.Context, id string) (map[string]any, error) {
+		return containerBody(id, "mysql:8.0", true, nil, nil, nil, nil), nil
+	}
+	err := fixture.service.Forget(context.Background(), testContainerID)
+	var invalid *shared.InvalidRequestError
+	if !errors.As(err, &invalid) || invalid.Status != 409 {
+		t.Fatalf("容器仍在时应 409：%v", err)
+	}
+	if kept, _ := fixture.registry.list(); len(kept) != 1 {
+		t.Fatal("容器仍在不得清理登记")
+	}
+	fixture.docker.inspectFn = nil // 404：容器已不存在
+	if err := fixture.service.Forget(context.Background(), testContainerID); err != nil {
+		t.Fatalf("容器已不存在应清理整组登记：%v", err)
+	}
+	if kept, _ := fixture.registry.list(); len(kept) != 0 {
+		t.Fatalf("登记应清空：%+v", kept)
+	}
+}
+
+func TestLegacyRegistryRowsAggregateAcrossOldFormats(t *testing.T) {
+	// 旧登记形态：同一容器的 managed 多行（active + stateEmpty 空容器行）。
+	rows := []databaseRecord{
+		{ID: "empty-row", Engine: engineMySQL, Name: "orders", VersionTag: "8.4", ContainerID: testContainerID,
+			VolumeName: stoppedManagedVolumeName, Source: sourceManaged, AccessScope: scopeAnyHost,
+			Admin: databaseSecret{Username: "root", Password: "admin-secret"}, CreatedAt: "2026-09-26T09:00:00.000Z", State: stateEmpty, ContainerName: "mysql-main"},
+		{ID: "managed-row", Engine: engineMySQL, Name: "crm", VersionTag: "8.4", ContainerID: testContainerID,
+			VolumeName: stoppedManagedVolumeName, Source: sourceManaged, AccessScope: scopeAnyHost,
+			Admin: databaseSecret{Username: "root", Password: "admin-secret"}, CreatedAt: "2026-09-28T09:00:00.000Z", State: stateActive, ContainerName: "mysql-main"},
+	}
+	containers := []contract.Container{{ID: testContainerID, ImageRef: "mysql:8.4"}}
+	fixture := newServiceFixture("", containers, rows)
+	fixture.docker.inspectFn = func(_ context.Context, id string) (map[string]any, error) {
+		return containerBody(id, "mysql:8.4", true, map[string]string{
+			"elysian.managed": "true", "elysian.database": "true", "elysian.database.engine": "MySQL",
+			"elysian.database.version": "8.4", "elysian.database.volume": stoppedManagedVolumeName,
+		}, []string{"elysian-db-shared"}, enginePortBindings("0.0.0.0", "43306"), testVolumeMount(stoppedManagedVolumeName)), nil
+	}
+	instances, err := fixture.service.List(context.Background())
+	if err != nil || len(instances) != 1 {
+		t.Fatalf("同容器多行应聚合为一行：%v %d", err, len(instances))
+	}
+	instance := instances[0]
+	if instance.Source != sourceManaged || instance.CredentialUsername != "root" || !instance.CredentialsVerified || !instance.NeedsAttention {
+		t.Fatalf("多行聚合投影不符：%+v", instance)
+	}
+	// 删除仍按容器聚合执行：removeManaged 成功后空容器行一并清理。
+	if err := fixture.service.RemoveContainer(context.Background(), testContainerID); err != nil {
+		t.Fatalf("删除失败：%v", err)
+	}
+	if kept, _ := fixture.registry.list(); len(kept) != 0 {
+		t.Fatalf("空容器行应随容器删除一并清理：%+v", kept)
+	}
+}
+
+// TestFileRegistryPreservesLegacyRecordShape 旧 databases.json 解析与写回键序不变。
+func TestFileRegistryPreservesLegacyRecordShape(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "databases.json")
+	legacy := `[{"id":"row-1","engine":"MySQL","name":"orders","versionTag":"8.4","containerId":"` + testContainerID + `","volumeName":"` + stoppedManagedVolumeName + `","source":"managed","accessScope":"any-host","admin":{"username":"root","password":"admin-secret"},"user":{"username":"reader","password":"reader-secret"},"createdAt":"2026-09-26T09:00:00.000Z","state":"active","containerName":"mysql-main"}]`
+	if err := os.WriteFile(path, []byte(legacy), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	registry := newFileDatabaseRegistry(path)
+	rows, err := registry.list()
+	if err != nil || len(rows) != 1 || rows[0].User.Username != "reader" || rows[0].Admin.Password != "admin-secret" {
+		t.Fatalf("旧格式登记应原样解析：%v %+v", err, rows)
+	}
+	rows[0].State = stateNeedsAttention
+	if err := registry.put(rows[0]); err != nil {
+		t.Fatal(err)
+	}
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	text := string(data)
+	for _, key := range []string{`"id":`, `"engine":`, `"name":`, `"versionTag":`, `"containerId":`, `"volumeName":`, `"source":`, `"accessScope":`, `"admin":`, `"user":`, `"createdAt":`, `"state":`, `"containerName":`} {
+		if !strings.Contains(text, key) {
+			t.Fatalf("写回应保留旧键 %s：%s", key, text)
 		}
 	}
 }
 
-// jsonMarshal 共享编码出口（与 shared.MarshalJSON 一致）。
-func jsonMarshal(value any) ([]byte, error) {
-	return shared.MarshalJSON(value)
+// guardFixture 注入容器操作守卫的假件。
+type guardFixture struct {
+	calls []string
+	err   error
 }
 
-func TestValidateCreateRequestNameMessageStatesFormatRule(t *testing.T) {
-	body := map[string]any{
-		"engine": engineMySQL, "versionTag": "8.4", "name": "mysql-db",
-		"user":        map[string]any{"username": "reader", "password": "long-enough-password"},
-		"accessScope": scopeContainerNet,
-		"target":      map[string]any{"kind": "new", "imageId": testImageID, "containerName": "mysql-db"},
+func (g *guardFixture) guard(_ context.Context, id, name, own string) error {
+	g.calls = append(g.calls, id+"|"+name+"|"+own)
+	return g.err
+}
+
+func TestContainerMutationGuardReceivesContainerName(t *testing.T) {
+	rows := []databaseRecord{{ID: "row-1", Engine: engineMySQL, ContainerID: testContainerID,
+		Source: sourceManaged, State: stateActive, CreatedAt: "2026-09-28T09:00:00.000Z", ContainerName: "mysql-main"}}
+	fixture := newServiceFixture("", nil, rows)
+	guard := &guardFixture{err: errors.New("此容器有进行中或结果未确认的操作")}
+	fixture.service.operationGuard = guard.guard
+	if _, err := fixture.service.Reconcile(context.Background(), testContainerID); err == nil {
+		t.Fatal("守卫拒绝应上抛")
 	}
-	_, err := validateCreateRequest(body)
-	var invalid *shared.InvalidRequestError
-	if !errors.As(err, &invalid) || invalid.Status != 400 {
-		t.Fatalf("连字符库名应被挡下，实际 %v", err)
-	}
-	if !strings.Contains(invalid.Message, "只能使用英文字母、数字和下划线") {
-		t.Fatalf("拒绝必须带上格式规则，模型才知道怎么纠正，实际 %q", invalid.Message)
-	}
-	terminalErr := ""
-	if _, err := sqlName("mysql-db"); err != nil {
-		terminalErr = err.Error()
-	}
-	if !strings.Contains(terminalErr, "只能使用英文字母、数字和下划线") {
-		t.Fatalf("SQL 终端校验应给出同一条规则，实际 %q", terminalErr)
+	if len(guard.calls) != 1 || guard.calls[0] != testContainerID+"|mysql-main|" {
+		t.Fatalf("守卫应收容器 ID 与名称：%v", guard.calls)
 	}
 }
 
-func TestCreateStartFailureReportsReasonAndKeepsPendingRegistration(t *testing.T) {
-	fixture := newServiceFixture("8.4")
-	fixture.docker.createResult = createResult{
-		containerID:  strings.Repeat("c", 64),
-		volumeName:   "elysian-db-" + strings.Repeat("0", 36),
-		started:      false,
-		startFailure: "面板数据库网络 elysian-db-shared 不存在",
+// 编译期锚定：memory 消隐与布尔字段恒出现。
+func TestMemoryOmittedWhenUnavailable(t *testing.T) {
+	containers := []contract.Container{{ID: testContainerID, ImageRef: "mysql:8.4"}}
+	fixture := newServiceFixture("", containers, nil)
+	fixture.docker.inspectFn = func(_ context.Context, id string) (map[string]any, error) {
+		return containerBody(id, "mysql:8.4", true, nil, nil, nil, nil), nil
 	}
-	_, err := fixture.service.Create(context.Background(), newCreateRequest(
-		createTarget{Kind: "new", ImageID: testImageID, ContainerName: "mysql-db"}, scopeContainerNet, nil))
-	if err == nil {
-		t.Fatal("启动失败必须报错")
+	fixture.docker.memoryFn = func(context.Context, string) (*memoryView, error) {
+		return nil, errors.New("stats 不可用")
 	}
-	message := err.Error()
-	if !strings.Contains(message, "容器启动失败") || !strings.Contains(message, "面板数据库网络 elysian-db-shared 不存在") {
-		t.Fatalf("错误应同时含启动失败与本地原因：%s", message)
+	instances, err := fixture.service.List(context.Background())
+	if err != nil || len(instances) != 1 {
+		t.Fatalf("列表失败：%v", err)
 	}
-	if !strings.Contains(message, "已登记为待处理") {
-		t.Fatalf("错误应指向待处理登记：%s", message)
+	raw, _ := json.Marshal(instances[0])
+	if strings.Contains(string(raw), `"memory"`) {
+		t.Fatalf("stats 读不到时应以 omitempty 消隐，不补零：%s", raw)
 	}
-	rows, listErr := fixture.registry.list()
-	if listErr != nil || len(rows) != 1 || rows[0].State != stateNeedsAttention {
-		t.Fatalf("容器已产生时必须留下待处理登记：%+v %v", rows, listErr)
+	if !strings.Contains(string(raw), `"credentialsVerified":false`) || !strings.Contains(string(raw), `"needsAttention":false`) {
+		t.Fatalf("布尔字段应恒出现：%s", raw)
 	}
 }

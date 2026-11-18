@@ -3,10 +3,11 @@ package database
 import (
 	"bytes"
 	"context"
+	"database/sql"
 	"errors"
-	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -16,6 +17,7 @@ import (
 
 // sqliteService.bun.test.ts 对等测试（真子进程）：生命周期、上传校验、快照并发
 // 与 fs 错误分类。worker 经测试二进制自身分叉（TestMain 拦截，go-plan §11 D10）。
+// SQL 会话已退役：仅保留文件创建、上传、快照、删除与核对路径。
 
 // TestMain 兼任 SQLite worker 子进程入口：父进程注入 ELYSIAN_SQLITE_FILE 时
 // 跳过测试框架直接进入 IPC 主循环。
@@ -24,6 +26,15 @@ func TestMain(m *testing.M) {
 		os.Exit(RunSQLiteWorker(os.Stdin, os.Stdout, os.Getenv))
 	}
 	os.Exit(m.Run())
+}
+
+// expectInvalidRequest 断言错误为指定状态码与文案的 InvalidRequestError。
+func expectInvalidRequest(t *testing.T, err error, status int, message string) {
+	t.Helper()
+	var invalid *shared.InvalidRequestError
+	if !errors.As(err, &invalid) || invalid.Status != status || invalid.Message != message {
+		t.Fatalf("应为 %d「%s」，实际 %v", status, message, err)
+	}
 }
 
 func newTestSqliteService(t *testing.T, mutate func(*sqliteOptions)) *sqliteService {
@@ -43,6 +54,30 @@ func newTestSqliteService(t *testing.T, mutate func(*sqliteOptions)) *sqliteServ
 	return newSqliteService(options)
 }
 
+// makeValidSqliteBytes 用测试进程内 modernc 驱动生成一份合法 SQLite 字节流，
+// 供上传回灌测试（SQL 会话退役后不再经终端建表）。
+func makeValidSqliteBytes(t *testing.T) []byte {
+	t.Helper()
+	path := filepath.Join(t.TempDir(), "donor.db")
+	db, err := sql.Open("sqlite", path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer db.Close()
+	if _, err := db.Exec("CREATE TABLE notes (id INTEGER, value TEXT)"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := db.Exec("INSERT INTO notes VALUES (1, 'hello')"); err != nil {
+		t.Fatal(err)
+	}
+	db.Close()
+	data, err := os.ReadFile(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	return data
+}
+
 func TestSqliteLifecycle(t *testing.T) {
 	service := newTestSqliteService(t, nil)
 	created, err := service.Create(context.Background(), "notes")
@@ -55,35 +90,8 @@ func TestSqliteLifecycle(t *testing.T) {
 	if created.Status != statusRunning || created.Source != sourceManaged {
 		t.Fatalf("创建后应为 running/managed：%+v", created)
 	}
-	// 终端会话：建表、插入、查询、ATTACH 拒。
-	session, err := service.OpenSession(context.Background(), strings.TrimPrefix(created.ID, "sqlite-"))
-	if err != nil {
-		t.Fatalf("openSession 失败：%v", err)
-	}
-	if _, err := session.Execute(context.Background(), "CREATE TABLE notes (id INTEGER, value TEXT)"); err != nil {
-		t.Fatalf("建表失败：%v", err)
-	}
-	lines, err := session.Execute(context.Background(), "INSERT INTO notes VALUES (1, 'hello')")
-	if err != nil {
-		t.Fatalf("插入失败：%v", err)
-	}
-	if len(lines) != 1 || !strings.HasPrefix(lines[0], "执行成功，影响") {
-		t.Fatalf("插入回显应为「执行成功，影响 N 行。」：%v", lines)
-	}
-	rows, err := session.Execute(context.Background(), "SELECT id, value FROM notes")
-	if err != nil {
-		t.Fatalf("查询失败：%v", err)
-	}
-	if len(rows) != 3 || rows[0] != "id\tvalue" || rows[1] != "1\thello" || !strings.Contains(rows[2], "返回 1 行。") {
-		t.Fatalf("查询输出不符：%#v", rows)
-	}
-	// ATTACH 被策略拒绝；错误经 IPC 帧回传文本（TS 同构：status 不随帧回传）。
-	_, attachErr := session.Execute(context.Background(), "ATTACH '/etc/passwd' AS other")
-	if attachErr == nil || !strings.Contains(attachErr.Error(), "禁止文件") {
-		t.Fatalf("ATTACH 应被拒且消息含「禁止文件」，实际 %v", attachErr)
-	}
-	if err := session.Close(); err != nil {
-		t.Fatal(err)
+	if created.TableCount == nil || *created.TableCount != 0 {
+		t.Fatalf("空库 tableCount 应为 0（worker probe 事实）：%+v", created)
 	}
 	// 快照下载字节 > 0。
 	snapshot, err := service.Download(context.Background(), strings.TrimPrefix(created.ID, "sqlite-"))
@@ -105,9 +113,9 @@ func TestSqliteLifecycle(t *testing.T) {
 	if err := service.Remove(context.Background(), strings.TrimPrefix(created.ID, "sqlite-")); err != nil {
 		t.Fatalf("remove 失败：%v", err)
 	}
-	rows2, err := service.List(context.Background())
-	if err != nil || len(rows2) != 0 {
-		t.Fatalf("remove 后列表应为空：%v %v", rows2, err)
+	rows, err := service.List(context.Background())
+	if err != nil || len(rows) != 0 {
+		t.Fatalf("remove 后列表应为空：%v %v", rows, err)
 	}
 }
 
@@ -155,42 +163,9 @@ func TestSqliteUploadValidation(t *testing.T) {
 	})
 }
 
-// 从真实库导出一份合法 SQLite 字节流，供回灌测试。
-func makeValidSqliteBytes(t *testing.T, service *sqliteService, name string) []byte {
-	t.Helper()
-	created, err := service.Create(context.Background(), name)
-	if err != nil {
-		t.Fatalf("建库失败：%v", err)
-	}
-	session, err := service.OpenSession(context.Background(), strings.TrimPrefix(created.ID, "sqlite-"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := session.Execute(context.Background(), "CREATE TABLE notes (id INTEGER, value TEXT)"); err != nil {
-		t.Fatal(err)
-	}
-	if _, err := session.Execute(context.Background(), "INSERT INTO notes VALUES (1, 'hello')"); err != nil {
-		t.Fatal(err)
-	}
-	session.Close()
-	snapshot, err := service.Download(context.Background(), strings.TrimPrefix(created.ID, "sqlite-"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	data, err := os.ReadFile(snapshot.Path)
-	if err != nil {
-		t.Fatal(err)
-	}
-	snapshot.Cleanup()
-	if err := service.Remove(context.Background(), strings.TrimPrefix(created.ID, "sqlite-")); err != nil {
-		t.Fatal(err)
-	}
-	return data
-}
-
 func TestSqliteImportRoundTrip(t *testing.T) {
 	service := newTestSqliteService(t, nil)
-	payload := makeValidSqliteBytes(t, service, "donor")
+	payload := makeValidSqliteBytes(t)
 	imported, err := service.ImportFile(context.Background(), "copy", bytes.NewReader(payload), int64(len(payload)), "application/octet-stream")
 	if err != nil {
 		t.Fatalf("回灌失败：%v", err)
@@ -251,7 +226,7 @@ func TestSqliteFsMessageClassification(t *testing.T) {
 	if message := sqliteFsMessage(&errnoError{code: "EUNKNOWN", message: "x"}); message != "SQLite 管理文件不可用" {
 		t.Fatalf("未识别 code 应兜底，实际 %q", message)
 	}
-	if message := sqliteFsMessage(errors.New("数据库终端消息")); message != "数据库终端消息" {
+	if message := sqliteFsMessage(errors.New("本地管理错误")); message != "本地管理错误" {
 		t.Fatalf("无 code 的错误应原样，实际 %q", message)
 	}
 	if message := sqliteFsMessage(shared.InvalidRequest("请求错误")); message != "请求错误" {
@@ -262,38 +237,22 @@ func TestSqliteFsMessageClassification(t *testing.T) {
 	}
 }
 
-func TestSqliteQuotaWithSmallTotalLimit(t *testing.T) {
-	// totalLimit=8192（2 页）：limitBytes = max(自身字节, min(1GiB, 8192-其他))
-	// —— 空库自身 ~12KB（3 页），因此写入超 3 页的数据被 max_page_count 拦截。
+func TestSqliteTotalLimitWithSmallQuota(t *testing.T) {
+	// 空库两页（8 KiB）：限额 8 KiB 时首库恰好可建，第二库在建库前触发总量 413。
 	service := newTestSqliteService(t, func(options *sqliteOptions) {
 		options.TotalLimitBytes = 8192
 	})
-	created, err := service.Create(context.Background(), "notes")
-	if err != nil {
-		t.Fatalf("小配额建库失败：%v", err)
+	if _, err := service.Create(context.Background(), "notes"); err != nil {
+		t.Fatalf("小配额首库应可建：%v", err)
 	}
-	id := strings.TrimPrefix(created.ID, "sqlite-")
-	session, err := service.OpenSession(context.Background(), id)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := session.Execute(context.Background(), "CREATE TABLE notes (id INTEGER, value TEXT)"); err != nil {
-		t.Fatal(err)
-	}
-	_, insertErr := session.Execute(context.Background(), fmt.Sprintf("INSERT INTO notes VALUES (1, '%s')", strings.Repeat("x", 60000)))
-	if insertErr == nil {
-		t.Fatal("小配额下超限写入应被配额拦截")
-	}
-	session.Close()
-	// 文件未超限：库仍可打开核对。
-	rows, err := service.List(context.Background())
-	if err != nil || len(rows) != 1 {
-		t.Fatalf("配额拦截不应破坏登记：%v %v", rows, err)
-	}
-	// 总量已达上限：再建新库 413。
-	_, err = service.Create(context.Background(), "another")
+	_, err := service.Create(context.Background(), "another")
 	if err == nil || !strings.Contains(err.Error(), "上限") {
 		t.Fatalf("总量超限后再建应 413「上限」，实际 %v", err)
+	}
+	// 登记仍只有一库：失败创建不残留登记。
+	rows, err := service.List(context.Background())
+	if err != nil || len(rows) != 1 {
+		t.Fatalf("登记不应被失败创建污染：%v %v", rows, err)
 	}
 }
 

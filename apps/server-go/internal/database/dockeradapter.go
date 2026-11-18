@@ -20,7 +20,7 @@ import (
 )
 
 // Docker Engine API 适配（databaseDocker.ts 等价物）：inspect/assertEngine/
-// address/attach/detach/create/removeManaged/memory。请求经 seam.DockerTransport
+// create/removeManaged/memory。请求经 seam.DockerTransport
 // 发出（版本前缀 /v1.41 由传输器统一添加），每请求超时 15s、响应上限 4 MiB。
 
 const (
@@ -56,7 +56,6 @@ var (
 	containerNamePattern        = regexp.MustCompile(`^[a-zA-Z0-9][a-zA-Z0-9_.-]{0,63}$`)
 	shaRefPattern               = regexp.MustCompile(`^(?:sha256:)?[a-f0-9]{64}$`)
 	managedVolumeNamePattern    = regexp.MustCompile(`^elysian-db-[0-9a-f-]{36}$`)
-	ipv4Pattern                 = regexp.MustCompile(`^\d{1,3}(?:\.\d{1,3}){3}$`)
 )
 
 // validDatabaseVersion 版本标签判据（拒绝 latest 与嵌入 shell 元字符的形态）。
@@ -231,93 +230,15 @@ func (d *dockerAPI) ensureNetwork(ctx context.Context, network string) error {
 	return nil
 }
 
-// attach 把容器接入面板数据库网络（幂等）。
-func (d *dockerAPI) attach(ctx context.Context, id, network string) error {
-	if network != networkDBPrivateName && network != networkDBSharedName {
-		return shared.InvalidRequest("数据库网络无效")
-	}
-	info, err := d.inspect(ctx, id)
-	if err != nil {
-		return err
-	}
-	if attached := field(obj(field(obj(field(info, "NetworkSettings")), "Networks")), network); attached != nil {
-		return nil
-	}
-	if err := d.ensureNetwork(ctx, network); err != nil {
-		return err
-	}
-	response, err := d.request(ctx, "POST", "/networks/"+url.PathEscape(network)+"/connect", nil, map[string]any{"Container": id})
-	if err != nil {
-		return err
-	}
-	if response.Status != 200 && response.Status != 201 && response.Status != 204 {
-		return &shared.InvalidRequestError{Status: 409, Message: "无法将数据库容器接入面板网络"}
-	}
-	return nil
-}
-
-// detach 把容器移出面板数据库网络（幂等；容器已删视为已离网）。
-func (d *dockerAPI) detach(ctx context.Context, id, network string) error {
-	if network != networkDBPrivateName && network != networkDBSharedName {
-		return shared.InvalidRequest("数据库网络无效")
-	}
-	info, err := d.inspect(ctx, id)
-	if err != nil {
-		var invalid *shared.InvalidRequestError
-		if errors.As(err, &invalid) && invalid.Status == 404 {
-			return nil
-		}
-		return err
-	}
-	if attached := field(obj(field(obj(field(info, "NetworkSettings")), "Networks")), network); attached == nil {
-		return nil
-	}
-	response, err := d.request(ctx, "POST", "/networks/"+url.PathEscape(network)+"/disconnect", nil, map[string]any{"Container": id})
-	if err != nil {
-		return err
-	}
-	if response.Status < 200 || response.Status >= 300 {
-		return &shared.InvalidRequestError{Status: 409, Message: "无法将数据库容器移出面板网络"}
-	}
-	return nil
-}
-
-// address 取容器在面板网络（私有优先）上的 IPv4。
-func (d *dockerAPI) address(ctx context.Context, id string, network string) (databaseAddress, error) {
-	info, err := d.inspect(ctx, id)
-	if err != nil {
-		return databaseAddress{}, err
-	}
-	if !inspectRunning(info) {
-		return databaseAddress{}, &shared.InvalidRequestError{Status: 409, Message: "数据库容器未运行"}
-	}
-	networks := obj(field(obj(field(info, "NetworkSettings")), "Networks"))
-	selected := network
-	if selected == "" {
-		if field(networks, networkDBPrivateName) != nil {
-			selected = networkDBPrivateName
-		} else {
-			selected = networkDBSharedName
-		}
-	}
-	ip, _ := field(obj(field(networks, selected)), "IPAddress").(string)
-	if !ipv4Pattern.MatchString(ip) {
-		return databaseAddress{}, &shared.InvalidRequestError{Status: 409, Message: "数据库容器尚未接入面板网络"}
-	}
-	return databaseAddress{Host: ip, Port: 0}, nil
-}
-
 // createInput 创建数据库容器的全部入参。
 type createInput struct {
-	serviceOptions *seam.AgentServiceContainerInput
-	engine         string
-	versionTag     string
-	imageID        string
-	containerName  string
-	accessScope    string
-	hostPort       *int
-	bootstrapPwd   string
-	ordinaryUser   databaseSecret
+	engine        string
+	versionTag    string
+	imageID       string
+	containerName string
+	accessScope   string
+	hostPort      *int
+	bootstrapPwd  string
 }
 
 // createResult 容器与专属卷的创建产物。
@@ -478,30 +399,8 @@ func (d *dockerAPI) create(ctx context.Context, input createInput) (createResult
 		NetworkingConfig: networkingConfigSpec{EndpointsConfig: map[string]networkEndpointSpec{network: {}}},
 		ExposedPorts:     map[string]map[string]any{portKey: {}},
 	}
-	if input.serviceOptions != nil {
-		spec.Image = "sha256:" + stripSha256Prefix(imageID)
-		switch input.serviceOptions.ResourceTier {
-		case "small":
-			spec.HostConfig.Memory = 512 << 20
-			spec.HostConfig.NanoCpus = 500000000
-		case "medium":
-			spec.HostConfig.Memory = 1 << 30
-			spec.HostConfig.NanoCpus = 1000000000
-		case "large":
-			spec.HostConfig.Memory = 2 << 30
-			spec.HostConfig.NanoCpus = 2000000000
-		}
-		spec.HostConfig.PidsLimit = 256
-		for _, entry := range input.serviceOptions.Env {
-			key := strings.SplitN(entry, "=", 2)[0]
-			if strings.HasPrefix(key, "MYSQL_") || strings.HasPrefix(key, "MARIADB_") || strings.Contains(key, "PASSWORD") {
-				continue
-			}
-			spec.Env = append(spec.Env, entry)
-		}
-	}
 	if engine == engineRedis {
-		spec.Cmd = redisACLCommand(input.bootstrapPwd, input.ordinaryUser)
+		spec.Cmd = redisACLCommand(input.bootstrapPwd)
 	} else {
 		prefix := "MARIADB"
 		if engine == engineMySQL {
@@ -553,14 +452,10 @@ func startFailureReason(body []byte, network string) string {
 }
 
 // redisACLCommand 生成 Redis 启动命令：ACL 文件先写进持久卷再启动服务。
-// ACL 里 default 与普通账号密码均为 sha256 hex（#hash 形态），容器配置不含明文。
-func redisACLCommand(bootstrapPassword string, ordinaryUser databaseSecret) []string {
+// ACL 里 default 用户密码为 sha256 hex（#hash 形态），容器配置不含明文。
+func redisACLCommand(bootstrapPassword string) []string {
 	adminHash := sha256.Sum256([]byte(bootstrapPassword))
-	userHash := sha256.Sum256([]byte(ordinaryUser.Password))
-	acl := "user default on #" + hex.EncodeToString(adminHash[:]) + " ~* &* +@all\n" +
-		"user " + ordinaryUser.Username + " on #" + hex.EncodeToString(userHash[:]) +
-		" ~* &* +@all -@dangerous -@scripting -select -move -copy -swapdb -flushdb -flushall" +
-		" -eval -evalsha -eval_ro -evalsha_ro -fcall -fcall_ro -function -script -config -acl -module -debug -shutdown -save -bgsave -bgrewriteaof -migrate -restore -replicaof -slaveof -cluster -monitor -sync -psync\n"
+	acl := "user default on #" + hex.EncodeToString(adminHash[:]) + " ~* &* +@all\n"
 	encoded := base64.StdEncoding.EncodeToString([]byte(acl))
 	return []string{"sh", "-c", fmt.Sprintf("printf '%%s' '%s' | base64 -d > /data/users.acl && exec redis-server --appendonly yes --aclfile /data/users.acl", encoded)}
 }

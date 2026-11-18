@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
 	"net/http"
 	"net/http/httptest"
@@ -13,78 +12,60 @@ import (
 	"testing"
 
 	"github.com/go-chi/chi/v5"
-	"github.com/gorilla/websocket"
 
-	"elysian/server/internal/contract"
 	"elysian/server/internal/middleware"
-	"elysian/server/internal/seam"
 	"elysian/server/internal/shared"
 )
 
-// databaseRoutes.test.ts 对等测试：HTTP 守卫链、列表合并、审计口径与终端帧检查。
+// databaseRoutes.test.ts 对等测试：HTTP 守卫链、容器列表与 SQLite 分流、确认守卫。
 
 const testSecret = "password-hidden-from-list"
 
-// fakeService 假服务型数据库服务。
+// fakeService 假容器数据库服务。
 type fakeService struct {
 	mu                sync.Mutex
-	listed            []serviceInstance
+	listed            []containerInstance
 	revealed          databaseSecret
-	removed           []string
 	removedContainers []string
-	discovered        []discoveredCall
 	createCalled      bool
-	revealCalled      bool
-	openSession       Session
+	reconciled        []string
+	forgotten         []string
 }
 
-func (f *fakeService) List(context.Context) ([]serviceInstance, error) {
+func (f *fakeService) List(context.Context) ([]containerInstance, error) {
 	return f.listed, nil
 }
 
-func (f *fakeService) Discover(_ context.Context, engine string, versionTag *string) (discoverResult, error) {
+func (f *fakeService) Create(context.Context, createRequest) (createResponse, error) {
 	f.mu.Lock()
 	defer f.mu.Unlock()
-	f.discovered = append(f.discovered, discoveredCall{engine: engine, versionTag: versionTag})
-	return discoverResult{Images: []contract.ContainerImage{}, Containers: []containerCandidate{}}, nil
-}
-
-type discoveredCall struct {
-	engine     string
-	versionTag *string
-}
-
-func (f *fakeService) Create(context.Context, createRequest) (createResponse, error) {
 	f.createCalled = true
 	return createResponse{}, nil
 }
 
 func (f *fakeService) Reveal(context.Context, string) (databaseSecret, error) {
-	f.revealCalled = true
 	return f.revealed, nil
 }
 
-func (f *fakeService) Remove(_ context.Context, id string) error {
-	f.removed = append(f.removed, id)
-	return nil
-}
-
 func (f *fakeService) RemoveContainer(_ context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
 	f.removedContainers = append(f.removedContainers, id)
 	return nil
 }
 
-func (f *fakeService) Reconcile(context.Context, string) (serviceInstance, error) {
-	return serviceInstance{}, nil
+func (f *fakeService) Reconcile(_ context.Context, id string) (containerInstance, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.reconciled = append(f.reconciled, id)
+	return containerInstance{}, nil
 }
 
-func (f *fakeService) Forget(context.Context, string) error { return nil }
-
-func (f *fakeService) OpenSession(context.Context, string) (Session, error) {
-	if f.openSession != nil {
-		return f.openSession, nil
-	}
-	return nil, errors.New("session not configured")
+func (f *fakeService) Forget(_ context.Context, id string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.forgotten = append(f.forgotten, id)
+	return nil
 }
 
 // fakeSqlite 假 SQLite 托管服务。
@@ -135,34 +116,9 @@ func (f *fakeSqlite) Forget(_ context.Context, id string) error {
 	return nil
 }
 
-func (f *fakeSqlite) OpenSession(context.Context, string) (Session, error) {
-	return nil, errors.New("session not configured")
-}
-
-// recordedLog 记录审计调用的假日志。
-type recordedLog struct {
-	mu   sync.Mutex
-	rows []seam.OperationRecord
-}
-
-func (l *recordedLog) Runtime(string, string, string) {}
-
-func (l *recordedLog) RecordOperation(rec seam.OperationRecord) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	l.rows = append(l.rows, rec)
-}
-
-// routerFixture 组装被测路由。
-type routerFixture struct {
-	router  chi.Router
-	service *fakeService
-	sqlite  *fakeSqlite
-	logs    *recordedLog
-}
-
-func newRouterFixture(service Service, sqlite SqliteService, logs seam.Logs) chi.Router {
-	return newRouter(routerDeps{available: true, service: service, sqlite: sqlite, logs: logs})
+// newRouterFixture 组装被测路由。
+func newRouterFixture(service Service, sqlite SqliteService) chi.Router {
+	return newRouter(routerDeps{available: true, service: service, sqlite: sqlite})
 }
 
 func sameOriginHeaders() map[string]string {
@@ -181,197 +137,116 @@ func doRequest(t *testing.T, router chi.Router, method, target string, headers m
 	return recorder
 }
 
-func TestDiscoverPassesVersionTag(t *testing.T) {
-	service := &fakeService{}
-	router := newRouterFixture(service, nil, nil)
-	if status := doRequest(t, router, "GET", "/discover?engine=MySQL", nil, nil).Code; status != 200 {
-		t.Fatalf("省略 versionTag 应 200，实际 %d", status)
-	}
-	if len(service.discovered) != 1 || service.discovered[0].engine != "MySQL" || service.discovered[0].versionTag != nil {
-		t.Fatalf("discover 参数透传不符：%+v", service.discovered)
-	}
-	if status := doRequest(t, router, "GET", "/discover?engine=MySQL&versionTag=8.4", nil, nil).Code; status != 200 {
-		t.Fatal("带版本查询应 200")
-	}
-	if service.discovered[1].versionTag == nil || *service.discovered[1].versionTag != "8.4" {
-		t.Fatalf("versionTag 应透传 8.4：%+v", service.discovered[1].versionTag)
-	}
-	if status := doRequest(t, router, "GET", "/discover?engine=Oracle", nil, nil).Code; status != 400 {
-		t.Fatal("未知引擎应 400")
-	}
-}
-
-func TestListMergesServiceThenSqlite(t *testing.T) {
-	service := &fakeService{listed: []serviceInstance{{
-		ID: "db-1", Engine: engineMySQL, Name: "orders", Version: "8.4", Status: statusRunning,
-		UpdatedAt: "2026-09-28T00:00:00.000Z", CredentialUsername: "reader", HasCredentials: boolPtr(true),
+func TestListReturnsContainerRowsOnly(t *testing.T) {
+	service := &fakeService{listed: []containerInstance{{
+		ID: "c1", Engine: engineMySQL, Name: "mysql-main", Version: "8.4", Status: statusRunning,
+		Image: "mysql:8.4", ContainerID: "c1", Ports: []containerPortView{}, Networks: []string{},
+		CredentialsVerified: true, UpdatedAt: "2026-09-28T00:00:00.000Z",
 	}}}
 	files := &fakeSqlite{listed: []sqliteInstance{{
 		ID: "sqlite-123", Engine: engineSQLite, Name: "notes", Version: "3.54", Status: statusRunning,
 		UpdatedAt: "2026-09-28T00:00:00.000Z", Source: sourceManaged,
 	}}}
-	router := newRouterFixture(service, files, nil)
+	router := newRouterFixture(service, files)
 	recorder := doRequest(t, router, "GET", "/", nil, nil)
 	if recorder.Code != 200 {
-		t.Fatalf("列表应 200，实际 %d", recorder.Code)
+		t.Fatalf("容器列表应 200，实际 %d", recorder.Code)
 	}
 	var rows []map[string]any
 	if json.Unmarshal(recorder.Body.Bytes(), &rows) != nil {
-		t.Fatal("列表 JSON 解析失败")
+		t.Fatal("容器列表 JSON 解析失败")
 	}
-	if len(rows) != 2 || rows[0]["engine"] != "MySQL" || rows[1]["engine"] != "SQLite" {
-		t.Fatalf("列表应服务型在前 SQLite 在后：%s", recorder.Body.String())
+	if len(rows) != 1 || rows[0]["engine"] != "MySQL" || rows[0]["containerId"] != "c1" {
+		t.Fatalf("GET / 只返回容器实例行：%s", recorder.Body.String())
+	}
+	if strings.Contains(recorder.Body.String(), "SQLite") {
+		t.Fatal("容器列表不得混入 SQLite 行")
 	}
 	if strings.Contains(recorder.Body.String(), testSecret) {
 		t.Fatal("列表不得包含密码")
 	}
+	// SQLite 行走独立端点。
+	sqliteList := doRequest(t, router, "GET", "/sqlite", nil, nil)
+	if sqliteList.Code != 200 {
+		t.Fatalf("GET /sqlite 应 200，实际 %d", sqliteList.Code)
+	}
+	var sqliteRows []map[string]any
+	if json.Unmarshal(sqliteList.Body.Bytes(), &sqliteRows) != nil || len(sqliteRows) != 1 || sqliteRows[0]["engine"] != "SQLite" {
+		t.Fatalf("GET /sqlite 只返回 SQLite 行：%s", sqliteList.Body.String())
+	}
+	if strings.Contains(sqliteList.Body.String(), "MySQL") {
+		t.Fatal("SQLite 列表不得混入容器行")
+	}
+}
+
+func TestRetiredEndpointsReturnNotFound(t *testing.T) {
+	router := newRouterFixture(&fakeService{}, &fakeSqlite{})
+	for _, target := range []string{"/db-1", "/db-1/terminal", "/discover?engine=MySQL"} {
+		method := "DELETE"
+		if strings.HasPrefix(target, "/db-1/terminal") || strings.HasPrefix(target, "/discover") {
+			method = "GET"
+		}
+		recorder := doRequest(t, router, method, target, sameOriginHeaders(), []byte("{}"))
+		if recorder.Code != http.StatusNotFound {
+			t.Fatalf("%s %s 退役端点应 404，实际 %d", method, target, recorder.Code)
+		}
+	}
 }
 
 func TestRevealGuardsAndNoStore(t *testing.T) {
-	service := &fakeService{revealed: databaseSecret{Username: "reader", Password: testSecret}}
-	router := newRouterFixture(service, nil, nil)
-	blocked := doRequest(t, router, "POST", "/db-1/reveal", map[string]string{
+	service := &fakeService{revealed: databaseSecret{Username: "root", Password: testSecret}}
+	router := newRouterFixture(service, nil)
+	blocked := doRequest(t, router, "POST", "/container-id/reveal", map[string]string{
 		"Host": "localhost:48100", "Origin": "http://evil.example", "Content-Type": "application/json",
 	}, []byte("{}"))
 	if blocked.Code != http.StatusForbidden {
 		t.Fatalf("跨源 reveal 应 403，实际 %d", blocked.Code)
 	}
-	revealed := doRequest(t, router, "POST", "/db-1/reveal", sameOriginHeaders(), []byte("{}"))
+	revealed := doRequest(t, router, "POST", "/container-id/reveal", sameOriginHeaders(), []byte("{}"))
 	if revealed.Code != 200 || revealed.Header().Get("Cache-Control") != "no-store" {
 		t.Fatalf("reveal 应 200 且 no-store，实际 %d %q", revealed.Code, revealed.Header().Get("Cache-Control"))
 	}
 	if !strings.Contains(revealed.Body.String(), testSecret) {
-		t.Fatal("reveal 应回普通账号凭证")
+		t.Fatal("reveal 应回管理员凭证")
 	}
 }
 
 func TestRemoveContainerConfirmGuard(t *testing.T) {
 	service := &fakeService{}
-	router := newRouterFixture(service, nil, nil)
+	router := newRouterFixture(service, nil)
 	headers := sameOriginHeaders()
-	denied := doRequest(t, router, "DELETE", "/db-1/container", headers, []byte(`{"confirm":false}`))
+	denied := doRequest(t, router, "DELETE", "/container-id/container", headers, []byte(`{"confirm":false}`))
 	if denied.Code != 400 || !strings.Contains(denied.Body.String(), "必须确认删除容器及全部数据") {
 		t.Fatalf("错 confirm 应 400，实际 %d %s", denied.Code, denied.Body.String())
 	}
 	if len(service.removedContainers) != 0 {
 		t.Fatal("错 confirm 不应调用 service")
 	}
-	accepted := doRequest(t, router, "DELETE", "/db-1/container", headers, []byte(`{"confirm":"DELETE_CONTAINER_AND_DATA"}`))
-	if accepted.Code != 200 || len(service.removedContainers) != 1 {
-		t.Fatalf("正确 confirm 应 200 并调用 service：%d", accepted.Code)
+	accepted := doRequest(t, router, "DELETE", "/container-id/container", headers, []byte(`{"confirm":"DELETE_CONTAINER_AND_DATA"}`))
+	if accepted.Code != 200 || len(service.removedContainers) != 1 || service.removedContainers[0] != "container-id" {
+		t.Fatalf("正确 confirm 应 200 并按容器 ID 调用 service：%d", accepted.Code)
 	}
 }
 
-func TestTerminalUpgradeGuards(t *testing.T) {
-	logs := &recordedLog{}
-	router := newRouterFixture(&fakeService{}, nil, logs)
-	denied := doRequest(t, router, "GET", "/db-1/terminal", map[string]string{
-		"Host": "localhost:48100", "Origin": "http://evil.example",
-	}, nil)
-	if denied.Code != http.StatusForbidden || !strings.Contains(denied.Body.String(), "请求来源不允许") {
-		t.Fatalf("非同源终端 GET 应 403，实际 %d", denied.Code)
+func TestReconcileAndForgetUseContainerID(t *testing.T) {
+	service := &fakeService{}
+	router := newRouterFixture(service, nil)
+	headers := sameOriginHeaders()
+	if status := doRequest(t, router, "POST", "/container-id/reconcile", headers, nil).Code; status != 200 {
+		t.Fatalf("reconcile 应 200，实际 %d", status)
 	}
-	logs.mu.Lock()
-	if len(logs.rows) != 1 || logs.rows[0].Category != "database" || logs.rows[0].Action != "发起数据库协议终端连接" ||
-		logs.rows[0].Result != "failure" || logs.rows[0].HTTPStatus == nil || *logs.rows[0].HTTPStatus != 403 {
-		t.Fatalf("403 拒绝应记 failure/403 审计：%+v", logs.rows)
+	if status := doRequest(t, router, "DELETE", "/container-id/registration", headers, nil).Code; status != 200 {
+		t.Fatalf("forget 应 200，实际 %d", status)
 	}
-	logs.mu.Unlock()
-
-	logs = &recordedLog{}
-	router = newRouterFixture(nil, &fakeSqlite{}, logs)
-	unavailable := doRequest(t, router, "GET", "/db-1/terminal", map[string]string{
-		"Host": "localhost:48100", "Origin": "http://localhost:48100",
-	}, nil)
-	if unavailable.Code != http.StatusServiceUnavailable || !strings.Contains(unavailable.Body.String(), "数据库终端服务不可用") {
-		t.Fatalf("只挂 sqlite 时 MySQL 终端应 503，实际 %d", unavailable.Code)
-	}
-	logs.mu.Lock()
-	if len(logs.rows) != 1 || logs.rows[0].Result != "failure" || logs.rows[0].HTTPStatus == nil || *logs.rows[0].HTTPStatus != 503 {
-		t.Fatalf("503 拒绝应记 failure/503 审计：%+v", logs.rows)
-	}
-	logs.mu.Unlock()
-}
-
-func TestTerminalFrameViolation(t *testing.T) {
-	if reason := terminalFrameViolation(websocket.BinaryMessage, []byte("binary")); reason != "终端消息无效" {
-		t.Fatalf("二进制帧应判「终端消息无效」，实际 %q", reason)
-	}
-	if reason := terminalFrameViolation(websocket.TextMessage, []byte("x")); reason != "" {
-		t.Fatalf("普通文本帧应放行，实际 %q", reason)
-	}
-	if reason := terminalFrameViolation(websocket.TextMessage, []byte(strings.Repeat("a", 65*1024))); reason != "输入超过 64 KiB" {
-		t.Fatalf("65 KiB 帧应判超限，实际 %q", reason)
-	}
-	if reason := terminalFrameViolation(websocket.TextMessage, []byte(strings.Repeat("a", 64*1024))); reason != "" {
-		t.Fatalf("64 KiB 帧应放行，实际 %q", reason)
-	}
-	if reason := terminalFrameViolation(websocket.TextMessage, []byte(`{"type":"execute","text":"SELECT 1"}`)); reason != "" {
-		t.Fatalf("合法 JSON 帧应放行，实际 %q", reason)
-	}
-}
-
-// fakeWsConn 可编程的 seam.WsConn 假件。
-type fakeWsConn struct {
-	readyState     int
-	bufferedAmount int64
-	sent           []string
-	closeCode      int
-	closeReason    string
-}
-
-func (c *fakeWsConn) SendText(text string) bool {
-	if c.readyState != 1 {
-		return false
-	}
-	c.sent = append(c.sent, text)
-	return true
-}
-
-func (c *fakeWsConn) BufferedAmount() int64 { return c.bufferedAmount }
-
-func (c *fakeWsConn) Close(code int, reason string) {
-	c.closeCode = code
-	c.closeReason = reason
-}
-
-func (c *fakeWsConn) ReadMessage() (int, []byte, error) { return 0, nil, errors.New("unused") }
-
-func TestSendGuardedWatermark(t *testing.T) {
-	payload := wsErrorFrame{Type: "error", Text: "上一条命令仍在执行"}
-	// 低于水位：发送。
-	conn := &fakeWsConn{readyState: 1, bufferedAmount: 1024*1024 - 1}
-	sendGuarded(conn, func() bool { return conn.readyState == 1 }, payload)
-	if len(conn.sent) != 1 || conn.closeCode != 0 {
-		t.Fatalf("低于水位应发送：%v", conn.sent)
-	}
-	// 达到水位：不发并 1008。
-	for _, amount := range []int64{1024 * 1024, 1024*1024 + 1} {
-		conn = &fakeWsConn{readyState: 1, bufferedAmount: amount}
-		sendGuarded(conn, func() bool { return conn.readyState == 1 }, payload)
-		if len(conn.sent) != 0 || conn.closeCode != 1008 || conn.closeReason != "输出缓冲超限" {
-			t.Fatalf("水位达 1 MiB 应 close(1008 输出缓冲超限)：%d %q", conn.closeCode, conn.closeReason)
-		}
-	}
-	// 非 OPEN：不发也不断开。
-	conn = &fakeWsConn{readyState: 3, bufferedAmount: 1024 * 1024 * 8}
-	sendGuarded(conn, func() bool { return conn.readyState == 1 }, payload)
-	if len(conn.sent) != 0 || conn.closeCode != 0 {
-		t.Fatal("非 OPEN 不应发送或断开")
+	if len(service.reconciled) != 1 || service.reconciled[0] != "container-id" || len(service.forgotten) != 1 || service.forgotten[0] != "container-id" {
+		t.Fatalf("id 语义应为容器 ID：%v %v", service.reconciled, service.forgotten)
 	}
 }
 
 func TestSqliteRoutesMergeAndConfirm(t *testing.T) {
-	service := &fakeService{listed: []serviceInstance{{ID: "db-1", Engine: engineMySQL}}}
 	files := &fakeSqlite{listed: []sqliteInstance{{ID: "sqlite-123", Engine: engineSQLite, Name: "notes"}}}
-	router := newRouterFixture(service, files, nil)
+	router := newRouterFixture(&fakeService{}, files)
 	headers := sameOriginHeaders()
-
-	recorder := doRequest(t, router, "GET", "/", nil, nil)
-	var rows []map[string]any
-	if json.Unmarshal(recorder.Body.Bytes(), &rows) != nil || len(rows) != 2 || rows[0]["engine"] != "MySQL" || rows[1]["engine"] != "SQLite" {
-		t.Fatalf("合并列表应 MySQL 在前 SQLite 在后：%s", recorder.Body.String())
-	}
 
 	created := doRequest(t, router, "POST", "/sqlite", headers, []byte(`{"name":"notes"}`))
 	if created.Code != 201 {
@@ -405,7 +280,7 @@ func TestUnavailableDomainReturns503(t *testing.T) {
 	for _, testCase := range []struct {
 		method, target string
 	}{
-		{"GET", "/"}, {"GET", "/nowhere"}, {"POST", "/"}, {"DELETE", "/db-1"},
+		{"GET", "/"}, {"GET", "/sqlite"}, {"GET", "/nowhere"}, {"DELETE", "/container-id"},
 	} {
 		recorder := doRequest(t, router, testCase.method, testCase.target, map[string]string{"Host": "localhost:48100", "Origin": "http://localhost:48100", "Content-Type": "application/json"}, []byte("{}"))
 		if recorder.Code != 503 || !strings.Contains(recorder.Body.String(), "真实数据库仅在 Docker 环境可用") {
@@ -415,15 +290,15 @@ func TestUnavailableDomainReturns503(t *testing.T) {
 }
 
 func TestServiceMissingReturns503(t *testing.T) {
-	router := newRouterFixture(nil, &fakeSqlite{}, nil)
-	recorder := doRequest(t, router, "GET", "/discover?engine=MySQL", nil, nil)
+	router := newRouterFixture(nil, &fakeSqlite{})
+	recorder := doRequest(t, router, "GET", "/", nil, nil)
 	if recorder.Code != 503 || !strings.Contains(recorder.Body.String(), "容器数据库服务不可用") {
-		t.Fatalf("仅挂 sqlite 时服务型端点应 503，实际 %d %s", recorder.Code, recorder.Body.String())
+		t.Fatalf("仅挂 sqlite 时容器端点应 503，实际 %d %s", recorder.Code, recorder.Body.String())
 	}
 }
 
 func TestSameOriginGuardRejectsCrossSiteWrites(t *testing.T) {
-	router := newRouterFixture(&fakeService{}, &fakeSqlite{}, nil)
+	router := newRouterFixture(&fakeService{}, &fakeSqlite{})
 	recorder := doRequest(t, router, "DELETE", "/sqlite/sqlite-123", map[string]string{
 		"Host": "localhost:48100", "Origin": "http://evil.example", "Content-Type": "application/json",
 	}, []byte(`{"confirm":"DELETE_SQLITE_FILE"}`))
@@ -435,10 +310,8 @@ func TestSameOriginGuardRejectsCrossSiteWrites(t *testing.T) {
 // 编译期锚定：错误映射按 shared.InvalidRequestError 自带状态码回显。
 func TestWriteErrorMapsStatus(t *testing.T) {
 	recorder := httptest.NewRecorder()
-	middleware.WriteError(recorder, &shared.InvalidRequestError{Status: 409, Message: "数据库已登记"})
-	if recorder.Code != 409 || !strings.Contains(recorder.Body.String(), "数据库已登记") {
+	middleware.WriteError(recorder, &shared.InvalidRequestError{Status: 409, Message: "数据库容器已登记"})
+	if recorder.Code != 409 || !strings.Contains(recorder.Body.String(), "数据库容器已登记") {
 		t.Fatalf("InvalidRequestError 应按 Status 回显：%d %s", recorder.Code, recorder.Body.String())
 	}
 }
-
-var _ = context.Background

@@ -12,7 +12,7 @@ import (
 	"elysian/server/internal/shared"
 )
 
-// databaseDocker.test.ts 对等测试：Redis ACL 命令不含明文、detach 幂等矩阵、
+// databaseDocker.test.ts 对等测试：Redis ACL 命令不含明文、
 // 三种 accessScope 的真实 Docker 配置。
 
 const (
@@ -110,7 +110,6 @@ func TestRedisCreateWritesACLFileWithoutPlaintextPasswords(t *testing.T) {
 	result, err := docker.create(context.Background(), createInput{
 		engine: engineRedis, versionTag: "7.4", imageID: testImageID, containerName: "redis-db",
 		accessScope: scopeContainerNet, bootstrapPwd: "admin-secret",
-		ordinaryUser: databaseSecret{Username: "reader", Password: "reader-secret-123"},
 	})
 	if err != nil {
 		t.Fatalf("create 失败：%v", err)
@@ -145,111 +144,18 @@ func TestRedisCreateWritesACLFileWithoutPlaintextPasswords(t *testing.T) {
 	if target, _ := firstMount["Target"].(string); target != "/data" {
 		t.Fatalf("Redis 挂载目标应为 /data，实际 %s", target)
 	}
-	if strings.Contains(string(createBodyText(createBody)), "reader-secret-123") ||
-		strings.Contains(string(createBodyText(createBody)), "admin-secret") {
+	if strings.Contains(string(createBodyText(createBody)), "admin-secret") {
 		t.Fatal("容器配置不得含明文密码")
+	}
+	// 退役后 Redis 只初始化 default 管理员账号，不再创建普通账号。
+	if strings.Contains(string(createBodyText(createBody)), "reader") {
+		t.Fatal("Redis 启动命令不得包含普通账号")
 	}
 }
 
 func createBodyText(body map[string]any) []byte {
 	data, _ := json.Marshal(body)
 	return data
-}
-
-func TestDetachIdempotenceMatrix(t *testing.T) {
-	newFixture := func(networks map[string]any, inspectStatus, disconnectStatus int) (*dockerAPI, *scriptedTransport) {
-		transport := &scriptedTransport{responder: func(req seam.EngineRequest) seam.EngineResponse {
-			if strings.HasSuffix(req.Path, "/json") {
-				body := baseInspectBody()
-				if inspectStatus != 0 && inspectStatus != 200 {
-					return seam.EngineResponse{Status: inspectStatus}
-				}
-				if networks != nil {
-					body["NetworkSettings"] = map[string]any{"Networks": networks}
-				}
-				data, _ := json.Marshal(body)
-				return seam.EngineResponse{Status: 200, Body: data}
-			}
-			if strings.HasSuffix(req.Path, "/disconnect") {
-				return seam.EngineResponse{Status: disconnectStatus}
-			}
-			return seam.EngineResponse{Status: 204}
-		}}
-		return newDockerAPI(transport, func(context.Context) ([]contract.ContainerImage, error) { return nil, nil }), transport
-	}
-
-	t.Run("容器不在该网络上时不发起 disconnect", func(t *testing.T) {
-		docker, transport := newFixture(nil, 0, 0)
-		if err := docker.detach(context.Background(), testContainerID, networkDBSharedName); err != nil {
-			t.Fatalf("detach 应幂等成功：%v", err)
-		}
-		for _, call := range transport.calls {
-			if strings.HasSuffix(call.Path, "/disconnect") {
-				t.Fatal("不应发起 disconnect")
-			}
-		}
-	})
-
-	t.Run("容器在该网络上时 POST 断开且 body 只含容器 ID", func(t *testing.T) {
-		docker, transport := newFixture(map[string]any{
-			"elysian-db-shared": map[string]any{"IPAddress": "172.28.0.9"},
-		}, 0, 204)
-		if err := docker.detach(context.Background(), testContainerID, networkDBSharedName); err != nil {
-			t.Fatalf("detach 失败：%v", err)
-		}
-		found := false
-		for _, call := range transport.calls {
-			if strings.HasSuffix(call.Path, "/disconnect") {
-				found = true
-				// seam.EngineRequest.Path 不含版本前缀（seam.go 契约）。
-				if call.Method != "POST" || call.Path != "/networks/elysian-db-shared/disconnect" {
-					t.Fatalf("disconnect 请求形态不符：%s %s", call.Method, call.Path)
-				}
-				var body map[string]any
-				if json.Unmarshal(call.Body, &body) != nil || len(body) != 1 || body["Container"] != testContainerID {
-					t.Fatalf("disconnect body 应只含 Container=%s，实际 %s", testContainerID, call.Body)
-				}
-			}
-		}
-		if !found {
-			t.Fatal("未发起 disconnect")
-		}
-	})
-
-	t.Run("容器已被外部删除视为已离网", func(t *testing.T) {
-		docker, transport := newFixture(nil, 404, 0)
-		if err := docker.detach(context.Background(), testContainerID, networkDBSharedName); err != nil {
-			t.Fatalf("inspect 404 应幂等返回：%v", err)
-		}
-		for _, call := range transport.calls {
-			if strings.HasSuffix(call.Path, "/disconnect") {
-				t.Fatal("不应发起 disconnect")
-			}
-		}
-	})
-
-	t.Run("disconnect 非 2xx 时抛 409", func(t *testing.T) {
-		docker, _ := newFixture(map[string]any{
-			"elysian-db-shared": map[string]any{"IPAddress": "172.28.0.9"},
-		}, 0, 500)
-		err := docker.detach(context.Background(), testContainerID, networkDBSharedName)
-		var invalid *shared.InvalidRequestError
-		if !errors.As(err, &invalid) || invalid.Status != 409 || invalid.Message != "无法将数据库容器移出面板网络" {
-			t.Fatalf("应抛 409「无法将数据库容器移出面板网络」，实际 %v", err)
-		}
-	})
-
-	t.Run("网络名不在白名单时抛 400 且零请求", func(t *testing.T) {
-		docker, transport := newFixture(nil, 0, 0)
-		err := docker.detach(context.Background(), testContainerID, "bridge")
-		var invalid *shared.InvalidRequestError
-		if !errors.As(err, &invalid) || invalid.Status != 400 || invalid.Message != "数据库网络无效" {
-			t.Fatalf("应抛 400「数据库网络无效」，实际 %v", err)
-		}
-		if len(transport.calls) != 0 {
-			t.Fatal("不应发起任何引擎请求")
-		}
-	})
 }
 
 func TestCreateAccessScopeDockerConfig(t *testing.T) {
@@ -284,7 +190,6 @@ func TestCreateAccessScopeDockerConfig(t *testing.T) {
 			engine: engineMySQL, versionTag: "8.4", imageID: testImageID,
 			containerName: "test-" + testCase.scope, accessScope: testCase.scope,
 			hostPort: testCase.hostPort, bootstrapPwd: "bootstrap-secret",
-			ordinaryUser: databaseSecret{Username: "reader", Password: "strong-password-123"},
 		})
 		if err != nil {
 			t.Fatalf("create(%s) 失败：%v", testCase.scope, err)
@@ -387,7 +292,6 @@ func TestCreateStartFailureMapsEngineReasonLocally(t *testing.T) {
 			result, err := docker.create(context.Background(), createInput{
 				engine: engineMySQL, versionTag: "8.4", imageID: testImageID, containerName: "mysql-db",
 				accessScope: scopeContainerNet, bootstrapPwd: "bootstrap-secret",
-				ordinaryUser: databaseSecret{Username: "reader", Password: "strong-password-123"},
 			})
 			if err != nil {
 				t.Fatalf("启动失败不应成为创建错误，容器与登记要留在原地：%v", err)
@@ -425,7 +329,6 @@ func TestCreateEnsuresMissingDatabaseNetworkBeforeContainer(t *testing.T) {
 	result, err := docker.create(context.Background(), createInput{
 		engine: engineMySQL, versionTag: "8.4", imageID: testImageID, containerName: "mysql-db",
 		accessScope: scopeContainerNet, bootstrapPwd: "bootstrap-secret",
-		ordinaryUser: databaseSecret{Username: "reader", Password: "strong-password-123"},
 	})
 	if err != nil || !result.started || result.startFailure != "" {
 		t.Fatalf("缺网时应在建容器前补网吧，实际 err=%v result=%+v", err, result)
@@ -472,7 +375,6 @@ func TestCreateDoesNotRecreateExistingDatabaseNetwork(t *testing.T) {
 	result, err := docker.create(context.Background(), createInput{
 		engine: engineMySQL, versionTag: "8.4", imageID: testImageID, containerName: "mysql-db",
 		accessScope: scopeLocalhost, bootstrapPwd: "bootstrap-secret",
-		ordinaryUser: databaseSecret{Username: "reader", Password: "strong-password-123"},
 	})
 	if err != nil || !result.started {
 		t.Fatalf("localhost 创建失败：%v %+v", err, result)
@@ -481,39 +383,6 @@ func TestCreateDoesNotRecreateExistingDatabaseNetwork(t *testing.T) {
 		if call.Method == "POST" && call.Path == "/networks/create" {
 			t.Fatalf("网络已存在时不得重复创建，调用序列：%v", callPaths(transport.calls))
 		}
-	}
-}
-
-func TestAttachEnsuresMissingDatabaseNetwork(t *testing.T) {
-	transport := &scriptedTransport{responder: func(req seam.EngineRequest) seam.EngineResponse {
-		switch {
-		case strings.HasSuffix(req.Path, "/json"):
-			body, _ := json.Marshal(baseInspectBody())
-			return seam.EngineResponse{Status: 200, Body: body}
-		case req.Method == "GET" && req.Path == "/networks/"+networkDBSharedName:
-			return seam.EngineResponse{Status: 404}
-		case req.Method == "POST" && req.Path == "/networks/create":
-			return seam.EngineResponse{Status: 201, Body: []byte(`{"Id":"net-1","Warning":""}`)}
-		case req.Method == "POST" && req.Path == "/networks/"+networkDBSharedName+"/connect":
-			return seam.EngineResponse{Status: 200}
-		}
-		return seam.EngineResponse{Status: 204}
-	}}
-	docker := newDockerAPI(transport, func(context.Context) ([]contract.ContainerImage, error) { return nil, nil })
-	if err := docker.attach(context.Background(), testContainerID, networkDBSharedName); err != nil {
-		t.Fatalf("attach 失败：%v", err)
-	}
-	networkCreate, connect := -1, -1
-	for index, call := range transport.calls {
-		if call.Method == "POST" && call.Path == "/networks/create" {
-			networkCreate = index
-		}
-		if call.Method == "POST" && call.Path == "/networks/"+networkDBSharedName+"/connect" {
-			connect = index
-		}
-	}
-	if networkCreate < 0 || connect < 0 || networkCreate > connect {
-		t.Fatalf("接入前必须先建网吧，调用序列：%v", callPaths(transport.calls))
 	}
 }
 

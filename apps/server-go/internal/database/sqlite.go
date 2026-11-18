@@ -16,8 +16,8 @@ import (
 	"elysian/server/internal/shared"
 )
 
-// SQLite 文件托管服务（sqliteService.ts 等价物）：创建/上传/下载快照/删除/核对/
-// 终端会话；全部写操作与每次 execute 经全局串行队列（配额语义依赖串行时点重算）。
+// SQLite 文件托管服务（sqliteService.ts 等价物）：创建/上传/下载快照/删除/核对；
+// 全部写操作经全局串行队列。SQL 会话已随数据库终端退役，仅保留文件操作。
 
 const (
 	sqliteUploadLimit       = 256 * 1024 * 1024
@@ -63,7 +63,6 @@ type SqliteService interface {
 	Remove(ctx context.Context, id string) error
 	Reconcile(ctx context.Context, id string) (sqliteInstance, bool, error)
 	Forget(ctx context.Context, id string) error
-	OpenSession(ctx context.Context, id string) (Session, error)
 }
 
 // sqliteSnapshot 一份导出快照；Cleanup 一次性删快照并释放并发名额。
@@ -80,7 +79,6 @@ type sqliteOptions struct {
 	RegistryPath    string
 	UID             *uint32
 	GID             *uint32
-	QueryTimeout    time.Duration
 	TotalLimitBytes int64
 	Launcher        func() sqliteWorkerCommand
 	Now             func() time.Time
@@ -90,8 +88,6 @@ type sqliteOptions struct {
 type sqliteService struct {
 	options       sqliteOptions
 	totalLimit    int64
-	active        map[string]map[*sqliteWorker]bool
-	activeMu      sync.Mutex
 	activeExports int
 	exportsMu     sync.Mutex
 	serialize     sync.Mutex
@@ -108,9 +104,6 @@ func newSqliteService(options sqliteOptions) *sqliteService {
 	if options.TotalLimitBytes <= 0 {
 		options.TotalLimitBytes = sqliteTotalLimitDefault
 	}
-	if options.QueryTimeout <= 0 {
-		options.QueryTimeout = 15 * time.Second
-	}
 	if options.Launcher == nil {
 		options.Launcher = defaultWorkerCommand
 	}
@@ -120,7 +113,6 @@ func newSqliteService(options sqliteOptions) *sqliteService {
 	return &sqliteService{
 		options:    options,
 		totalLimit: options.TotalLimitBytes,
-		active:     map[string]map[*sqliteWorker]bool{},
 	}
 }
 
@@ -549,17 +541,6 @@ func validateHeader(path string) error {
 	return nil
 }
 
-// closeActive 关闭某 id 的全部活跃 worker。
-func (s *sqliteService) closeActive(id string) {
-	s.activeMu.Lock()
-	workers := s.active[id]
-	delete(s.active, id)
-	s.activeMu.Unlock()
-	for worker := range workers {
-		worker.close()
-	}
-}
-
 // List 全部托管库投影。
 func (s *sqliteService) List(ctx context.Context) ([]sqliteInstance, error) {
 	rows, err := s.records()
@@ -824,7 +805,6 @@ func (s *sqliteService) Remove(ctx context.Context, id string) error {
 	if err := s.change(row); err != nil {
 		return err
 	}
-	s.closeActive(id)
 	if err := s.removeFiles(id); err != nil {
 		row.Error = err.Error()
 		_ = s.change(row)
@@ -924,87 +904,4 @@ func (s *sqliteService) Forget(ctx context.Context, id string) error {
 		return err
 	}
 	return s.dropFromRegistry(id)
-}
-
-// sqliteSessionHandle 一个 SQLite 终端会话。
-type sqliteSessionHandle struct {
-	service *sqliteService
-	worker  *sqliteWorker
-	id      string
-}
-
-// OpenSession 打开 SQLite 终端会话（独立 worker 子进程）。
-func (s *sqliteService) OpenSession(ctx context.Context, id string) (Session, error) {
-	row, err := s.get(id)
-	if err != nil {
-		return nil, err
-	}
-	if row.State != sqliteStateActive {
-		return nil, sqliteErr(409, "SQLite 文件尚未就绪")
-	}
-	file, err := s.checkedFile(id)
-	if err != nil {
-		return nil, err
-	}
-	worker, err := s.spawnWorker(file, false)
-	if err != nil {
-		return nil, err
-	}
-	s.activeMu.Lock()
-	set := s.active[id]
-	if set == nil {
-		set = map[*sqliteWorker]bool{}
-		s.active[id] = set
-	}
-	set[worker] = true
-	s.activeMu.Unlock()
-	return &sqliteSessionHandle{service: s, worker: worker, id: id}, nil
-}
-
-// Execute 按会话配额执行 SQL（全局串行，配额在串行时点重算）。
-func (h *sqliteSessionHandle) Execute(ctx context.Context, input string) ([]string, error) {
-	h.service.serialize.Lock()
-	defer h.service.serialize.Unlock()
-	file, err := h.service.checkedFile(h.id)
-	if err != nil {
-		return nil, err
-	}
-	info, err := os.Stat(file)
-	if err != nil {
-		return nil, rewrapFsError(err)
-	}
-	ownBytes := info.Size()
-	total, err := h.service.totalBytes()
-	if err != nil {
-		return nil, err
-	}
-	others := total - ownBytes
-	room := int64(sqliteFileLimit)
-	if h.service.totalLimit-others < room {
-		room = h.service.totalLimit - others
-	}
-	limitBytes := ownBytes
-	if room > limitBytes {
-		limitBytes = room
-	}
-	raw, err := h.worker.request("execute", map[string]any{"sql": input, "limitBytes": limitBytes}, h.service.options.QueryTimeout)
-	if err != nil {
-		return nil, err
-	}
-	var lines []string
-	if err := json.Unmarshal(raw, &lines); err != nil {
-		return nil, err
-	}
-	return lines, nil
-}
-
-// Close 关闭会话 worker。
-func (h *sqliteSessionHandle) Close() error {
-	h.worker.close()
-	h.service.activeMu.Lock()
-	if set := h.service.active[h.id]; set != nil {
-		delete(set, h.worker)
-	}
-	h.service.activeMu.Unlock()
-	return nil
 }

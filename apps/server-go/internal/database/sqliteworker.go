@@ -2,7 +2,6 @@ package database
 
 import (
 	"bufio"
-	"context"
 	"database/sql"
 	"encoding/json"
 	"errors"
@@ -11,7 +10,6 @@ import (
 	"os"
 	"os/exec"
 	"strconv"
-	"strings"
 	"sync"
 	"syscall"
 	"time"
@@ -23,9 +21,9 @@ import (
 
 // SQLite 托管 worker：自身二进制的 `__sqlite-worker` 子命令（go-plan §11 D10），
 // uid 2001 降权 + stdin/stdout JSON 行 IPC + 启动 PRAGMA 双限额。就绪帧
-// {"type":"ready"}；每帧请求 {id,kind,sql?,target?,limitBytes?} →
-// {id,ok:true,value} 或 {id,ok:false,error,code?}（code 为 fs errno 名，供上层
-// 归类中文）。子命令分发在 cmd/elysian（集成阶段接线，见 gaps）。
+// {"type":"ready"}；每帧请求 {id,kind,target?} → {id,ok:true,value} 或
+// {id,ok:false,error,code?}（code 为 fs errno 名，供上层归类中文）。
+// SQL 会话帧（sql/limitBytes）已随数据库终端退役；子命令分发在 cmd/elysian。
 
 // workerRequest 父进程 → worker 的请求帧。
 type workerRequest struct {
@@ -153,100 +151,6 @@ func (w *workerRun) applyLimitBytes(limit int64) error {
 	return err
 }
 
-// execute 校验并执行一条 SQL，输出行集（截断规则与文案逐字对齐 TS 版）。
-// 全程持单连接：无结果集语句经 Query 执行（modernc 对 0 列语句即时返回），
-// 随后在同一连接上以 SELECT changes() 取影响行数（bun:sqlite statement.run()
-// 的 changes 等价物；modernc 的 driver.Rows 不暴露受影响行数）。
-func (w *workerRun) execute(ctx context.Context, sqlText string) ([]string, error) {
-	if err := validateSqliteStatement(sqlText); err != nil {
-		return nil, err
-	}
-	conn, err := w.db.Conn(ctx)
-	if err != nil {
-		return nil, err
-	}
-	defer conn.Close()
-	rows, err := conn.QueryContext(ctx, sqlText)
-	if err != nil {
-		return nil, err
-	}
-	columns, err := rows.Columns()
-	if err != nil {
-		rows.Close()
-		return nil, err
-	}
-	if len(columns) == 0 {
-		rows.Close()
-		var changes int64
-		if err := conn.QueryRowContext(ctx, "SELECT changes()").Scan(&changes); err != nil {
-			return nil, err
-		}
-		return []string{fmt.Sprintf("执行成功，影响 %d 行。", changes)}, nil
-	}
-	output := []string{strings.Join(columns, "\t")}
-	byteCount := len(output[0])
-	count := 0
-	values := make([]any, len(columns))
-	pointers := make([]any, len(columns))
-	for i := range values {
-		pointers[i] = &values[i]
-	}
-	for rows.Next() {
-		largeCell := false
-		if err := rows.Scan(pointers...); err != nil {
-			return nil, err
-		}
-		cells := make([]string, len(values))
-		for i, value := range values {
-			if text, ok := value.(string); ok && len(text) > 1024*1024 {
-				largeCell = true
-				cells[i] = ""
-				continue
-			}
-			cells[i] = sqliteCellString(value)
-		}
-		if largeCell {
-			output = append(output, "单元格超过 1 MiB，已截断。")
-			break
-		}
-		line := strings.Join(cells, "\t")
-		byteCount += len(line)
-		if byteCount > 1024*1024 {
-			output = append(output, "结果超过 1 MiB，已截断。")
-			break
-		}
-		output = append(output, line)
-		count++
-		if count >= 500 {
-			output = append(output, "结果达到 500 行上限，已截断。")
-			break
-		}
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
-	}
-	output = append(output, fmt.Sprintf("返回 %d 行。", count))
-	return output, nil
-}
-
-// sqliteCellString 单元格字符串化：NULL / BLOB / 其余 String(value)。
-func sqliteCellString(value any) string {
-	switch v := value.(type) {
-	case nil:
-		return "NULL"
-	case []byte:
-		return fmt.Sprintf("[BLOB %d 字节]", len(v))
-	case string:
-		return v
-	case int64:
-		return strconv.FormatInt(v, 10)
-	case float64:
-		return strconv.FormatFloat(v, 'g', -1, 64)
-	default:
-		return fmt.Sprint(v)
-	}
-}
-
 // exportSnapshot VACUUM INTO 一致性快照。
 func (w *workerRun) exportSnapshot(target string) (exportValue, error) {
 	if _, err := w.db.Exec("VACUUM INTO ?", target); err != nil {
@@ -258,6 +162,9 @@ func (w *workerRun) exportSnapshot(target string) (exportValue, error) {
 	}
 	return exportValue{Bytes: info.Size()}, nil
 }
+
+// boolPtr 取布尔指针（worker 应答帧 OK 字段用）。
+func boolPtr(value bool) *bool { return &value }
 
 // errnoCode 从错误里提取 fs errno 名（ENOENT 等），供上层归类中文。
 func errnoCode(err error) string {
@@ -365,17 +272,6 @@ func handleWorkerRequest(run *workerRun, file string, request workerRequest) (js
 	case "validate":
 		value, err := run.probe(file, true)
 		return marshalWorkerValue(value, err)
-	case "execute":
-		if request.SQL == nil {
-			return nil, errors.New("SQLite 操作无效")
-		}
-		if request.LimitBytes != nil {
-			if err := run.applyLimitBytes(*request.LimitBytes); err != nil {
-				return nil, err
-			}
-		}
-		lines, err := run.execute(context.Background(), *request.SQL)
-		return marshalWorkerValue(lines, err)
 	case "export":
 		if request.Target == nil {
 			return nil, errors.New("SQLite 操作无效")
@@ -620,16 +516,4 @@ func (w *sqliteWorker) close() {
 	}
 }
 
-// Worker 父进程侧统一出口（一次性操作与会话共用）。
-type Worker interface {
-	Request(kind string, extra map[string]any, timeout time.Duration) (json.RawMessage, error)
-	Close()
-}
-
-// Request 代理到 sqliteWorker。
-func (w *sqliteWorker) Request(kind string, extra map[string]any, timeout time.Duration) (json.RawMessage, error) {
-	return w.request(kind, extra, timeout)
-}
-
-// Close 代理到 sqliteWorker。
-func (w *sqliteWorker) Close() { w.close() }
+// Worker 父进程侧统一出口已随 SQL 会话退役；一次性操作直接使用 sqliteWorker.request。

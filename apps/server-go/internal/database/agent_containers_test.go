@@ -4,122 +4,190 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"fmt"
-	"slices"
 	"strings"
 	"testing"
 
+	"elysian/server/internal/contract"
 	"elysian/server/internal/seam"
 	"elysian/server/internal/shared"
 )
 
-type failedMutationRegistry struct{ databaseRegistry }
+// agent_containers_test.go：容器接缝收缩为 Registered + Lifecycle 后的语义。
+// Lifecycle 保留受管数据库容器 start/stop/restart 路由与 remove→removeContainer
+// 的五元核验；Registered 供 exec 拦截。
 
-func (r failedMutationRegistry) put(databaseRecord) error {
-	return errors.New("PRIVATE_REGISTRY_FAILURE")
+// lifecycleFixture 组合真实 dockerAPI（脚本引擎）与共享服务。
+type lifecycleFixture struct {
+	service   *databaseService
+	registry  *memoryDatabaseRegistry
+	bridge    seam.AgentDatabaseContainers
+	transport *scriptedTransport
 }
-func (r failedMutationRegistry) remove(string) error { return errors.New("PRIVATE_REGISTRY_FAILURE") }
 
-func TestContainerChangePreservesUnknownAfterSQLWhenRegistryFails(t *testing.T) {
-	fixture := newServiceFixture("8.4")
-	bridge := (&AgentFacade{service: fixture.service}).ContainerBridge(func(context.Context) error { return nil })
-	create, _, err := bridge.PrepareCreate(context.Background(), seam.AgentServiceContainerInput{Name: "db", Image: "mysql:8.4@sha256:" + strings.Repeat("a", 64), Env: []string{"MYSQL_DATABASE=orders"}}, testImageID)
-	if err != nil {
-		t.Fatal(err)
+func newLifecycleFixture(rows []databaseRecord, responder func(req seam.EngineRequest) seam.EngineResponse, containerID string) *lifecycleFixture {
+	transport := &scriptedTransport{responder: responder}
+	registry := newMemoryDatabaseRegistry(rows)
+	service := newDatabaseService(serviceDeps{
+		registry: registry,
+		docker:   newDockerAPI(transport, func(context.Context) ([]contract.ContainerImage, error) { return testImageList(), nil }),
+	})
+	facade := &AgentFacade{service: service}
+	return &lifecycleFixture{service: service, registry: registry, bridge: facade.ContainerBridge(func(context.Context) error { return nil }), transport: transport}
+}
+
+func managedRow(volume string) databaseRecord {
+	return databaseRecord{ID: "db", Engine: engineMySQL, Name: "orders", VersionTag: "8.4", Source: sourceManaged,
+		State: stateActive, ContainerID: testContainerID, VolumeName: volume, ContainerName: "mysql-main",
+		Admin: databaseSecret{Username: "root", Password: "admin-secret"}, CreatedAt: "2026-09-28T09:00:00.000Z"}
+}
+
+// failingListRegistry 登记读取故障假件（其余方法委托原登记表）。
+type failingListRegistry struct{ databaseRegistry }
+
+func (r failingListRegistry) list() ([]databaseRecord, error) {
+	return nil, errors.New("PRIVATE_REGISTRY_FAILURE")
+}
+
+func TestRegisteredReportsManagedContainers(t *testing.T) {
+	rows := []databaseRecord{managedRow(stoppedManagedVolumeName)}
+	fixture := newLifecycleFixture(rows, func(seam.EngineRequest) seam.EngineResponse { return seam.EngineResponse{Status: 200} }, testContainerID)
+	registered, err := fixture.bridge.Registered(context.Background(), testContainerID)
+	if err != nil || !registered {
+		t.Fatalf("登记容器应报告 registered：%v %v", registered, err)
 	}
-	if _, err := create(context.Background()); err != nil {
-		t.Fatal(err)
+	registered, err = fixture.bridge.Registered(context.Background(), strings.Repeat("9", 64))
+	if err != nil || registered {
+		t.Fatalf("未登记容器应报告 false：%v %v", registered, err)
 	}
-	rows, _ := fixture.registry.list()
-	fixture.service.deps.registry = failedMutationRegistry{fixture.registry}
-	remove, err := bridge.PrepareChange(context.Background(), rows[0].ContainerID, "request", seam.AgentDatabaseChange{Action: "remove", Name: "orders", ExpectedRevision: containerRevision(rows)})
-	if err != nil {
-		t.Fatal(err)
+	broken := newLifecycleFixture(rows, func(seam.EngineRequest) seam.EngineResponse { return seam.EngineResponse{Status: 200} }, testContainerID)
+	broken.service.deps.registry = failingListRegistry{broken.registry}
+	if _, err := broken.bridge.Registered(context.Background(), testContainerID); err == nil {
+		t.Fatal("登记读取失败应上抛")
 	}
-	_, err = remove(context.Background())
+	facade := &AgentFacade{}
+	if _, err := facade.ContainerBridge(nil).Registered(context.Background(), testContainerID); err == nil {
+		t.Fatal("能力不可用应上抛")
+	}
+}
+
+func TestLifecycleRoutesManagedDatabaseContainerActions(t *testing.T) {
+	volume := stoppedManagedVolumeName
+	// stop：运行中容器 → POST /stop → 复核为已停止。
+	running := true
+	stops, starts := 0, 0
+	fixture := newLifecycleFixture([]databaseRecord{managedRow(volume)}, func(req seam.EngineRequest) seam.EngineResponse {
+		switch {
+		case req.Method == "GET" && strings.HasSuffix(req.Path, "/json"):
+			body := baseInspectBody()
+			body["State"] = map[string]any{"Running": running}
+			obj(body["Config"])["Labels"] = map[string]any{"elysian.managed": "true", "elysian.database": "true", "elysian.database.engine": "MySQL", "elysian.database.version": "8.4", "elysian.database.volume": volume}
+			raw, _ := json.Marshal(body)
+			return seam.EngineResponse{Status: 200, Body: raw}
+		case req.Method == "GET" && strings.Contains(req.Path, "/volumes/"):
+			raw, _ := json.Marshal(map[string]any{"Labels": map[string]any{"elysian.database": "true", "elysian.database.engine": "MySQL", "elysian.database.version": "8.4"}})
+			return seam.EngineResponse{Status: 200, Body: raw}
+		case req.Method == "POST" && strings.HasSuffix(req.Path, "/stop"):
+			stops++
+			running = false
+			return seam.EngineResponse{Status: 204}
+		case req.Method == "POST" && strings.HasSuffix(req.Path, "/start"):
+			starts++
+			running = true
+			return seam.EngineResponse{Status: 204}
+		}
+		return seam.EngineResponse{Status: 404}
+	}, testContainerID)
+	handled, err := fixture.bridge.Lifecycle(context.Background(), testContainerID, "stop")
+	if err != nil || !handled {
+		t.Fatalf("stop 路由失败：%v %v", handled, err)
+	}
+	if stops != 1 || starts != 0 {
+		t.Fatalf("stop 应恰好发起一次 /stop：%d %d", stops, starts)
+	}
+	// start：已停止容器 → POST /start → 复核为运行中。
+	running = false
+	handled, err = fixture.bridge.Lifecycle(context.Background(), testContainerID, "start")
+	if err != nil || !handled {
+		t.Fatalf("start 路由失败：%v %v", handled, err)
+	}
+	if starts != 1 || stops != 1 {
+		t.Fatalf("start 应恰好发起一次 /start：%d %d", starts, stops)
+	}
+}
+
+func TestLifecycleRemoveRoutesThroughRemoveContainerWithVolumeChecks(t *testing.T) {
+	volume := stoppedManagedVolumeName
+	// 停止态受管容器与匹配卷：remove 走 removeManaged 全量五元核验。
+	inspect := baseInspectBody()
+	inspect["State"] = map[string]any{"Running": false}
+	obj(inspect["Config"])["Labels"] = map[string]any{"elysian.managed": "true", "elysian.database": "true", "elysian.database.engine": "MySQL", "elysian.database.version": "8.4", "elysian.database.volume": volume}
+	inspectRaw, _ := json.Marshal(inspect)
+	volumeRaw, _ := json.Marshal(map[string]any{"Labels": map[string]any{"elysian.database": "true", "elysian.database.engine": "MySQL", "elysian.database.version": "8.4"}})
+	fixture := newLifecycleFixture([]databaseRecord{managedRow(volume)}, func(req seam.EngineRequest) seam.EngineResponse {
+		switch {
+		case req.Method == "GET" && req.Path == "/containers/"+testContainerID+"/json":
+			return seam.EngineResponse{Status: 200, Body: inspectRaw}
+		case req.Method == "GET" && req.Path == "/volumes/"+volume:
+			return seam.EngineResponse{Status: 200, Body: volumeRaw}
+		case req.Method == "DELETE" && req.Path == "/containers/"+testContainerID:
+			return seam.EngineResponse{Status: 204}
+		case req.Method == "DELETE" && req.Path == "/volumes/"+volume:
+			return seam.EngineResponse{Status: 204}
+		}
+		return seam.EngineResponse{Status: 404}
+	}, testContainerID)
+	handled, err := fixture.bridge.Lifecycle(context.Background(), testContainerID, "remove")
+	if err != nil || !handled {
+		t.Fatalf("remove 路由失败：%v %v", handled, err)
+	}
+	if kept, _ := fixture.registry.list(); len(kept) != 0 {
+		t.Fatalf("容器删除后登记应清空：%+v", kept)
+	}
+	deletes := 0
+	for _, call := range fixture.transport.calls {
+		if call.Method == "DELETE" {
+			deletes++
+		}
+	}
+	if deletes != 2 {
+		t.Fatalf("容器与专属卷应各删一次：%v", callPaths(fixture.transport.calls))
+	}
+}
+
+func TestLifecycleForeignVolumeIdentityStillVerified(t *testing.T) {
+	volume := stoppedManagedVolumeName
+	// 卷标签不符：即使走容器接缝，五元核验失败仍拒绝删除，登记保留。
+	inspect := baseInspectBody()
+	inspect["State"] = map[string]any{"Running": false}
+	obj(inspect["Config"])["Labels"] = map[string]any{"elysian.managed": "true", "elysian.database": "true", "elysian.database.engine": "MySQL", "elysian.database.version": "8.4", "elysian.database.volume": volume}
+	inspectRaw, _ := json.Marshal(inspect)
+	volumeRaw, _ := json.Marshal(map[string]any{"Labels": map[string]any{"elysian.database.engine": "MySQL"}})
+	fixture := newLifecycleFixture([]databaseRecord{managedRow(volume)}, func(req seam.EngineRequest) seam.EngineResponse {
+		switch {
+		case req.Method == "GET" && req.Path == "/containers/"+testContainerID+"/json":
+			return seam.EngineResponse{Status: 200, Body: inspectRaw}
+		case req.Method == "GET" && req.Path == "/volumes/"+volume:
+			return seam.EngineResponse{Status: 200, Body: volumeRaw}
+		}
+		return seam.EngineResponse{Status: 404}
+	}, testContainerID)
+	_, err := fixture.bridge.Lifecycle(context.Background(), testContainerID, "remove")
 	var receipt *seam.AgentContainerError
-	if !errors.As(err, &receipt) || receipt.NoBusinessEffect || receipt.NotDispatched || strings.Contains(receipt.Message, "PRIVATE") {
-		t.Fatalf("unsafe registry failure receipt: %+v %v", receipt, err)
+	if !errors.As(err, &receipt) || receipt.NotDispatched || receipt.NoBusinessEffect || receipt.Code != "database-container-operation-failed" || receipt.Message != "数据库持久卷身份核对失败" {
+		t.Fatalf("卷身份不符应保留固定失败原因：%+v %v", receipt, err)
 	}
-	if !slices.Contains(fixture.protocol.trace.items, "drop") {
-		t.Fatal("did not reach SQL effect")
+	if kept, _ := fixture.registry.list(); len(kept) != 1 {
+		t.Fatal("失败路径不得清理登记")
 	}
-	after, _ := fixture.registry.list()
-	if containerRevision(rows) != containerRevision(after) {
-		t.Fatal("failed registry write changed the fixture")
-	}
-}
-
-func TestContainerCreateOnStoppedManagedDatabaseIsConfirmedNoEffect(t *testing.T) {
-	fixture := newServiceFixture("8.4")
-	bridge := (&AgentFacade{service: fixture.service}).ContainerBridge(func(context.Context) error { return nil })
-	create, _, err := bridge.PrepareCreate(context.Background(), seam.AgentServiceContainerInput{Name: "db", Image: "mysql:8.4@sha256:" + strings.Repeat("a", 64), Env: []string{"MYSQL_DATABASE=orders"}}, testImageID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := create(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	rows, _ := fixture.registry.list()
-	fixture.docker.inspectInfos[rows[0].ContainerID]["State"] = map[string]any{"Running": false}
-	change, err := bridge.PrepareChange(context.Background(), rows[0].ContainerID, "request", seam.AgentDatabaseChange{Action: "create", Name: "archive", ExpectedRevision: containerRevision(rows)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	_, err = change(context.Background())
-	var receipt *seam.AgentContainerError
-	if !errors.As(err, &receipt) || !receipt.NoBusinessEffect || receipt.NotDispatched || receipt.Message != "数据库容器未运行，数据库变更未执行" {
-		t.Fatalf("%+v %v", receipt, err)
-	}
-	after, _ := fixture.registry.list()
-	if containerRevision(rows) != containerRevision(after) {
-		t.Fatal("rejected creation changed registration")
+	for _, call := range fixture.transport.calls {
+		if call.Method == "DELETE" {
+			t.Fatalf("身份核对失败不得派发删除：%v", callPaths(fixture.transport.calls))
+		}
 	}
 }
 
-func TestContainerBridgeDistinguishesAcceptedNoEffectFromUnknownDrop(t *testing.T) {
-	for _, stopped := range []bool{true, false} {
-		t.Run(fmt.Sprint(stopped), func(t *testing.T) {
-			fixture := newServiceFixture("8.4")
-			bridge := (&AgentFacade{service: fixture.service}).ContainerBridge(func(context.Context) error { return nil })
-			create, _, err := bridge.PrepareCreate(context.Background(), seam.AgentServiceContainerInput{Name: "db", Image: "mysql:8.4@sha256:" + strings.Repeat("a", 64), Env: []string{"MYSQL_DATABASE=orders"}}, testImageID)
-			if err != nil {
-				t.Fatal(err)
-			}
-			if _, err = create(context.Background()); err != nil {
-				t.Fatal(err)
-			}
-			rows, _ := fixture.registry.list()
-			before := containerRevision(rows)
-			fixture.docker.inspectInfos[rows[0].ContainerID]["State"] = map[string]any{"Running": !stopped}
-			fixture.protocol.dropErr = errors.New("PRIVATE_DATABASE_RESPONSE")
-			remove, err := bridge.PrepareChange(context.Background(), rows[0].ContainerID, "request", seam.AgentDatabaseChange{Action: "remove", Name: "orders", ExpectedRevision: before})
-			if err != nil {
-				t.Fatal(err)
-			}
-			_, err = remove(context.Background())
-			var receipt *seam.AgentContainerError
-			if !errors.As(err, &receipt) || receipt.NotDispatched || receipt.NoBusinessEffect != stopped || strings.Contains(receipt.Message, "PRIVATE") {
-				t.Fatalf("receipt=%+v %v", receipt, err)
-			}
-			if stopped && receipt.Message != "数据库容器未运行，数据库变更未执行" {
-				t.Fatal(receipt.Message)
-			}
-			after, _ := fixture.registry.list()
-			if containerRevision(after) != before {
-				t.Fatal("failed change modified registration")
-			}
-			for _, call := range fixture.protocol.trace.items {
-				if stopped && call == "drop" {
-					t.Fatal("stopped container reached drop")
-				}
-			}
-		})
-	}
-}
-
-func TestContainerLifecyclePreflightRefusalsAreNotDispatched(t *testing.T) {
-	managed := databaseRecord{ID: "db", Engine: engineMySQL, Name: "orders", Source: sourceManaged, State: stateActive, ContainerID: strings.Repeat("c", 64)}
+func TestLifecyclePreflightRefusalsAreNotDispatched(t *testing.T) {
+	managed := managedRow(stoppedManagedVolumeName)
 	adopted, sibling := managed, managed
 	adopted.Source = sourceAdopted
 	sibling.ID, sibling.Name = "sibling", "archive"
@@ -135,247 +203,44 @@ func TestContainerLifecyclePreflightRefusalsAreNotDispatched(t *testing.T) {
 	} {
 		for _, action := range []string{"start", "stop", "restart", "remove"} {
 			t.Run(tc.name+"/"+action, func(t *testing.T) {
-				fixture := newServiceFixture("8.4")
-				fixture.registry.rows = tc.rows
-				before := containerRevision(tc.rows)
+				fixture := newLifecycleFixture(tc.rows, func(req seam.EngineRequest) seam.EngineResponse {
+					return seam.EngineResponse{Status: 200, Body: []byte(`{}`)}
+				}, testContainerID)
 				fixture.service.operationGuard = func(context.Context, string, string, string) error { return tc.guard }
-				bridge := (&AgentFacade{service: fixture.service}).ContainerBridge(func(context.Context) error { return nil })
-				handled, err := bridge.Lifecycle(context.Background(), managed.ContainerID, action)
+				before, _ := fixture.registry.list()
+				handled, err := fixture.bridge.Lifecycle(context.Background(), managed.ContainerID, action)
 				var rejected *seam.AgentContainerError
 				if !handled || !errors.As(err, &rejected) || !rejected.NotDispatched || rejected.NoBusinessEffect || rejected.Code != "database-container-operation-failed" || rejected.Message != tc.message+"，数据库变更未执行" {
-					t.Fatalf("preflight refusal lost its execution fact: handled=%v receipt=%+v err=%v", handled, rejected, err)
+					t.Fatalf("预检拒绝失去执行事实：handled=%v receipt=%+v err=%v", handled, rejected, err)
 				}
 				after, err := fixture.registry.list()
-				if err != nil || containerRevision(after) != before || len(fixture.docker.removeCalls) > 0 || len(fixture.protocol.trace.items) > 0 {
-					t.Fatal("preflight refusal changed the database")
+				if err != nil || len(after) != len(before) || len(fixture.transport.calls) > 0 {
+					t.Fatal("预检拒绝不得改动数据库")
 				}
 			})
 		}
 	}
 }
 
-func TestContainerLifecycleGuardFailureDoesNotClaimPreflightRejection(t *testing.T) {
-	fixture := newServiceFixture("8.4")
-	fixture.registry.rows = []databaseRecord{{ID: "db", Engine: engineMySQL, Name: "orders", Source: sourceManaged, State: stateActive, ContainerID: strings.Repeat("c", 64)}}
+func TestLifecycleGuardFailureDoesNotClaimPreflightRejection(t *testing.T) {
+	fixture := newLifecycleFixture([]databaseRecord{managedRow(stoppedManagedVolumeName)}, func(req seam.EngineRequest) seam.EngineResponse {
+		return seam.EngineResponse{Status: 200, Body: []byte(`{}`)}
+	}, testContainerID)
 	fixture.service.operationGuard = func(context.Context, string, string, string) error { return errors.New("PRIVATE_TASK_STORAGE_FAILURE") }
-	bridge := (&AgentFacade{service: fixture.service}).ContainerBridge(func(context.Context) error { return nil })
-	handled, err := bridge.Lifecycle(context.Background(), fixture.registry.rows[0].ContainerID, "stop")
+	handled, err := fixture.bridge.Lifecycle(context.Background(), testContainerID, "stop")
 	var failure *seam.AgentContainerError
 	if !handled || !errors.As(err, &failure) || failure.NotDispatched || failure.NoBusinessEffect || strings.Contains(failure.Message, "PRIVATE") {
-		t.Fatalf("storage failure was exposed as a recoverable refusal: handled=%v receipt=%+v err=%v", handled, failure, err)
+		t.Fatalf("存储故障不得伪装成可纠正拒绝：handled=%v receipt=%+v err=%v", handled, failure, err)
 	}
 }
 
-func TestContainerBridgeCreatesAndSynchronizesAllThreeEngines(t *testing.T) {
-	for _, test := range []struct{ engine, repo, version, key, name string }{{engineMySQL, "mysql", "8.4", "MYSQL_DATABASE", "orders"}, {engineMariaDB, "mariadb", "11.4", "MARIADB_DATABASE", "orders"}, {engineRedis, "redis", "7.4", "", "0"}} {
-		t.Run(test.engine, func(t *testing.T) {
-			fixture := newServiceFixture(test.version)
-			facade := &AgentFacade{service: fixture.service}
-			checks := 0
-			bridge := facade.ContainerBridge(func(context.Context) error { checks++; return nil })
-			input := seam.AgentServiceContainerInput{Name: "service-main", Image: test.repo + ":" + test.version + "@sha256:" + strings.Repeat("a", 64), ResourceTier: "medium", NetworkScope: "container-net"}
-			if test.key != "" {
-				input.Env = []string{test.key + "=" + test.name}
-			}
-			run, handled, err := bridge.PrepareCreate(context.Background(), input, "sha256:"+testImageID)
-			if err != nil || !handled || len(fixture.registry.rows) != 0 {
-				t.Fatalf("prepare dispatched: %v %v", handled, err)
-			}
-			value, err := run(context.Background())
-			if err != nil {
-				t.Fatal(err)
-			}
-			if checks != 1 {
-				t.Fatalf("authorization duplicated: %d", checks)
-			}
-			rows, err := fixture.registry.list()
-			if err != nil || len(rows) != 1 {
-				t.Fatalf("rows=%+v %v", rows, err)
-			}
-			row := rows[0]
-			if row.Name != test.name || row.Engine != test.engine || row.State != stateActive || row.User.Password == "" || row.Admin.Password == "" {
-				t.Fatalf("invalid registration: %s", row.ID)
-			}
-			raw, _ := json.Marshal(value)
-			if strings.Contains(string(raw), row.User.Password) || strings.Contains(string(raw), row.Admin.Password) {
-				t.Fatal("credential leaked")
-			}
-			if len(fixture.docker.createCalls) != 1 || fixture.docker.createCalls[0].serviceOptions == nil || fixture.docker.createCalls[0].imageID != testImageID {
-				t.Fatal("resource options lost")
-			}
-		})
+func TestLifecycleUnregisteredContainerFallsThrough(t *testing.T) {
+	fixture := newLifecycleFixture(nil, func(req seam.EngineRequest) seam.EngineResponse { return seam.EngineResponse{Status: 200} }, testContainerID)
+	handled, err := fixture.bridge.Lifecycle(context.Background(), testContainerID, "start")
+	if handled || err != nil {
+		t.Fatalf("非数据库容器应交回 docker 域：handled=%v err=%v", handled, err)
 	}
-}
-
-func TestContainerBridgeStructuredChangeUsesRevisionAndOriginalCredentials(t *testing.T) {
-	fixture := newServiceFixture("8.4")
-	facade := &AgentFacade{service: fixture.service}
-	bridge := facade.ContainerBridge(func(context.Context) error { return nil })
-	input := seam.AgentServiceContainerInput{Name: "db", Image: "mysql:8.4@sha256:" + strings.Repeat("a", 64), Env: []string{"MYSQL_DATABASE=orders"}}
-	create, _, err := bridge.PrepareCreate(context.Background(), input, testImageID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := create(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	rows, _ := fixture.registry.list()
-	container := rows[0].ContainerID
-	original := rows[0]
-	if _, err := bridge.PrepareChange(context.Background(), container, "", seam.AgentDatabaseChange{Action: "create", Name: "archive", ExpectedRevision: "stale"}); err == nil {
-		t.Fatal("stale revision accepted")
-	}
-	change := seam.AgentDatabaseChange{Action: "create", Name: "archive", ExpectedRevision: containerRevision(rows)}
-	run, err := bridge.PrepareChange(context.Background(), container, "", change)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := run(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	rows, _ = fixture.registry.list()
-	if len(rows) != 2 || rows[1].Admin != original.Admin || rows[1].ContainerID != container {
-		t.Fatal("new logical database lost shared instance credentials")
-	}
-	if _, err := run(context.Background()); err == nil {
-		t.Fatal("stale prepared change replayed")
-	}
-	remove, err := bridge.PrepareChange(context.Background(), container, "", seam.AgentDatabaseChange{Action: "remove", Name: "archive", ExpectedRevision: containerRevision(rows)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := remove(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	rows, _ = fixture.registry.list()
-	if len(rows) != 1 || rows[0].Name != "orders" || rows[0].User != original.User {
-		t.Fatal("removed sibling affected original registration")
-	}
-}
-
-func TestContainerOperationGuardBlocksSharedDatabaseWritesButSkipsOwnTask(t *testing.T) {
-	fixture := newServiceFixture("8.4")
-	facade := &AgentFacade{service: fixture.service}
-	bridge := facade.ContainerBridge(func(context.Context) error { return nil })
-	input := seam.AgentServiceContainerInput{Name: "db", Image: "mysql:8.4@sha256:" + strings.Repeat("a", 64), Env: []string{"MYSQL_DATABASE=orders"}}
-	create, _, err := bridge.PrepareCreate(context.Background(), input, testImageID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := create(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	rows, _ := fixture.registry.list()
-	container := rows[0].ContainerID
-	guardError := errors.New("container operation pending")
-	sawOwn := false
-	fixture.service.operationGuard = func(_ context.Context, id, name, own string) error {
-		if id != container || name != "db" {
-			t.Fatalf("guard target mismatch id=%s name=%s", id, name)
-		}
-		if own == strings.Repeat("b", 64) {
-			sawOwn = true
-			return nil
-		}
-		return guardError
-	}
-	if err := fixture.service.Remove(context.Background(), rows[0].ID); !errors.Is(err, guardError) {
-		t.Fatalf("HTTP page write bypassed pending barrier: %v", err)
-	}
-	change, err := bridge.PrepareChange(context.Background(), container, strings.Repeat("b", 64), seam.AgentDatabaseChange{Action: "create", Name: "archive", ExpectedRevision: containerRevision(rows)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := change(context.Background()); err != nil || !sawOwn {
-		t.Fatalf("accepted worker did not retain own request identity: %v", err)
-	}
-}
-
-func TestContainerInspectionDefaultsToBoundedRegistrationWithoutProtocolReads(t *testing.T) {
-	fixture := newServiceFixture("8.4")
-	for i := 0; i < 140; i++ {
-		if err := fixture.registry.put(databaseRecord{ID: fmt.Sprintf("db-%03d", i), ContainerID: strings.Repeat("c", 64), Name: fmt.Sprintf("orders_%d", i), Engine: engineMySQL, State: stateActive, Source: sourceManaged, Admin: databaseSecret{Password: "PRIVATE_ADMIN"}, User: databaseSecret{Password: "PRIVATE_USER"}}); err != nil {
-			t.Fatal(err)
-		}
-	}
-	bridge := (&AgentFacade{service: fixture.service}).ContainerBridge(func(context.Context) error { return nil })
-	value, err := bridge.Inspect(context.Background(), strings.Repeat("c", 64), nil)
-	if err != nil {
-		t.Fatal(err)
-	}
-	result := value.(map[string]any)
-	if len(result["databases"].([]any)) != 100 || result["truncated"] != true || len(fixture.protocol.trace.items) != 0 {
-		t.Fatalf("default inspection read protocol or exceeded bound: %+v", result)
-	}
-	raw, _ := json.Marshal(result)
-	if len(raw) > 64<<10 || strings.Contains(string(raw), "PRIVATE_") || strings.Contains(string(raw), "metadata") || strings.Contains(string(raw), "metrics") {
-		t.Fatal("default inspection exposed excess details")
-	}
-	if _, err := bridge.Inspect(context.Background(), strings.Repeat("c", 64), &seam.AgentDatabaseInspection{ID: "foreign-id", Metrics: true}); err == nil || len(fixture.protocol.trace.items) != 0 {
-		t.Fatal("foreign database selection crossed container identity")
-	}
-}
-
-type existingDatabaseProtocol struct{ *fakeProtocol }
-
-func (p *existingDatabaseProtocol) exists(context.Context, databaseRecord, databaseAddress, string) (bool, error) {
-	return true, nil
-}
-
-func TestContainerChangeDoesNotAdoptExistingUnregisteredLogicalDatabase(t *testing.T) {
-	fixture := newServiceFixture("8.4")
-	bridge := (&AgentFacade{service: fixture.service}).ContainerBridge(func(context.Context) error { return nil })
-	create, _, err := bridge.PrepareCreate(context.Background(), seam.AgentServiceContainerInput{Name: "db", Image: "mysql:8.4@sha256:" + strings.Repeat("a", 64), Env: []string{"MYSQL_DATABASE=orders"}}, testImageID)
-	if err != nil {
-		t.Fatal(err)
-	}
-	if _, err := create(context.Background()); err != nil {
-		t.Fatal(err)
-	}
-	rows, _ := fixture.registry.list()
-	fixture.service.deps.protocol = &existingDatabaseProtocol{fixture.protocol}
-	run, err := bridge.PrepareChange(context.Background(), rows[0].ContainerID, "", seam.AgentDatabaseChange{Action: "create", Name: "archive", ExpectedRevision: containerRevision(rows)})
-	if err != nil {
-		t.Fatal(err)
-	}
-	prior := len(fixture.protocol.trace.items)
-	if _, err := run(context.Background()); err == nil {
-		t.Fatal("unregistered existing database was adopted")
-	}
-	current, _ := fixture.registry.list()
-	if len(current) != len(rows) || len(fixture.protocol.trace.items) != prior {
-		t.Fatal("rejected adoption changed database state")
-	}
-}
-
-func TestContainerCreateRejectsUnverifiableVariantsAndUnsupportedInitBeforeDispatch(t *testing.T) {
-	for _, test := range []struct {
-		name   string
-		mutate func(*seam.AgentServiceContainerInput)
-	}{
-		{"mysql-no-tag", func(input *seam.AgentServiceContainerInput) { input.Image = "mysql@sha256:" + strings.Repeat("a", 64) }},
-		{"mariadb-no-tag", func(input *seam.AgentServiceContainerInput) {
-			input.Image = "docker.io/library/mariadb@sha256:" + strings.Repeat("a", 64)
-		}},
-		{"redis-no-tag", func(input *seam.AgentServiceContainerInput) { input.Image = "redis@sha256:" + strings.Repeat("a", 64) }},
-		{"mysql-variant", func(input *seam.AgentServiceContainerInput) {
-			input.Image = "mysql:8.4-oracle@sha256:" + strings.Repeat("a", 64)
-		}},
-		{"redis-variant", func(input *seam.AgentServiceContainerInput) {
-			input.Image = "redis:7.4-alpine@sha256:" + strings.Repeat("a", 64)
-		}},
-		{"credential-mismatch", func(input *seam.AgentServiceContainerInput) { input.Credentials = []string{"MARIADB_ROOT_PASSWORD"} }},
-		{"hidden-init", func(input *seam.AgentServiceContainerInput) { input.Env = append(input.Env, "MYSQL_USER=manual_user") }},
-		{"custom-port", func(input *seam.AgentServiceContainerInput) { input.Port = 3307 }},
-	} {
-		t.Run(test.name, func(t *testing.T) {
-			fixture := newServiceFixture("8.4")
-			bridge := (&AgentFacade{service: fixture.service}).ContainerBridge(func(context.Context) error { return nil })
-			input := seam.AgentServiceContainerInput{Name: "db", Image: "mysql:8.4@sha256:" + strings.Repeat("a", 64), Env: []string{"MYSQL_DATABASE=orders"}}
-			test.mutate(&input)
-			if run, handled, err := bridge.PrepareCreate(context.Background(), input, testImageID); err == nil || !handled || run != nil || len(fixture.docker.createCalls) > 0 || len(fixture.registry.rows) > 0 {
-				t.Fatalf("invalid input escaped preparation: handled=%v err=%v", handled, err)
-			}
-		})
+	if len(fixture.transport.calls) != 0 {
+		t.Fatal("落空路由不得发起引擎请求")
 	}
 }
