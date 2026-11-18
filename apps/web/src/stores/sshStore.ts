@@ -16,6 +16,7 @@ import { create } from 'zustand'
 import type { ElysianGateway, SshKeyAccount } from '../contracts/adapters'
 import { isDockerRuntime } from '../utils/isDockerRuntime'
 import { useMessageStore } from './messageStore'
+import { messageOf } from '../utils/errorMessage'
 
 /** SSH 管理页签的状态：服务概况、登录方式与端口、Root 凭据、登录密钥，以及各分区自己的忙碌态。 */
 type SshStatus = 'idle' | 'loading' | 'ready' | 'error'
@@ -159,7 +160,7 @@ export const useSshStore = create<SshState>((set, get) => {
   const recordFailure = async (error: unknown, gateway: ElysianGateway) => {
     const auth = captureAuthGeneration()
     const generation = sshGeneration
-    const message = error instanceof Error ? error.message : '操作失败，请重试'
+    const message = messageOf(error, '操作失败，请重试')
     if (hasUncertainOutcome(error)) await get().load(gateway)
     if (generation === sshGeneration && auth === captureAuthGeneration()) set({ operationError: message })
   }
@@ -239,7 +240,7 @@ export const useSshStore = create<SshState>((set, get) => {
         if (current()) set({ loginRecords })
       }
     })().catch(error => {
-      if (current()) set(state => ({ sectionErrors: { ...state.sectionErrors, [section]: error instanceof Error ? error.message : 'SSH 数据刷新失败' } }))
+      if (current()) set(state => ({ sectionErrors: { ...state.sectionErrors, [section]: messageOf(error, 'SSH 数据刷新失败') } }))
     }).finally(() => {
       if (pending.get(section) !== operation) return
       pending.delete(section)
@@ -263,7 +264,7 @@ export const useSshStore = create<SshState>((set, get) => {
         ])
         if (current()) set({ status: 'ready', operationError: undefined, overview, ...applySettings(settings), rootAuth, keys, loginRecords, keyAccounts, ...stoppedSettings(overview) })
       } catch (error) {
-        if (current()) set({ status: 'error', errorMessage: error instanceof Error ? error.message : 'SSH 数据加载失败' })
+        if (current()) set({ status: 'error', errorMessage: messageOf(error, 'SSH 数据加载失败') })
       } finally { if (initialLoad === operation) initialLoad = undefined }
     })()
     initialLoad = operation

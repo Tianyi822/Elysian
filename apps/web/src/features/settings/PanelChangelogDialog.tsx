@@ -8,6 +8,7 @@ import { ScrollArea } from '../../components/ScrollArea'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
 import { useMessageStore } from '../../stores/messageStore'
 import { Button } from '../../components/Button'
+import { messageOf } from '../../utils/errorMessage'
 
 /**
  * 更新日志窗口：列所选来源最近的提交标题，从新到旧。
@@ -50,7 +51,7 @@ export function PanelChangelogDialog({
       },
       (cause: unknown) => {
         if (cancelled) return
-        setError(cause instanceof Error ? cause.message : '读取更新日志失败')
+        setError(messageOf(cause, '读取更新日志失败'))
         setLoading(false)
       },
     )

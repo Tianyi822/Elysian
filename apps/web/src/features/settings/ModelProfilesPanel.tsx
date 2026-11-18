@@ -20,6 +20,7 @@ import { useImeEnterGuard } from '../../components/useImeEnterGuard'
 import { ModelAdvancedFields } from './ModelAdvancedFields'
 import { blankModel, discoveredModelDraft, modelPresetDraft, savedModelDraft, type DraftModel } from './modelDraft'
 import { Button } from '../../components/Button'
+import { messageOf } from '../../utils/errorMessage'
 
 const formatTokens = (value: number) => value >= 1024 * 1024 ? `${Number((value / (1024 * 1024)).toFixed(2))}M` : value >= 1024 ? `${Math.round(value / 1024)}k` : String(value)
 const iconButton = 'inline-flex size-8 shrink-0 items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-40'
@@ -110,7 +111,7 @@ function ModelServiceDialog({ service, visible, onClose }: { service?: AgentMode
       }
     } catch (error) {
       if (discoveryRequest.current === controller && !controller.signal.aborted) {
-        setError(error instanceof Error ? error.message : '获取模型失败，请重试或手动添加')
+        setError(messageOf(error, '获取模型失败，请重试或手动添加'))
         if (isRevisionConflict(error)) await useModelSettingsStore.getState().refresh(gateway)
       }
     } finally {

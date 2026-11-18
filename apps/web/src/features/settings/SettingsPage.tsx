@@ -17,6 +17,7 @@ import { SETTINGS_TABS, useSettingsTab, type SettingsTab } from './settingsTabs'
 import { panelUsernameError } from '../../contracts/panelAccount'
 import { captureAuthGeneration } from '../../utils/authGeneration'
 import { useImeEnterGuard } from '../../components/useImeEnterGuard'
+import { messageOf } from '../../utils/errorMessage'
 
 /*
  * 设置页按面板维护、账号安全、模型、MCP 与 Skill 配置分区。主题在侧边栏切换。
@@ -174,7 +175,7 @@ function AccountSecuritySettings() {
       expire()
     } catch (cause) {
       if (generation !== captureAuthGeneration()) return
-      const message = cause instanceof Error ? cause.message : '修改用户名失败'
+      const message = messageOf(cause, '修改用户名失败')
       setUsernameError(message)
       useMessageStore.getState().notify({ tone: 'danger', message })
       setSubmitting(false)
@@ -195,7 +196,7 @@ function AccountSecuritySettings() {
       expire()
     } catch (cause) {
       if (generation !== captureAuthGeneration()) return
-      const message = cause instanceof Error ? cause.message : '修改密码失败'
+      const message = messageOf(cause, '修改密码失败')
       setPasswordError(message)
       useMessageStore.getState().notify({ tone: 'danger', message })
       setSubmitting(false)

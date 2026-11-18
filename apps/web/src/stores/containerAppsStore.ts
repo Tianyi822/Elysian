@@ -13,6 +13,7 @@ import type {
 import type { ElysianGateway } from '../contracts/adapters'
 import { useMessageStore } from './messageStore'
 import { isContainerBuildActive } from '@elysian/contracts'
+import { messageOf } from '../utils/errorMessage'
 
 /**
  * 容器工作区的界面状态。数据一律经 gateway.containers 的 adapter 取，
@@ -97,7 +98,7 @@ export type ContainerAppsState = {
 /** 构建任务的 requestId：uuid 形状（小写），与服务端 safeDeploymentID 同一正则口径。 */
 export function newBuildRequestId(): string { return randomId() }
 
-const detail = (cause: unknown) => (cause instanceof Error ? cause.message : '操作失败，请重试')
+const detail = (cause: unknown) => messageOf(cause, '操作失败，请重试')
 
 function notifyBuildTransitions(previous: readonly ContainerBuildTask[], tasks: readonly ContainerBuildTask[], slug: string) {
   for (const task of tasks) {

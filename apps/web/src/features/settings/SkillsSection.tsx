@@ -24,6 +24,7 @@ import { RevisionConflictNotice } from './RevisionConflictNotice'
 import { useSilentPolling } from './useSilentPolling'
 import { useInFlightSubmit } from './useInFlightSubmit'
 import { Button } from '../../components/Button'
+import { messageOf } from '../../utils/errorMessage'
 
 const sourceLabels = { zip: 'ZIP 上传', git: 'HTTPS Git', directory: '服务器目录' }
 const importLabels: Record<AgentSkillImportTask['state'], { label: string; tone: StatusTone }> = {
@@ -153,7 +154,7 @@ function SkillImportDialog({ target, open, onClose, onPending, onAccepted }: { t
         if (error.status === 409) void useAgentExtensionsStore.getState().loadSkills(gateway, { silent: true })
       }
       setUncertain(pending.current !== null)
-      const message = error instanceof Error ? error.message : '导入结果尚未确认'
+      const message = messageOf(error, '导入结果尚未确认')
       setError(message)
       if (dispatched) useMessageStore.getState().notify({ tone: 'danger', message })
     }
@@ -220,7 +221,7 @@ function SkillRevocations({ skillId }: { skillId: string }) {
   useEffect(() => {
     let cancelled = false
     setLoading(true); setError(undefined)
-    void gateway.agentExtensions.listCapabilityRevocations({ kind: 'skill', id: skillId, cursor, limit: 20 }).then(page => { if (!cancelled) { setItems(rows => cursor ? [...rows, ...page.items] : page.items); setMore(page.hasMore); setNext(page.nextCursor) } }).catch(error => { if (!cancelled) setError(error instanceof Error ? error.message : '撤销记录读取失败') }).finally(() => { if (!cancelled) setLoading(false) })
+    void gateway.agentExtensions.listCapabilityRevocations({ kind: 'skill', id: skillId, cursor, limit: 20 }).then(page => { if (!cancelled) { setItems(rows => cursor ? [...rows, ...page.items] : page.items); setMore(page.hasMore); setNext(page.nextCursor) } }).catch(error => { if (!cancelled) setError(messageOf(error, '撤销记录读取失败')) }).finally(() => { if (!cancelled) setLoading(false) })
     return () => { cancelled = true }
   }, [gateway, skillId, cursor])
   const [next, setNext] = useState('')

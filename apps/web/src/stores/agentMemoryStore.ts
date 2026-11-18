@@ -2,8 +2,9 @@ import { create } from 'zustand'
 import type { AgentMemorySpace, AgentMemoryPage, AgentMemoryPageInput } from '@elysian/contracts'
 import type { ElysianGateway } from '../contracts/adapters'
 import { useSessionStore } from './sessionStore'
+import { messageOf } from '../utils/errorMessage'
 
-const message = (error: unknown) => error instanceof Error ? error.message : '读取知识 Wiki 失败'
+const message = (error: unknown) => messageOf(error, '读取知识 Wiki 失败')
 const initial = { spaces: [] as readonly AgentMemorySpace[], pages: [] as readonly AgentMemoryPage[], spaceId: '', page: undefined as AgentMemoryPage | undefined, current: undefined as AgentMemoryPage | undefined, loading: false, reading: false, saving: false, error: undefined as string | undefined }
 type MemoryState = typeof initial & {
   initialize(gateway: ElysianGateway): Promise<void>

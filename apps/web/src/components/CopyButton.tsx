@@ -4,6 +4,7 @@ import { Check, Copy } from './icons'
 import { useMessageStore } from '../stores/messageStore'
 import { writeClipboardText } from '../utils/clipboardText'
 import { Button } from './Button'
+import { messageOf } from '../utils/errorMessage'
 
 /** 复制成功后的反馈时长（毫秒）。 */
 const FEEDBACK_MS = 1_500
@@ -11,7 +12,7 @@ const FEEDBACK_MS = 1_500
 function notifyCopyFailed(error: unknown): void {
   useMessageStore.getState().notify({
     tone: 'danger',
-    message: `复制失败：浏览器拒绝了剪贴板访问（${error instanceof Error ? error.message : '未知原因'}）`,
+    message: `复制失败：浏览器拒绝了剪贴板访问（${messageOf(error, '未知原因')}）`,
   })
 }
 

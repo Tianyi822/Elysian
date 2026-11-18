@@ -4,6 +4,7 @@ import { observeElementSize } from '../utils/observeElementSize'
 import { writeClipboardText } from '../utils/clipboardText'
 import { useMessageStore } from '../stores/messageStore'
 import { TERMINAL_FONT_SIZE_DEFAULT } from './terminalFontSize'
+import { messageOf } from '../utils/errorMessage'
 import './rawTerminal.css'
 
 type Transport = {
@@ -65,7 +66,7 @@ class RawTerminalRuntime {
       this.openIfMounted()
       this.flush()
     }).catch(error => {
-      this.initializationError = error instanceof Error ? error.message : '终端组件加载失败'
+      this.initializationError = messageOf(error, '终端组件加载失败')
       this.fail(error)
     })
   }
@@ -79,7 +80,7 @@ class RawTerminalRuntime {
     this.flush()
   }
   private fail(error: unknown) {
-    const message = error instanceof Error ? error.message : '终端组件加载失败'
+    const message = messageOf(error, '终端组件加载失败')
     this.transport?.onError(message)
   }
   private send(data: Uint8Array) {

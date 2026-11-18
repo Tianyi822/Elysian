@@ -7,6 +7,7 @@ import { create } from 'zustand'
 import type { ElysianGateway } from '../contracts/adapters'
 import { isDockerRuntime } from '../utils/isDockerRuntime'
 import { useMessageStore } from './messageStore'
+import { messageOf } from '../utils/errorMessage'
 
 /** 用户管理页签的状态：主机账号列表与两个弹窗。 */
 type UsersStatus = 'idle' | 'loading' | 'ready' | 'error'
@@ -58,7 +59,7 @@ export const useUsersStore = create<UsersState>((set, get) => {
   let pendingLoad: { gateway: ElysianGateway; auth: number; snapshot: readonly HostUser[]; promise: Promise<void> } | undefined
   const recordFailure = async (error: unknown, gateway: ElysianGateway) => {
     const auth = captureAuthGeneration()
-    const message = error instanceof Error ? error.message : '操作失败，请重试'
+    const message = messageOf(error, '操作失败，请重试')
     if (hasUncertainOutcome(error)) await get().load(gateway)
     if (auth === captureAuthGeneration()) set({ operationError: message })
   }
@@ -87,7 +88,7 @@ export const useUsersStore = create<UsersState>((set, get) => {
         const users = await gateway.users.list()
         if (current() && operation.snapshot === get().users) set({ status: 'ready', users, operationError: undefined, errorMessage: undefined })
       } catch (error) {
-        if (current()) set({ status: hadData ? 'ready' : 'error', errorMessage: error instanceof Error ? error.message : '账号数据加载失败' })
+        if (current()) set({ status: hadData ? 'ready' : 'error', errorMessage: messageOf(error, '账号数据加载失败') })
       } finally { if (pendingLoad === operation) pendingLoad = undefined }
     })()
     return operation.promise

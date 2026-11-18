@@ -7,6 +7,7 @@ import { useGateway } from '../../adapters/GatewayProvider'
 import { useFilesStore } from '../../stores/filesStore'
 import { useImeEnterGuard } from '../../components/useImeEnterGuard'
 import { Button } from '../../components/Button'
+import { messageOf } from '../../utils/errorMessage'
 
 /**
  * 重命名对话框：预填现名，名称判据在前端先挡一道（非空、不含斜杠），
@@ -46,8 +47,8 @@ export function RenameDialog({
       await rename(gateway, entryPath, trimmed)
       onClose()
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : '重命名失败')
-      useMessageStore.getState().notify({ tone: 'danger', message: error instanceof Error ? error.message : '重命名失败' })
+      setErrorMessage(messageOf(error, '重命名失败'))
+      useMessageStore.getState().notify({ tone: 'danger', message: messageOf(error, '重命名失败') })
     } finally {
       setSubmitting(false)
     }

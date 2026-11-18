@@ -14,6 +14,7 @@ import { useImeEnterGuard } from '../../components/useImeEnterGuard'
 import { useSessionStore } from '../../stores/sessionStore'
 import { useMessageStore } from '../../stores/messageStore'
 import { writeClipboardText } from '../../utils/clipboardText'
+import { messageOf } from '../../utils/errorMessage'
 
 /*
  * 登录页（/login，顶层平级路由，不进 AppShell、不包 RequireArea）。
@@ -250,7 +251,7 @@ export function LoginPage() {
         navigate(target, { replace: true })
       }
     } catch (cause) {
-      setSubmitError(cause instanceof Error ? cause.message : '登录失败')
+      setSubmitError(messageOf(cause, '登录失败'))
       setSubmitting(false)
     }
   }

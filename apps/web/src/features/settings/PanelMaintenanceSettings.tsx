@@ -21,6 +21,7 @@ import { useImeEnterGuard } from '../../components/useImeEnterGuard'
 import { useMessageStore } from '../../stores/messageStore'
 import { sendPanelPending, type PanelPending } from '../../stores/panelPending'
 import { Button } from '../../components/Button'
+import { messageOf } from '../../utils/errorMessage'
 
 const BUTTON = 'h-9 rounded-lg border border-control-line bg-surface-raised px-4 text-sm font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50'
 const INPUT = 'h-9 w-full rounded-lg border border-control-line bg-surface-raised px-3 text-sm tabular-nums text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50'
@@ -120,7 +121,7 @@ export function PanelMaintenanceSettings() {
     const current = () => lifecycle.current === generation && captureAuthGeneration() === auth && usePanelStore.getState().task?.id === id
     setRetryingCLI(true); setProgressError(null)
     try { const result = await gateway.panel.retryCLIRegistration(id); if (current()) usePanelStore.getState().put(result) }
-    catch (cause) { if (current()) setProgressError(cause instanceof Error ? cause.message : 'CLI 注册重试失败') }
+    catch (cause) { if (current()) setProgressError(messageOf(cause, 'CLI 注册重试失败')) }
     finally { if (current()) setRetryingCLI(false) }
   }
 
@@ -144,7 +145,7 @@ export function PanelMaintenanceSettings() {
     }
     catch (cause) {
       if (!current() || (saved && usePanelStore.getState().pending?.requestId !== saved.requestId)) return
-      const message = cause instanceof Error ? cause.message : '维护请求失败，请重试'
+      const message = messageOf(cause, '维护请求失败，请重试')
       if (!saved || (cause instanceof PanelHttpError && cause.status < 500)) {
         // 本地准备失败尚未发送请求，不进入「结果未确认」对账。
         if (saved) rememberPending(null)
@@ -173,7 +174,7 @@ export function PanelMaintenanceSettings() {
       const result = await gateway.panel.checkUpdate(channel, source)
       if (current()) setUpdate(result)
     }
-    catch (cause) { if (current()) setUpdateError(cause instanceof Error ? cause.message : '检查更新失败，请重试') }
+    catch (cause) { if (current()) setUpdateError(messageOf(cause, '检查更新失败，请重试')) }
     finally { if (current()) setChecking(false) }
   }
   const selectSource = (next: PanelUpdateSource) => {

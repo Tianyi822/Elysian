@@ -10,6 +10,7 @@ import { prepareAgentImage } from '../adapters/local/agentImagePreparation'
 import { useMessageStore, type MessageTone } from './messageStore'
 import type { AgentChatAdapter, AgentChatAttachment, AgentChatPermissionMode, AgentChatSession, AgentChatRun, AgentConversationAdapter } from '../contracts/agentChat'
 import type { AgentUserInputAnswer, AgentUserInputRequest } from '@elysian/contracts'
+import { messageOf } from '../utils/errorMessage'
 
 type AgentChatState = {
   setUserInputAnswer(request: AgentUserInputRequest, questionId: string, answer: AgentUserInputAnswer): void
@@ -77,7 +78,7 @@ export const isChatReplyActive = (run: AgentChatRun | null) => isChatRunActive(r
 export const chatRunFailure = (run: AgentChatRun | null) => run && !isChatRunActive(run) && run.status !== 'succeeded' && run.status !== 'cancelled' && !run.budgetStop
   ? `${RUNTIME_RUN_STATUS_LABELS[run.status]}${run.error ? `：${run.error.message}` : ''}`
   : null
-const failureMessage = (error: unknown) => error instanceof Error ? error.message : '会话请求失败'
+const failureMessage = (error: unknown) => messageOf(error, '会话请求失败')
 // 这些业务拒绝发生在 submitAgent 核对 requestId 之后，可确认该请求未被接受。
 // 前置来源/请求体守卫、未知 4xx 与请求标识冲突都不能证明先前的未确认请求未执行。
 const confirmedRejections: Readonly<Record<string, number>> = {

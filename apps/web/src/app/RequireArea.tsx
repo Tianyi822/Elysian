@@ -4,6 +4,7 @@ import { useGateway } from '../adapters/GatewayProvider'
 import { ErrorState, LoadingState, NoPermissionState } from '../components/states/StateViews'
 import type { PageArea } from '../contracts/adapters'
 import { ShellPageFallback } from './layout/ShellLayoutContext'
+import { messageOf } from '../utils/errorMessage'
 
 /**
  * 页面级访问闸门。放在路由层，一处承载全部页面的无权限状态，
@@ -37,7 +38,7 @@ export function RequireArea({
         const allowed = await gateway.session.canView(area)
         if (!cancelled) setResult({ gateway, area, attempt, allowed })
       } catch (error) {
-        if (!cancelled) setResult({ gateway, area, attempt, error: error instanceof Error ? error.message : '暂时无法读取访问权限，请重试。' })
+        if (!cancelled) setResult({ gateway, area, attempt, error: messageOf(error, '暂时无法读取访问权限，请重试。') })
       }
     })()
 

@@ -18,6 +18,7 @@ import {
 import { getLastContainerSample, onStreamEvent } from './eventStreamStore'
 import { useMessageStore } from './messageStore'
 import { abortableDelay, awaitAbortable, throwIfAborted } from '../utils/abortable'
+import { messageOf } from '../utils/errorMessage'
 
 type ContainerTerminalStatus = 'connecting' | 'connected' | 'error'
 
@@ -275,7 +276,7 @@ export const useContainersStore = create<{
         set({ status: 'ready', ...(operation.snapshot === get().containers ? { containers } : {}), ...(canCommitImages ? { images } : {}) })
         replayLatestSample()
       } catch (error) {
-        if (current()) set({ status: hadData ? 'ready' : 'error', errorMessage: error instanceof Error ? error.message : '读取容器数据失败' })
+        if (current()) set({ status: hadData ? 'ready' : 'error', errorMessage: messageOf(error, '读取容器数据失败') })
       } finally { if (pendingLoad === operation) pendingLoad = undefined }
     })()
     return operation.promise
@@ -305,7 +306,7 @@ export const useContainersStore = create<{
         set({ images })
         if (operation.notify) useMessageStore.getState().notify({ tone: 'success', message: '镜像列表已刷新' })
       } catch (error) {
-        if (current()) useMessageStore.getState().notify({ tone: 'danger', message: `刷新镜像失败：${error instanceof Error ? error.message : '未知错误'}` })
+        if (current()) useMessageStore.getState().notify({ tone: 'danger', message: `刷新镜像失败：${messageOf(error)}` })
       } finally {
         if (pendingImages === operation) {
           pendingImages = undefined
@@ -352,7 +353,7 @@ export const useContainersStore = create<{
         createOpen: false,
       }))
     } catch (error) {
-      const detail = error instanceof Error ? error.message : '未知错误'
+      const detail = messageOf(error)
       set({ createError: `创建容器失败：${detail}` })
       useMessageStore.getState().notify({ tone: 'danger', message: `创建容器失败：${detail}` })
     } finally {
@@ -392,7 +393,7 @@ export const useContainersStore = create<{
       return { status: 'succeeded' }
     } catch (error) {
       if (auth !== captureAuthGeneration()) return { status: 'unknown', error: '登录状态已变化，结果未确认' }
-      const detail = error instanceof Error ? error.message : '未知错误'
+      const detail = messageOf(error)
       set((state) => ({ removingImageIds: state.removingImageIds.filter((id) => id !== imageId) }))
       useMessageStore.getState().notify({ tone: 'danger', message: `删除镜像失败：${detail}` })
       try {
@@ -444,7 +445,7 @@ export const useContainersStore = create<{
       }))
     } catch (error) {
       if (imagePullSequence !== pullSequence) return
-      const detail = error instanceof Error ? error.message : '未知错误'
+      const detail = messageOf(error)
       useMessageStore.getState().notify(controller.signal.aborted
         ? { tone: 'info', message: `已取消镜像 ${input.name}:${input.tag} 的拉取请求` }
         : { tone: 'danger', message: `拉取镜像失败：${detail}` })
@@ -513,7 +514,7 @@ export const useContainersStore = create<{
       if (earlyClose) get().handleTerminalClose(earlyClose.id, earlyClose.info)
     } catch (error) {
       if (generation !== captureAuthGeneration() || get().terminal?.sessionId !== pendingId) return
-      const errorMessage = error instanceof Error ? error.message : '连接容器终端失败'
+      const errorMessage = messageOf(error, '连接容器终端失败')
       set(state => ({ terminal: state.terminal && { ...state.terminal, status: 'error', errorMessage } }))
       useMessageStore.getState().notify({ tone: 'danger', message: errorMessage })
     }
@@ -557,7 +558,7 @@ export const useContainersStore = create<{
       })
     } catch (error) {
       if (!current()) return
-      const detail = error instanceof Error ? error.message : '未知错误'
+      const detail = messageOf(error)
       useMessageStore
         .getState()
         .notify({ tone: 'danger', message: `容器 ${name} 操作失败：${detail}` })
@@ -579,7 +580,7 @@ export const useContainersStore = create<{
       useMessageStore.getState().notify({ tone: 'success', message: `容器 ${container.name} 已删除${isDockerRuntime() ? '' : '（演示）'}` })
     } catch (error) {
       if (!current()) return
-      const detail = error instanceof Error ? error.message : '未知错误'
+      const detail = messageOf(error)
       useMessageStore.getState().notify({ tone: 'danger', message: `未能确认删除容器 ${container.name}：${detail}` })
       const snapshot = get().containers
       try {

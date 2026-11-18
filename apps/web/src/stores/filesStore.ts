@@ -5,6 +5,7 @@ import type { ElysianGateway, FilePermissionInput } from '../contracts/adapters'
 import { isDockerRuntime } from '../utils/isDockerRuntime'
 import { useMessageStore, type MessageTone } from './messageStore'
 import { FileTransferError, isFileUploadConflict } from '../adapters/filesTransferError'
+import { messageOf } from '../utils/errorMessage'
 
 /**
  * 动作完成提示的演示标注：Docker 运行时动作已真实执行（cp/mv/tar/chmod 落到容器内
@@ -157,7 +158,7 @@ export const useFilesStore = create<FilesState>((set, get) => {
           const entries = await gateway.files.list(path)
           if (current()) set({ status: 'ready', entries, reloading: false })
         } catch (error) {
-          if (current()) set({ status: inPlace ? 'ready' : 'error', reloading: false, errorMessage: error instanceof Error ? error.message : '读取目录内容失败' })
+          if (current()) set({ status: inPlace ? 'ready' : 'error', reloading: false, errorMessage: messageOf(error, '读取目录内容失败') })
         } finally { if (pendingLoad === operation) pendingLoad = undefined }
       })()
       return operation.promise
@@ -227,7 +228,7 @@ export const useFilesStore = create<FilesState>((set, get) => {
         }
         set({ clipboard: undefined })
       } catch (error) {
-        notify(`${verb}失败：${error instanceof Error ? error.message : '未知错误'}`, 'danger')
+        notify(`${verb}失败：${messageOf(error)}`, 'danger')
       } finally {
         await reload(gateway)
       }
@@ -242,7 +243,7 @@ export const useFilesStore = create<FilesState>((set, get) => {
         const archive = await gateway.files.compressEntry(path)
         notify(`已压缩为 ${archive.name}${MOCK_SUFFIX}`)
       } catch (error) {
-        notify(`压缩失败：${error instanceof Error ? error.message : '未知错误'}`, 'danger')
+        notify(`压缩失败：${messageOf(error)}`, 'danger')
       } finally {
         await reload(gateway)
       }
@@ -270,7 +271,7 @@ export const useFilesStore = create<FilesState>((set, get) => {
       } catch (error) {
         if (sequence !== searchSequence) return
         set({ searchResults: [], searching: false })
-        notify(`搜索失败：${error instanceof Error ? error.message : '未知错误'}`, 'danger')
+        notify(`搜索失败：${messageOf(error)}`, 'danger')
       }
     },
     clearSearch() {
@@ -366,7 +367,7 @@ export const useFilesStore = create<FilesState>((set, get) => {
               }
             }
           } catch (error) {
-            if (!controller.signal.aborted) updateItem(index, { status: 'error', errorMessage: error instanceof Error ? error.message : '上传失败' })
+            if (!controller.signal.aborted) updateItem(index, { status: 'error', errorMessage: messageOf(error, '上传失败') })
             if (error instanceof FileTransferError && error.status === 401) {
               sessionExpired = true
               break

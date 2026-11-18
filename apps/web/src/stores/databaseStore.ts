@@ -11,6 +11,7 @@ import {
 import type { ElysianGateway, DatabaseCreateInput } from '../contracts/adapters'
 import { useMessageStore } from './messageStore'
 import { notifyFirewallPortSync } from './firewallPortNotice'
+import { messageOf } from '../utils/errorMessage'
 
 type DatabaseKind = 'container' | 'file'
 type LoadStatus = 'idle' | 'loading' | 'ready' | 'error'
@@ -96,7 +97,7 @@ function refreshDataset(gateway: ElysianGateway, kind: DatabaseKind, showIndicat
       }
     } catch (error) {
       if (!current()) return
-      const message = error instanceof Error ? error.message : `读取${label}失败`
+      const message = messageOf(error, `读取${label}失败`)
       if (hadData && getState()[errorMessage] !== message) {
         useMessageStore.getState().notify({ tone: 'danger', message: `${label}刷新失败。${message}` })
       }
@@ -165,7 +166,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       // 创建是真实变更：立即向服务端核对列表，不用本地拼接的状态冒充服务端事实。
       void get().refreshAfterMutation(gateway, input.kind)
     } catch (error) {
-      const detail = error instanceof Error ? error.message : '未知错误'
+      const detail = messageOf(error)
       set({ createError: detail })
       useMessageStore.getState().notify({ tone: 'danger', message: `创建数据库失败：${detail}` })
     } finally {
@@ -186,7 +187,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
         .getState()
         .notify({ tone: 'success', message: forget ? `数据库容器 ${row.name} 的登记已清理` : `数据库容器 ${row.name} 已删除` })
     } catch (error) {
-      const detail = error instanceof Error ? error.message : '未知错误'
+      const detail = messageOf(error)
       useMessageStore.getState().notify({ tone: 'danger', message: `删除数据库容器失败：${detail}` })
     } finally {
       // 删除容器和删卷分两步；错误也可能留下待清理登记。
@@ -207,7 +208,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
         .notify({ tone: 'success', message: `SQLite 文件 ${row.name} 已删除` })
       await get().refreshAfterMutation(gateway, 'file')
     } catch (error) {
-      const detail = error instanceof Error ? error.message : '未知错误'
+      const detail = messageOf(error)
       useMessageStore.getState().notify({ tone: 'danger', message: `删除 SQLite 文件失败：${detail}` })
     } finally {
       set((state) => ({ removingSqliteIds: state.removingSqliteIds.filter((id) => id !== fileId) }))

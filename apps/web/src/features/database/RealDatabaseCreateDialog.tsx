@@ -13,6 +13,7 @@ import { DEFAULT_IMAGE_REGISTRY, registryHost, validateRegistryUrl } from '../..
 import { useFeedbackMessage } from '../../components/useFeedbackMessage'
 import { Button } from '../../components/Button'
 import type { ImageRegistryPreset } from '../../contracts/adapters'
+import { messageOf } from '../../utils/errorMessage'
 
 /**
  * 添加数据库容器：镜像版本查询与拉取复用容器域既有接缝（imageTags / pullImage），
@@ -132,7 +133,7 @@ export function RealDatabaseCreateDialog({ engine }: { engine: DatabaseContainer
       await refreshAfterMutation(gateway, 'container')
       setPullComplete(true)
     } catch (error) {
-      setPullError(error instanceof Error ? error.message : '镜像拉取失败')
+      setPullError(messageOf(error, '镜像拉取失败'))
     } finally {
       setPulling(false)
     }

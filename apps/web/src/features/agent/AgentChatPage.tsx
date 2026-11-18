@@ -30,6 +30,7 @@ import { ChatUsageIndicator } from './ChatUsageIndicator'
 import { defaultReasoningLevel, reasoningLabel, useChatModels } from './useChatModels'
 import './agentChat.css'
 import { Button } from '../../components/Button'
+import { messageOf } from '../../utils/errorMessage'
 
 const PERMISSION_MODES: readonly { value: AgentChatPermissionMode; label: string; description: string; Icon: IconComponent }[] = [
   { value: 'ask', label: '请求批准', description: '需要批准的操作，按服务端规则请求确认。', Icon: Hand },
@@ -130,7 +131,7 @@ export function AgentChatPage() {
       if (active) setNavigationReady(location.key)
     }
     void restore().catch(cause => {
-      if (active) setNavigationFailure(`会话初始化失败：${cause instanceof Error ? cause.message : '请重新读取会话。'}`)
+      if (active) setNavigationFailure(`会话初始化失败：${messageOf(cause, '请重新读取会话。')}`)
     })
     return () => { active = false }
   }, [api, location.key, requestedId, requestedDraft, chat.initialize, navigationAttempt])
@@ -293,7 +294,7 @@ export function AgentChatPage() {
       const next = new URLSearchParams(params); next.delete('session')
       setParams(next, { state: { ...routeState, agentDraftId: useAgentChatStore.getState().session?.id } })
       shell.closeConversationDrawer(); input.current?.focus()
-    }).catch(cause => chat.reportOperation(`新建会话失败：${cause instanceof Error ? cause.message : '请重试。'}`))
+    }).catch(cause => chat.reportOperation(`新建会话失败：${messageOf(cause, '请重试。')}`))
   }
   const selectConversation = (key: string) => {
     if (chat.sending) return

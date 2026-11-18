@@ -5,6 +5,7 @@ import { captureAuthGeneration } from '../../utils/authGeneration'
 import { useAgentChatStore } from '../../stores/agentChatStore'
 import { useImeEnterGuard } from '../../components/useImeEnterGuard'
 import { Button } from '../../components/Button'
+import { messageOf } from '../../utils/errorMessage'
 
 /**
  * 会话重命名弹窗：预填当前标题，空值与超长在前端先挡（均按 TrimSpace 后口径）；
@@ -60,7 +61,7 @@ export function SessionRenameDialog({ target, onClose }: {
       if (valid()) onClose()
     } catch (error) {
       if (valid() && useAgentChatStore.getState().session?.id === owner) {
-        const message = error instanceof Error ? error.message : '重命名失败'
+        const message = messageOf(error, '重命名失败')
         setError(message)
         reportOperation(message)
         input.current?.focus()

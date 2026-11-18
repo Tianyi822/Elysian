@@ -3,6 +3,7 @@ import { loadCommandTerminalLibrary, type CommandTerminalInstance } from './comm
 import { TERMINAL_FONT_SIZE_DEFAULT, TERMINAL_FONT_SIZE_WHEEL_STEP } from '../../terminal/terminalFontSize'
 import { writeClipboardText } from '../../utils/clipboardText'
 import { useMessageStore } from '../../stores/messageStore'
+import { messageOf } from '../../utils/errorMessage'
 import './commandTerminal.css'
 
 export type CommandTerminalResult = { lines: readonly string[]; clear?: boolean; prompt?: string }
@@ -100,7 +101,7 @@ export function CommandTerminal(props: CommandTerminalProps) {
           }
         } catch (failure) {
           if (alive && !controller.signal.aborted && !(failure instanceof Error && failure.name === 'AbortError')) {
-            echo(`错误：${failure instanceof Error ? failure.message : '执行失败'}`)
+            echo(`错误：${messageOf(failure, '执行失败')}`)
           }
         } finally {
           if (operation === controller) { operation = undefined; busy = false }
@@ -142,7 +143,7 @@ export function CommandTerminal(props: CommandTerminalProps) {
             echo('^C')
             if (current.current.onInterrupt) {
               void Promise.resolve(current.current.onInterrupt()).catch((failure: unknown) => {
-                if (alive) echo(`错误：${failure instanceof Error ? failure.message : '中断失败'}`)
+                if (alive) echo(`错误：${messageOf(failure, '中断失败')}`)
               })
             }
             return false
@@ -158,7 +159,7 @@ export function CommandTerminal(props: CommandTerminalProps) {
         observer = new ResizeObserver(() => { if (node.clientWidth > 0 && node.clientHeight > 0) instance?.resize() })
         observer.observe(node)
       }
-    }).catch((failure: unknown) => { if (alive) setError(failure instanceof Error ? failure.message : '终端组件加载失败') })
+    }).catch((failure: unknown) => { if (alive) setError(messageOf(failure, '终端组件加载失败')) })
 
     return () => {
       alive = false

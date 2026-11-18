@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useState } from 'react'
 import type { AgentModelProfile, AgentModelReasoningLevel } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
+import { messageOf } from '../../utils/errorMessage'
 
 export type ChatModelOption = {
   id: string
@@ -67,7 +68,7 @@ export function useChatModels(): ChatModelsState & { reload(): void } {
       setState({ models, status: 'ready' })
     }).catch((error: unknown) => {
       if (controller.signal.aborted) return
-      setState({ models: [], status: 'error', error: error instanceof Error ? error.message : '读取模型列表失败' })
+      setState({ models: [], status: 'error', error: messageOf(error, '读取模型列表失败') })
     })
     return () => controller.abort()
   }, [modelSettings, attempt])

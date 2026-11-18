@@ -19,6 +19,7 @@ import { Check } from '../../components/icons'
 import { useFilesStore } from '../../stores/filesStore'
 import { useImeEnterGuard } from '../../components/useImeEnterGuard'
 import { Button } from '../../components/Button'
+import { messageOf } from '../../utils/errorMessage'
 
 /*
  * 权限对话框：三类人（所有者、用户组、公共）各三项动作（读取、写入、执行），
@@ -137,8 +138,8 @@ export function PermissionDialog({
       })
       onClose()
     } catch (error) {
-      setErrorMessage(error instanceof Error ? error.message : '修改权限失败')
-      useMessageStore.getState().notify({ tone: 'danger', message: error instanceof Error ? error.message : '修改权限失败' })
+      setErrorMessage(messageOf(error, '修改权限失败'))
+      useMessageStore.getState().notify({ tone: 'danger', message: messageOf(error, '修改权限失败') })
     } finally {
       setSubmitting(false)
     }

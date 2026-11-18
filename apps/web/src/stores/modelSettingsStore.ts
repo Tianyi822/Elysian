@@ -2,6 +2,7 @@ import { captureAuthGeneration } from '../utils/authGeneration'
 import { validAgentModelDefaultReasoningLevel, validAgentModelReasoningLevels } from '@elysian/contracts'
 import type { AgentModelProfile, AgentModelProfileInput, AgentModelService, AgentModelServiceInput } from '@elysian/contracts'
 import { create } from 'zustand'
+import { messageOf as errorMessageOf } from '../utils/errorMessage'
 import { isDockerRuntime } from '../utils/isDockerRuntime'
 import type { ElysianGateway } from '../contracts/adapters'
 import { useMessageStore } from './messageStore'
@@ -50,7 +51,7 @@ type ModelSettingsState = {
   reset(): void
 }
 
-const messageOf = (error: unknown) => error instanceof Error ? error.message : '读取模型配置失败'
+const messageOf = (error: unknown) => errorMessageOf(error, '读取模型配置失败')
 const notify = (message: string, tone: 'success' | 'danger' = 'success') => useMessageStore.getState().notify({ message, tone })
 const initial = { status: 'idle' as const, models: [], services: [], reloading: false, saving: false, search: '', errorMessage: undefined }
 

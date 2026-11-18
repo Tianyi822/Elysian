@@ -7,8 +7,9 @@ import { IconButton } from '../../components/IconButton'
 import { BookOpen, X } from '../../components/icons'
 import { ChatMarkdown } from '../../components/ChatMarkdown'
 import { Button } from '../../components/Button'
+import { messageOf } from '../../utils/errorMessage'
 
-const failure = (cause: unknown) => cause instanceof Error ? cause.message : '读取长期记忆失败'
+const failure = (cause: unknown) => messageOf(cause, '读取长期记忆失败')
 
 /** 从回答保存的精确引用读取历史，绝不以当前页面代替。 */
 export function ChatMemorySources({ sources, api }: { sources: readonly AgentWikiRef[]; api: AgentMemoryAdapter }) {

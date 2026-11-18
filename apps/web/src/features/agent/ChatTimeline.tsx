@@ -14,6 +14,7 @@ import { ChatRuntimeResult } from './ChatRuntimeResult'
 import { ChatToolProgress } from './ChatToolProgress'
 import { ChatRecovery } from './ChatRecovery'
 import { Button } from '../../components/Button'
+import { messageOf } from '../../utils/errorMessage'
 
 type ToolEntry = Extract<AgentChatTimelineEntry, { kind: 'tool' }>
 const toolLabels: Record<AgentChatToolStatus, string> = {
@@ -44,7 +45,7 @@ function ChatTool({ entry, runId, api, onProgress }: { entry: ToolEntry; runId: 
     }).catch(error => {
       if (!controller.signal.aborted) {
         setError(true)
-        report(error instanceof Error ? error.message : '工具详情读取失败，请重试。')
+        report(messageOf(error, '工具详情读取失败，请重试。'))
       }
     }).finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => controller.abort()

@@ -11,6 +11,7 @@ import { openPanelAddress } from '../../utils/panelNavigation'
 import { readPanelPending } from '../../stores/panelPending'
 import { frontendCommit, readPanelReload } from '../../stores/panelReload'
 import { PanelReloadCountdown } from './PanelReloadCountdown'
+import { messageOf } from '../../utils/errorMessage'
 
 const DISCONNECT_BUDGET_MS = 120_000
 
@@ -61,7 +62,7 @@ export function PanelUpdateMonitor() {
               useMessageStore.getState().notify({ tone: 'info', message: '面板维护任务已提交' })
             } else if (store().pending?.requestId === pending.requestId) usePanelStore.setState({ progressError: null })
           } catch (cause) {
-            if (current() && store().pending?.requestId === pending.requestId) usePanelStore.setState({ progressError: cause instanceof Error ? cause.message : '查询维护提交结果失败' })
+            if (current() && store().pending?.requestId === pending.requestId) usePanelStore.setState({ progressError: messageOf(cause, '查询维护提交结果失败') })
           }
         }
         if (recovering) {
@@ -134,7 +135,7 @@ export function PanelUpdateMonitor() {
           }
         } else {
           disconnectedAt = undefined
-          usePanelStore.setState({ connectionError: null, progressError: cause instanceof Error ? cause.message : '读取维护任务失败' })
+          usePanelStore.setState({ connectionError: null, progressError: messageOf(cause, '读取维护任务失败') })
         }
       } finally {
         busy = false

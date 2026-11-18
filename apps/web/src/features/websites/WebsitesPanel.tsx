@@ -24,6 +24,7 @@ import { filterWebsiteProjects } from './websitesListing'
 import { useFeedbackMessage } from '../../components/useFeedbackMessage'
 import { useMessageStore } from '../../stores/messageStore'
 import { Button } from '../../components/Button'
+import { messageOf } from '../../utils/errorMessage'
 
 /**
  * 网站项目面板：工具栏（添加项目 + 分类/搜索/刷新）、代理通道横幅、Docker 区
@@ -208,7 +209,7 @@ export function WebsitesPanel() {
                     .setRunning(gateway, project, project.runState !== 'running')
                 }
                 onRedeploy={() => setRedeployTarget(project)}
-                onRollback={project.previousRelease ? () => { setOperationError(undefined); setRollbackIds((ids) => [...ids, project.id]); void gateway.websites.deployment?.rollback(project.id).then((task) => { useWebsiteDeploymentsStore.getState().put(task); setSelectedTask(task); useMessageStore.getState().notify({ tone: 'info', message: `已提交项目 ${project.name} 的回滚任务` }) }).catch((error: unknown) => setOperationError(error instanceof Error ? error.message : '回滚提交失败')).finally(() => setRollbackIds((ids) => ids.filter((id) => id !== project.id))) } : undefined}
+                onRollback={project.previousRelease ? () => { setOperationError(undefined); setRollbackIds((ids) => [...ids, project.id]); void gateway.websites.deployment?.rollback(project.id).then((task) => { useWebsiteDeploymentsStore.getState().put(task); setSelectedTask(task); useMessageStore.getState().notify({ tone: 'info', message: `已提交项目 ${project.name} 的回滚任务` }) }).catch((error: unknown) => setOperationError(messageOf(error, '回滚提交失败'))).finally(() => setRollbackIds((ids) => ids.filter((id) => id !== project.id))) } : undefined}
                 onOpenSettings={() => useWebsitesStore.getState().openSettings(project)}
                 onOpenRemove={() => useWebsitesStore.getState().openRemove(project)}
               />

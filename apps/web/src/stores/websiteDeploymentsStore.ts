@@ -3,6 +3,7 @@ import { websiteDeploymentIsActive } from '@elysian/contracts'
 import type { WebsiteDeploymentTask } from '@elysian/contracts'
 import type { ElysianGateway } from '../contracts/adapters'
 import { useMessageStore } from './messageStore'
+import { messageOf } from '../utils/errorMessage'
 
 function notifyTransition(previous: WebsiteDeploymentTask | undefined, task: WebsiteDeploymentTask) {
   if (!previous || (!websiteDeploymentIsActive(previous.state) && previous.state !== 'awaiting-config') || previous.state === task.state || websiteDeploymentIsActive(task.state)) return
@@ -33,6 +34,6 @@ export const useWebsiteDeploymentsStore = create<DeploymentState>((set, get) => 
       const tasks = rows.map((row) => byId.get(row.id) ?? row).sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       for (const task of tasks) notifyTransition(get().tasks.find((row) => row.id === task.id), task)
       set({ tasks, loading: false, error: undefined })
-    } catch (error) { set({ loading: false, error: error instanceof Error ? error.message : '部署任务加载失败' }) }
+    } catch (error) { set({ loading: false, error: messageOf(error, '部署任务加载失败') }) }
   },
 }))

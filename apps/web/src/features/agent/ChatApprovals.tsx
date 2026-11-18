@@ -10,6 +10,7 @@ import { useMessageStore } from '../../stores/messageStore'
 import { captureAuthGeneration } from '../../utils/authGeneration'
 import { RuntimeAccessCard } from '../../components/RuntimeAccessCard'
 import { Button } from '../../components/Button'
+import { messageOf } from '../../utils/errorMessage'
 
 const BUTTON = 'inline-flex min-h-8 items-center justify-center gap-1.5 rounded-md border border-control-line px-3 text-xs hover:bg-surface-hover disabled:opacity-50'
 
@@ -32,7 +33,7 @@ export function ChatApprovals({ api, runId, onChanged, onCancel }: { api?: Agent
       let timer: ReturnType<typeof setTimeout>
       const read = async () => {
         try { const rows = await api.approvals(runId, controller.signal); if (!controller.signal.aborted && auth === captureAuthGeneration()) { setApprovals(rows.filter(a => a.kind !== 'workflow-gate' && (a.status === 'pending' || a.status === 'approved'))); setPending(previous => Object.fromEntries(Object.entries(previous).filter(([id, input]) => rows.some(row => row.id === id && row.status === 'pending' && row.kind !== 'workflow-gate' && row.access?.revision === input.expectedRevision && row.access.digest === input.expectedDigest)))); setError(null) } }
-        catch (cause) { if (!controller.signal.aborted && auth === captureAuthGeneration()) setError(cause instanceof Error ? cause.message : '读取审批失败') }
+        catch (cause) { if (!controller.signal.aborted && auth === captureAuthGeneration()) setError(messageOf(cause, '读取审批失败')) }
         finally { if (!controller.signal.aborted && auth === captureAuthGeneration()) { setLoading(false); timer = setTimeout(() => void read(), 2000) } }
       }
       void read()
@@ -50,7 +51,7 @@ export function ChatApprovals({ api, runId, onChanged, onCancel }: { api?: Agent
       useMessageStore.getState().notify({ tone: 'success', message: result.status === 'approved' ? '操作已批准，等待执行。' : '操作已拒绝。' })
       onChanged()
     }
-    catch (cause) { if (owner === lifetime.current && auth === captureAuthGeneration()) setError(cause instanceof Error ? cause.message : '审批结果未确认，请重新读取') }
+    catch (cause) { if (owner === lifetime.current && auth === captureAuthGeneration()) setError(messageOf(cause, '审批结果未确认，请重新读取')) }
     finally { if (owner === lifetime.current && auth === captureAuthGeneration()) { setActing(false); setAttempt(value => value + 1) } }
   }
   const decideAccess = async (approval: AgentApproval, decision: AgentAccessDecisionInput['decision']) => {
@@ -64,7 +65,7 @@ export function ChatApprovals({ api, runId, onChanged, onCancel }: { api?: Agent
       setApprovals(rows => rows.map(row => row.id === approval.id ? receipt : row))
       setPending(previous => { const next = { ...previous }; delete next[approval.id]; return next })
       onChanged()
-    } catch (cause) { if (owner === lifetime.current && auth === captureAuthGeneration()) setError(cause instanceof Error ? cause.message : '确认结果未知，请重新读取') }
+    } catch (cause) { if (owner === lifetime.current && auth === captureAuthGeneration()) setError(messageOf(cause, '确认结果未知，请重新读取')) }
     finally { if (owner === lifetime.current && auth === captureAuthGeneration()) { setActing(false); setAttempt(value => value + 1) } }
   }
   return <section aria-label="待审批操作" className="mb-3 max-h-[50dvh] overflow-y-auto border-y border-line py-3 text-xs">

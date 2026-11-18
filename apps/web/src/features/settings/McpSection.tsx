@@ -21,6 +21,7 @@ import { useInFlightSubmit } from './useInFlightSubmit'
 import { useImeEnterGuard } from '../../components/useImeEnterGuard'
 import { ExtensionDialog, ExtensionToggle, Field, IconAction } from './extensionUi'
 import { Button } from '../../components/Button'
+import { messageOf } from '../../utils/errorMessage'
 
 const transports = [{ value: 'streamable-http', label: 'Streamable HTTP' }, { value: 'stdio', label: '容器 stdio' }] as const
 const mcpStateLabel = (server: AgentMCPServer) => server.revoked ? '已永久撤销' : server.active ? '已启用' : '已停用'
@@ -152,7 +153,7 @@ function McpDetailDialog({ initial, visible, onClose }: { initial: AgentMCPServe
   useEffect(() => {
     let cancelled = false
     setError(undefined)
-    void gateway.agentExtensions.getMcpServer(initial.id, selectedRevision).then(item => { if (!cancelled) setServer(item) }).catch(error => { if (!cancelled) setError(error instanceof Error ? error.message : '修订读取失败') })
+    void gateway.agentExtensions.getMcpServer(initial.id, selectedRevision).then(item => { if (!cancelled) setServer(item) }).catch(error => { if (!cancelled) setError(messageOf(error, '修订读取失败')) })
     void state.loadMcpCatalog(gateway, initial.id, selectedRevision)
     return () => { cancelled = true }
   }, [gateway, initial.id, selectedRevision, state.loadMcpCatalog])

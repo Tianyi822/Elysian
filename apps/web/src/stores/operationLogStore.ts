@@ -12,6 +12,7 @@ import { isDockerRuntime } from '../utils/isDockerRuntime'
 import type { ElysianGateway } from '../contracts/adapters'
 import { createLogReader } from './logReader'
 import { useMessageStore } from './messageStore'
+import { messageOf } from '../utils/errorMessage'
 
 type OperationLogStatus = 'idle' | 'loading' | 'ready' | 'error'
 
@@ -157,7 +158,7 @@ export const useOperationLogStore = create<OperationLogState>((set, get) => {
         activeClear = undefined
         useMessageStore.getState().notify({
           tone: 'danger',
-          message: `清空失败：${error instanceof Error ? error.message : '未知错误'}`,
+          message: `清空失败：${messageOf(error)}`,
         })
         set({ clearing: false })
       }

@@ -4,6 +4,7 @@ import type { AgentConversationAdapter } from '../../contracts/agentChat'
 import { captureAuthGeneration } from '../../utils/authGeneration'
 import { useAgentChatStore } from '../../stores/agentChatStore'
 import { Button } from '../../components/Button'
+import { messageOf } from '../../utils/errorMessage'
 
 type Props = { timeline: AgentChatTimelineSnapshot; api: AgentConversationAdapter }
 
@@ -50,7 +51,7 @@ function RecoveryActions({ timeline, api, sessionId }: Props & { sessionId?: str
       await operation()
       if (valid()) await useAgentChatStore.getState().refresh(api, undefined, [...new Set([timeline.runId, sourceRunId])])
     } catch (cause) {
-      if (valid()) setError(cause instanceof Error ? cause.message : failure)
+      if (valid()) setError(messageOf(cause, failure))
     } finally {
       if (valid()) { acting.current = false; setBusy(false) }
     }

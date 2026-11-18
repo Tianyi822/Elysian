@@ -44,6 +44,7 @@ import { ContainerDetailSheet } from '../../components/ContainerDetailSheet'
 import { useFeedbackMessage } from '../../components/useFeedbackMessage'
 import { useMessageStore } from '../../stores/messageStore'
 import { Button } from '../../components/Button'
+import { messageOf } from '../../utils/errorMessage'
 
 const CONTAINER_STATUS_TONE: Record<DatabaseContainerStatus, StatusTone> = {
   running: 'success',
@@ -262,7 +263,7 @@ function DatabaseContainerCard({
       useMessageStore.getState().notify({ tone: 'success', message })
       await useDatabaseStore.getState().refreshAfterMutation(gateway, 'container')
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : '数据库操作失败')
+      setActionError(messageOf(error, '数据库操作失败'))
     }
   }
 
@@ -271,7 +272,7 @@ function DatabaseContainerCard({
       const secret = await gateway.databases.reveal(row.id)
       await copyCredential(secret[field], field === 'username' ? '管理员用户名' : '管理员密码')
       setActionError('')
-    } catch (error) { setActionError(error instanceof Error ? error.message : '读取管理员凭据失败') }
+    } catch (error) { setActionError(messageOf(error, '读取管理员凭据失败')) }
   }
 
   const powerAction: 'start' | 'stop' = row.status === 'running' ? 'stop' : 'start'
@@ -283,7 +284,7 @@ function DatabaseContainerCard({
       useMessageStore.getState().notify({ tone: 'success', message: powerAction === 'stop' ? `已停止容器 ${row.name}` : `已启动容器 ${row.name}` })
       await useDatabaseStore.getState().refreshAfterMutation(gateway, 'container')
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : '容器操作失败')
+      setActionError(messageOf(error, '容器操作失败'))
     } finally {
       setPowerBusy(false)
     }
@@ -440,7 +441,7 @@ function SqliteFileCard({
       useMessageStore.getState().notify({ tone: 'success', message })
       if (changed) await useDatabaseStore.getState().refreshAfterMutation(gateway, 'file')
     } catch (error) {
-      setActionError(error instanceof Error ? error.message : '数据库操作失败')
+      setActionError(messageOf(error, '数据库操作失败'))
     }
   }
 

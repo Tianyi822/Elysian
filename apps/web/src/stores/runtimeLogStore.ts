@@ -5,6 +5,7 @@ import { isDockerRuntime } from '../utils/isDockerRuntime'
 import type { ElysianGateway } from '../contracts/adapters'
 import { createLogReader } from './logReader'
 import { useMessageStore } from './messageStore'
+import { messageOf } from '../utils/errorMessage'
 
 type RuntimeLogStatus = 'idle' | 'loading' | 'ready' | 'error'
 
@@ -126,7 +127,7 @@ export const useRuntimeLogStore = create<RuntimeLogState>((set, get) => {
         // 失败保留弹窗（用户可重试）：只解除忙碌态，不动 clearTarget。
         useMessageStore.getState().notify({
           tone: 'danger',
-          message: `清空失败：${error instanceof Error ? error.message : '未知错误'}`,
+          message: `清空失败：${messageOf(error)}`,
         })
         set({ clearing: false })
       }

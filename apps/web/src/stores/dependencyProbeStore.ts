@@ -3,6 +3,7 @@ import { create } from 'zustand'
 import { captureAuthGeneration } from '../utils/authGeneration'
 import type { ElysianGateway } from '../contracts/adapters'
 import { useMessageStore } from './messageStore'
+import { messageOf } from '../utils/errorMessage'
 
 /**
  * 依赖探测层的状态机：持有最近一份探测报告，供容器页、数据库页、网站页与
@@ -82,7 +83,7 @@ export const useDependencyProbeStore = create<DependencyProbeStoreState>((set, g
     }).catch((error: unknown) => {
       if (!isCurrent()) return null
       set({ status: 'error', rechecking: false })
-      const message = error instanceof Error ? error.message : '依赖检测失败'
+      const message = messageOf(error, '依赖检测失败')
       notify(operation.manual ? message : `依赖检测失败：${message}`, 'danger')
       return null
     }).finally(() => {

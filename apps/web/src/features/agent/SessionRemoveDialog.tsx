@@ -3,6 +3,7 @@ import { ConfirmDialog } from '../../components/ConfirmDialog'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { captureAuthGeneration } from '../../utils/authGeneration'
 import { useAgentChatStore } from '../../stores/agentChatStore'
+import { messageOf } from '../../utils/errorMessage'
 
 /**
  * 删除会话确认弹窗：标题点名会话，说明聊天记录与运行历史一并清除且不可恢复；
@@ -42,7 +43,7 @@ export function SessionRemoveDialog({ target, onClose }: {
       if (valid()) onClose()
     } catch (error) {
       if (valid() && useAgentChatStore.getState().session?.id === owner) {
-        const message = error instanceof Error ? error.message : '删除失败'
+        const message = messageOf(error, '删除失败')
         setError(message)
         reportOperation(message)
       }

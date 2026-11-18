@@ -7,6 +7,7 @@ import { X } from '../../components/icons'
 import { accessConfigEntryVisible, useDependencyProbeStore } from '../../stores/dependencyProbeStore'
 import { useWebsitesStore } from '../../stores/websitesStore'
 import { Button } from '../../components/Button'
+import { messageOf } from '../../utils/errorMessage'
 
 const SECTION = 'panel-surface p-4'
 const ACTION = 'rounded-lg border border-line bg-surface px-3 py-2 text-xs font-medium text-fg hover:border-fg-subtle disabled:opacity-50'
@@ -88,7 +89,7 @@ export function CaddyConfigDialog({ onClose, onAddProject }: { onClose: () => vo
       setPrivateKeyPem('')
       setCertificateName('')
       setPrivateKeyName('')
-    } catch (cause) { const message = cause instanceof Error ? cause.message : '访问配置保存失败'; setError(message); useMessageStore.getState().notify({ tone: 'danger', message }) }
+    } catch (cause) { const message = messageOf(cause, '访问配置保存失败'); setError(message); useMessageStore.getState().notify({ tone: 'danger', message }) }
     finally { setSaving(false) }
   }
 

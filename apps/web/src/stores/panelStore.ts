@@ -5,6 +5,7 @@ import type { ElysianGateway } from '../contracts/adapters'
 import { captureAuthGeneration } from '../utils/authGeneration'
 import { savePanelPending, type PanelPending } from './panelPending'
 import { frontendCommit, PANEL_RELOAD_DELAY_MS, readPanelReload, savePanelReload, type PanelReload } from './panelReload'
+import { messageOf } from '../utils/errorMessage'
 
 type PanelState = {
   info: PanelInfo | null; task: PanelTask | null; logs: string; offset: number; hasMore: boolean; error: string | null
@@ -84,7 +85,7 @@ export const usePanelStore = create<PanelState>((set, get) => ({
       set({ info, task, error: null, trackedTaskId: tracked ? task.id : null,
         ...(task?.id !== get().task?.id ? { logs: '', offset: 0, hasMore: false, verifiedUpdate: null, verificationError: null, needsManualReload: false } : {}) })
       if (task) { try { await get().poll(gateway, signal) } catch { /* 全局监控继续恢复任务连接。 */ } }
-    } catch (cause) { if (current()) set({ error: cause instanceof Error ? cause.message : '面板信息加载失败' }) }
+    } catch (cause) { if (current()) set({ error: messageOf(cause, '面板信息加载失败') }) }
   },
   async poll(gateway, signal) {
     const task = get().task; if (!task) return null

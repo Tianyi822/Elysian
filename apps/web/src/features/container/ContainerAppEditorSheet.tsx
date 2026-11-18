@@ -11,6 +11,7 @@ import { useContainerAppsStore } from '../../stores/containerAppsStore'
 import { isComposeFile } from '../../stores/containerAppsStore'
 import { useFeedbackMessage } from '../../components/useFeedbackMessage'
 import { Button } from '../../components/Button'
+import { messageOf } from '../../utils/errorMessage'
 
 /** 编辑抽屉的读取状态；失败要在抽屉里说清楚并能重试，不能只留一个空框。 */
 type Loaded = { kind: 'loading' } | { kind: 'error'; message: string } | { kind: 'ready'; content: string }
@@ -68,7 +69,7 @@ export function ContainerAppEditorSheet({
         if (!cancelled) {
           setLoaded({
             kind: 'error',
-            message: cause instanceof Error ? cause.message : '读取文件内容失败',
+            message: messageOf(cause, '读取文件内容失败'),
           })
         }
       })

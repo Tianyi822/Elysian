@@ -8,6 +8,7 @@ import { ExtensionDialog } from './extensionUi'
 import { CTL_SECONDARY } from '../../components/formControl'
 import { McpCatalog } from './McpSection'
 import { Button } from '../../components/Button'
+import { messageOf } from '../../utils/errorMessage'
 
 type Pointer = { requestId: string; id?: string; decision?: AgentMCPProbeDecision; cancelRequestId?: string }
 const storageKey = (server: AgentMCPServer) => `elysian:mcp-probe:v1:${server.id}:${server.revision}`
@@ -45,7 +46,7 @@ export function McpProbeDialog({ server, visible, onClose }: { server: AgentMCPS
         setRequest(value); setError(undefined)
         if (!pointer.id) savePointer({ ...pointer, id: value.id })
         if (['preparing', 'running'].includes(value.state)) timer = setTimeout(() => void read(), 1000)
-      } catch (cause) { if (current()) setError(cause instanceof Error ? cause.message : '探测状态读取失败') }
+      } catch (cause) { if (current()) setError(messageOf(cause, '探测状态读取失败')) }
       finally { if (current()) setReading(false) }
     }
     void read()
@@ -57,7 +58,7 @@ export function McpProbeDialog({ server, visible, onClose }: { server: AgentMCPS
     const input = pointer.decision ?? { requestId: randomId(), expectedVersion: request.version, expectedDigest: request.digest, decision: decision === 'denied' ? 'deny' : 'allow-once' }
     savePointer({ ...pointer, decision: input }); setBusy(true); setError(undefined)
     try { const value = await api.decideMcpProbeRequest(request.id, input); if (owner === lifetime.current && auth === captureAuthGeneration()) { setRequest(value); savePointer({ ...pointer, decision: undefined }) } }
-    catch (cause) { if (owner === lifetime.current && auth === captureAuthGeneration()) setError(cause instanceof Error ? cause.message : '探测确认结果未知') }
+    catch (cause) { if (owner === lifetime.current && auth === captureAuthGeneration()) setError(messageOf(cause, '探测确认结果未知')) }
     finally { if (owner === lifetime.current && auth === captureAuthGeneration()) { setBusy(false); setAttempt(value => value + 1) } }
   }
   const cancel = async () => {
@@ -65,7 +66,7 @@ export function McpProbeDialog({ server, visible, onClose }: { server: AgentMCPS
     const owner = lifetime.current, auth = captureAuthGeneration(), requestId = pointer.cancelRequestId ?? randomId()
     savePointer({ ...pointer, cancelRequestId: requestId }); setBusy(true)
     try { const value = await api.cancelMcpProbeRequest(request.id, { requestId }); if (owner === lifetime.current && auth === captureAuthGeneration()) setRequest(value) }
-    catch (cause) { if (owner === lifetime.current && auth === captureAuthGeneration()) setError(cause instanceof Error ? cause.message : '停止结果未确认') }
+    catch (cause) { if (owner === lifetime.current && auth === captureAuthGeneration()) setError(messageOf(cause, '停止结果未确认')) }
     finally { if (owner === lifetime.current && auth === captureAuthGeneration()) { setBusy(false); setAttempt(value => value + 1) } }
   }
   const restart = () => { createPromise.current = undefined; setRequest(undefined); savePointer({ requestId: randomId() }); setAttempt(value => value + 1) }

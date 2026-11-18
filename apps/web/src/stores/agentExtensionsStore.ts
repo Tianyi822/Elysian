@@ -11,6 +11,7 @@ import type {
 } from '@elysian/contracts'
 import type { ElysianGateway } from '../contracts/adapters'
 import { AgentHttpError } from '../contracts/agentHttpError'
+import { messageOf as errorMessageOf } from '../utils/errorMessage'
 import { isDockerRuntime } from '../utils/isDockerRuntime'
 import { useMessageStore } from './messageStore'
 import { createRequestGuard } from './requestGuard'
@@ -31,7 +32,7 @@ const TERMINAL_IMPORT_STATES = new Set(['succeeded', 'failed', 'cancelled', 'int
 const ACTIVE_IMPORT_STATES = new Set(['queued', 'running'])
 
 function messageOf(error: unknown): string {
-  return error instanceof Error ? error.message : '操作失败，请稍后重试'
+  return errorMessageOf(error, '操作失败，请稍后重试')
 }
 
 function notify(tone: 'success' | 'info' | 'danger', message: string): void {

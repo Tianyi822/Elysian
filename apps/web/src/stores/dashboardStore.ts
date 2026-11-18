@@ -9,6 +9,7 @@ import {
 } from '../contracts/resourceMetrics'
 import type { ElysianGateway } from '../contracts/adapters'
 import { onStreamEvent } from './eventStreamStore'
+import { messageOf } from '../utils/errorMessage'
 
 /** 同一 SSE 节拍内重复到达时合并为一点，避免图表重复柱。 */
 const SAMPLE_MERGE_DEDUPE_MS = 4500
@@ -80,7 +81,7 @@ function reloadResources(gateway: ElysianGateway, range: TimeRange, manual = fal
         useDashboardStore.setState({ status: 'ready', resources: merged, resourcesRange: range, errorMessage: undefined })
       }
     } catch (error) {
-      if (current()) useDashboardStore.setState({ status: hadData ? 'ready' : 'error', errorMessage: error instanceof Error ? error.message : '读取仪表盘数据失败' })
+      if (current()) useDashboardStore.setState({ status: hadData ? 'ready' : 'error', errorMessage: messageOf(error, '读取仪表盘数据失败') })
     } finally {
       if (pendingRead === operation) {
         pendingRead = undefined

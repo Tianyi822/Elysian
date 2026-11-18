@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { AgentRuntimeInfo } from '@elysian/contracts'
 import type { ElysianGateway } from '../contracts/adapters'
+import { messageOf } from '../utils/errorMessage'
 
 /*
  * 模型设置使用的 Agent 运行时能力报告：先判定内核可用性与
@@ -50,7 +51,7 @@ export const useAgentRuntimeStore = create<AgentRuntimeState>((set, get) => {
         set({
           status: inPlace ? 'ready' : 'error',
           reloading: false,
-          errorMessage: error instanceof Error ? error.message : '读取 Agent 运行时报告失败',
+          errorMessage: messageOf(error, '读取 Agent 运行时报告失败'),
         })
         if (options?.silent) throw error
       }

@@ -16,6 +16,7 @@ import { hasUncertainOutcome } from '../adapters/http/requestDeadline'
 import type { ElysianGateway } from '../contracts/adapters'
 import { isDockerRuntime } from '../utils/isDockerRuntime'
 import { useMessageStore } from './messageStore'
+import { messageOf } from '../utils/errorMessage'
 
 /** 每页行数与参照产品的默认值一致；演示数据约 27 条，正好跨两页。 */
 export const FIREWALL_PAGE_SIZE = 20
@@ -158,7 +159,7 @@ export const useFirewallStore = create<FirewallState>((set, get) => {
         const [data] = await Promise.all([readFirewall(gateway), get().refreshScan(gateway)])
         if (current() && sameReadSnapshot(operation.snapshot, get())) set({ status: 'ready', ...data, operationError: undefined, errorMessage: undefined })
       } catch (error) {
-        if (current()) set({ status: hadData ? 'ready' : 'error', errorMessage: error instanceof Error ? error.message : '防火墙数据加载失败' })
+        if (current()) set({ status: hadData ? 'ready' : 'error', errorMessage: messageOf(error, '防火墙数据加载失败') })
       } finally { if (pendingLoad === operation) pendingLoad = undefined }
     })()
     return operation.promise
@@ -406,7 +407,7 @@ export const useFirewallStore = create<FirewallState>((set, get) => {
         if (auth === captureAuthGeneration() && revision === scanRevision) set({ scanProtection, scanStatus: 'ready', scanError: undefined })
       } catch (error) {
         if (auth !== captureAuthGeneration() || revision !== scanRevision) return
-        set({ scanStatus: 'error', scanError: error instanceof Error ? error.message : '读取防扫描状态失败' })
+        set({ scanStatus: 'error', scanError: messageOf(error, '读取防扫描状态失败') })
       } finally { if (pendingScan === operation) pendingScan = undefined }
     })()
     return operation.promise
@@ -434,7 +435,7 @@ export const useFirewallStore = create<FirewallState>((set, get) => {
       return true
     } catch (error) {
       if (auth !== captureAuthGeneration()) return false
-      const detail = error instanceof Error ? error.message : '防扫描设置失败'
+      const detail = messageOf(error, '防扫描设置失败')
       const message = savingConfig ? `防扫描配置保存失败：${detail}` : detail
       // 所有失败均回读事实，尤其写超时不能把旧快照当成已回滚，也不自动重投。
       set({ scanSaving: false, scanStatus: 'loading' })

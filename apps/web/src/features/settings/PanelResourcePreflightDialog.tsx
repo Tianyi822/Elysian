@@ -4,6 +4,7 @@ import type { PanelResourcePlan, PanelUpdatePreflight, PanelUpdateTarget } from 
 import type { PanelAdapter } from '../../contracts/adapters'
 import { captureAuthGeneration } from '../../utils/authGeneration'
 import { Button } from '../../components/Button'
+import { messageOf } from '../../utils/errorMessage'
 
 const BUTTON = 'h-9 rounded-lg border border-control-line bg-surface-raised px-4 text-sm font-medium text-fg disabled:cursor-not-allowed disabled:opacity-50'
 export function resourceSize(bytes: number): string { return `${(bytes / 1024 / 1024).toFixed(0)} MiB` }
@@ -26,7 +27,7 @@ export function PanelResourcePreflightDialog({ target, adapter, precompiled = fa
     void adapter.preflightUpdate(target).then(value => {
       if (!current()) return
       setReport(value); setTargets(value.needsRelease ? value.candidates.filter(c => c.recommended && !c.disabledReason).map(c => c.id) : []); setStopPanel(value.needsRelease && value.stopPanelRecommended)
-    }).catch(cause => { if (current()) setError(cause instanceof Error ? cause.message : '资源预检失败，请重试') })
+    }).catch(cause => { if (current()) setError(messageOf(cause, '资源预检失败，请重试')) })
       .finally(() => { if (current()) setLoading(false) })
     return () => { generation.current++ }
   }, [adapter, target, revision])

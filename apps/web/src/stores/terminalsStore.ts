@@ -5,6 +5,7 @@ import { hostTerminalCloseMessage } from '../terminal/terminalCloseMessage'
 import { deactivateRawTerminal, disposeRawTerminal, rawTerminalRuntime } from '../terminal/rawTerminalRuntime'
 import { captureAuthGeneration } from '../utils/authGeneration'
 import type { ElysianGateway, HostTerminalCloseInfo, HostTerminalFrame, HostTerminalSessionInfo } from '../contracts/adapters'
+import { messageOf } from '../utils/errorMessage'
 
 export function hostTerminalBanner(): string { return isDockerRuntime() ? '本机终端' : '演示终端 · 待接入真实执行' }
 export function hostTerminalEmptyDescription(): string { return isDockerRuntime() ? '新建一条本机终端会话，命令在真实 Shell 中执行。' : '新建一条本机演示终端。命令在浏览器内求值。' }
@@ -77,7 +78,7 @@ export const useTerminalsStore = create<State>((set, get) => ({
       if (earlyClose) get().handleClose(earlyClose.id, earlyClose.info)
     } catch (error) {
       if (operation !== revision || generation !== captureAuthGeneration() || !get().sessions.some(session => session.id === pendingId)) return
-      const errorMessage = error instanceof Error ? error.message : '连接本机终端失败'
+      const errorMessage = messageOf(error, '连接本机终端失败')
       set(state => ({ opening: false, sessions: state.sessions.map(session => session.id === pendingId ? { ...session, status: 'error', errorMessage } : session) }))
       useMessageStore.getState().notify({ tone: 'danger', message: `本机终端连接失败：${errorMessage}` })
     }

@@ -2,6 +2,7 @@ import { logNumericSortKey } from '@elysian/contracts'
 import type { LogListQuery, LogStorageStats } from '@elysian/contracts'
 import { captureAuthGeneration } from '../utils/authGeneration'
 import type { ElysianGateway } from '../contracts/adapters'
+import { messageOf } from '../utils/errorMessage'
 
 type LogPage<Entry> = {
   entries: readonly Entry[]
@@ -90,7 +91,7 @@ export function createLogReader<Entry extends { id: string }, Query extends LogL
           ...(trackStorage ? { storage: report.storage } : {}),
         })
       } catch (error) {
-        if (acceptsResult()) set({ status: first ? 'error' : 'ready', errorMessage: error instanceof Error ? error.message : '日志读取失败' })
+        if (acceptsResult()) set({ status: first ? 'error' : 'ready', errorMessage: messageOf(error, '日志读取失败') })
       } finally {
         if (pendingLoad === operation) {
           const ownsBusy = current()
@@ -122,7 +123,7 @@ export function createLogReader<Entry extends { id: string }, Query extends LogL
       loaded = { ...scope, snapshot }
       set({ entries: snapshot, truncated: report.truncated })
     } catch (error) {
-      if (acceptsResult()) set({ olderError: error instanceof Error ? error.message : '更早的记录加载失败' })
+      if (acceptsResult()) set({ olderError: messageOf(error, '更早的记录加载失败') })
     } finally {
       if (pendingOlder === scope) {
         const ownsBusy = current()

@@ -15,6 +15,7 @@ import { X } from '../../components/icons'
 import { FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
 import { useMessageStore } from '../../stores/messageStore'
 import { Button } from '../../components/Button'
+import { messageOf } from '../../utils/errorMessage'
 
 const INPUT = `${FORM_CONTROL_HEIGHT_CLASS} w-full rounded-lg border border-control-line bg-surface-raised px-2.5 text-sm text-fg placeholder:text-fg-subtle disabled:opacity-60`
 const BUTTON = 'rounded-lg border border-control-line bg-surface-raised px-3 py-2 text-xs font-medium text-fg hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50'
@@ -22,7 +23,7 @@ const TOOL_LABEL: Record<string, string> = { javac: '普通 Java · JDK', maven:
 const TEST_LABEL = { pending: '等待测试', passed: '测试与检查已通过', failed: '测试或构建未完成，请查看日志', absent: '未发现测试', skipped: '已明确跳过测试' }
 const TOOL_DEFAULT: Record<string, string> = { maven: '3.9.11', gradle: '8.14.3', pnpm: '10.17.1', yarn: '1.22.22', bun: '1.2.22', uv: '0.8.22', poetry: '2.2.1' }
 const initialConfig: WebsiteBuildConfig = { candidateId: '', target: 'service', command: '', skipTests: false }
-function errorOf(error: unknown) { return error instanceof Error ? error.message : '部署操作失败' }
+function errorOf(error: unknown) { return messageOf(error, '部署操作失败') }
 function configurationWarning(source: WebsiteSource | undefined, candidateId: string) {
   const warnings = [...(source?.report?.warnings ?? []), ...(source?.report?.candidates.find((candidate) => candidate.id === candidateId)?.warnings ?? [])]
   return [...new Set(warnings)].join('\n')

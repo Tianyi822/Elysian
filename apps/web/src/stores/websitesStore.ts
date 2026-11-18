@@ -12,6 +12,7 @@ import type { ElysianGateway } from '../contracts/adapters'
 import { isDockerRuntime } from '../utils/isDockerRuntime'
 import { useMessageStore } from './messageStore'
 import { notifyFirewallPortSync } from './firewallPortNotice'
+import { messageOf } from '../utils/errorMessage'
 
 /**
  * 动作完成提示的运行模式标注：Docker 运行时动作已真实执行（容器、站点目录与
@@ -87,10 +88,6 @@ function notify(message: string, tone: 'success' | 'danger' = 'success'): void {
   useMessageStore.getState().notify({ message, tone })
 }
 
-function errorMessageOf(error: unknown, fallback: string): string {
-  return error instanceof Error ? error.message : fallback
-}
-
 export const useWebsitesStore = create<WebsitesState>((set, get) => {
   let pendingLoad: { gateway: ElysianGateway; auth: number; snapshot: readonly WebsiteProject[]; proxy: WebsiteProxyStatus; promise: Promise<void> } | undefined
   let detailSequence = 0
@@ -112,7 +109,7 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
         if (current()) set({ detailLogs: logs, detailLogsLoading: false, detailLogsError: undefined })
       } catch (error) {
         if (!current()) return
-        const message = errorMessageOf(error, '日志加载失败')
+        const message = messageOf(error, '日志加载失败')
         set({ detailLogsLoading: false, detailLogsError: message })
         notify(message, 'danger')
       } finally { if (pendingDetail === operation) pendingDetail = undefined }
@@ -158,7 +155,7 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
           if (current() && operation.snapshot === get().projects && operation.proxy === get().proxyStatus) set({ status: 'ready', projects, proxyStatus: proxy })
         } catch (error) {
           if (!current()) return
-          const message = errorMessageOf(error, '网站数据读取失败')
+          const message = messageOf(error, '网站数据读取失败')
           set({ status: hadData ? 'ready' : 'error', errorMessage: message })
           if (hadData) notify(message, 'danger')
         } finally {
@@ -181,7 +178,7 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
         // 路由事实要等下一次列表读取：成功后静默刷新一次，横幅随之下线。
         await get().refresh(gateway, { silent: true })
       } catch (error) {
-        notify(errorMessageOf(error, '反向代理配置下发失败'), 'danger')
+        notify(messageOf(error, '反向代理配置下发失败'), 'danger')
       } finally {
         set({ reconciling: false })
       }
@@ -214,7 +211,7 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
         return true
       } catch (error) {
         set({ saving: false })
-        notify(errorMessageOf(error, '添加失败'), 'danger')
+        notify(messageOf(error, '添加失败'), 'danger')
         return false
       }
     },
@@ -258,8 +255,8 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
         notify(`项目 ${updated.name} 已修改${NOTICE_SUFFIX}`)
         return true
       } catch (error) {
-        set({ saving: false, settingsError: errorMessageOf(error, '保存失败') })
-        notify(errorMessageOf(error, '保存失败'), 'danger')
+        set({ saving: false, settingsError: messageOf(error, '保存失败') })
+        notify(messageOf(error, '保存失败'), 'danger')
         return false
       }
     },
@@ -285,7 +282,7 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
         notify(`项目 ${project.name} 已删除${NOTICE_SUFFIX}`)
       } catch (error) {
         set((state) => ({ busyProjectIds: state.busyProjectIds.filter((id) => id !== project.id) }))
-        notify(errorMessageOf(error, '删除失败'), 'danger')
+        notify(messageOf(error, '删除失败'), 'danger')
       }
     },
 
@@ -314,7 +311,7 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
           projects: state.projects.map((item) => (item.id === previous.id ? previous : item)),
           busyProjectIds: state.busyProjectIds.filter((id) => id !== project.id),
         }))
-        notify(errorMessageOf(error, '操作失败'), 'danger')
+        notify(messageOf(error, '操作失败'), 'danger')
       }
     },
 
