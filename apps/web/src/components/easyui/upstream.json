@@ -28,6 +28,7 @@
     "Add a CSS-only Sidebar density preset for desktop viewports from 1440px: 64px brand area, 36px mark, 40px navigation/footer rows, 20px icons and 4px row gaps. Keep upstream widths, compact desktop/mobile density, motion, and navigation behavior.",
     "Map colors to existing semantic theme tokens and Chinese labels.",
     "Add an optional DataTable searchAction beside the built-in search field. The Docker image table keeps refresh next to search and pull in the existing right-hand toolbar slot instead of a row count; selection still replaces the normal toolbar.",
+    "Allow DataTable callers to hide the default toolbar row count without adding a right-hand action; used by the read-only login log table.",
     "Preserve controlled values, disabled state, and reduced-motion support.",
     "Disable infrastructure count-up/delta classification; retain StatCard pointer and keyboard scrubber.",
     "Preserve sampling timestamps and use host size observer fallback.",

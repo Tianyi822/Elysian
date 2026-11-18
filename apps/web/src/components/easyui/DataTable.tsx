@@ -91,6 +91,8 @@ export interface DataTableProps<T> {
   searchAction?: ReactNode;
   /** Right side of the toolbar, replacing the row count when provided */
   toolbar?: ReactNode;
+  /** Show the default row count in the normal toolbar (default true). */
+  showRowCount?: boolean;
   /** Persistent navigation, retained while selection replaces search/actions. */
   toolbarNavigation?: ReactNode;
   /** Rows mounted per batch; the rest mount as the body scrolls (default 20, Infinity = all) */
@@ -248,6 +250,7 @@ export function DataTable<T>({
   bulkActions,
   searchAction,
   toolbar,
+  showRowCount = true,
   toolbarNavigation,
   pageSize = 20,
   maxHeight = "viewport",
@@ -519,11 +522,13 @@ export function DataTable<T>({
           {searchField}
           <div className="shrink-0">{searchAction}</div>
         </div>
-      ) : searchField) : <span className={`text-[13px] ${muted}`}>{processed.length} 行</span>}
-      <div className="dt-toolbar-actions ml-auto flex max-w-full shrink-0 flex-wrap items-center gap-2">
-        {searchable && !toolbar && <span className={`hidden text-[12.5px] tabular-nums sm:block ${muted}`}>{processed.length} 行</span>}
-        {toolbar}
-      </div>
+      ) : searchField) : showRowCount && <span className={`text-[13px] ${muted}`}>{processed.length} 行</span>}
+      {toolbar || (searchable && showRowCount) ? (
+        <div className="dt-toolbar-actions ml-auto flex max-w-full shrink-0 flex-wrap items-center gap-2">
+          {searchable && !toolbar && <span className={`hidden text-[12.5px] tabular-nums sm:block ${muted}`}>{processed.length} 行</span>}
+          {toolbar}
+        </div>
+      ) : null}
     </motion.div>
   );
 
