@@ -390,7 +390,7 @@ describe('平台操作日志面板', () => {
     expect(screen.getByText('还有更早的记录')).toBeInTheDocument()
   })
 
-  it('搜索防抖 300 毫秒后请求带 trim 后的 q', async () => {
+  it('关键词变化防抖 300 毫秒，期间改筛选重新计时，只请求最新组合', async () => {
     const calls: OperationLogListQuery[] = []
     const gateway = gatewayWithLogs({
       operationLogs: async (query) => {
@@ -405,20 +405,29 @@ describe('平台操作日志面板', () => {
     act(() => {
       useOperationLogStore.getState().setSearch('  端口  ')
     })
-    await vi.advanceTimersByTimeAsync(300)
-    expect(calls.length).toBeGreaterThan(initialCalls)
-    expect(calls.at(-1)?.q).toBe('端口')
+    await act(async () => { await vi.advanceTimersByTimeAsync(200) })
+    act(() => { useOperationLogStore.getState().setCategoryFilter('security') })
+    await act(async () => { await vi.advanceTimersByTimeAsync(299) })
+    expect(calls).toHaveLength(initialCalls)
+    await act(async () => { await vi.advanceTimersByTimeAsync(1) })
+    expect(calls.slice(initialCalls)).toEqual([{ q: '端口', category: 'security' }])
+
+    act(() => { useOperationLogStore.getState().setResultFilter('failure') })
+    await act(async () => { await vi.advanceTimersByTimeAsync(0) })
+    expect(calls.slice(initialCalls + 1)).toEqual([{ q: '端口', category: 'security', result: 'failure' }])
   })
 
   it('加载更早：第二次请求带末行 before/beforeId，行数为两页之和', async () => {
     const page1 = SEED_OPERATION_LOGS.slice(0, 3)
     const page2 = SEED_OPERATION_LOGS.slice(3, 6)
     const calls: OperationLogListQuery[] = []
+    let resolveOlder!: (report: ReturnType<typeof reportWith>) => void
+    const older = new Promise<ReturnType<typeof reportWith>>((resolve) => { resolveOlder = resolve })
     const gateway = gatewayWithLogs({
       operationLogs: async (query) => {
         calls.push(query ?? {})
         if (query?.before) {
-          return reportWith(page2, { total: 6, truncated: false })
+          return older
         }
         return reportWith(page1, { total: 6, truncated: true })
       },
@@ -428,7 +437,11 @@ describe('平台操作日志面板', () => {
     await screen.findByRole('region', { name: '操作日志表' })
     expect(dataRows()).toHaveLength(3)
     await user.click(screen.getByRole('button', { name: '加载更早的记录' }))
-    await waitFor(() => expect(dataRows()).toHaveLength(6))
+    expect(screen.getByRole('button', { name: '加载中…' })).toBeDisabled()
+    expect(dataRows()).toHaveLength(3)
+    await act(async () => { resolveOlder(reportWith(page2, { total: 6, truncated: false })) })
+    expect(dataRows()).toHaveLength(6)
+    expect(screen.queryByRole('button', { name: '加载更早的记录' })).not.toBeInTheDocument()
     const last = page1[page1.length - 1]!
     expect(calls.at(-1)).toMatchObject({
       before: last.at,

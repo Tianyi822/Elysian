@@ -279,7 +279,7 @@ describe('平台登录日志面板', () => {
     ).toHaveAttribute('aria-pressed', 'true')
   })
 
-  it('搜索 300 毫秒后请求带 q', async () => {
+  it('搜索 300 毫秒后请求带 q，离开页面取消未触发的搜索', async () => {
     const calls: LoginLogListQuery[] = []
     const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
     const gateway: ElysianGateway = {
@@ -294,7 +294,7 @@ describe('平台登录日志面板', () => {
         },
       },
     }
-    renderApp('/logs', { gateway })
+    const { unmount } = renderApp('/logs', { gateway })
     await openLoginTab()
     await screen.findByRole('region', { name: '登录日志表' })
     const initialCalls = calls.length
@@ -302,9 +302,13 @@ describe('平台登录日志面板', () => {
     act(() => {
       useLoginLogStore.getState().setSearch('114.135')
     })
-    await vi.advanceTimersByTimeAsync(300)
-    expect(calls.length).toBeGreaterThan(initialCalls)
-    expect(calls.at(-1)?.q).toBe('114.135')
+    await act(async () => { await vi.advanceTimersByTimeAsync(300) })
+    expect(calls.slice(initialCalls)).toEqual([{ q: '114.135' }])
+
+    act(() => { useLoginLogStore.getState().setSearch('另一条搜索') })
+    unmount()
+    await act(async () => { await vi.advanceTimersByTimeAsync(300) })
+    expect(calls).toHaveLength(initialCalls + 1)
   })
 
   it('登录状态筛选让请求带 status', async () => {

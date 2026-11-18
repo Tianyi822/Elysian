@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useCallback } from 'react'
 import { LOG_ENTRY_FETCH_LIMIT, LOGIN_LOG_STATUS_LABELS } from '@elysian/contracts'
 import type { LoginLogEntry } from '@elysian/contracts'
 import { isDockerRuntime } from '../../utils/isDockerRuntime'
@@ -13,6 +13,8 @@ import { ErrorState, LoadingState } from '../../components/states/StateViews'
 import { useLoginLogStore } from '../../stores/loginLogStore'
 import type { LoginLogStatusFilter } from '../../stores/loginLogStore'
 import { useLogReportNotifications } from './useLogReportNotifications'
+import { useDebouncedSearch } from './useDebouncedSearch'
+import { LogLoadOlder } from './LogLoadOlder'
 import { Button } from '../../components/Button'
 import './logFilters.css'
 
@@ -54,17 +56,8 @@ export function LoginLogPanel() {
 
   useLogReportNotifications('登录日志', { ready: status === 'ready', truncated, skippedLines, skippedFiles, olderError })
 
-  const committedSearchRef = useRef(search.trim())
-  const trimmedSearch = search.trim()
-
-  useEffect(() => {
-    const delay = trimmedSearch === committedSearchRef.current ? 0 : 300
-    const handle = setTimeout(() => {
-      committedSearchRef.current = trimmedSearch
-      void load(gateway)
-    }, delay)
-    return () => clearTimeout(handle)
-  }, [gateway, load, statusFilter, trimmedSearch])
+  const reloadSearch = useCallback(() => void load(gateway), [gateway, load])
+  const trimmedSearch = useDebouncedSearch(search, reloadSearch, statusFilter)
 
   if (status === 'loading' || status === 'idle') {
     return <LoadingState label="正在加载登录日志…" />
@@ -96,7 +89,7 @@ export function LoginLogPanel() {
         className="log-filter-table dt-toolbar-inline-actions"
         searchAction={<RefreshButton className="dt-toolbar-control-icon" label="刷新日志" busy={refreshing} disabled={loadingOlder} onPress={() => void load(gateway)} />}
         toolbar={<ChipGroup ariaLabel="登录状态筛选" items={STATUS_FILTERS} value={statusFilter} onSelect={setStatusFilter} className="login-log-filter" />}
-        filterMode="external" emptyState={entries.length === 0 && !search.trim() && statusFilter === 'all' ? <><p className="font-medium">还没有登录日志</p><p className="text-sm text-fg-muted">登录成功或失败后，记录会出现在这里。</p></> : undefined} searchPlaceholder="搜索登录日志" selectionKey={statusFilter} busy={querying}
+        filterMode="external" emptyState={entries.length === 0 && !trimmedSearch && statusFilter === 'all' ? <><p className="font-medium">还没有登录日志</p><p className="text-sm text-fg-muted">登录成功或失败后，记录会出现在这里。</p></> : undefined} searchPlaceholder="搜索登录日志" selectionKey={statusFilter} busy={querying}
         columns={[
           { key: 'ip', header: 'IP 地址', primary: true, width: '160px', accessor: entry => entry.ip, cell: entry => <span className="tabular-nums">{entry.ip}</span> },
           { key: 'location', header: '归属地', width: 'minmax(140px,1fr)', accessor: entry => entry.location },
@@ -105,28 +98,7 @@ export function LoginLogPanel() {
           { key: 'time', header: '时间', width: '176px', accessor: entry => new Date(entry.time), cell: entry => <span className="tabular-nums text-fg-muted">{formatLoginTime(entry.time)}</span> },
         ]} />
 
-      {truncated ? (
-        <div className="mt-3 flex flex-col items-start gap-2">
-          <p className="text-xs text-fg-muted">还有更早的记录</p>
-          <Button variant="outline"
-            type="button"
-            disabled={loadingOlder}
-            onClick={() => void loadOlder(gateway)}
-            className="rounded-lg border border-control-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:opacity-50"
-          >
-            {loadingOlder ? '加载中…' : '加载更早的记录'}
-          </Button>
-          {olderError ? (
-            <p role="status" className="text-xs text-danger">
-              更早的记录加载失败
-            </p>
-          ) : null}
-        </div>
-      ) : olderError ? (
-        <p role="status" className="mt-3 text-xs text-danger">
-          更早的记录加载失败
-        </p>
-      ) : null}
+      <LogLoadOlder className="mt-3" hasMore={truncated} busy={loadingOlder} error={olderError} onLoad={() => void loadOlder(gateway)} />
     </div>
   )
 }

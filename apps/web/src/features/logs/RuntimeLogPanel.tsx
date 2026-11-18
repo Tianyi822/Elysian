@@ -1,6 +1,6 @@
 import { TOOLTIP_CONTENT_CLASS } from '../../components/tooltipStyles'
 import * as Tooltip from '@radix-ui/react-tooltip'
-import { useEffect, useRef } from 'react'
+import { useCallback } from 'react'
 import { LOG_ENTRY_FETCH_LIMIT, formatLogBytes, logRetentionText } from '@elysian/contracts'
 import type { PlatformLogLevel, RuntimeLogEntry } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
@@ -13,7 +13,9 @@ import { RefreshButton } from '../../components/RefreshState'
 import { Trash2 } from '../../components/icons'
 import { useRuntimeLogStore } from '../../stores/runtimeLogStore'
 import { useLogReportNotifications } from './useLogReportNotifications'
+import { useDebouncedSearch } from './useDebouncedSearch'
 import { ClearLogsDialog } from './ClearLogsDialog'
+import { LogLoadOlder } from './LogLoadOlder'
 import { LogMessageCell } from './LogMessageCell'
 import { LogTable } from './LogTable'
 import type { LogColumn } from './LogTable'
@@ -67,17 +69,8 @@ export function RuntimeLogPanel() {
 
   useLogReportNotifications('运行日志', { ready: status === 'ready', truncated, skippedLines, skippedFiles, olderError, failedWrites: storage?.failedWrites, trimmedBySize: storage?.trimmedBySize })
 
-  const committedSearchRef = useRef(search.trim())
-  const trimmedSearch = search.trim()
-
-  useEffect(() => {
-    const delay = trimmedSearch === committedSearchRef.current ? 0 : 300
-    const handle = setTimeout(() => {
-      committedSearchRef.current = trimmedSearch
-      void load(gateway, { silent: true })
-    }, delay)
-    return () => clearTimeout(handle)
-  }, [gateway, load, trimmedSearch])
+  const reloadSearch = useCallback(() => void load(gateway, { silent: true }), [gateway, load])
+  const trimmedSearch = useDebouncedSearch(search, reloadSearch)
 
   if (status === 'loading' || status === 'idle') {
     return <LoadingState label="正在加载运行日志…" />
@@ -156,28 +149,7 @@ export function RuntimeLogPanel() {
         )}
       />
 
-      {truncated ? (
-        <div className="flex flex-col items-start gap-2">
-          <p className="text-xs text-fg-muted">还有更早的记录</p>
-          <Button variant="outline"
-            type="button"
-            disabled={loadingOlder}
-            onClick={() => void loadOlder(gateway)}
-            className="rounded-lg border border-control-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:opacity-50"
-          >
-            {loadingOlder ? '加载中…' : '加载更早的记录'}
-          </Button>
-          {olderError ? (
-            <p role="status" className="text-xs text-danger">
-              更早的记录加载失败
-            </p>
-          ) : null}
-        </div>
-      ) : olderError ? (
-        <p role="status" className="text-xs text-danger">
-          更早的记录加载失败
-        </p>
-      ) : null}
+      <LogLoadOlder hasMore={truncated} busy={loadingOlder} error={olderError} onLoad={() => void loadOlder(gateway)} />
 
       <ClearLogsDialog />
     </div>

@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react'
+import { useCallback } from 'react'
 import {
   LOG_ENTRY_FETCH_LIMIT,
   OPERATION_LOG_CATEGORIES,
@@ -18,11 +18,13 @@ import type { StatusTone } from '../../components/StatusTag'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
 import { useOperationLogStore } from '../../stores/operationLogStore'
 import { useLogReportNotifications } from './useLogReportNotifications'
+import { useDebouncedSearch } from './useDebouncedSearch'
 import type {
   OperationLogCategoryFilter,
   OperationLogResultFilter,
 } from '../../stores/operationLogStore'
 import { LogMessageCell } from './LogMessageCell'
+import { LogLoadOlder } from './LogLoadOlder'
 import { LogTable } from './LogTable'
 import type { LogColumn } from './LogTable'
 import { Button } from '../../components/Button'
@@ -144,17 +146,8 @@ export function OperationLogPanel() {
 
   useLogReportNotifications('操作日志', { ready: status === 'ready', truncated, skippedLines, skippedFiles, olderError, failedWrites: storage?.failedWrites, trimmedBySize: storage?.trimmedBySize })
 
-  const committedSearchRef = useRef(search.trim())
-  const trimmedSearch = search.trim()
-
-  useEffect(() => {
-    const delay = trimmedSearch === committedSearchRef.current ? 0 : 300
-    const handle = setTimeout(() => {
-      committedSearchRef.current = trimmedSearch
-      void load(gateway)
-    }, delay)
-    return () => clearTimeout(handle)
-  }, [gateway, load, categoryFilter, resultFilter, trimmedSearch])
+  const reloadSearch = useCallback(() => void load(gateway), [gateway, load])
+  const trimmedSearch = useDebouncedSearch(search, reloadSearch, `${categoryFilter}:${resultFilter}`)
 
   if (status === 'loading' || status === 'idle') {
     return <LoadingState label="正在加载操作日志…" />
@@ -237,28 +230,7 @@ export function OperationLogPanel() {
         )}
       />
 
-      {truncated ? (
-        <div className="mt-3 flex flex-col items-start gap-2">
-          <p className="text-xs text-fg-muted">还有更早的记录</p>
-          <Button variant="outline"
-            type="button"
-            disabled={loadingOlder}
-            onClick={() => void loadOlder(gateway)}
-            className="rounded-lg border border-control-line bg-surface-raised px-3 py-1.5 text-xs font-medium text-fg transition-colors hover:border-fg-subtle disabled:opacity-50"
-          >
-            {loadingOlder ? '加载中…' : '加载更早的记录'}
-          </Button>
-          {olderError ? (
-            <p role="status" className="text-xs text-danger">
-              更早的记录加载失败
-            </p>
-          ) : null}
-        </div>
-      ) : olderError ? (
-        <p role="status" className="mt-3 text-xs text-danger">
-          更早的记录加载失败
-        </p>
-      ) : null}
+      <LogLoadOlder className="mt-3" hasMore={truncated} busy={loadingOlder} error={olderError} onLoad={() => void loadOlder(gateway)} />
     </div>
   )
 }
