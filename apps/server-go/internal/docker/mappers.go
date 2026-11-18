@@ -283,6 +283,14 @@ func resolveStartedAt(status string, startedAt any) (string, bool) {
 	return s, true
 }
 
+func mapContainerForWeb(inspect any, selfID string) (contract.Container, error) {
+	container, err := mapContainer(inspect)
+	if err == nil {
+		_, container.RemoveBlockedReason = containerRemovalProtection(inspect, selfID)
+	}
+	return container, err
+}
+
 // mapContainer Engine inspect → contract.Container；形状无效返回「容器详情格式无效…」。
 func mapContainer(inspect any) (contract.Container, error) {
 	record, ok := asRecord(inspect)

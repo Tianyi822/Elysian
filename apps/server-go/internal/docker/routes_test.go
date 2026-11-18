@@ -16,7 +16,11 @@ import (
 // routes 对等测试（dockerRoutes.test.ts 锚点：两段 503、透传、同源、404 剥前缀、
 // NDJSON 三帧、终端升级守卫链、SSE 次序）。
 
-func readyRouter() (chiRouter, *fakeEngine) {
+func readyRouter(statusOverride ...string) (chiRouter, *fakeEngine) {
+	status := "running"
+	if len(statusOverride) > 0 {
+		status = statusOverride[0]
+	}
 	engine := newFakeEngine(func(call engineCall) (int, string, bool) {
 		switch {
 		case call.Method == "GET" && call.Path == "/containers/json":
@@ -24,7 +28,7 @@ func readyRouter() (chiRouter, *fakeEngine) {
 		case call.Method == "GET" && call.Path == "/containers/create":
 			return 201, `{"Id":"` + strings.Repeat("e", 64) + `"}`, true
 		case call.Method == "GET" && strings.HasPrefix(call.Path, "/containers/"):
-			return 200, containerInspectForStatus("running"), true
+			return 200, containerInspectForStatus(status), true
 		case call.Method == "GET" && call.Path == "/images/json":
 			return 200, listOf(`{"Id":"sha256:` + imageIDConst + `"}`), true
 		case call.Method == "GET" && call.Path == "/images/search":
@@ -205,6 +209,11 @@ func TestRoutesAction200AndDelete204(t *testing.T) {
 		t.Fatalf("动作 200：%d %s", recorder.Code, recorder.Body.String())
 	}
 	recorder = doWrite(router, http.MethodDelete, "/containers/"+strings.Repeat("c", 64), "", sameOriginHeaders())
+	if recorder.Code != 409 || !strings.Contains(recorder.Body.String(), containerRunningRemoveMessage) {
+		t.Fatalf("运行中拒绝删除：%d %q", recorder.Code, recorder.Body.String())
+	}
+	stoppedRouter, _ := readyRouter("exited")
+	recorder = doWrite(stoppedRouter, http.MethodDelete, "/containers/"+strings.Repeat("c", 64), "", sameOriginHeaders())
 	if recorder.Code != 204 || recorder.Body.String() != "" {
 		t.Fatalf("DELETE 204 无体：%d %q", recorder.Code, recorder.Body.String())
 	}

@@ -627,7 +627,7 @@ func (s *dockerService) ListContainers(ctx context.Context) ([]contract.Containe
 	values, err := s.listWithInspect(ctx, "/containers/json", url.Values{"all": {"1"}},
 		func(id string) string { return "/containers/" + encodeEngineID(id) + "/json" },
 		"容器",
-		func(_, inspect any) (any, error) { return mapContainer(inspect) })
+		func(_, inspect any) (any, error) { return mapContainerForWeb(inspect, s.deps.selfContainerID) })
 	if err != nil {
 		return nil, err
 	}

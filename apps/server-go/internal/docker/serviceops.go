@@ -84,8 +84,47 @@ func (s *dockerService) Action(ctx context.Context, id, action string) (contract
 	return mapContainer(postInspect)
 }
 
-// RemoveContainer 删除容器：inspect 解析后先过自我保护与数据库 label 保护，
-// 不带 force——引擎对运行中容器返回 409。
+// containerRemovalProtection 与 Docker 页展示共用归属保护，不暴露原始标签。
+func containerRemovalProtection(inspect any, selfID string) (int, string) {
+	if selfInspectCheck(inspect, selfID) {
+		return http.StatusBadRequest, actionSelfMessage
+	}
+	if record, ok := asRecord(inspect); ok {
+		if config, ok := asRecord(mustGet(record, "Config")); ok {
+			if labels, ok := asRecord(mustGet(config, "Labels")); ok {
+				switch {
+				case mustGet(labels, labelDatabase) == labelTrueValue:
+					return http.StatusConflict, "数据库容器须在数据库页使用“删除容器及数据”操作"
+				case mustGet(labels, "elysian.website") == labelTrueValue:
+					return http.StatusConflict, "网站容器须在网站页处理"
+				}
+			}
+		}
+	}
+	return 0, ""
+}
+
+func containerRemovalStateConflict(inspect any) string {
+	record, ok := asRecord(inspect)
+	if !ok {
+		return "容器未处于可删除的停止状态"
+	}
+	state, ok := asRecord(mustGet(record, "State"))
+	if ok {
+		status, _ := asString(mustGet(state, "Status"))
+		if status == "running" || status == "paused" || status == "restarting" ||
+			mustGet(state, "Running") == true || mustGet(state, "Paused") == true || mustGet(state, "Restarting") == true {
+			return containerRunningRemoveMessage
+		}
+		switch status {
+		case "created", "exited", "dead":
+			return ""
+		}
+	}
+	return "容器未处于可删除的停止状态"
+}
+
+// RemoveContainer 删除前重查归属和状态；引擎无 force 的 DELETE 保护检查后的启动竞争。
 func (s *dockerService) RemoveContainer(ctx context.Context, id string) error {
 	release, err := s.tryLockAction(id)
 	if err != nil {
@@ -97,17 +136,11 @@ func (s *dockerService) RemoveContainer(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if selfInspectCheck(inspect, s.deps.selfContainerID) {
-		return &shared.InvalidRequestError{Status: http.StatusBadRequest, Message: actionSelfMessage}
+	if status, reason := containerRemovalProtection(inspect, s.deps.selfContainerID); reason != "" {
+		return &shared.InvalidRequestError{Status: status, Message: reason}
 	}
-	if record, ok := asRecord(inspect); ok {
-		if config, ok := asRecord(mustGet(record, "Config")); ok {
-			if labels, ok := asRecord(mustGet(config, "Labels")); ok {
-				if value, ok := asString(mustGet(labels, labelDatabase)); ok && value == labelTrueValue {
-					return &shared.InvalidRequestError{Status: http.StatusConflict, Message: "数据库容器须在数据库页使用“删除容器及数据”操作"}
-				}
-			}
-		}
+	if reason := containerRemovalStateConflict(inspect); reason != "" {
+		return &shared.InvalidRequestError{Status: http.StatusConflict, Message: reason}
 	}
 	targetID, err := requireID(inspect, "容器")
 	if err != nil {

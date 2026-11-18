@@ -724,7 +724,7 @@ func removeScript(selfID string, deleteStatus int) engineScript {
 			if selfID != "" {
 				return 200, `{"Id":"` + selfID + `","Name":"/elysian","Created":"c","State":{"Status":"running"},"Config":{"Labels":{"` + labelDatabase + `":"false"}},"HostConfig":{},"Mounts":[],"Image":"i"}`, true
 			}
-			return 200, `{"Id":"` + strings.Repeat("c", 64) + `","Name":"/web-1","Created":"c","State":{"Status":"running"},"Config":{"Labels":{"` + labelDatabase + `":"false"}},"HostConfig":{},"Mounts":[],"Image":"i"}`, true
+			return 200, containerInspectForStatus("exited"), true
 		}
 		if call.Method == "DELETE" {
 			return deleteStatus, `{"message":"cannot"}`, true
@@ -775,10 +775,44 @@ func TestRemoveContainerStatuses(t *testing.T) {
 	if err := successService.RemoveContainer(context.Background(), strings.Repeat("c", 64)); err != nil {
 		t.Fatal(err)
 	}
-	for _, call := range successEngine.Requests() {
-		if call.Method == "DELETE" && call.Path != "/containers/"+strings.Repeat("c", 64) {
-			t.Fatalf("DELETE 应用完整 Id：%s", call.Path)
-		}
+	calls := successEngine.Requests()
+	if len(calls) != 2 || calls[1].Method != "DELETE" || calls[1].Path != "/containers/"+strings.Repeat("c", 64) || len(calls[1].Query) != 0 {
+		t.Fatalf("应按完整 ID 删除且不带 force 或 v：%+v", calls)
+	}
+}
+
+func TestRemoveContainerRejectsActiveOrUnknownStateBeforeDelete(t *testing.T) {
+	for _, status := range []string{"running", "paused", "restarting", "removing", ""} {
+		t.Run(status, func(t *testing.T) {
+			engine := newFakeEngine(func(call engineCall) (int, string, bool) {
+				return 200, containerInspectForStatus(status), call.Method == "GET"
+			})
+			message := containerRunningRemoveMessage
+			if status == "removing" || status == "" {
+				message = "容器未处于可删除的停止状态"
+			}
+			wantInvalidRequest(t, newService(engine, nil).RemoveContainer(context.Background(), strings.Repeat("c", 64)), 409, message)
+			if calls := engine.Requests(); len(calls) != 1 || calls[0].Method != "GET" {
+				t.Fatalf("拒绝删除时只能读取详情：%+v", calls)
+			}
+		})
+	}
+}
+
+func TestRemoveContainerWebsiteLabel(t *testing.T) {
+	body := strings.Replace(containerInspectForStatus("exited"), `"Config":{`, `"Config":{"Labels":{"elysian.website":"true"},`, 1)
+	engine := newFakeEngine(func(call engineCall) (int, string, bool) { return 200, body, call.Method == "GET" })
+	wantInvalidRequest(t, newService(engine, nil).RemoveContainer(context.Background(), strings.Repeat("c", 64)), 409, "网站容器须在网站页处理")
+	if len(engine.Requests()) != 1 {
+		t.Fatal("不应对受管网站发出 DELETE")
+	}
+	inspect, err := decodeOrderedJSON([]byte(body))
+	if err != nil {
+		t.Fatal(err)
+	}
+	view, err := mapContainerForWeb(inspect, "")
+	if err != nil || view.RemoveBlockedReason != "网站容器须在网站页处理" {
+		t.Fatalf("Web 视图未投影删除保护：%+v, %v", view, err)
 	}
 }
 
