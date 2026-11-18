@@ -2,6 +2,7 @@ import { TOOLTIP_CONTENT_CLASS } from '../../components/tooltipStyles'
 import { useState } from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import * as Tooltip from '@radix-ui/react-tooltip'
+import { useShallow } from 'zustand/react/shallow'
 import { Pencil, Plus, X } from '../../components/icons'
 import { RefreshButton } from '../../components/RefreshState'
 import { IconButton } from '../../components/IconButton'
@@ -62,10 +63,19 @@ export function ChatSessionList({ onSelect, onNew, onRefresh, onMore, onClose, r
   onClose?: () => void
   refreshing: boolean
 }) {
-  const chat = useAgentChatStore()
+  const chat = useAgentChatStore(useShallow(state => ({
+    selected: state.session && agentChatSessionKey(state.session),
+    remoteTitle: state.remoteSession?.title,
+    localSessions: state.localSessions,
+    sessions: state.sessions,
+    sending: state.sending,
+    listLoading: state.listLoading,
+    listError: state.listError,
+    listHasMore: state.listHasMore,
+  })))
   const [renameTarget, setRenameTarget] = useState<SessionRow | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<SessionRow | null>(null)
-  const selected = chat.session && agentChatSessionKey(chat.session)
+  const selected = chat.selected
   const local = new Map(chat.localSessions.map(row => [agentChatSessionKey(row), row]))
   const drafts = chat.localSessions.filter(row => !row.remote && (row.id === selected || row.draft || row.attachments.length))
   const rows: SessionRow[] = [...drafts.map(row => ({ id: row.id, title: row.draft || '新会话', active: false, server: false })),
@@ -74,7 +84,7 @@ export function ChatSessionList({ onSelect, onNew, onRefresh, onMore, onClose, r
   for (const record of chat.localSessions) {
     const key = agentChatSessionKey(record)
     if (record.remote && (record.pending || key === selected) && !rows.some(row => row.id === key)) {
-      rows.push({ id: key, title: key === selected ? chat.remoteSession?.title || '当前会话' : record.draft || '发送待确认', active: false, server: true })
+      rows.push({ id: key, title: key === selected ? chat.remoteTitle || '当前会话' : record.draft || '发送待确认', active: false, server: true })
     }
   }
   return <div className="chat-session-list">

@@ -1,6 +1,7 @@
 import { Fragment, useCallback, useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type Ref } from 'react'
 import { Link, useLocation, useSearchParams } from 'react-router'
 import * as Dialog from '@radix-ui/react-dialog'
+import { useShallow } from 'zustand/react/shallow'
 import { useShellLayout } from '../../app/layout/ShellLayoutContext'
 import { ChatSessionList } from './ChatSessionList'
 import { Bot, Brain, Hand, Image as ImageIcon, List, Loader2, Paperclip, Pencil, Plus, Send, Square, ShieldAlert, ShieldCheck, X, type IconComponent } from '../../components/icons'
@@ -54,7 +55,46 @@ function SessionToggle({ expanded, controls, onClick, buttonRef }: {
 
 /** 基本文本聊天，沿用现有会话、模型目录与任务续轮接口。 */
 export function AgentChatPage() {
-  const chat = useAgentChatStore()
+  const chat = useAgentChatStore(useShallow(state => ({
+    session: state.session,
+    remoteSession: state.remoteSession,
+    messages: state.messages,
+    run: state.run,
+    timelines: state.timelines,
+    reasoning: state.reasoning,
+    liveOutput: state.liveOutput,
+    outgoingMessage: state.outgoingMessage,
+    loading: state.loading,
+    refreshing: state.refreshing,
+    sending: state.sending,
+    stopping: state.stopping,
+    uploadingAttachments: state.uploadingAttachments,
+    syncError: state.syncError,
+    inputError: state.inputError,
+    localSessions: state.localSessions,
+    initialize: state.initialize,
+    newSession: state.newSession,
+    selectSession: state.selectSession,
+    loadSessions: state.loadSessions,
+    refresh: state.refresh,
+    watchOutput: state.watchOutput,
+    send: state.send,
+    stop: state.stop,
+    continueTask: state.continueTask,
+    setDraft: state.setDraft,
+    editMessage: state.editMessage,
+    setEditText: state.setEditText,
+    cancelEdit: state.cancelEdit,
+    setModel: state.setModel,
+    setReasoningLevel: state.setReasoningLevel,
+    setPermissionMode: state.setPermissionMode,
+    setUserInputAnswer: state.setUserInputAnswer,
+    answerUserInput: state.answerUserInput,
+    addAttachments: state.addAttachments,
+    removeAttachment: state.removeAttachment,
+    reportInput: state.reportInput,
+    reportOperation: state.reportOperation,
+  })))
   const shell = useShellLayout()
   const location = useLocation()
   const [params, setParams] = useSearchParams()

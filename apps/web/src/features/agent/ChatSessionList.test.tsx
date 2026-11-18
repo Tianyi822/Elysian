@@ -1,19 +1,41 @@
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { Profiler, type ProfilerOnRenderCallback } from 'react'
 import * as Tooltip from '@radix-ui/react-tooltip'
-import { beforeEach, expect, it } from 'vitest'
+import { beforeEach, expect, it, vi } from 'vitest'
+import { agentChatLocalAdapter } from '../../adapters/local/agentChatLocalAdapter'
+import { agentChatSessionKey } from '../../contracts/agentChat'
 import { useAgentChatStore } from '../../stores/agentChatStore'
 import { chatTestApi } from '../../test/agentChatFixtures'
 import { ChatSessionList } from './ChatSessionList'
 
 beforeEach(() => {
   useAgentChatStore.getState().clearDisplay()
+  for (const row of agentChatLocalAdapter.list()) agentChatLocalAdapter.remove(agentChatSessionKey(row))
   useAgentChatStore.setState({ session: null, localSessions: [], sessions: [], listLoading: false, listError: null })
 })
 
-function renderList(backend: ReturnType<typeof chatTestApi>) {
-  return render(<Tooltip.Provider><ChatSessionList onNew={() => {}} onSelect={() => {}}
-    onRefresh={() => { void useAgentChatStore.getState().loadSessions(backend.api) }} onMore={() => {}} refreshing={false} /></Tooltip.Provider>)
+function renderList(backend: ReturnType<typeof chatTestApi>, onRender?: ProfilerOnRenderCallback) {
+  const list = <ChatSessionList onNew={() => {}} onSelect={() => {}}
+    onRefresh={() => { void useAgentChatStore.getState().loadSessions(backend.api) }} onMore={() => {}} refreshing={false} />
+  return render(<Tooltip.Provider>{onRender ? <Profiler id="chat-sessions" onRender={onRender}>{list}</Profiler> : list}</Tooltip.Provider>)
 }
+
+it('输入区错误不重渲染会话列表，草稿标题仍跟随输入', async () => {
+  const backend = chatTestApi()
+  await useAgentChatStore.getState().newSession()
+  const rendered = vi.fn<ProfilerOnRenderCallback>()
+  renderList(backend, rendered)
+  expect(screen.getByRole('button', { name: '新会话', current: 'page' })).toBeInTheDocument()
+  expect(rendered).toHaveBeenCalled()
+  rendered.mockClear()
+
+  act(() => useAgentChatStore.getState().reportInput('附件太大'))
+  expect(rendered).not.toHaveBeenCalled()
+
+  act(() => useAgentChatStore.getState().setDraft('待发送的草稿'))
+  expect(screen.getByRole('button', { name: '待发送的草稿', current: 'page' })).toBeInTheDocument()
+  expect(rendered).toHaveBeenCalled()
+})
 
 it('首次读取失败显示错误及重试，恢复后才显示成功空列表', async () => {
   const backend = chatTestApi()

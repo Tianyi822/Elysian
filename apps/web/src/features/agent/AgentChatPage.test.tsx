@@ -1,5 +1,5 @@
 import { act, fireEvent, render, screen, waitFor, within } from '@testing-library/react'
-import { useState, type ReactNode } from 'react'
+import { Profiler, useState, type ProfilerOnRenderCallback, type ReactNode } from 'react'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import { createMemoryRouter, RouterProvider } from 'react-router'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -33,7 +33,7 @@ function TestShell({ children }: { children: ReactNode }) {
   </ShellLayoutContext.Provider>
 }
 
-function renderChat(backend = chatTestApi(), initialEntry = '/agent', modelError?: string, models: (typeof chatTestModel)[] = [chatTestModel]) {
+function renderChat(backend = chatTestApi(), initialEntry = '/agent', modelError?: string, models: (typeof chatTestModel)[] = [chatTestModel], onRender?: ProfilerOnRenderCallback) {
   const gateway = createMockGateway({ eventStream: 'memory' })
   gateway.agentConversation = backend.api
   const readModels = vi.spyOn(gateway.modelSettings, 'listModelServices').mockResolvedValue([{
@@ -41,7 +41,8 @@ function renderChat(backend = chatTestApi(), initialEntry = '/agent', modelError
     baseUrl: chatTestModel.baseUrl, active: true, hasCredential: true, models: models.map(model => ({ ...model, enabled: true })),
   }])
   if (modelError) readModels.mockRejectedValueOnce(new Error(modelError))
-  const router = createMemoryRouter([{ path: '*', element: <Tooltip.Provider><GatewayProvider gateway={gateway}><TestShell><AgentChatPage /></TestShell><MessageCenter /></GatewayProvider></Tooltip.Provider> }], { initialEntries: [initialEntry] })
+  const page = onRender ? <Profiler id="agent-chat" onRender={onRender}><AgentChatPage /></Profiler> : <AgentChatPage />
+  const router = createMemoryRouter([{ path: '*', element: <Tooltip.Provider><GatewayProvider gateway={gateway}><TestShell>{page}</TestShell><MessageCenter /></GatewayProvider></Tooltip.Provider> }], { initialEntries: [initialEntry] })
   const view = render(<RouterProvider router={router} />)
   return { ...view, ...backend, router, readModels, gateway }
 }
@@ -64,6 +65,18 @@ beforeEach(async () => {
 })
 
 describe('基本聊天界面', () => {
+  it('会话列表的分页游标变化不会重渲染聊天页', async () => {
+    const rendered = vi.fn<ProfilerOnRenderCallback>()
+    renderChat(chatTestApi(), '/agent', undefined, [chatTestModel], rendered)
+    const textbox = screen.getByRole('textbox', { name: '发送给 Ely 的消息' })
+    await waitFor(() => expect(textbox).toBeEnabled())
+    expect(rendered).toHaveBeenCalled()
+    rendered.mockClear()
+
+    act(() => useAgentChatStore.setState({ listCursor: 'next-cursor' }))
+    expect(rendered).not.toHaveBeenCalled()
+  })
+
   it.each(['failed', 'interrupted', 'cancelled'] as const)('历史 %s 由快照恢复正式结果，消息回读不重复，编辑重发移除旧结果', async status => {
     const backend = chatTestApi()
     backend.hold()
