@@ -100,7 +100,7 @@ describe('顶栏系统负载', () => {
     expect(trigger).not.toHaveTextContent('0.18')
   })
 
-  it('点击展开明细：三档负载与内存两套口径分节列出', async () => {
+  it('明细常驻三档负载和 RSS，Go 运行时默认折叠且可用键盘切换', async () => {
     emitLoad({ m1: 0.42, m5: 0.18, m15: 0.07 })
     const trigger = await renderReady()
     await waitFor(() => expect(trigger).toHaveTextContent('0.42'))
@@ -117,8 +117,16 @@ describe('顶栏系统负载', () => {
     expect(within(dialog).getByText('1.00 GiB')).toBeInTheDocument()
     expect(within(dialog).getByText('占系统总内存')).toBeInTheDocument()
     expect(within(dialog).getByText('7.8%')).toBeInTheDocument()
-    expect(within(dialog).getByText('Go 运行时')).toBeInTheDocument()
-    expect(within(dialog).getByText('40.0 MiB')).toBeInTheDocument()
+    const runtime = within(dialog).getByRole('button', { name: 'Go 运行时' })
+    expect(runtime).toHaveAttribute('aria-expanded', 'false')
+    expect(within(dialog).queryByText('堆预留')).not.toBeInTheDocument()
+    runtime.focus()
+    await user.keyboard('{Enter}')
+    expect(runtime).toHaveAttribute('aria-expanded', 'true')
+    expect(within(dialog).getByText('40.0 MiB')).toBeVisible()
+    await user.keyboard('{Enter}')
+    expect(runtime).toHaveAttribute('aria-expanded', 'false')
+    expect(within(dialog).queryByText('堆预留')).not.toBeInTheDocument()
   })
 
   it('口径解释在问号浮层里，不常驻明细', async () => {
@@ -131,6 +139,7 @@ describe('顶栏系统负载', () => {
     const dialog = await screen.findByRole('dialog', { name: '系统负载明细' })
     expect(within(dialog).queryByText(/不能相加/)).not.toBeInTheDocument()
 
+    await user.click(within(dialog).getByRole('button', { name: 'Go 运行时' }))
     await user.click(within(dialog).getByRole('button', { name: '内存口径说明' }))
     const help = await screen.findByRole('dialog', { name: '内存口径说明' })
     expect(within(help).getByText(/不能相加/)).toBeInTheDocument()

@@ -1,6 +1,6 @@
 import * as Popover from '@radix-ui/react-popover'
 import * as Tooltip from '@radix-ui/react-tooltip'
-import { useEffect, useMemo, useState, useSyncExternalStore } from 'react'
+import { useEffect, useId, useMemo, useState, useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
 import { fetchPlatformMemory } from '../adapters/http/platformMemoryAdapter'
 import { createPlatformMemorySource } from '../adapters/platformMemory/platformMemorySource'
@@ -8,7 +8,7 @@ import type { PlatformMemoryView } from '../adapters/platformMemory/platformMemo
 import type { PlatformMemorySample } from '../adapters/platformMemory/types'
 import type { SystemLoad } from '../adapters/mock/resourceMetrics'
 import { formatDateTime } from './format'
-import { CircleHelp, Gauge } from './icons'
+import { ChevronRight, CircleHelp, Gauge } from './icons'
 import { getLastResourceSample, onStreamEvent } from '../stores/eventStreamStore'
 import { Button } from './Button'
 
@@ -89,12 +89,11 @@ function Row({ label, value }: { label: string; value: string }) {
 }
 
 /** 浮层里的一组：标题说明这是哪个口径，组内只放该口径下的读数。 */
-function Section({ title, help, children }: { title: string; help?: ReactNode; children: ReactNode }) {
+function Section({ title, children }: { title: string; children: ReactNode }) {
   return (
     <section className="mt-3">
       <p className="mb-1.5 flex items-center gap-1.5 font-medium text-fg-subtle">
         {title}
-        {help}
       </p>
       {children}
     </section>
@@ -252,18 +251,7 @@ export function SystemLoadBadge({ navigation = false, collapsed = false }: { nav
                 )}
               </Section>
 
-              <Section title="Go 运行时" help={<ScopeHelp />}>
-                <dl className="grid grid-cols-2 gap-x-5 gap-y-1.5">
-                  <Row label="堆已用" value={formatMiB(sample.heapUsedMb)} />
-                  <Row label="存活堆" value={formatMiB(sample.heapLiveMb)} />
-                  <Row label="堆预留" value={formatMiB(sample.heapTotalMb)} />
-                  <Row label="堆内空位" value={formatMiB(sample.heapUnusedMb)} />
-                  <Row label="空闲未归还" value={formatMiB(sample.heapRetainedMb)} />
-                  <Row label="已归还系统" value={formatMiB(sample.heapReleasedMb)} />
-                  <Row label="栈与元数据" value={formatMiB(sample.runtimeOtherMb)} />
-                  <Row label="GC 次数" value={String(sample.gcCount)} />
-                </dl>
-              </Section>
+              <RuntimeDetails sample={sample} />
             </>
           ) : (
             <Section title="面板内存">
@@ -282,5 +270,35 @@ export function SystemLoadBadge({ navigation = false, collapsed = false }: { nav
         </Popover.Content>
       </Popover.Portal>
     </Popover.Root>
+  )
+}
+
+function RuntimeDetails({ sample }: { sample: PlatformMemorySample }) {
+  const [expanded, setExpanded] = useState(false)
+  const contentId = useId()
+  return (
+    <section className="mt-3">
+      <div className="flex items-center gap-1.5">
+        <Button unstyled type="button" aria-expanded={expanded} aria-controls={contentId}
+          onClick={() => setExpanded(value => !value)}
+          className="focus-ring flex items-center gap-1.5 rounded py-0.5 font-medium text-fg-subtle hover:text-fg">
+          <ChevronRight aria-hidden size={14} className={expanded ? 'rotate-90' : undefined} />
+          Go 运行时
+        </Button>
+        {expanded && <ScopeHelp />}
+      </div>
+      <div id={contentId} hidden={!expanded}>
+        {expanded && <dl className="mt-1.5 grid grid-cols-2 gap-x-5 gap-y-1.5">
+          <Row label="堆已用" value={formatMiB(sample.heapUsedMb)} />
+          <Row label="存活堆" value={formatMiB(sample.heapLiveMb)} />
+          <Row label="堆预留" value={formatMiB(sample.heapTotalMb)} />
+          <Row label="堆内空位" value={formatMiB(sample.heapUnusedMb)} />
+          <Row label="空闲未归还" value={formatMiB(sample.heapRetainedMb)} />
+          <Row label="已归还系统" value={formatMiB(sample.heapReleasedMb)} />
+          <Row label="栈与元数据" value={formatMiB(sample.runtimeOtherMb)} />
+          <Row label="GC 次数" value={String(sample.gcCount)} />
+        </dl>}
+      </div>
+    </section>
   )
 }
