@@ -19,6 +19,8 @@ import { Check } from '../../components/icons'
 import { useFilesStore } from '../../stores/filesStore'
 import { useImeEnterGuard } from '../../components/useImeEnterGuard'
 import { Button } from '../../components/Button'
+import { useUsersStore } from '../../stores/usersStore'
+import { captureAuthGeneration } from '../../utils/authGeneration'
 import { messageOf } from '../../utils/errorMessage'
 
 /*
@@ -64,7 +66,9 @@ export function PermissionDialog({
   const [modeText, setModeText] = useState(entry.mode)
   const [owner, setOwner] = useState(isValidHostUserName(entry.owner) ? entry.owner : 'root')
   const [recursive, setRecursive] = useState(false)
-  const [ownerNames, setOwnerNames] = useState<readonly string[]>([])
+  const users = useUsersStore((s) => s.users)
+  const loadUsers = useUsersStore((s) => s.load)
+  const [ownersLoadedFor, setOwnersLoadedFor] = useState<{ gateway: typeof gateway; auth: number }>()
   const [submitting, setSubmitting] = useState(false)
   const [errorMessage, setErrorMessage] = useState<string>()
 
@@ -82,28 +86,24 @@ export function PermissionDialog({
     setErrorMessage(undefined)
   }, [entry.mode, entry.owner, entryPath, currentOwnerSelectable])
 
-  // 所有者候选：root 打头，其余系统账号按名称排序；当前所有者必在候选里，即使它已不在账号表中。
+  // 候选共用主机账号清单。弹窗的读取失败时仍可选择 root 或当前属主。
   useEffect(() => {
     let cancelled = false
-    void (async () => {
-      try {
-        const users = await gateway.users.list()
-        if (!cancelled) setOwnerNames(users.map((user) => user.name))
-      } catch {
-        // 取不到账号表不影响改权限：候选退化成「root 加当前所有者」。
-        if (!cancelled) setOwnerNames([])
+    const auth = captureAuthGeneration()
+    void loadUsers(gateway).then((loaded) => {
+      if (!cancelled && auth === captureAuthGeneration()) {
+        setOwnersLoadedFor(loaded ? { gateway, auth } : undefined)
       }
-    })()
-    return () => {
-      cancelled = true
-    }
-  }, [gateway])
+    })
+    return () => { cancelled = true }
+  }, [gateway, loadUsers])
 
+  const ownersLoaded = ownersLoadedFor?.gateway === gateway && ownersLoadedFor.auth === captureAuthGeneration()
   const ownerOptions = useMemo(() => {
-    // 候选只收主机账号名（root 打头、系统账号排序）；当前属主解析不出名字时（uid 数字串）不进候选。
-    const names = new Set(['root', ...ownerNames, ...(currentOwnerSelectable ? [entry.owner] : [])])
+    const names = new Set(['root', ...(currentOwnerSelectable ? [entry.owner] : [])])
+    if (ownersLoaded) for (const user of users) names.add(user.name)
     return [...names].sort((a, b) => (a === 'root' ? -1 : b === 'root' ? 1 : a.localeCompare(b)))
-  }, [ownerNames, entry.owner, currentOwnerSelectable])
+  }, [ownersLoaded, users, entry.owner, currentOwnerSelectable])
 
   const permission = modeToPermission(mode)
   // 每列表头显示的位值：与下面那列勾选同源，勾选一变位值就变。

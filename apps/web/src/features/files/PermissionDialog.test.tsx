@@ -1,9 +1,12 @@
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
-import { describe, expect, it, vi } from 'vitest'
-import type { FileEntry } from '@elysian/contracts'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { FileEntry, HostUser } from '@elysian/contracts'
 import { GatewayProvider } from '../../adapters/GatewayProvider'
 import { createMockGateway } from '../../adapters/mock/gateway'
+import { SEED_HOST_USERS } from '../../adapters/mock/usersData'
+import { useSessionStore } from '../../stores/sessionStore'
+import { useUsersStore } from '../../stores/usersStore'
 import { PermissionDialog } from './PermissionDialog'
 
 /*
@@ -23,15 +26,76 @@ function fileEntry(owner: string): FileEntry {
   }
 }
 
-function renderDialog(owner: string) {
+function renderDialog(owner: string, gateway = createMockGateway({ eventStream: 'memory' })) {
   return render(
-    <GatewayProvider gateway={createMockGateway({ eventStream: 'memory' })}>
+    <GatewayProvider gateway={gateway}>
       <PermissionDialog entry={fileEntry(owner)} entryPath="/tmp/a.txt" onClose={() => {}} />
     </GatewayProvider>,
   )
 }
 
+beforeEach(() => useUsersStore.setState(useUsersStore.getInitialState(), true))
+
 describe('权限对话框的属主候选', () => {
+  it('复用主机账号表正在读取的清单，并从共享列表显示属主候选', async () => {
+    const base = createMockGateway({ eventStream: 'memory' })
+    const account = { ...SEED_HOST_USERS[0]!, name: 'shared-account' }
+    let resolve!: (users: readonly HostUser[]) => void
+    const list = vi.fn(() => new Promise<readonly HostUser[]>(done => { resolve = done }))
+    const gateway = { ...base, users: { ...base.users, list } }
+
+    const loading = useUsersStore.getState().load(gateway)
+    renderDialog('deploy', gateway)
+    expect(list).toHaveBeenCalledOnce()
+    await act(async () => { resolve([account]); await loading })
+
+    await userEvent.click(screen.getByRole('button', { name: /所有者/ }))
+    expect(await screen.findByRole('menuitemradio', { name: 'shared-account' })).toBeInTheDocument()
+    expect(screen.getByRole('menuitemradio', { name: 'root' })).toBeInTheDocument()
+    expect(screen.getByRole('menuitemradio', { name: 'deploy' })).toBeInTheDocument()
+  })
+
+  it('候选读取失败时只保留 root 和当前属主，主机账号表仍保留旧清单', async () => {
+    const base = createMockGateway({ eventStream: 'memory' })
+    const account = { ...SEED_HOST_USERS[0]!, name: 'previous-account' }
+    const list = vi.fn<() => Promise<readonly HostUser[]>>()
+      .mockResolvedValueOnce([account]).mockRejectedValueOnce(new Error('暂时离线'))
+    const gateway = { ...base, users: { ...base.users, list } }
+    await useUsersStore.getState().load(gateway)
+
+    renderDialog('deploy', gateway)
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(2))
+    await userEvent.click(screen.getByRole('button', { name: /所有者/ }))
+    expect(await screen.findByRole('menuitemradio', { name: 'root' })).toBeInTheDocument()
+    expect(screen.getByRole('menuitemradio', { name: 'deploy' })).toBeInTheDocument()
+    expect(screen.queryByRole('menuitemradio', { name: 'previous-account' })).not.toBeInTheDocument()
+    expect(useUsersStore.getState().users).toEqual([account])
+  })
+
+  it('会话失效清除旧账号和候选，迟到的列表读取无法恢复它们', async () => {
+    const base = createMockGateway({ eventStream: 'memory' })
+    const account = { ...SEED_HOST_USERS[0]!, name: 'previous-account' }
+    let resolve!: (users: readonly HostUser[]) => void
+    const list = vi.fn<() => Promise<readonly HostUser[]>>()
+      .mockResolvedValueOnce([account])
+      .mockImplementationOnce(() => new Promise(done => { resolve = done }))
+    const gateway = { ...base, users: { ...base.users, list } }
+    renderDialog('deploy', gateway)
+    await userEvent.click(screen.getByRole('button', { name: /所有者/ }))
+    expect(await screen.findByRole('menuitemradio', { name: 'previous-account' })).toBeInTheDocument()
+
+    await act(async () => {
+      const refreshing = useUsersStore.getState().load(gateway)
+      useSessionStore.getState().expire()
+      resolve([account])
+      await refreshing
+    })
+
+    expect(useUsersStore.getState().users).toEqual([])
+    expect(screen.getByRole('menuitemradio', { name: 'root' })).toBeInTheDocument()
+    expect(screen.queryByRole('menuitemradio', { name: 'previous-account' })).not.toBeInTheDocument()
+  })
+
   it('当前属主是账号名时照常默认选中，账号在候选里', async () => {
     renderDialog('deploy')
     const trigger = screen.getByRole('button', { name: /所有者/ })

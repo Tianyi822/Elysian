@@ -27,7 +27,9 @@ type UsersState = {
   removeTarget: HostUser | undefined
   saving: boolean
   removingUserIds: readonly string[]
-  load: (gateway: ElysianGateway) => Promise<void>
+  /** 返回本次读取是否成功并仍属当前会话。 */
+  load: (gateway: ElysianGateway) => Promise<boolean>
+  clearDisplay(): void
   setSearch: (search: string) => void
   syncFromSystem: (gateway: ElysianGateway) => Promise<void>
   openCreate: () => void
@@ -56,7 +58,7 @@ export const useUsersStore = create<UsersState>((set, get) => {
     if (auth !== deletionAuth) { deletionAuth = auth; set({ removingUserIds: [] }) }
     return auth
   }
-  let pendingLoad: { gateway: ElysianGateway; auth: number; snapshot: readonly HostUser[]; promise: Promise<void> } | undefined
+  let pendingLoad: { gateway: ElysianGateway; auth: number; snapshot: readonly HostUser[]; promise: Promise<boolean> } | undefined
   const recordFailure = async (error: unknown, gateway: ElysianGateway) => {
     const auth = captureAuthGeneration()
     const message = messageOf(error, '操作失败，请重试')
@@ -75,20 +77,31 @@ export const useUsersStore = create<UsersState>((set, get) => {
   saving: false,
   removingUserIds: [],
 
+  clearDisplay() {
+    pendingLoad = undefined
+    set({
+      status: 'idle', users: [], errorMessage: undefined, operationError: undefined,
+      syncing: false, saving: false, dialogUser: undefined, removeTarget: undefined, removingUserIds: [],
+    })
+  },
+
   load(gateway) {
     const auth = syncDeletionGeneration()
     if (pendingLoad?.gateway === gateway && pendingLoad.auth === auth && pendingLoad.snapshot === get().users) return pendingLoad.promise
     const hadData = get().status === 'ready'
-    const operation = { gateway, auth, snapshot: get().users, promise: Promise.resolve() }
+    const operation = { gateway, auth, snapshot: get().users, promise: Promise.resolve(false) }
     pendingLoad = operation
     const current = () => pendingLoad === operation && auth === captureAuthGeneration()
     set({ status: hadData ? 'ready' : 'loading', errorMessage: undefined })
     operation.promise = (async () => {
       try {
         const users = await gateway.users.list()
-        if (current() && operation.snapshot === get().users) set({ status: 'ready', users, operationError: undefined, errorMessage: undefined })
+        if (!current()) return false
+        if (operation.snapshot === get().users) set({ status: 'ready', users, operationError: undefined, errorMessage: undefined })
+        return true
       } catch (error) {
         if (current()) set({ status: hadData ? 'ready' : 'error', errorMessage: messageOf(error, '账号数据加载失败') })
+        return false
       } finally { if (pendingLoad === operation) pendingLoad = undefined }
     })()
     return operation.promise
@@ -101,13 +114,17 @@ export const useUsersStore = create<UsersState>((set, get) => {
   // 同步后重新读一遍列表：真实实现里系统可能新增或删除了账号，只更新数字是不够的。
   async syncFromSystem(gateway) {
     if (get().syncing) return
+    const auth = captureAuthGeneration()
     set({ syncing: true })
     try {
       const { total } = await gateway.users.syncFromSystem()
+      if (auth !== captureAuthGeneration()) return
       const users = await gateway.users.list()
+      if (auth !== captureAuthGeneration()) return
       set({ users, syncing: false })
       notify(`已从系统同步账号，当前共 ${total} 个${MOCK_SUFFIX}`)
     } catch (error) {
+      if (auth !== captureAuthGeneration()) return
       set({ syncing: false })
       notify(error instanceof Error ? `同步失败：${error.message}` : '同步失败', 'danger')
       await recordFailure(error, gateway)
@@ -130,6 +147,7 @@ export const useUsersStore = create<UsersState>((set, get) => {
   async saveUser(gateway, input) {
     const editing = get().dialogUser
     if (editing === undefined || get().saving) return false
+    const auth = captureAuthGeneration()
     set({ saving: true, operationError: undefined })
     try {
       if (editing === 'new') {
@@ -138,6 +156,7 @@ export const useUsersStore = create<UsersState>((set, get) => {
           return false
         }
         const created = await gateway.users.create({ ...input, name: input.name })
+        if (auth !== captureAuthGeneration()) return false
         set((state) => ({ users: [created, ...state.users], dialogUser: undefined, saving: false }))
         notify(`账号 ${created.name} 已创建${MOCK_SUFFIX}`)
       } else {
@@ -149,6 +168,7 @@ export const useUsersStore = create<UsersState>((set, get) => {
           // 密码透传：弹窗只在填了新密码时带该字段，留空（undefined）即本次不动密码。
           ...(input.password !== undefined ? { password: input.password } : {}),
         })
+        if (auth !== captureAuthGeneration()) return false
         set((state) => ({
           users: state.users.map((user) => (user.id === updated.id ? updated : user)),
           dialogUser: undefined,
@@ -160,6 +180,7 @@ export const useUsersStore = create<UsersState>((set, get) => {
       }
       return true
     } catch (error) {
+      if (auth !== captureAuthGeneration()) return false
       set({ saving: false })
       notify(error instanceof Error ? `保存失败：${error.message}` : '保存失败', 'danger')
       await recordFailure(error, gateway)

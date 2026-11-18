@@ -13,6 +13,7 @@ import { useContainersStore } from './containersStore'
 import { useDatabaseStore } from './databaseStore'
 import { useModelSettingsStore } from './modelSettingsStore'
 import { useAgentRuntimeStore } from './agentRuntimeStore'
+import { useUsersStore } from './usersStore'
 
 function clearPrivateDisplays() {
   useAgentChatStore.getState().clearDisplay()
@@ -23,6 +24,7 @@ function clearPrivateDisplays() {
   useDatabaseStore.getState().clearDisplay()
   useModelSettingsStore.getState().reset()
   useAgentRuntimeStore.getState().reset()
+  useUsersStore.getState().clearDisplay()
 }
 
 function resetLogSession(mode: SessionMode | undefined) {

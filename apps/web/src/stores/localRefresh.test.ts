@@ -28,7 +28,7 @@ function refreshCase<S, T>(options: {
   store: StoreApi<S>
   empty: T
   gateway(base: ElysianGateway, read: () => Promise<T>): ElysianGateway
-  load(state: S, gateway: ElysianGateway): Promise<void>
+  load(state: S, gateway: ElysianGateway): Promise<unknown>
   select(state: S): { status: string; snapshot: unknown; error?: string }
 }) {
   return {
