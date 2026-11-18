@@ -9,11 +9,13 @@ package files
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"reflect"
 	"regexp"
 	"strings"
 	"testing"
+	"time"
 )
 
 var serviceCtx = context.Background()
@@ -225,6 +227,86 @@ func TestServiceSize(t *testing.T) {
 		_, err = fileAliasService.Size(serviceCtx, "/tmp/cpuinfo-alias")
 		requireErrorExact(t, err, "拒绝操作系统虚拟目录：/tmp/cpuinfo-alias")
 	})
+}
+
+func TestSizeScansConcurrentlyAndBoundsDiskWork(t *testing.T) {
+	root := fakeDirNode()
+	for i := 0; i <= sizeScanConcurrency; i++ {
+		root.setChild(fmt.Sprintf("dir-%d", i), fakeDirNode(fakeNamedNode{name: "file", node: fakeFileNode(3)}))
+	}
+	host := createFakeFilesHost(root)
+	start := make(chan string, sizeScanConcurrency+1)
+	release := make(chan struct{})
+	ctx, cancel := context.WithTimeout(serviceCtx, 3*time.Second)
+	defer cancel()
+	readdir := host.readdir
+	host.readdir = func(path string) ([]dirEntry, error) {
+		start <- path
+		select {
+		case <-release:
+			return readdir(path)
+		case <-ctx.Done():
+			return nil, ctx.Err()
+		}
+	}
+	service := newTestService(host)
+	results := make(chan error, sizeScanConcurrency)
+	for i := 0; i < sizeScanConcurrency; i++ {
+		go func() {
+			path := fmt.Sprintf("/dir-%d", i)
+			count, err := service.Size(ctx, path)
+			if err == nil && count != 3 {
+				err = fmt.Errorf("%s 大小 = %d，期望 3", path, count)
+			}
+			results <- err
+		}()
+	}
+	for range sizeScanConcurrency {
+		select {
+		case <-start:
+		case <-ctx.Done():
+			t.Fatal("多个目录未能同时开始遍历")
+		}
+	}
+	waiting, stopWaiting := context.WithTimeout(ctx, 20*time.Millisecond)
+	defer stopWaiting()
+	lastPath := fmt.Sprintf("/dir-%d", sizeScanConcurrency)
+	if _, err := service.Size(waiting, lastPath); !errors.Is(err, context.DeadlineExceeded) {
+		t.Fatalf("扫描槽满时等待取消：%v", err)
+	}
+	select {
+	case path := <-start:
+		t.Fatalf("多出的目录不应开始扫描：%s", path)
+	default:
+	}
+	close(release)
+	for range sizeScanConcurrency {
+		requireNoError(t, <-results)
+	}
+	total, err := service.Size(ctx, lastPath)
+	requireNoError(t, err)
+	if total != 3 || len(host.commands) != 0 {
+		t.Fatalf("应释放扫描槽且不启动子进程：大小=%d，命令=%v", total, host.commands)
+	}
+}
+
+func TestSizeCanceledWalkStopsBeforeReadingChildren(t *testing.T) {
+	ctx, cancel := context.WithCancel(serviceCtx)
+	defer cancel()
+	host := createFakeFilesHost(seedContainerTree())
+	readdir := host.readdir
+	host.readdir = func(path string) ([]dirEntry, error) {
+		entries, err := readdir(path)
+		cancel()
+		return entries, err
+	}
+	host.lstat = func(path string) (entryStats, error) {
+		t.Fatalf("取消时不应继续读取子项：%s", path)
+		return entryStats{}, nil
+	}
+	if _, err := newTestService(host).Size(ctx, "/var/log"); !errors.Is(err, context.Canceled) {
+		t.Fatalf("应返回取消，不返回不完整的大小：%v", err)
+	}
 }
 
 var stagingPayloadPattern = regexp.MustCompile(`^/tmp/\.elysian-staging-[0-9a-f]{16}/\.payload$`)

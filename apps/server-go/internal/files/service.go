@@ -47,6 +47,9 @@ import (
 // 列举条数上限：超出截断（顺序本不保证，截断不破坏契约）。
 const listMaxEntries = 10000
 
+// 同一文件服务的 HTTP goroutine 共享扫描槽，避免批量统计耗尽磁盘 I/O。
+const sizeScanConcurrency = 4
+
 // 搜索结果条数上限：触顶即停止遍历返回已命中部分。
 const searchMaxResults = 1000
 
@@ -113,6 +116,7 @@ type fileService interface {
 // 操作内不再重复解析。
 type filesService struct {
 	mutationMu          sync.Mutex
+	sizeScans           chan struct{}
 	deps                hostDeps
 	accounts            seam.SystemAccounts
 	forbiddenPrefixes   []string
@@ -122,6 +126,7 @@ type filesService struct {
 // newService 构造服务编排：deps 为宿主访问出口，accounts 为 getent 账号通道。
 func newService(deps hostDeps, accounts seam.SystemAccounts) *filesService {
 	return &filesService{
+		sizeScans:           make(chan struct{}, sizeScanConcurrency),
 		deps:                deps,
 		accounts:            accounts,
 		forbiddenPrefixes:   forbiddenWritePrefixes(deps.HomeDir()),
@@ -615,6 +620,15 @@ func (s *filesService) Size(ctx context.Context, nodePath string) (int64, error)
 	if err != nil {
 		return 0, err
 	}
+	select {
+	case s.sizeScans <- struct{}{}:
+		defer func() { <-s.sizeScans }()
+	case <-ctx.Done():
+		return 0, ctx.Err()
+	}
+	if err := ctx.Err(); err != nil {
+		return 0, err
+	}
 	stats, err := s.statExisting(normalized, nodePath)
 	if err != nil {
 		return 0, err
@@ -625,7 +639,7 @@ func (s *filesService) Size(ctx context.Context, nodePath string) (int64, error)
 	if !stats.isDir() {
 		return stats.size, nil
 	}
-	total, err := sumDescendantSizes(s.deps, normalized)
+	total, err := sumDescendantSizes(ctx, s.deps, normalized)
 	if err != nil {
 		var limitErr *walkLimitError
 		if errors.As(err, &limitErr) {

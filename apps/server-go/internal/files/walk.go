@@ -1,6 +1,7 @@
 package files
 
 import (
+	"context"
 	"errors"
 	"io/fs"
 	"syscall"
@@ -65,6 +66,7 @@ type treeWalkDeps interface {
 
 // walkOptions 遍历行为的全部开关（maxNodes/maxDepth 为 0 时取缺省上限，测试可缩小预算）。
 type walkOptions struct {
+	ctx         context.Context // 大小统计在请求取消后停止继续扫描。
 	virtualDirs byte
 	onLimit     byte
 	// extraPrune 额外剪枝（仅目录生效）：search 专属的 node_modules 段与工具缓存前缀。
@@ -114,6 +116,9 @@ func walkFileTree(deps treeWalkDeps, startPath string, options walkOptions) (wal
 	}
 	stack := []stackItem{{dirPath: startPath, childDepth: 1}}
 	for len(stack) > 0 {
+		if options.ctx != nil && options.ctx.Err() != nil {
+			return walkOutcome{}, options.ctx.Err()
+		}
 		item := stack[len(stack)-1]
 		stack = stack[:len(stack)-1]
 		dirPath, childDepth := item.dirPath, item.childDepth
@@ -122,6 +127,9 @@ func walkFileTree(deps treeWalkDeps, startPath string, options walkOptions) (wal
 			return walkOutcome{}, err
 		}
 		for _, dirent := range dirents {
+			if options.ctx != nil && options.ctx.Err() != nil {
+				return walkOutcome{}, options.ctx.Err()
+			}
 			if visited >= maxNodes {
 				if err := hitLimit("nodes"); err != nil {
 					return walkOutcome{}, err
@@ -169,9 +177,10 @@ func walkFileTree(deps treeWalkDeps, startPath string, options walkOptions) (wal
 
 // sumDescendantSizes 目录全部后代的大小求和：文件与符号链接按 lstat 字节数累计
 // （链接不跟随），目录不累计。
-func sumDescendantSizes(deps treeWalkDeps, startPath string) (int64, error) {
+func sumDescendantSizes(ctx context.Context, deps treeWalkDeps, startPath string) (int64, error) {
 	var total int64
 	_, err := walkFileTree(deps, startPath, walkOptions{
+		ctx:         ctx,
 		virtualDirs: virtualPrune,
 		onLimit:     limitThrow,
 		onEntry: func(entry walkEntry) bool {
@@ -182,6 +191,9 @@ func sumDescendantSizes(deps treeWalkDeps, startPath string) (int64, error) {
 		},
 	})
 	if err != nil {
+		return 0, err
+	}
+	if err := ctx.Err(); err != nil {
 		return 0, err
 	}
 	return total, nil

@@ -334,7 +334,7 @@ func TestWalkFileTree(t *testing.T) {
 func TestSumDescendantSizes(t *testing.T) {
 	t.Run("文件累加 lstat.size，符号链接按链接字节计（不跟随），目录不累计", func(t *testing.T) {
 		deps := &walkFakeDeps{root: seedWalkTree()}
-		total, err := sumDescendantSizes(deps, "/var/log")
+		total, err := sumDescendantSizes(serviceCtx, deps, "/var/log")
 		if err != nil {
 			t.Fatalf("求和失败：%v", err)
 		}
@@ -346,7 +346,7 @@ func TestSumDescendantSizes(t *testing.T) {
 
 	t.Run("虚拟 FS 前缀整树剪枝后不计入；node_modules 有意不剪（求和要真实规模）", func(t *testing.T) {
 		deps := &walkFakeDeps{root: seedWalkTree()}
-		total, err := sumDescendantSizes(deps, "/")
+		total, err := sumDescendantSizes(serviceCtx, deps, "/")
 		if err != nil {
 			t.Fatalf("求和失败：%v", err)
 		}
@@ -358,7 +358,7 @@ func TestSumDescendantSizes(t *testing.T) {
 
 	t.Run("规模触顶抛 walkLimitError（服务层据此报中文）", func(t *testing.T) {
 		deps := &walkFakeDeps{root: seedWalkTree()}
-		total, err := sumDescendantSizes(deps, "/var/log/archive")
+		total, err := sumDescendantSizes(serviceCtx, deps, "/var/log/archive")
 		if err != nil || total != 10 {
 			t.Fatalf("小目录求和 = (%d, %v)", total, err)
 		}
@@ -367,7 +367,7 @@ func TestSumDescendantSizes(t *testing.T) {
 			children = append(children, wd(fakeIndexName(i), walkFile(1)))
 		}
 		bigDeps := &walkFakeDeps{root: walkDir(wd("big", walkDir(children...)))}
-		_, err = sumDescendantSizes(bigDeps, "/big")
+		_, err = sumDescendantSizes(serviceCtx, bigDeps, "/big")
 		var limitErr *walkLimitError
 		if !errors.As(err, &limitErr) {
 			t.Fatalf("期望 walkLimitError，得到 %v", err)
