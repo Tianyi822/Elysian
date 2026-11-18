@@ -18,6 +18,7 @@ import { isDockerRuntime } from '../utils/isDockerRuntime'
 import { demoNoticeSuffix, MOCK_ACTION_NOTE } from '../utils/demoNotice'
 import { useMessageStore } from './messageStore'
 import { messageOf } from '../utils/errorMessage'
+import { withBusyId, withoutBusyId } from './busyIds'
 
 /** SSH 管理页签的状态：服务概况、登录方式与端口、Root 凭据、登录密钥，以及各分区自己的忙碌态。 */
 type SshStatus = 'idle' | 'loading' | 'ready' | 'error'
@@ -538,22 +539,23 @@ export const useSshStore = create<SshState>((set, get) => {
     const auth = captureAuthGeneration()
     const generation = sshGeneration
     const target = get().keys.find((key) => key.id === keyId)
-    if (!target || get().removingKeyIds.includes(keyId)) return { status: 'failed', error: '密钥不存在或正在删除，请重新读取状态' }
-    set((state) => ({ removingKeyIds: [...state.removingKeyIds, keyId] }))
+    const removingKeyIds = withBusyId(get().removingKeyIds, keyId)
+    if (!target || !removingKeyIds) return { status: 'failed', error: '密钥不存在或正在删除，请重新读取状态' }
+    set({ removingKeyIds })
     sshRevision += 1
     try {
       await gateway.ssh.removeKey(keyId)
       if (generation !== sshGeneration || auth !== captureAuthGeneration()) return securitySessionChanged()
       set((state) => ({
         keys: state.keys.filter((key) => key.id !== keyId),
-        removingKeyIds: state.removingKeyIds.filter((id) => id !== keyId),
+        removingKeyIds: withoutBusyId(state.removingKeyIds, keyId),
       }))
       notify(`SSH 密钥「${target.name}」已删除${MOCK_SUFFIX}`)
       return { status: 'succeeded' }
     } catch (error) {
       if (generation !== sshGeneration || auth !== captureAuthGeneration()) return securitySessionChanged()
       set((state) => ({
-        removingKeyIds: state.removingKeyIds.filter((id) => id !== keyId),
+        removingKeyIds: withoutBusyId(state.removingKeyIds, keyId),
       }))
       notify(error instanceof Error ? `删除失败：${error.message}` : '删除失败', 'danger')
       await recordFailure(error, gateway)

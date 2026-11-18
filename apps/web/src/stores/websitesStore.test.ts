@@ -1,4 +1,5 @@
-import { beforeEach, describe, expect, it } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
+import type { WebsiteProject } from '@elysian/contracts'
 import { createMockGateway } from '../adapters/mock/gateway'
 import { resetWebsitesData } from '../adapters/mock/websitesData'
 import { useMessageStore } from './messageStore'
@@ -30,5 +31,33 @@ describe('网站状态', () => {
     expect(saved.routeApplied).toBe(true)
     expect(saved.certificate?.applied).toBe(true)
     expect(useWebsitesStore.getState().projects[0]?.domain).toBe('example.com')
+  })
+
+  it('同一项目互斥，不同项目独立解锁，启停失败回滚原状态', async () => {
+    const gateway = createMockGateway({ eventStream: 'memory', eventIntervalMs: 60_000 })
+    const { createProject, setRunning, saveAccess, removeProject } = useWebsitesStore.getState()
+    await createProject(gateway, 'html', { name: 'docs', port: 8088, access: { mode: 'direct' } })
+    await createProject(gateway, 'html', { name: 'blog', port: 8089, access: { mode: 'direct' } })
+    const [docs, blog] = useWebsitesStore.getState().projects as readonly [WebsiteProject, WebsiteProject]
+    let reject!: (reason: Error) => void
+    const pending = new Promise<WebsiteProject>((_, fail) => { reject = fail })
+    vi.spyOn(gateway.websites, 'setRunning').mockReturnValue(pending)
+    const remove = vi.spyOn(gateway.websites, 'remove')
+
+    const running = docs.runState !== 'running'
+    const change = setRunning(gateway, docs, running)
+    expect(useWebsitesStore.getState().projects[0]?.runState).toBe(running ? 'running' : 'stopped')
+    await expect(saveAccess(gateway, docs.id, { mode: 'direct' })).rejects.toThrow('项目正在执行其他操作')
+    await removeProject(gateway, docs)
+    expect(remove).not.toHaveBeenCalled()
+
+    const removing = removeProject(gateway, blog)
+    expect(useWebsitesStore.getState().busyProjectIds).toEqual([docs.id, blog.id])
+    await removing
+    expect(useWebsitesStore.getState().busyProjectIds).toEqual([docs.id])
+
+    reject(new Error('启停失败'))
+    await change
+    expect(useWebsitesStore.getState()).toMatchObject({ busyProjectIds: [], projects: [docs] })
   })
 })

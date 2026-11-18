@@ -12,6 +12,7 @@ import type { ElysianGateway, DatabaseCreateInput } from '../contracts/adapters'
 import { useMessageStore } from './messageStore'
 import { notifyFirewallPortSync } from './firewallPortNotice'
 import { messageOf } from '../utils/errorMessage'
+import { withBusyId, withoutBusyId } from './busyIds'
 
 type DatabaseKind = 'container' | 'file'
 type LoadStatus = 'idle' | 'loading' | 'ready' | 'error'
@@ -177,8 +178,9 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   async removeContainer(gateway, containerId) {
     const row = get().databases.find((item) => item.id === containerId)
     if (!row) return
-    if (get().removingContainerIds.includes(containerId)) return
-    set((state) => ({ removingContainerIds: [...state.removingContainerIds, containerId] }))
+    const removingContainerIds = withBusyId(get().removingContainerIds, containerId)
+    if (!removingContainerIds) return
+    set({ removingContainerIds })
     try {
       const forget = row.status === 'missing' && (row.source !== 'managed' || !row.volumeName)
       if (forget) await gateway.databases.forget(containerId)
@@ -192,15 +194,16 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     } finally {
       // 删除容器和删卷分两步；错误也可能留下待清理登记。
       await get().refreshAfterMutation(gateway, 'container')
-      set((state) => ({ removingContainerIds: state.removingContainerIds.filter((id) => id !== containerId) }))
+      set((state) => ({ removingContainerIds: withoutBusyId(state.removingContainerIds, containerId) }))
     }
   },
 
   async removeSqliteFile(gateway, fileId) {
     const row = get().sqliteFiles.find((item) => item.id === fileId)
     if (!row) return
-    if (get().removingSqliteIds.includes(fileId)) return
-    set((state) => ({ removingSqliteIds: [...state.removingSqliteIds, fileId] }))
+    const removingSqliteIds = withBusyId(get().removingSqliteIds, fileId)
+    if (!removingSqliteIds) return
+    set({ removingSqliteIds })
     try {
       await gateway.databases.removeSqlite(fileId)
       useMessageStore
@@ -211,7 +214,7 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       const detail = messageOf(error)
       useMessageStore.getState().notify({ tone: 'danger', message: `删除 SQLite 文件失败：${detail}` })
     } finally {
-      set((state) => ({ removingSqliteIds: state.removingSqliteIds.filter((id) => id !== fileId) }))
+      set((state) => ({ removingSqliteIds: withoutBusyId(state.removingSqliteIds, fileId) }))
     }
   },
 }))

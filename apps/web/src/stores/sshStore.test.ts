@@ -111,4 +111,27 @@ describe('SSH 状态刷新与身份隔离', () => {
     expect(useSshStore.getState().sectionErrors.service).toBeUndefined()
     expect(useSshStore.getState().portDraft).toBe('5432')
   })
+
+  it('删除密钥在途时仍拒绝另一条 SSH 写入', async () => {
+    const { gateway } = sshSessions()
+    const { load, removeKey } = useSshStore.getState()
+    await load(gateway)
+    const [first, second] = useSshStore.getState().keys
+    const receipt = deferred<void>()
+    const originalRemove = gateway.ssh.removeKey.bind(gateway.ssh)
+    const remove = vi.spyOn(gateway.ssh, 'removeKey').mockImplementation(async (id) => {
+      await receipt.promise
+      return originalRemove(id)
+    })
+
+    const removing = removeKey(gateway, first!.id)
+    expect(useSshStore.getState().removingKeyIds).toEqual([first!.id])
+    await expect(removeKey(gateway, second!.id)).resolves.toEqual({ status: 'failed', error: 'SSH 设置正在变更，请等待完成' })
+    expect(remove).toHaveBeenCalledExactlyOnceWith(first!.id)
+
+    receipt.resolve(undefined)
+    await expect(removing).resolves.toEqual({ status: 'succeeded' })
+    expect(useSshStore.getState().removingKeyIds).toEqual([])
+    expect(useSshStore.getState().keys.map(key => key.id)).not.toContain(first!.id)
+  })
 })

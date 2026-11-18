@@ -345,6 +345,32 @@ describe('数据库页面', () => {
     expect(screen.queryByText(/mock，待接入真实执行/)).not.toBeInTheDocument()
   })
 
+  it('删除数据库容器后等待名单回读才释放该行，期间不重复提交', async () => {
+    const { gateway } = pageGateway()
+    const { load, removeContainer } = useDatabaseStore.getState()
+    await load(gateway)
+    const id = useDatabaseStore.getState().databases.find(row => row.name === 'mariadb-primary')!.id
+    let release!: () => void
+    const pendingRefresh = new Promise<void>(resolve => { release = resolve })
+    const originalList = gateway.databases.list.bind(gateway.databases)
+    const list = vi.spyOn(gateway.databases, 'list').mockImplementationOnce(async () => {
+      await pendingRefresh
+      return originalList()
+    })
+    const remove = vi.spyOn(gateway.databases, 'removeContainer')
+
+    const removing = removeContainer(gateway, id)
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(1))
+    expect(useDatabaseStore.getState().removingContainerIds).toEqual([id])
+    await removeContainer(gateway, id)
+    expect(remove).toHaveBeenCalledExactlyOnceWith(id)
+
+    release()
+    await removing
+    expect(useDatabaseStore.getState().removingContainerIds).toEqual([])
+    expect(useDatabaseStore.getState().databases.map(row => row.id)).not.toContain(id)
+  })
+
   it('待核对容器提供重新核对，核对通过后警告块消失', async () => {
     const user = userEvent.setup()
     renderApp('/databases', { gateway: pageGateway().gateway })

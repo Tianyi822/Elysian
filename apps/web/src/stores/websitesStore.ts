@@ -14,6 +14,7 @@ import { demoNoticeSuffix } from '../utils/demoNotice'
 import { useMessageStore } from './messageStore'
 import { notifyFirewallPortSync } from './firewallPortNotice'
 import { messageOf } from '../utils/errorMessage'
+import { withBusyId, withoutBusyId } from './busyIds'
 
 const NOTICE_SUFFIX = demoNoticeSuffix(isDockerRuntime(), '演示数据，刷新后还原')
 
@@ -209,8 +210,9 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
     },
 
     async saveAccess(gateway, projectId, access) {
-      if (get().busyProjectIds.includes(projectId)) throw new Error('项目正在执行其他操作')
-      set((state) => ({ busyProjectIds: [...state.busyProjectIds, projectId] }))
+      const busyProjectIds = withBusyId(get().busyProjectIds, projectId)
+      if (!busyProjectIds) throw new Error('项目正在执行其他操作')
+      set({ busyProjectIds })
       try {
         const { project: updated, firewallPort } = await gateway.websites.setAccess(projectId, access)
         set((state) => ({
@@ -222,7 +224,7 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
         await get().refresh(gateway, { silent: true })
         return get().projects.find((project) => project.id === projectId) ?? updated
       } finally {
-        set((state) => ({ busyProjectIds: state.busyProjectIds.filter((id) => id !== projectId) }))
+        set((state) => ({ busyProjectIds: withoutBusyId(state.busyProjectIds, projectId) }))
       }
     },
 
@@ -262,25 +264,27 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
     },
 
     async removeProject(gateway, project) {
-      if (get().busyProjectIds.includes(project.id)) return
-      set((state) => ({ busyProjectIds: [...state.busyProjectIds, project.id] }))
+      const busyProjectIds = withBusyId(get().busyProjectIds, project.id)
+      if (!busyProjectIds) return
+      set({ busyProjectIds })
       try {
         await gateway.websites.remove(project.id)
         set((state) => ({
           projects: state.projects.filter((item) => item.id !== project.id),
           removeTarget: undefined,
-          busyProjectIds: state.busyProjectIds.filter((id) => id !== project.id),
+          busyProjectIds: withoutBusyId(state.busyProjectIds, project.id),
         }))
         notify(`项目 ${project.name} 已删除${NOTICE_SUFFIX}`)
       } catch (error) {
-        set((state) => ({ busyProjectIds: state.busyProjectIds.filter((id) => id !== project.id) }))
+        set((state) => ({ busyProjectIds: withoutBusyId(state.busyProjectIds, project.id) }))
         notify(messageOf(error, '删除失败'), 'danger')
       }
     },
 
     // 乐观更新：状态先翻再等 adapter 确认，失败回滚并报危险通知。
     async setRunning(gateway, project, running) {
-      if (get().busyProjectIds.includes(project.id)) return
+      const busyProjectIds = withBusyId(get().busyProjectIds, project.id)
+      if (!busyProjectIds) return
       const previous = project
       const optimistic: WebsiteProject = {
         ...project,
@@ -288,20 +292,20 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
         pid: running ? project.pid : null,
       }
       set((state) => ({
-        busyProjectIds: [...state.busyProjectIds, project.id],
+        busyProjectIds,
         projects: state.projects.map((item) => (item.id === project.id ? optimistic : item)),
       }))
       try {
         const confirmed = await gateway.websites.setRunning(project.id, running)
         set((state) => ({
           projects: state.projects.map((item) => (item.id === confirmed.id ? confirmed : item)),
-          busyProjectIds: state.busyProjectIds.filter((id) => id !== project.id),
+          busyProjectIds: withoutBusyId(state.busyProjectIds, project.id),
         }))
         notify(`项目 ${project.name} 已${running ? '启动' : '停止'}${NOTICE_SUFFIX}`)
       } catch (error) {
         set((state) => ({
           projects: state.projects.map((item) => (item.id === previous.id ? previous : item)),
-          busyProjectIds: state.busyProjectIds.filter((id) => id !== project.id),
+          busyProjectIds: withoutBusyId(state.busyProjectIds, project.id),
         }))
         notify(messageOf(error, '操作失败'), 'danger')
       }
