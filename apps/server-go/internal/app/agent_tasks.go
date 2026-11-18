@@ -50,8 +50,7 @@ func containerBuildTaskStatus(status containerapps.AgentTaskStatus) tools.TaskSt
 	return normalizedTaskStatus(outcome, status.State, status.Value, "container-app-build-"+string(outcome), status.Error, agentTaskProgress(status.State, status.Terminal, status.Stage, status.UpdatedAt, "正在构建容器镜像"))
 }
 
-func agentTaskReconciler(sites *websites.AgentFacade, apps *containerapps.AgentFacade, containers *docker.AgentFacade, databases *database.AgentFacade) func(context.Context, tools.TaskReconciliation) error {
-	inspect := agentTaskInspector(sites, apps, containers, databases)
+func agentTaskReconciler(inspect func(context.Context, tools.TaskReference) (tools.TaskStatus, error), containers *docker.AgentFacade) func(context.Context, tools.TaskReconciliation) error {
 	return func(ctx context.Context, intent tools.TaskReconciliation) error {
 		if intent.Task.Domain != docker.ContainerOperationDomain {
 			status, err := inspect(ctx, intent.Task)
@@ -63,29 +62,9 @@ func agentTaskReconciler(sites *websites.AgentFacade, apps *containerapps.AgentF
 			}
 			return errors.New("域任务尚无可核实的结束回执")
 		}
-		var input any
-		var target string
-		switch intent.Tool {
-		case "docker_container_exec":
-			var value docker.ContainerExecInput
-			if err := decodeContainerArguments(intent.ArgumentsJSON, &value); err != nil {
-				return err
-			}
-			if value.RequestID != intent.Task.RequestID {
-				return errors.New("容器操作原始请求身份不匹配")
-			}
-			input, target = value, value.ID
-		case "docker_container_create_service":
-			var value docker.AgentServiceCreateInput
-			if err := decodeContainerArguments(intent.ArgumentsJSON, &value); err != nil {
-				return err
-			}
-			if value.RequestID != intent.Task.RequestID {
-				return errors.New("容器操作原始请求身份不匹配")
-			}
-			input, target = value, "name:"+value.Name
-		default:
-			return errors.New("无法核对容器操作的原始输入")
+		input, target, err := containerOperationInput(intent.Tool, intent.ArgumentsJSON, intent.Task.RequestID)
+		if err != nil {
+			return err
 		}
 		raw, err := json.Marshal(input)
 		if err != nil {
@@ -100,7 +79,7 @@ func agentTaskReconciler(sites *websites.AgentFacade, apps *containerapps.AgentF
 	}
 }
 
-func agentTaskInspector(sites *websites.AgentFacade, apps *containerapps.AgentFacade, containers *docker.AgentFacade, databases *database.AgentFacade) func(context.Context, tools.TaskReference) (tools.TaskStatus, error) {
+func agentTaskInspector(sites *websites.AgentFacade, apps *containerapps.AgentFacade, containers *docker.AgentFacade, databases database.LegacyTaskLedger) func(context.Context, tools.TaskReference) (tools.TaskStatus, error) {
 	return func(ctx context.Context, ref tools.TaskReference) (tools.TaskStatus, error) {
 		if ref.ID == "" || ref.RequestID == "" {
 			return tools.TaskStatus{}, errors.New("异步任务身份缺失")
@@ -141,15 +120,14 @@ func agentTaskInspector(sites *websites.AgentFacade, apps *containerapps.AgentFa
 			}
 			return status, nil
 		case "database":
-			task, err := databases.InspectTask(ctx, ref.ID)
+			task, err := databases.Read(ctx, ref.ID, ref.RequestID)
 			if err != nil {
 				return tools.TaskStatus{}, err
 			}
-			if task.RequestID != ref.RequestID {
-				return tools.TaskStatus{}, errors.New("数据库任务请求身份不匹配")
+			if task.State == "succeeded" {
+				return normalizedTaskStatus(tools.TaskSucceeded, task.State, task, "", "", nil), nil
 			}
-			outcome := taskOutcome(task.State == "succeeded", false, task.State == "running" || task.State == "pending")
-			return normalizedTaskStatus(outcome, task.State, task, "database-task-unknown", task.Message, agentTaskProgress(task.State, task.State == "succeeded", task.Message, "", "正在执行数据库任务")), nil
+			return normalizedTaskStatus(tools.TaskUnknown, task.State, task, "database-task-unknown", task.Message, nil), nil
 		case "docker-image-pull":
 			task, err := containers.InspectPull(ctx, ref.ID)
 			if err != nil {
@@ -227,8 +205,16 @@ func agentPullProgress(task docker.AgentPullTask) *tools.TaskProgress {
 	return progress
 }
 
-func agentTaskLookup(sites *websites.AgentFacade, apps *containerapps.AgentFacade, containers *docker.AgentFacade, databases *database.AgentFacade) func(context.Context, tools.TaskReference) (tools.TaskReference, error) {
+func agentTaskLookup(sites *websites.AgentFacade, apps *containerapps.AgentFacade, containers *docker.AgentFacade, databases database.LegacyTaskLedger) func(context.Context, tools.TaskReference) (tools.TaskReference, error) {
 	return func(ctx context.Context, ref tools.TaskReference) (tools.TaskReference, error) {
+		if ref.Domain == "database" {
+			task, err := databases.Read(ctx, ref.ID, ref.RequestID)
+			if err != nil {
+				return ref, err
+			}
+			ref.ID, ref.RequestID = task.ID, task.RequestID
+			return ref, nil
+		}
 		if ref.ID != "" {
 			var requestID string
 			var err error
@@ -236,10 +222,6 @@ func agentTaskLookup(sites *websites.AgentFacade, apps *containerapps.AgentFacad
 			case docker.ContainerOperationDomain:
 				var task docker.ContainerOperationTask
 				task, err = containers.InspectContainerOperation(ctx, ref.ID)
-				requestID = task.RequestID
-			case "database":
-				var task database.AgentTask
-				task, err = databases.InspectTask(ctx, ref.ID)
 				requestID = task.RequestID
 			case "website":
 				var task websites.AgentTaskStatus
@@ -276,10 +258,6 @@ func agentTaskLookup(sites *websites.AgentFacade, apps *containerapps.AgentFacad
 				return ref, err
 			}
 			ref.ID = task.ID
-		case "database":
-			var task database.AgentTask
-			task, err = databases.LookupTask(ctx, ref.RequestID)
-			ref.ID = task.ID
 		case "website":
 			ref.ID, err = sites.LookupTask(ctx, ref.RequestID)
 		case "container-app-build":
@@ -296,7 +274,7 @@ func agentTaskLookup(sites *websites.AgentFacade, apps *containerapps.AgentFacad
 }
 
 // 仅供管理员删除会话后的宿主收尾使用，要求完整匹配持久任务身份。
-func agentTaskCanceller(sites *websites.AgentFacade, apps *containerapps.AgentFacade, containers *docker.AgentFacade, databases *database.AgentFacade) func(context.Context, tools.TaskReference) error {
+func agentTaskCanceller(sites *websites.AgentFacade, apps *containerapps.AgentFacade, containers *docker.AgentFacade, databases database.LegacyTaskLedger) func(context.Context, tools.TaskReference) error {
 	return func(ctx context.Context, ref tools.TaskReference) error {
 		if ref.ID == "" || ref.RequestID == "" {
 			return errors.New("后台任务身份缺失")
@@ -304,14 +282,16 @@ func agentTaskCanceller(sites *websites.AgentFacade, apps *containerapps.AgentFa
 		switch ref.Domain {
 		case docker.ContainerOperationDomain:
 			return containers.CancelContainerOperation(ctx, ref.ID, ref.RequestID)
-		case "database":
-			return databases.CancelOwnedTask(ctx, ref.ID, ref.RequestID)
 		case "website":
 			return sites.CancelOwnedTask(ctx, ref.ID, ref.RequestID)
 		case "container-app-build":
 			return apps.CancelOwnedTask(ctx, ref.ID, ref.RequestID)
 		case "docker-image-pull":
 			return containers.CancelOwnedTask(ctx, ref.ID, ref.RequestID)
+		case "database":
+			// The retired worker is absent; only verify that the reference belongs to it.
+			_, err := databases.Read(ctx, ref.ID, ref.RequestID)
+			return err
 		default:
 			return errors.New("后台任务领域无效")
 		}

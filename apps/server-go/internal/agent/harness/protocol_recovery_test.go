@@ -15,17 +15,17 @@ import (
 	hstate "elysian/server/internal/agent/harness/state"
 )
 
-func TestNativeDatabasePreflightRejectionContinuesAndReleasesBarrier(t *testing.T) {
+func TestNativeDatabaseRetiredRejectionContinuesAndReleasesBarrier(t *testing.T) {
 	bridge := databaseBusinessBridge(t)
 	m, session, _ := agentManager(t, func(_ context.Context, _ model.Profile, request model.Request) (model.Response, error) {
 		if request.ToolChoice == "store_working_memory" {
 			return memoryReply(request), nil
 		}
-		if strings.Contains(allRequestText(request), "database-task-rejected") {
-			if !strings.Contains(allRequestText(request), "missing") {
-				t.Error("未返回参数纠正指引")
+		if strings.Contains(allRequestText(request), "database-retired") {
+			if !strings.Contains(allRequestText(request), "数据库独立工具已退役") {
+				t.Error("未返回退役指引")
 			}
-			return finalReply("任务尚未执行，需要将 expected 修正为 missing 并选择明确版本"), nil
+			return finalReply("数据库独立工具已退役，任务未执行；数据库容器请使用 Docker 工具管理"), nil
 		}
 		if !contains(toolNames(request), "database_create") {
 			return searchReply("database_create"), nil
@@ -64,12 +64,12 @@ func TestNativeDatabasePreflightRejectionContinuesAndReleasesBarrier(t *testing.
 	}
 	calls, err := m.Calls(context.Background(), run.ID, "", 50)
 	// 工具精简后注入目录落在 eager 阈值内，database_create 首请求即定义可见，
-	// 不再经历 tool_search 往返；本测试关注预检拒绝是否继续运行并回传精确原因。
+	// 不再经历 tool_search 往返；本测试关注退役回执是否继续运行并回传精确原因。
 	if err != nil || len(calls.Items) != 1 || calls.Items[0].Error == nil {
 		t.Fatalf("missing calls: %+v %v", calls, err)
 	}
-	if calls.Items[0].Error.Code != "database-task-rejected" {
-		t.Fatalf("预检错误被覆盖：%+v", calls.Items[0])
+	if calls.Items[0].Error.Code != "database-retired" {
+		t.Fatalf("退役错误被覆盖：%+v", calls.Items[0])
 	}
 	operations, err := m.Operations(context.Background(), run.ID)
 	if err != nil {
@@ -101,7 +101,7 @@ func TestNativeDatabasePreflightRejectionContinuesAndReleasesBarrier(t *testing.
 		t.Fatalf("屏障未确认：%+v %v", barriers, err)
 	}
 	_, raw := readRecordLines(t, fixture(m), recordOwner{"session", session.ID})
-	if !strings.Contains(string(raw), "database-task-rejected") || strings.Contains(string(raw), "outcome-unknown") {
+	if !strings.Contains(string(raw), "database-retired") || strings.Contains(string(raw), "outcome-unknown") {
 		t.Fatal("JSONL 未保留真实拒绝原因")
 	}
 }

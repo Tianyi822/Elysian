@@ -15,29 +15,52 @@ func agentTaskVerifier(containers *docker.AgentFacade) func(context.Context, too
 		if v.OperationID == "" || v.DispatchID == "" || v.Task.Domain != docker.ContainerOperationDomain || v.Task.RequestID == "" || v.Task.ID != "" {
 			return v.Task, errors.New("缺少可核实的原始提交身份")
 		}
-		var task docker.ContainerOperationTask
-		var err error
-		switch v.Tool {
-		case "docker_container_create_service":
-			var input docker.AgentServiceCreateInput
-			if decodeContainerArguments(v.ArgumentsJSON, &input) != nil || input.RequestID != v.Task.RequestID {
-				return v.Task, errors.New("核实参数身份不匹配")
-			}
-			task, err = containers.SealUnacceptedOperation(ctx, input.RequestID, "name:"+input.Name, input)
-		case "docker_container_exec":
-			var input docker.ContainerExecInput
-			if decodeContainerArguments(v.ArgumentsJSON, &input) != nil || input.RequestID != v.Task.RequestID {
-				return v.Task, errors.New("核实参数身份不匹配")
-			}
-			task, err = containers.SealUnacceptedOperation(ctx, input.RequestID, input.ID, input)
-		default:
-			return v.Task, errors.New("该工具没有经过审核的未受理核实契约")
+		input, target, err := containerOperationInput(v.Tool, v.ArgumentsJSON, v.Task.RequestID)
+		if err != nil {
+			return v.Task, err
 		}
+		task, err := containers.SealUnacceptedOperation(ctx, v.Task.RequestID, target, input)
 		if err != nil {
 			return v.Task, err
 		}
 		return tools.TaskReference{Domain: v.Task.Domain, ID: task.ID, RequestID: task.RequestID, Target: task.Target, Digest: task.Digest}, nil
 	}
+}
+
+// Keep the original JSON field order and omission rules for accepted exec v2
+// receipts. An exec v3 or a v2 argv call marshals to the same bytes as before.
+type execReceiptInput struct {
+	docker.ContainerExecInput
+	DatabaseChange *struct {
+		Action           string `json:"action"`
+		Name             string `json:"name"`
+		ExpectedRevision string `json:"expectedRevision"`
+		Charset          string `json:"charset,omitempty"`
+	} `json:"databaseChange,omitempty"`
+}
+
+func containerOperationInput(tool, raw, requestID string) (any, string, error) {
+	switch tool {
+	case "docker_container_exec":
+		var input execReceiptInput
+		if err := decodeContainerArguments(raw, &input); err != nil {
+			return nil, "", err
+		}
+		if input.RequestID == requestID {
+			return input, input.ID, nil
+		}
+	case "docker_container_create_service":
+		var input docker.AgentServiceCreateInput
+		if err := decodeContainerArguments(raw, &input); err != nil {
+			return nil, "", err
+		}
+		if input.RequestID == requestID {
+			return input, "name:" + input.Name, nil
+		}
+	default:
+		return nil, "", errors.New("该工具没有经过审核的容器操作核实契约")
+	}
+	return nil, "", errors.New("容器操作原始请求身份不匹配")
 }
 
 // Match the tool's lossless integer interpretation, including 3306.0 and 3e3.

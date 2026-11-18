@@ -132,6 +132,12 @@ func (m *Manager) canVerifyOperation(o Operation) bool {
 	if o.Task.ID != "" {
 		return true
 	}
-	return m.deps.VerifyTask != nil && o.Task.Domain == "docker-container-operation" && o.Capability.Source == "builtin" && o.Capability.Metadata.Async &&
-		(o.Capability.Name == "docker_container_create_service" && o.Capability.Metadata.Version == "3" || o.Capability.Name == "docker_container_exec" && o.Capability.Metadata.Version == "2")
+	return m.deps.VerifyTask != nil && o.Task.Domain == "docker-container-operation" && supportsMissingTaskVerification(o.Capability)
+}
+
+func supportsMissingTaskVerification(c Capability) bool {
+	version := c.Metadata.Version
+	return c.Source == "builtin" && c.Metadata.Async &&
+		(c.Name == "docker_container_create_service" && version == "3" ||
+			c.Name == "docker_container_exec" && (version == "2" || version == "3"))
 }

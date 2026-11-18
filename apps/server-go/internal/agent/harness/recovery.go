@@ -312,11 +312,10 @@ func (m *Manager) verifyMissingTask(ctx context.Context, expected Operation) (to
 		if err != nil {
 			return err
 		}
-		if o.Status != "unknown" || o.DispatchID != expected.DispatchID || o.Task == nil || o.Task.ID != "" || o.Task.RequestID == "" || o.Capability.Source != "builtin" || !o.Capability.Metadata.Async {
+		if o.Status != "unknown" || o.DispatchID != expected.DispatchID || o.Task == nil || o.Task.ID != "" || o.Task.RequestID == "" {
 			return bad("verification-changed", "操作不再满足未受理核实条件")
 		}
-		version := o.Capability.Metadata.Version
-		if !(o.Capability.Name == "docker_container_create_service" && version == "3" || o.Capability.Name == "docker_container_exec" && version == "2") {
+		if o.Task.Domain != "docker-container-operation" || !supportsMissingTaskVerification(o.Capability) {
 			return bad("verification-unsupported", "旧工具没有经过审核的提交前无变更契约")
 		}
 		v = tools.TaskVerification{OperationID: o.ID, DispatchID: o.DispatchID, Task: *o.Task, Tool: o.Capability.Name, ArgumentsJSON: o.ArgumentsJSON}

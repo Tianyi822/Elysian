@@ -17,25 +17,12 @@ import (
 	"elysian/server/internal/agent/kardia"
 	"elysian/server/internal/agent/tools"
 	databasetools "elysian/server/internal/agent/tools/database"
-	domaindatabase "elysian/server/internal/database"
-	"elysian/server/internal/seam"
 )
-
-type unusedDatabaseTransport struct{}
-
-func (unusedDatabaseTransport) Request(context.Context, seam.EngineRequest) (seam.EngineResponse, error) {
-	return seam.EngineResponse{}, errors.New("不应请求真实引擎")
-}
-func (unusedDatabaseTransport) Stream(context.Context, seam.EngineRequest, func([]byte)) (seam.EngineResponse, error) {
-	return seam.EngineResponse{}, errors.New("不应请求真实引擎")
-}
 
 func databaseBusinessBridge(t *testing.T) *toolbridge.Bridge {
 	t.Helper()
 	views := &dockerCatalogViews{}
-	facade := domaindatabase.NewAgentFacade(domaindatabase.Deps{EngineAvailable: true, Engine: unusedDatabaseTransport{}, Views: views,
-		AgentAuthorize: func(ctx context.Context) error { return tools.ConsumeBackend(ctx, tools.DispatchID(ctx)) }})
-	bridge, err := toolbridge.NewWithPlugins(views, databasetools.Plugin(databasetools.Deps{Facade: facade}, databasetools.Config{}))
+	bridge, err := toolbridge.NewWithPlugins(views, databasetools.Plugin(databasetools.Deps{}, databasetools.Config{}))
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -96,15 +83,15 @@ func TestNativeDatabaseBusinessErrorContinuesSameBatchAndPersists(t *testing.T) 
 			return reply, nil
 		case 3:
 			text := allRequestText(request)
-			if !strings.Contains(text, "database-version-invalid") || !strings.Contains(text, "latest") || !strings.Contains(text, "docker_images_list") {
-				t.Errorf("错误和同批搜索未返回模型：%s", text)
+			if !strings.Contains(text, "database-retired") || !strings.Contains(text, "数据库独立工具已退役") || !strings.Contains(text, "docker_images_list") {
+				t.Errorf("退役错误和同批搜索未返回模型：%s", text)
 			}
 			return toolReply("docker_images_list"), nil
 		default:
 			if !strings.Contains(allRequestText(request), "local-nginx") {
 				t.Error("纠正后的本地镜像查询未完成")
 			}
-			return finalReply("已检查本地镜像，请使用数据库镜像的明确版本"), nil
+			return finalReply("已检查本地镜像，数据库独立工具已退役，数据库容器请使用 Docker 工具管理"), nil
 		}
 	}, func(d *Deps) { d.Tools, d.Catalog, d.Spawn = bridge, &Extensions{}, frozenDatabaseSpawn })
 	run, _, err := m.CreateTask(context.Background(), session.ID, AgentInput{RequestID: "native-database-business", Content: "检查数据库镜像", ExtensionMode: "enabled", AuthorizationMode: AuthorizationOnDemand})
@@ -119,7 +106,7 @@ func TestNativeDatabaseBusinessErrorContinuesSameBatchAndPersists(t *testing.T) 
 	if err != nil || len(calls.Items) != 4 {
 		t.Fatalf("调用记录不完整：%+v %v", calls, err)
 	}
-	if calls.Items[1].Tool != "database_discover" || calls.Items[1].Status != StateFailed || calls.Items[1].Error == nil || calls.Items[1].Error.Code != "database-version-invalid" || calls.Items[2].Tool != toolSearchName || calls.Items[2].Status != StateSucceeded || calls.Items[3].Status != StateSucceeded {
+	if calls.Items[1].Tool != "database_discover" || calls.Items[1].Status != StateFailed || calls.Items[1].Error == nil || calls.Items[1].Error.Code != "database-retired" || calls.Items[2].Tool != toolSearchName || calls.Items[2].Status != StateSucceeded || calls.Items[3].Status != StateSucceeded {
 		t.Fatalf("同批续接记录不符：%+v", calls.Items)
 	}
 	lines, raw := readRecordLines(t, fixture(m), recordOwner{"session", session.ID})

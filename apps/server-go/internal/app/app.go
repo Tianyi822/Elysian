@@ -182,7 +182,7 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 	if logsAgent.Available() {
 		plugins = append(plugins, toollogs.Plugin(toollogs.Deps{Facade: logsAgent}, toollogs.Config{}))
 	}
-	databaseDeps := database.Deps{EngineAvailable: stack.Ready, SqliteAvailable: cfg.HostOpsAvailable(), Engine: stack.Engine, Views: stack.Views, SelfID: stack.SelfID, PortOpener: portOpener, Logs: appLogs, AgentAuthorize: agentAuthorize}
+	databaseDeps := database.Deps{EngineAvailable: stack.Ready, SqliteAvailable: cfg.HostOpsAvailable(), Engine: stack.Engine, Views: stack.Views, SelfID: stack.SelfID, PortOpener: portOpener}
 	databaseDeps.AgentFacade = database.NewAgentFacade(databaseDeps)
 	if stack.Agent != nil {
 		stack.Agent.SetDatabaseContainers(databaseDeps.AgentFacade.ContainerBridge(tools.Revalidate))
@@ -192,7 +192,7 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 		}
 	}
 	if databaseDeps.AgentFacade.Available() {
-		plugins = append(plugins, tooldatabase.Plugin(tooldatabase.Deps{Facade: databaseDeps.AgentFacade}, tooldatabase.Config{}))
+		plugins = append(plugins, tooldatabase.Plugin(tooldatabase.Deps{}, tooldatabase.Config{}))
 	}
 	filesDeps := files.Deps{Available: cfg.HostOpsAvailable(), Accounts: security.NewSystemAccounts()}
 	var filesAgent *files.AgentFacade
@@ -224,7 +224,15 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 		plugins = append(plugins, toolwebsites.Plugin(toolwebsites.Deps{Facade: websiteDeps.AgentFacade}, toolwebsites.Config{}))
 	}
 	factory := harnessFactory(func(config *config.Config, views seam.DockerViews) (http.Handler, func(context.Context) error, error) {
-		return assembleProductionHarness(config, views, harnessAssemblyOptions{Paths: paths.Default, Home: paths.ElysianHome, Plugins: plugins, CancelTask: agentTaskCanceller(websiteDeps.AgentFacade, appAgent, stack.Agent, databaseDeps.AgentFacade), InspectTask: agentTaskInspector(websiteDeps.AgentFacade, appAgent, stack.Agent, databaseDeps.AgentFacade), VerifyTask: agentTaskVerifier(stack.Agent), LookupTask: agentTaskLookup(websiteDeps.AgentFacade, appAgent, stack.Agent, databaseDeps.AgentFacade), ReconcileTask: agentTaskReconciler(websiteDeps.AgentFacade, appAgent, stack.Agent, databaseDeps.AgentFacade)})
+		legacy := database.LegacyTaskLedger{StateDir: paths.StateDir}
+		inspect := agentTaskInspector(websiteDeps.AgentFacade, appAgent, stack.Agent, legacy)
+		return assembleProductionHarness(config, views, harnessAssemblyOptions{
+			Paths: paths.Default, Home: paths.ElysianHome, Plugins: plugins,
+			CancelTask:  agentTaskCanceller(websiteDeps.AgentFacade, appAgent, stack.Agent, legacy),
+			InspectTask: inspect, VerifyTask: agentTaskVerifier(stack.Agent),
+			LookupTask:    agentTaskLookup(websiteDeps.AgentFacade, appAgent, stack.Agent, legacy),
+			ReconcileTask: agentTaskReconciler(inspect, stack.Agent),
+		})
 	})
 	if len(factories) > 0 && factories[0] != nil {
 		factory = factories[0]
@@ -243,9 +251,6 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 	}
 	if firewallAgent != nil {
 		runtime.closeFuncs = append(runtime.closeFuncs, firewallAgent.Close)
-	}
-	if databaseDeps.AgentFacade != nil {
-		runtime.closeFuncs = append(runtime.closeFuncs, databaseDeps.AgentFacade.Close)
 	}
 	if stack.Agent != nil {
 		runtime.closeFuncs = append(runtime.closeFuncs, stack.Agent.Close)

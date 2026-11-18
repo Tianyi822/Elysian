@@ -17,8 +17,6 @@ import (
 	"elysian/server/internal/agent/harness/workspace"
 	"elysian/server/internal/agent/kardia"
 	"elysian/server/internal/agent/tools"
-	domaindatabase "elysian/server/internal/database"
-	domaindocker "elysian/server/internal/docker"
 )
 
 func TestExternalFailureNeedsEvidenceBeforeAnotherMutation(t *testing.T) {
@@ -78,6 +76,12 @@ func TestMissingTaskVerificationRetriesDurableIntentWithoutRevivingHistory(t *te
 			o.DispatchID = "original-dispatch"
 			o.Capability = Capability{Name: "docker_container_create_service", Source: "builtin", Metadata: tools.Metadata{Async: true, Version: "3"}}
 			o.ArgumentsJSON = `{"name":"mysql84","requestId":"original"}`
+			target := "name:mysql84"
+			if stage == "domain" {
+				o.Capability.Name = "docker_container_exec"
+				o.ArgumentsJSON = `{"id":"service-id","requestId":"original","argv":["pwd"]}`
+				target = "service-id"
+			}
 			if err := fixture(m).write(m.ctx, "orphan-fixture", func(tx sessionstore.Tx) error { return saveOperation(m.ctx, tx, o) }); err != nil {
 				t.Fatal(err)
 			}
@@ -88,7 +92,7 @@ func TestMissingTaskVerificationRetriesDurableIntentWithoutRevivingHistory(t *te
 			m.deps.VerifyTask = func(_ context.Context, v tools.TaskVerification) (tools.TaskReference, error) {
 				requests++
 				if receipt == nil {
-					ref := tools.TaskReference{Domain: v.Task.Domain, ID: "sealed-task", RequestID: v.Task.RequestID, Target: "name:mysql84", Digest: strings.Repeat("d", 64)}
+					ref := tools.TaskReference{Domain: v.Task.Domain, ID: "sealed-task", RequestID: v.Task.RequestID, Target: target, Digest: strings.Repeat("d", 64)}
 					receipt = &ref
 					effects++
 				}
@@ -137,65 +141,6 @@ func TestMissingTaskVerificationRetriesDurableIntentWithoutRevivingHistory(t *te
 			}
 			assertDomainProtection(t, m, o, "released")
 		})
-	}
-}
-
-func TestServiceSubmissionMissingDatabaseNameReturnsToModelAfterRealApproval(t *testing.T) {
-	db := domaindatabase.NewAgentFacade(domaindatabase.Deps{EngineAvailable: true, Engine: unusedDatabaseTransport{}, Views: &dockerCatalogViews{}, AgentAuthorize: tools.Revalidate})
-	bridge, _ := dockerCatalogBridge(t, func(a *domaindocker.AgentFacade) { a.SetDatabaseContainers(db.ContainerBridge(tools.Revalidate)) })
-	var requests atomic.Int32
-	m, session, _ := agentManager(t, func(_ context.Context, _ model.Profile, request model.Request) (model.Response, error) {
-		if request.ToolChoice == "store_working_memory" {
-			return memoryReply(request), nil
-		}
-		switch requests.Add(1) {
-		case 1:
-			return searchReply("docker_container_create_service"), nil
-		case 2:
-			r := toolReply("docker_container_create_service")
-			r.ToolCalls[0].Arguments = json.RawMessage(`{"name":"mysql84","image":"mysql:8.4@sha256:` + strings.Repeat("a", 64) + `","requestId":"` + strings.Repeat("b", 64) + `","resourceTier":"small","networkScope":"any-host","port":3306,"hostPort":3306,"credentials":["MYSQL_ROOT_PASSWORD"],"volumes":["/var/lib/mysql"]}`)
-			return r, nil
-		default:
-			text := allRequestText(request)
-			if !strings.Contains(text, "MYSQL_DATABASE") || !strings.Contains(text, "not-started") {
-				t.Errorf("missing actionable rejection, MYSQL_DATABASE=%v not-started=%v", strings.Contains(text, "MYSQL_DATABASE"), strings.Contains(text, "not-started"))
-			}
-			return finalReply("缺少初始逻辑库名，创建未执行。"), nil
-		}
-	}, func(d *Deps) { d.Tools = bridge; d.Catalog = &Extensions{MountRoot: "/srv"} })
-	r, _, err := m.CreateTask(context.Background(), session.ID, AgentInput{RequestID: "real-service-preflight", Content: "部署 MySQL，small 档，开放3306", AuthorizationMode: AuthorizationOnDemand, PermissionMode: PermissionAsk})
-	if err != nil {
-		t.Fatal(err)
-	}
-	defer func() {
-		if t.Failed() {
-			current, _ := m.Get(context.Background(), r.ID)
-			t.Logf("service run status=%s reason=%s error=%+v requests=%d", current.Status, current.EndReason, current.Error, requests.Load())
-			events, _ := m.Events(context.Background(), r.ID, "", 100)
-			for _, e := range events.Items {
-				t.Logf("event %s %s", e.Type, e.Data)
-			}
-		}
-	}()
-	a := waitingApproval(t, m, r.ID)
-	if _, err := m.DecideAccess(context.Background(), a.ID, accessInput(a, "once", "approve-service-preflight")); err != nil {
-		t.Fatal(err)
-	}
-	finished := runtimeFinished(t, m, r.ID)
-	if finished.Status != StateSucceeded || requests.Load() != 3 {
-		t.Fatalf("%+v requests=%d", finished, requests.Load())
-	}
-	ops, _ := m.Operations(context.Background(), r.ID)
-	for _, o := range ops {
-		if o.Capability.Name == "docker_container_create_service" && (o.Status != "completed" || o.Task != nil || o.Error == nil || !strings.Contains(o.Error.Message, "MYSQL_DATABASE")) {
-			t.Fatalf("false unknown task status=%s task=%+v error=%+v", o.Status, o.Task, o.Error)
-		}
-	}
-	barriers, _ := m.Barriers(context.Background())
-	for _, b := range barriers {
-		if b.RunID == r.ID && b.Status != "confirmed" {
-			t.Fatalf("rejection kept barrier %+v", b)
-		}
 	}
 }
 

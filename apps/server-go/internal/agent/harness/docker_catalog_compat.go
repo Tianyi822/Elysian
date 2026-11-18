@@ -14,21 +14,84 @@ func legacyDockerContainerCatalogCompatible(operation Operation, current tools.P
 	if legacyDockerContainerCatalogCore(operation, current) {
 		return true
 	}
-	if current.Name != "docker_container_create_service" {
+	return legacyDockerRetiredDatabaseCatalogCompatible(operation, current)
+}
+
+// 逻辑库退役前的冻结文案（升 v3／v4 与 env 说明回退之前的目录）。
+const retiredExecDescription = "在精确受管容器中执行argv命令，或通过databaseChange同步创建/删除受管逻辑库及登记；两者互斥。受管数据库禁止任意argv，先inspect取得revision。密码由后端处理，不传入参数。requestId精确重试复用。Redis remove仅清空DB0并保留登记。异步等待由系统监视器完成。"
+
+// legacyDockerRetiredDatabaseCatalogCompatible 把当前目录精确还原为逻辑库退役前
+// 的冻结形状（exec v2 的 databaseChange 参数、inspect v3 的 database 参数、
+// create_service 含初始逻辑库要求的 env 说明），再按既有版本链核对。
+// 只还原退役文字与已删除参数，不放宽参数校验、元数据与审批约束。
+func legacyDockerRetiredDatabaseCatalogCompatible(operation Operation, current tools.PublicSchema) bool {
+	c := operation.Capability
+	if c.Source != "builtin" || current.Name != c.Name {
 		return false
 	}
-	raw, _ := json.Marshal(current)
+	restored, ok := restoreRetiredDatabaseSchema(current)
+	if !ok {
+		return false
+	}
+	var parameters map[string]any
+	if json.Unmarshal(c.Parameters, &parameters) != nil || mcp.Validate(c.Parameters, json.RawMessage(operation.ArgumentsJSON)) != nil {
+		return false
+	}
+	frozen := tools.PublicSchema{Name: c.Name, Description: c.Description, Parameters: parameters, Metadata: c.Metadata}
+	if hstate.DigestJSON(frozen) != c.CatalogDigest {
+		return false
+	}
+	if hstate.DigestJSON(restored) == c.CatalogDigest {
+		return true
+	}
+	return legacyDockerContainerCatalogCore(operation, restored)
+}
+
+// restoreRetiredDatabaseSchema 当前目录 → 退役前一个版本的精确形状；
+// 形状不符（未来再演化）时返回 false，绝不错配历史快照。
+func restoreRetiredDatabaseSchema(current tools.PublicSchema) (tools.PublicSchema, bool) {
+	raw, err := json.Marshal(current)
+	if err != nil {
+		return current, false
+	}
 	var copy tools.PublicSchema
 	if json.Unmarshal(raw, &copy) != nil {
-		return false
+		return current, false
 	}
-	props, _ := copy.Parameters["properties"].(map[string]any)
-	item, _ := props["env"].(map[string]any)
-	if item == nil || item["description"] != "非凭据环境变量 KEY=VALUE 列表，最多 16 项、每项不超过 512 字节，完整进入审批展示。MySQL 必须提供 MYSQL_DATABASE=初始逻辑库名，MariaDB 必须提供 MARIADB_DATABASE=初始逻辑库名；库名未知先用 request_user_input 询问，不得编造；密码只用 credentials 声明由后端生成" {
-		return false
+	properties, ok := copy.Parameters["properties"].(map[string]any)
+	if !ok {
+		return current, false
 	}
-	item["description"] = "非凭据环境变量 KEY=VALUE 列表，最多 16 项、每项不超过 512 字节，完整进入审批展示"
-	return legacyDockerContainerCatalogCore(operation, copy)
+	switch copy.Name {
+	case "docker_container_exec":
+		if copy.Metadata.Version != "3" || copy.Description != "在精确受管容器中执行argv命令。受管数据库容器禁止任意argv。requestId精确重试复用。异步等待由系统监视器完成。" {
+			return current, false
+		}
+		text := tools.Schema{Type: tools.SchemaString}
+		properties["databaseChange"] = tools.Schema{Type: tools.SchemaObject, Required: []string{"action", "name", "expectedRevision"}, Properties: map[string]tools.Schema{
+			"action": {Type: tools.SchemaString, Enum: tools.EnumOf("create", "remove")}, "name": text, "expectedRevision": text, "charset": text,
+		}}.JSONSchema()
+		copy.Description = retiredExecDescription
+		copy.Metadata.Version = "2"
+	case "docker_container_inspect":
+		if copy.Metadata.Version != "4" {
+			return current, false
+		}
+		query := tools.Schema{Type: tools.SchemaObject, Description: "首次检查省略此项，先取得登记摘要和 revision；仅按需读取某个登记的元数据或指标", Required: []string{"id"}, Properties: map[string]tools.Schema{
+			"id": {Type: tools.SchemaString, Description: "基础检查结果 database.databases[].id 中的数据库登记 ID，不是容器 ID"}, "metadata": {Type: tools.SchemaBoolean}, "metrics": {Type: tools.SchemaBoolean},
+		}}
+		properties["database"] = query.JSONSchema()
+		copy.Metadata.Version = "3"
+	case "docker_container_create_service":
+		item, _ := properties["env"].(map[string]any)
+		if item == nil || item["description"] != "非凭据环境变量 KEY=VALUE 列表，最多 16 项、每项不超过 512 字节，完整进入审批展示" {
+			return current, false
+		}
+		item["description"] = "非凭据环境变量 KEY=VALUE 列表，最多 16 项、每项不超过 512 字节，完整进入审批展示。MySQL 必须提供 MYSQL_DATABASE=初始逻辑库名，MariaDB 必须提供 MARIADB_DATABASE=初始逻辑库名；库名未知先用 request_user_input 询问，不得编造；密码只用 credentials 声明由后端生成"
+	default:
+		return current, false
+	}
+	return copy, true
 }
 func legacyDockerContainerCatalogCore(operation Operation, current tools.PublicSchema) bool {
 	c := operation.Capability

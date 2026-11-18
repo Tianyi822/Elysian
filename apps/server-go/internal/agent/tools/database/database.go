@@ -2,7 +2,6 @@ package database
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 
 	"elysian/server/internal/agent/kardia"
@@ -12,17 +11,22 @@ import (
 
 const ServiceName = "database"
 
-type Deps struct{ Facade *domain.AgentFacade }
+// Deps 数据库工具不再消费域 Facade：13 个 database_* 描述符逐字保留供旧 Run
+// 按固定 CatalogDigest 派发，处理器统一返回固定退役业务错误（不派发任务、不触协议）。
+type Deps struct{}
 type Config struct{}
 type Service struct {
 	kardia.Service
 	deps Deps
 }
 
+// retiredDatabaseError 数据库工具的固定退役回执：固定错误码与公开中文文案，
+// 声明未派发，不携带任何底层事实、不触协议与 Docker。
+func retiredDatabaseError() error {
+	return &tools.BusinessError{Code: "database-retired", Message: "数据库独立工具已退役，数据库容器请使用 Docker 工具管理", NotDispatched: true}
+}
+
 func New(c *kardia.Context, deps Deps, _ Config) (*Service, error) {
-	if deps.Facade == nil || !deps.Facade.Available() {
-		return nil, errors.New("数据库能力缺少共享域服务")
-	}
 	s := &Service{deps: deps}
 	base, err := kardia.NewService(c, ServiceName, s, nil)
 	if err != nil {
@@ -88,55 +92,7 @@ func New(c *kardia.Context, deps Deps, _ Config) (*Service, error) {
 			metadata.Version = "2"
 		}
 		descriptors = append(descriptors, tools.Descriptor{Name: spec.name, Description: spec.description, Parameters: tools.Schema{Type: tools.SchemaObject, Properties: properties, Required: required}, Metadata: metadata, Handler: func(c *kardia.Context, args tools.Arguments) (any, error) {
-			id, _ := tools.StringArg(args, "id")
-			if spec.action == "list" {
-				return deps.Facade.List(tools.Lifetime(c))
-			}
-			if spec.action == "metadata" {
-				return deps.Facade.Metadata(tools.Lifetime(c), id)
-			}
-			if spec.action == "metrics" {
-				return deps.Facade.Metrics(tools.Lifetime(c), id)
-			}
-			if spec.action == "discover" {
-				engine, _ := tools.StringArg(args, "engine")
-				version, _ := tools.StringArg(args, "versionTag")
-				value, err := deps.Facade.Discover(tools.Lifetime(c), engine, version)
-				if discovery, ok := err.(*domain.AgentDiscoveryError); ok {
-					return nil, &tools.BusinessError{Code: discovery.Code, Message: discovery.Message}
-				}
-				return value, err
-			}
-			if spec.action == "create" {
-				raw, err := json.Marshal(args)
-				if err != nil {
-					return nil, err
-				}
-				var input domain.AgentCreate
-				if err := json.Unmarshal(raw, &input); err != nil {
-					return nil, err
-				}
-				requestID, _ := tools.StringArg(args, "requestId")
-				task, err := deps.Facade.SubmitTask(tools.Lifetime(c), requestID, domain.AgentTaskInput{Action: "create", Create: input})
-				if err != nil {
-					return nil, taskSubmissionError(err)
-				}
-				return tools.Submission{Value: task, Task: tools.TaskReference{Domain: "database", ID: task.ID, RequestID: task.RequestID}}, nil
-			}
-			expected, _ := tools.StringArg(args, "expected")
-			if spec.action == "reconcile" {
-				requestID, _ := tools.StringArg(args, "requestId")
-				task, err := deps.Facade.SubmitTask(tools.Lifetime(c), requestID, domain.AgentTaskInput{Action: "reconcile", ID: id, Expected: expected})
-				if err != nil {
-					return nil, taskSubmissionError(err)
-				}
-				return tools.Submission{Value: task, Task: tools.TaskReference{Domain: "database", ID: task.ID, RequestID: task.RequestID}}, nil
-			}
-			value, err := deps.Facade.Lifecycle(tools.Lifetime(c), id, expected, spec.action)
-			if err != nil {
-				return nil, lifecycleBusinessError(err)
-			}
-			return value, nil
+			return nil, retiredDatabaseError()
 		}})
 	}
 	for _, action := range []string{"status", "logs", "cancel"} {
@@ -155,24 +111,7 @@ func New(c *kardia.Context, deps Deps, _ Config) (*Service, error) {
 			metadata.TaskDomain, metadata.TaskIDArgument = "database", "taskId"
 		}
 		descriptors = append(descriptors, tools.Descriptor{Name: "database_task_" + action, Description: description, Parameters: tools.Schema{Type: tools.SchemaObject, Required: []string{"id", "taskId"}, Properties: properties}, Metadata: metadata, Handler: func(c *kardia.Context, args tools.Arguments) (any, error) {
-			id, _ := tools.StringArg(args, "id")
-			taskID, _ := tools.StringArg(args, "taskId")
-			if action == "status" {
-				return deps.Facade.TaskStatus(tools.Lifetime(c), id, taskID)
-			}
-			if action == "logs" {
-				cursor, _ := tools.IntArg(args, "cursor")
-				limit, ok := tools.IntArg(args, "limit")
-				if !ok {
-					limit = 20
-				}
-				return deps.Facade.TaskLogs(tools.Lifetime(c), id, taskID, cursor, limit)
-			}
-			task, err := deps.Facade.CancelTask(tools.Lifetime(c), id, taskID)
-			if err != nil {
-				return nil, err
-			}
-			return tools.Submission{Value: task, Task: tools.TaskReference{Domain: "database", ID: task.ID, RequestID: task.RequestID}}, nil
+			return nil, retiredDatabaseError()
 		}})
 	}
 	if err := tools.RegisterAll(c, descriptors...); err != nil {
@@ -181,25 +120,6 @@ func New(c *kardia.Context, deps Deps, _ Config) (*Service, error) {
 	return s, nil
 }
 
-func taskSubmissionError(err error) error {
-	if rejected, ok := err.(*domain.AgentTaskRejectedError); ok {
-		return &tools.BusinessError{Code: "database-task-rejected", Message: rejected.Message, NotDispatched: true}
-	}
-	return err
-}
-
-// lifecycleBusinessError 用直接类型断言把生命周期错误映射为业务错误：
-// 预检拒绝声明未派发交回模型纠正；执行中失败保留固定中文原因但不声明未派发。
-// 组合错误原样上抛，与 AsBusinessError 的严格性一致，避免清理失败被洗白。
-func lifecycleBusinessError(err error) error {
-	if rejected, ok := err.(*domain.AgentLifecycleRejectedError); ok {
-		return &tools.BusinessError{Code: "database-lifecycle-rejected", Message: rejected.Message, NotDispatched: true}
-	}
-	if failure, ok := err.(*domain.AgentLifecycleError); ok {
-		return &tools.BusinessError{Code: failure.Code, Message: failure.Message}
-	}
-	return err
-}
 func Plugin(deps Deps, cfg Config) *kardia.Plugin {
 	return kardia.ServicePlugin(ServiceName, kardia.InjectMap{tools.ServiceName: nil}, func(c *kardia.Context, _ any) (any, error) { return New(c, deps, cfg) })
 }
