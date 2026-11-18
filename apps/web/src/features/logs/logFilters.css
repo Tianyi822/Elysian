@@ -1,0 +1,17 @@
+.log-filter-table .login-log-filter { --ctl-height: var(--dt-control-height); }
+
+.log-filter-table .operation-log-filter button[aria-haspopup="listbox"] {
+  width: var(--log-filter-width);
+  height: var(--dt-control-height);
+  gap: 8px;
+}
+.operation-log-category { --log-filter-width: 8.25rem; }
+.operation-log-outcome { --log-filter-width: 6.5rem; }
+
+@container (width < 28rem) {
+  .log-filter-table .dt-toolbar-normal { gap: 8px; }
+  .log-filter-table .login-log-filter [data-pill-main] { padding-inline: 4px; font-size: .75rem; }
+  .log-filter-table .operation-log-filter button[aria-haspopup="listbox"] { padding-inline: 8px; gap: 4px; font-size: .75rem; }
+  .operation-log-category { --log-filter-width: 6.75rem; }
+  .operation-log-outcome { --log-filter-width: 5.25rem; }
+}

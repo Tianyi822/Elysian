@@ -5,8 +5,8 @@ import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { formatLoginTime } from '../../components/format'
 import { DataTable } from '../../components/DataTable'
-import { CTL_TOOLBAR } from '../../components/formControl'
 import { ChipGroup } from '../../components/ChipGroup'
+import { RefreshButton } from '../../components/RefreshState'
 import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
@@ -14,6 +14,7 @@ import { useLoginLogStore } from '../../stores/loginLogStore'
 import type { LoginLogStatusFilter } from '../../stores/loginLogStore'
 import { useLogReportNotifications } from './useLogReportNotifications'
 import { Button } from '../../components/Button'
+import './logFilters.css'
 
 /** 登录状态 → 状态标签色调：成功绿、失败红，文字标签同时常驻。 */
 const STATUS_TONES: Record<LoginLogEntry['status'], StatusTone> = {
@@ -84,22 +85,17 @@ export function LoginLogPanel() {
   return (
     <div>
       {errorMessage ? <p role="alert" className="text-xs text-danger">刷新失败：{errorMessage}。已保留上次读取结果。<Button variant="link" type="button" className="ml-2 underline" onClick={() => void load(gateway)}>重试</Button></p> : null}
-      <div className={`${CTL_TOOLBAR} rect-toolbar mb-4 flex flex-wrap items-center gap-2 panel-surface px-4 py-3`}>
-        {isDockerRuntime() ? null : (
-          <span role="status" className="text-sm text-fg-muted">
-            演示数据
-          </span>
-        )}
-        <ChipGroup ariaLabel="登录状态筛选" items={STATUS_FILTERS} value={statusFilter} onSelect={setStatusFilter} />
-
-      </div>
+      {isDockerRuntime() ? null : <p role="status" className="mb-3 text-sm text-fg-muted">演示数据</p>}
       {notices.length > 0 ? (
         <p role="status" className="mb-3 text-xs text-fg-muted">
           {notices.join('；')}
         </p>
       ) : null}
 
-      <DataTable ariaLabel="登录日志表" rows={entries} query={search} onQueryChange={setSearch}
+      <DataTable ariaLabel="登录日志表" rows={entries} query={search} onQueryChange={setSearch} showRowCount={false}
+        className="log-filter-table dt-toolbar-inline-actions"
+        searchAction={<RefreshButton className="dt-toolbar-control-icon" label="刷新日志" busy={refreshing} disabled={loadingOlder} onPress={() => void load(gateway)} />}
+        toolbar={<ChipGroup ariaLabel="登录状态筛选" items={STATUS_FILTERS} value={statusFilter} onSelect={setStatusFilter} className="login-log-filter" />}
         filterMode="external" emptyState={entries.length === 0 && !search.trim() && statusFilter === 'all' ? <><p className="font-medium">还没有登录日志</p><p className="text-sm text-fg-muted">登录成功或失败后，记录会出现在这里。</p></> : undefined} searchPlaceholder="搜索登录日志" selectionKey={statusFilter} busy={querying}
         columns={[
           { key: 'ip', header: 'IP 地址', primary: true, width: '160px', accessor: entry => entry.ip, cell: entry => <span className="tabular-nums">{entry.ip}</span> },

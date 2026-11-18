@@ -354,24 +354,23 @@ describe('清空日志与其余能力', () => {
 })
 
 describe('工具栏分组', () => {
-  it('视图操作仅保留刷新，清空日志与事实说明各在别处', async () => {
+  it('刷新紧跟搜索，清空日志占最右侧操作位，体积和保留说明单独展示', async () => {
     renderApp('/logs', { gateway: gatewayWithLogs() })
     await waitForTable()
 
-    const viewGroup = screen.getByRole('group', { name: '日志视图操作' })
-    // 刷新是纯图标按钮，名字长在 aria-label 上。
-    expect(
-      within(viewGroup)
-        .getAllByRole('button')
-        .map((btn) => btn.getAttribute('aria-label') ?? btn.textContent),
-    ).toEqual(['刷新日志'])
-    // 清空是破坏性动作，不与视图开关混在同一组里；窄屏下它与日志大小同占第三行。
-    expect(within(viewGroup).queryByRole('button', { name: '清空日志' })).not.toBeInTheDocument()
-    // 保留口径与演示态是关于数据来源的事实，放工具栏外的说明行，不占控件位。
-    expect(within(viewGroup).queryByText(logRetentionText('runtime'))).not.toBeInTheDocument()
-    expect(screen.getByText(logRetentionText('runtime'))).toBeInTheDocument()
-    expect(screen.getByText('演示数据').closest('[role="status"]')).not.toBeNull()
-    expect(viewGroup).not.toContainElement(screen.getByText('演示数据'))
+    const search = within(region()).getByRole('searchbox', { name: '搜索运行日志' })
+    const refresh = within(region()).getByRole('button', { name: '刷新日志' })
+    const clear = within(region()).getByRole('button', { name: '清空日志' })
+    const searchGroup = search.closest('.dt-toolbar-search-group')!
+    const actions = searchGroup.nextElementSibling
+
+    expect(search.closest('label')?.nextElementSibling).toContainElement(refresh)
+    expect(actions).toContainElement(clear)
+    expect(clear.querySelector('svg')).toBeInTheDocument()
+    expect(within(region()).queryByText(/^\d+ 行$/)).not.toBeInTheDocument()
+    expect(region()).not.toContainElement(screen.getByText(/日志大小：/))
+    expect(region()).not.toContainElement(screen.getByText(logRetentionText('runtime')))
+    expect(region()).not.toContainElement(screen.getByText('演示数据'))
   })
 })
 

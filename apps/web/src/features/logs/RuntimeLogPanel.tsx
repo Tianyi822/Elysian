@@ -1,3 +1,4 @@
+import * as Tooltip from '@radix-ui/react-tooltip'
 import { useEffect, useRef } from 'react'
 import { LOG_ENTRY_FETCH_LIMIT, formatLogBytes, logRetentionText } from '@elysian/contracts'
 import type { PlatformLogLevel, RuntimeLogEntry } from '@elysian/contracts'
@@ -8,7 +9,7 @@ import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
 import { RefreshButton } from '../../components/RefreshState'
-import { CTL_PRIMARY, CTL_TOOLBAR } from '../../components/formControl'
+import { Trash2 } from '../../components/icons'
 import { useRuntimeLogStore } from '../../stores/runtimeLogStore'
 import { useLogReportNotifications } from './useLogReportNotifications'
 import { ClearLogsDialog } from './ClearLogsDialog'
@@ -16,12 +17,12 @@ import { LogMessageCell } from './LogMessageCell'
 import { LogTable } from './LogTable'
 import type { LogColumn } from './LogTable'
 import { Button } from '../../components/Button'
+import './runtimeLogToolbar.css'
 
 /**
  * 平台运行日志面板：日期时间｜等级｜日志信息三列固定宽度表格（超出省略、点击展开悬浮窗），
  * 条目按时间倒序（新 → 旧），最新一条在最上，与操作日志同一口径。
- * 工具栏三块为搜索、刷新日志与日志大小 + 清空日志
- * （破坏性动作走二次确认），窄屏按块各占一行。搜索走服务端筛选并防抖。
+ * 搜索走服务端筛选并防抖；清空日志需二次确认。
  */
 
 /** 等级 → 语义色调：等级列用 StatusTag 呈现（文字 + 颜色同时表达，不只靠颜色）；文字用原英文等级值，不译成中文。 */
@@ -109,35 +110,11 @@ export function RuntimeLogPanel() {
       : '没有匹配的运行日志，换个关键词或清空搜索'
 
   const querying = refreshing && !loadingOlder
-  const table = <LogTable label="运行日志表" columns={RUNTIME_LOG_COLUMNS} rows={entries}
-    rowKey={entry => entry.id} emptyMessage={emptyMessage} busy={querying} query={search} onQueryChange={setSearch}
-    />
 
   return (
     <div className="flex h-full flex-col gap-3">
       {errorMessage ? <p role="alert" className="text-xs text-danger">刷新失败：{errorMessage}。已保留上次读取结果。<Button variant="link" type="button" className="ml-2 underline" onClick={() => void load(gateway)}>重试</Button></p> : null}
-      {/*
-        工具栏三块：搜索 / 视图操作 / 日志大小与清空。窄屏（md 以下）一块一行，
-        md 起回到一行三段、最后一块靠右——自由折行会把清空按钮孤零零甩到第二行。
-      */}
-      <div className={`${CTL_TOOLBAR} rect-toolbar flex flex-col gap-2 panel-surface px-4 py-3 md:flex-row md:items-center`}>
-        <div role="group" aria-label="日志视图操作" className="flex flex-wrap items-center gap-2">
-          <RefreshButton
-            onPress={() => void load(gateway)}
-            busy={manualRefreshing}
-            label="刷新日志"
-          />
-        </div>
-        <div className="flex items-center justify-between gap-2 md:ml-auto">
-          <span className="text-xs text-fg-muted">
-            日志大小：<span className="tabular-nums text-fg">{formatLogBytes(storage.totalBytes)}</span>
-          </span>
-          {/* 危险感只在确认弹窗里呈现：工具栏按钮与其它按钮同款中性描边。 */}
-          <Button variant="primary" type="button" className={CTL_PRIMARY} onClick={() => openClear('runtime')}>清空日志</Button>
-        </div>
-      </div>
-
-      {/* 关于数据来源与保留口径的事实说明，与控件分开：演示态、保留策略、截断与坏行计数同处一行。 */}
+      {/* 数据来源、体积和保留口径与控件分开。 */}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-fg-subtle">
         {/* 宿主机本地开发读的是内存演示种子（真实日志由服务端的日志片提供），明示出来。 */}
         {isDockerRuntime() ? null : (
@@ -145,6 +122,9 @@ export function RuntimeLogPanel() {
             演示数据
           </span>
         )}
+        <span className="text-fg-muted">
+          日志大小：<span className="tabular-nums text-fg">{formatLogBytes(storage.totalBytes)}</span>
+        </span>
         <span>{logRetentionText('runtime')}</span>
         {notices.length > 0 ? <span className="text-fg-muted">{notices.join('；')}</span> : null}
       </div>
@@ -159,7 +139,33 @@ export function RuntimeLogPanel() {
         </p>
       ) : null}
 
-      {table}
+      <LogTable
+        label="运行日志表"
+        columns={RUNTIME_LOG_COLUMNS}
+        rows={entries}
+        rowKey={entry => entry.id}
+        emptyMessage={emptyMessage}
+        busy={querying}
+        query={search}
+        onQueryChange={setSearch}
+        searchAction={<RefreshButton className="dt-toolbar-control-icon" label="刷新日志" busy={manualRefreshing} onPress={() => void load(gateway)} />}
+        toolbar={(
+          <Tooltip.Root>
+            <Tooltip.Trigger asChild>
+              <Button variant="primary" type="button" aria-label="清空日志" className="runtime-log-clear-button shrink-0 whitespace-nowrap"
+                onClick={() => openClear('runtime')}>
+                <Trash2 aria-hidden size={16} />
+                <span className="runtime-log-clear-label">清空日志</span>
+              </Button>
+            </Tooltip.Trigger>
+            <Tooltip.Portal>
+              <Tooltip.Content side="bottom" sideOffset={6} className="z-[80] rounded border border-control-line bg-surface-raised px-2 py-1 text-xs text-fg shadow-lg">
+                清空日志<Tooltip.Arrow className="fill-surface-raised" />
+              </Tooltip.Content>
+            </Tooltip.Portal>
+          </Tooltip.Root>
+        )}
+      />
 
       {truncated ? (
         <div className="flex flex-col items-start gap-2">

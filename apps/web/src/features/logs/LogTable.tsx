@@ -6,13 +6,18 @@ export const TIMESTAMP_CHARS = 19
 
 /** Log requests remain server-owned; this wrapper only supplies table behavior. */
 export type LogColumn<T> = DataTableColumn<T>
-export function LogTable<T>({ label, columns, rows, rowKey, emptyMessage, busy, query, onQueryChange, selectionKey }: {
+export function LogTable<T>({ label, columns, rows, rowKey, emptyMessage, busy, query, onQueryChange, selectionKey, searchAction, toolbar, className }: {
   label: string; columns: readonly LogColumn<T>[]; rows: readonly T[];
   rowKey: (row: T) => string; emptyMessage: ReactNode; busy?: boolean;
   query?: string; onQueryChange?: (query: string) => void;
   selectionKey?: string;
+  searchAction?: ReactNode;
+  toolbar?: ReactNode;
+  className?: string;
 }) {
   return <DataTable ariaLabel={label} columns={columns} rows={rows} getRowId={rowKey}
+    className={[className, (searchAction || toolbar) && 'dt-toolbar-inline-actions'].filter(Boolean).join(' ')}
+    searchAction={searchAction} toolbar={toolbar}
     busy={busy} query={query} onQueryChange={onQueryChange} filterMode="external"
     searchPlaceholder={`搜索${label.replace(/表$/, '')}`} selectionKey={selectionKey}
     emptyState={<p className="text-sm text-fg-muted">{emptyMessage}</p>} />

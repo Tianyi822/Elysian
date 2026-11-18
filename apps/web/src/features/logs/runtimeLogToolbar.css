@@ -1,0 +1,10 @@
+.easyui-data-table .runtime-log-clear-button { height: var(--dt-control-height); }
+
+@container (width < 26rem) {
+  .easyui-data-table .runtime-log-clear-button {
+    width: var(--dt-control-height);
+    padding-inline: 0;
+    border-radius: 50%;
+  }
+  .easyui-data-table .runtime-log-clear-label { display: none; }
+}

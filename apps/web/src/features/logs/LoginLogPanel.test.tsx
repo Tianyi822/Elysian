@@ -45,7 +45,7 @@ async function openLoginTab() {
   await user.click(within(screen.getByRole('main')).getByRole('button', { name: '登录日志' }))
 }
 
-/** 状态筛选按钮（在顶栏下方的筛选组里，避免与表格内的状态标签同名混淆）。 */
+/** 限定工具栏筛选组，避免与表格内的状态标签混淆。 */
 function statusFilterButton(name: string) {
   return within(screen.getByRole('group', { name: '登录状态筛选' })).getByRole('button', { name })
 }
@@ -158,6 +158,50 @@ describe('平台登录日志面板', () => {
     expect(statusFilterButton('全部')).toHaveAttribute('aria-pressed', 'true')
   })
 
+  it('刷新紧跟搜索并按当前条件重新读取，等待期间保留结果，不显示行数或清空按钮', async () => {
+    const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
+    let finishRefresh!: () => void
+    const refreshing = new Promise<void>(resolve => { finishRefresh = resolve })
+    const loginLogs = vi.fn((query?: LoginLogListQuery) => base.logs.loginLogs(query))
+    const gateway: ElysianGateway = {
+      ...base,
+      logs: {
+        runtimeLog: (query) => base.logs.runtimeLog(query),
+        operationLogs: (query) => base.logs.operationLogs(query),
+        clearLogs: (category) => base.logs.clearLogs(category),
+        loginLogs,
+      },
+    }
+    useLoginLogStore.setState({ statusFilter: 'failure', search: 'Safari' })
+    renderApp('/logs', { gateway })
+    await openLoginTab()
+
+    const region = within(await screen.findByRole('region', { name: '登录日志表' }))
+    const search = region.getByRole('searchbox', { name: '搜索登录日志' })
+    const refresh = region.getByRole('button', { name: '刷新日志' })
+    const table = region.getByRole('table')
+    expect(search.closest('label')?.nextElementSibling).toContainElement(refresh)
+    expect(search.closest('.dt-toolbar-search-group')?.nextElementSibling)
+      .toContainElement(region.getByRole('group', { name: '登录状态筛选' }))
+    expect(region.queryByText(/^\d+ 行$/)).not.toBeInTheDocument()
+    expect(region.queryByRole('button', { name: '清空日志' })).not.toBeInTheDocument()
+    const rows = loginRows(table)
+    expect(rows.length).toBeGreaterThan(0)
+
+    loginLogs.mockClear()
+    loginLogs.mockImplementationOnce(async query => {
+      await refreshing
+      return base.logs.loginLogs(query)
+    })
+    await userEvent.setup({ delay: null }).click(refresh)
+    expect(loginLogs).toHaveBeenCalledExactlyOnceWith({ status: 'failure', q: 'Safari' })
+    expect(refresh).toBeDisabled()
+    expect(loginRows(table)).toEqual(rows)
+
+    finishRefresh()
+    await waitFor(() => expect(refresh).toBeEnabled())
+  })
+
   it('搜索按 IP 与用户代理匹配，可与状态筛选叠加', async () => {
     const user = userEvent.setup()
     renderApp('/logs')
@@ -187,11 +231,14 @@ describe('平台登录日志面板', () => {
     })
   })
 
-  it('宿主机演示态在筛选栏标注「演示数据」', async () => {
+  it('宿主机演示态在工具栏外标注「演示数据」，不再包一层面板', async () => {
     renderApp('/logs')
     await openLoginTab()
-    await screen.findByRole('region', { name: '登录日志表' })
-    expect(screen.getByText('演示数据').closest('[role="status"]')).not.toBeNull()
+    const region = await screen.findByRole('region', { name: '登录日志表' })
+    const demo = screen.getByText('演示数据')
+    expect(demo).toHaveAttribute('role', 'status')
+    expect(demo.closest('.panel-surface')).toBeNull()
+    expect(region).not.toContainElement(demo)
   })
 
   it('筛选与搜索无匹配时给出表内空提示', async () => {

@@ -12,8 +12,7 @@ import type { OperationLogEntry, OperationLogOutcome } from '@elysian/contracts'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { formatLoginTime } from '../../components/format'
-import { CTL_TOOLBAR } from '../../components/formControl'
-import { SelectDropdown } from '../../components/SelectDropdown'
+import { GooeySelect } from '../../components/GooeySelect'
 import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
@@ -27,14 +26,13 @@ import { LogMessageCell } from './LogMessageCell'
 import { LogTable } from './LogTable'
 import type { LogColumn } from './LogTable'
 import { Button } from '../../components/Button'
+import './logFilters.css'
 
 /**
  * 平台操作日志面板：服务端在写端点中间件与显式调用点采集的真实动作记录，
  * 界面只读（倒序条目 + 截断/坏行计数 + 存储统计），分类、结果与搜索走服务端筛选。
  *
- * 筛选走两个自绘下拉（分类、结果）而不是六枚 chip 加三枚 chip 平铺：chip 一多，
- * 两组「全部」并排出现就再也读不出哪个管分类、哪个管结果。下拉的触发器带字段名前缀，
- * 筛选生效时触发器进入 accent 态。工具栏只留控件与计数，保留口径与演示态说明放下方一行。
+ * 分类、结果通过搜索右侧的两个 EasyUI GooeyMenu 筛选；日志大小、总数与保留口径单独展示。
  *
  * 表格与运行日志**共用同一套底座**（`LogTable` + `LogMessageCell`）：固定列宽、
  * 表头 sticky、横向整表滚动、长文本省略加「查看完整内容」悬浮窗，两个面板因此
@@ -67,7 +65,7 @@ export function matchesOperationSearch(entry: OperationLogEntry, keyword: string
 }
 
 /**
- * 筛选后没有命中的表格内提示。数据库槽位有专门解释：契约里的五个分类固定渲染，
+ * 筛选后没有命中的表格内提示。数据库槽位有专门解释：契约里的分类固定渲染，
  * 没有记录时给出说明，空着是设计而非缺陷。
  */
 export function filteredEmptyText(
@@ -187,40 +185,6 @@ export function OperationLogPanel() {
   return (
     <div className="flex h-full flex-col">
       {errorMessage ? <p role="alert" className="text-xs text-danger">刷新失败：{errorMessage}。已保留上次读取结果。<Button variant="link" type="button" className="ml-2 underline" onClick={() => void load(gateway)}>重试</Button></p> : null}
-      {/*
-        工具栏三块：筛选下拉 / 搜索 / 计数。窄屏（md 以下）一块一行，md 起回到一行三段、
-        计数靠右。自由折行会把计数文字和控件混成一团，正是原来难以扫读的原因。
-      */}
-      <div className={`${CTL_TOOLBAR} rect-toolbar mb-4 flex flex-col gap-2 panel-surface px-4 py-3 md:flex-row md:items-center`}>
-        <div role="group" aria-label="操作日志筛选" className="flex flex-wrap items-center gap-2">
-          <SelectDropdown
-            ariaLabel="操作分类筛选"
-            label="分类"
-            active={categoryFilter !== 'all'}
-            items={CATEGORY_ITEMS}
-            value={categoryFilter}
-            onSelect={setCategoryFilter}
-          />
-          <SelectDropdown
-            ariaLabel="操作结果筛选"
-            label="结果"
-            active={resultFilter !== 'all'}
-            items={OUTCOME_ITEMS}
-            value={resultFilter}
-            onSelect={setResultFilter}
-          />
-        </div>
-        <div className="flex items-center justify-between gap-3 text-xs text-fg-muted md:ml-auto">
-          <span>
-            日志大小：
-            <span className="tabular-nums text-fg">{formatLogBytes(storage.totalBytes)}</span>
-          </span>
-          <span>
-            共 <span className="tabular-nums text-fg">{total}</span> 条操作记录
-          </span>
-        </div>
-      </div>
-
       {/* 关于数据来源与保留口径的事实说明，与控件分行：演示态在宿主机本地开发才出现。 */}
       <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-fg-subtle">
         {/* 容器内条目来自服务端真实采集（客户端无法投稿），宿主机本地开发是内存演示，明示出来。 */}
@@ -229,6 +193,12 @@ export function OperationLogPanel() {
             演示数据
           </span>
         )}
+        <span>
+          日志大小：<span className="tabular-nums text-fg">{formatLogBytes(storage.totalBytes)}</span>
+        </span>
+        <span>
+          共 <span className="tabular-nums text-fg">{total}</span> 条操作记录
+        </span>
         <span>{logRetentionText('operation')}</span>
       </div>
 
@@ -270,6 +240,15 @@ export function OperationLogPanel() {
           : filteredEmptyText(categoryFilter, trimmedSearch.length > 0)}
         busy={querying} query={search} onQueryChange={setSearch}
         selectionKey={`${categoryFilter}:${resultFilter}`}
+        className="log-filter-table"
+        toolbar={(
+          <div role="group" aria-label="操作日志筛选" className="flex items-center gap-2">
+            <GooeySelect ariaLabel="操作分类筛选" fieldLabel="分类" items={CATEGORY_ITEMS}
+              value={categoryFilter} onSelect={setCategoryFilter} className="operation-log-filter operation-log-category" />
+            <GooeySelect ariaLabel="操作结果筛选" fieldLabel="结果" items={OUTCOME_ITEMS}
+              value={resultFilter} onSelect={setResultFilter} className="operation-log-filter operation-log-outcome" />
+          </div>
+        )}
       />
 
       {truncated ? (

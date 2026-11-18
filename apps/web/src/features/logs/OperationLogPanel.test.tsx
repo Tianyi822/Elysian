@@ -162,21 +162,21 @@ describe('平台操作日志面板', () => {
     expect(screen.getByText('演示数据').closest('[role="status"]')).not.toBeNull()
   })
 
-  it('工具栏只放控件：两个筛选下拉成一组，保留口径与计数分行', async () => {
+  it('分类与结果使用 GooeyMenu，位于搜索同一行右侧并替换行数提示', async () => {
     renderApp('/logs', { gateway: gatewayWithLogs({}) })
-    await screen.findByRole('region', { name: '操作日志表' })
+    const region = await screen.findByRole('region', { name: '操作日志表' })
+    const search = within(region).getByRole('searchbox', { name: '搜索操作日志' })
+    const filterGroup = within(region).getByRole('group', { name: '操作日志筛选' })
+    expect(search.closest('label')?.nextElementSibling).toContainElement(filterGroup)
 
-    const filterGroup = screen.getByRole('group', { name: '操作日志筛选' })
-    // 这一组里只有两个下拉，chip 平铺时代的「两组全部并排」不再出现。
-    expect(within(filterGroup).getAllByRole('button')).toHaveLength(2)
-    // 触发器自带字段名前缀，不点开也看得出各自在筛什么。
-    expect(within(filterGroup).getByRole('button', { name: /^操作分类筛选/ })).toHaveTextContent('分类')
-    expect(within(filterGroup).getByRole('button', { name: /^操作结果筛选/ })).toHaveTextContent('结果')
-
-    // 保留口径是事实说明、不是控件，与计数分处两块（同块时窄屏会一起被挤进一行）。
-    const retention = screen.getByText(logRetentionText('operation'))
-    expect(within(filterGroup).queryByText(logRetentionText('operation'))).not.toBeInTheDocument()
-    expect(retention.parentElement).not.toBe(screen.getByText(/条操作记录/).parentElement)
+    for (const label of ['分类', '结果']) {
+      const trigger = within(filterGroup).getByRole('button', { name: `操作${label}筛选：全部` })
+      expect(trigger).toHaveTextContent(label)
+      expect(trigger).toHaveAttribute('aria-haspopup', 'listbox')
+      expect(trigger.closest('[data-easyui="gooey-menu"]')).toBeInTheDocument()
+    }
+    expect(within(region).queryByText(/^\d+ 行$/)).not.toBeInTheDocument()
+    expect(region).not.toContainElement(screen.getByText(logRetentionText('operation')))
   })
 
   it('保留五个业务列并支持按时间排序，排序不改变原日志内容', async () => {
@@ -205,21 +205,22 @@ describe('平台操作日志面板', () => {
     const trigger = screen.getByRole('button', { name: '操作分类筛选：全部' })
     await user.click(trigger)
     await user.click(
-      await screen.findByRole('menuitemradio', {
+      await screen.findByRole('option', {
         name: OPERATION_LOG_CATEGORY_LABELS.terminals,
       }),
     )
 
     await waitFor(() => expect(dataRows()).toHaveLength(terminals.length))
     expect(dataRows()[0]).toHaveTextContent(terminals[0]!.action)
-    // 筛选生效要在触发器上看得见：当前值回到可访问名，accent 态标出「这里筛过了」。
+    expect(trigger).toHaveTextContent(OPERATION_LOG_CATEGORY_LABELS.terminals)
     expect(trigger).toHaveAccessibleName(`操作分类筛选：${OPERATION_LOG_CATEGORY_LABELS.terminals}`)
-    expect(trigger).toHaveClass('border-accent/50', 'bg-accent/10', 'text-accent-fg')
+    expect(trigger).toHaveFocus()
 
     await user.click(trigger)
-    await user.click(await screen.findByRole('menuitemradio', { name: '全部' }))
+    expect(await screen.findByRole('option', { name: OPERATION_LOG_CATEGORY_LABELS.terminals })).toHaveAttribute('aria-selected', 'true')
+    await user.click(await screen.findByRole('option', { name: '全部' }))
     await waitFor(() => expect(dataRows()).toHaveLength(SEED_OPERATION_LOGS.length))
-    expect(trigger).not.toHaveClass('bg-accent/10')
+    expect(trigger).toHaveAccessibleName('操作分类筛选：全部')
   })
 
   it('按结果筛选：失败条目只剩结果标签为「失败」的行', async () => {
@@ -232,7 +233,7 @@ describe('平台操作日志面板', () => {
 
     await user.click(screen.getByRole('button', { name: '操作结果筛选：全部' }))
     await user.click(
-      await screen.findByRole('menuitemradio', { name: OPERATION_LOG_OUTCOME_LABELS.failure }),
+      await screen.findByRole('option', { name: OPERATION_LOG_OUTCOME_LABELS.failure }),
     )
 
     await waitFor(() => expect(dataRows()).toHaveLength(failures.length))
@@ -286,7 +287,7 @@ describe('平台操作日志面板', () => {
 
     await user.click(screen.getByRole('button', { name: '操作分类筛选：全部' }))
     await user.click(
-      await screen.findByRole('menuitemradio', {
+      await screen.findByRole('option', {
         name: OPERATION_LOG_CATEGORY_LABELS.database,
       }),
     )
@@ -382,7 +383,7 @@ describe('平台操作日志面板', () => {
     renderApp('/logs', { gateway })
     await screen.findByRole('region', { name: '操作日志表' })
     await user.click(screen.getByRole('button', { name: '操作分类筛选：全部' }))
-    await user.click(await screen.findByRole('menuitemradio', { name: OPERATION_LOG_CATEGORY_LABELS.security }))
+    await user.click(await screen.findByRole('option', { name: OPERATION_LOG_CATEGORY_LABELS.security }))
     await waitFor(() => expect(calls.at(-1)?.category).toBe('security'))
     expect(screen.getByText(/共/)).toHaveTextContent('40')
     expect(screen.getByRole('button', { name: '加载更早的记录' })).toBeInTheDocument()
@@ -479,7 +480,7 @@ describe('平台操作日志面板', () => {
     await screen.findByRole('region', { name: '操作日志表' })
     await user.click(screen.getByRole('button', { name: '操作分类筛选：全部' }))
     await user.click(
-      await screen.findByRole('menuitemradio', { name: OPERATION_LOG_CATEGORY_LABELS.database }),
+      await screen.findByRole('option', { name: OPERATION_LOG_CATEGORY_LABELS.database }),
     )
     await waitFor(() => expect(calls.at(-1)?.category).toBe('database'))
     expect(

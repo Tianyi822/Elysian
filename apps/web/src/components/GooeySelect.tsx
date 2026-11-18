@@ -2,10 +2,10 @@ import { useState } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
 import { GooeyMenu } from './easyui/GooeyMenu'
 
-/** Shared collapsed navigation. Domain values and selection effects stay with the caller. */
+/** Shared EasyUI selection menu. Domain values and selection effects stay with the caller. */
 export function GooeySelect<T extends string>({
   ariaLabel, items, value, onSelect, fallbackLabel = '请选择', disabled = false,
-  active = true, className,
+  active = true, className, fieldLabel,
 }: {
   ariaLabel: string
   items: readonly { value: T; label: string; disabled?: boolean }[]
@@ -15,6 +15,7 @@ export function GooeySelect<T extends string>({
   disabled?: boolean
   active?: boolean
   className?: string
+  fieldLabel?: string
 }) {
   const [open, setOpen] = useState(false)
   const reducedMotion = useReducedMotion()
@@ -33,7 +34,10 @@ export function GooeySelect<T extends string>({
     triggerLabel={`${ariaLabel}：${label}`}
     menuLabel={ariaLabel}
     trigger={<>
-      <span className="min-w-0 truncate">{label}</span>
+      {fieldLabel ? <span className="flex min-w-0 items-center gap-1">
+        <span className="shrink-0 text-[var(--t-gooey-muted)]">{fieldLabel}</span>
+        <span className="min-w-0 truncate">{label}</span>
+      </span> : <span className="min-w-0 truncate">{label}</span>}
       <motion.svg aria-hidden width="16" height="16" viewBox="0 0 24 24" fill="none"
         stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round"
         className="shrink-0 text-[var(--t-gooey-muted)]"
