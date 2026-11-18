@@ -8,7 +8,7 @@ import { useContainersStore } from '../../stores/containersStore'
 import { useMessageStore } from '../../stores/messageStore'
 import { customImageRegistries, invalidImageRegistries, officialImageRegistries } from '../../test/imageRegistryCases'
 import { ImagePullDialog } from './ImagePullDialog'
-import { readStoredImageRegistry, writeStoredImageRegistry } from './imagePullPreferences'
+import { readStoredImageRegistry, writeStoredImageRegistry } from '../../utils/imagePullPreferences'
 import type { ElysianGateway } from '../../contracts/adapters'
 
 vi.mock('../../app/runtime/isDockerRuntime', () => ({

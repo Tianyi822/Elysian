@@ -1,9 +1,9 @@
 import { memo, useMemo } from 'react'
 import type { ReactNode } from 'react'
 import type { RootContent } from 'hast'
-import { Check, Copy } from '../../components/icons'
-import { IconButton } from '../../components/IconButton'
-import { useClipboardCopy } from '../../components/CopyButton'
+import { Check, Copy } from './icons'
+import { IconButton } from './IconButton'
+import { useClipboardCopy } from './CopyButton'
 import { codeLanguageLabel, highlightCode } from './codeHighlight'
 
 function renderTokens(nodes: readonly RootContent[]): ReactNode {

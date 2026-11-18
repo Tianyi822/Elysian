@@ -1,6 +1,6 @@
 import { useLayoutEffect, useRef, useState } from 'react'
 import type { InputHTMLAttributes } from 'react'
-import { PasswordVisibilityButton } from '../security/passwordFieldParts'
+import { PasswordVisibilityButton } from '../../components/PasswordVisibilityButton'
 
 type Props = Omit<InputHTMLAttributes<HTMLInputElement>, 'type' | 'value'> & { value: string }
 

@@ -8,7 +8,7 @@ import { subscribeWhileVisible } from '../../adapters/subscribeWhileVisible'
 import { useFeedbackMessage } from '../../components/useFeedbackMessage'
 import { useMessageStore } from '../../stores/messageStore'
 import { captureAuthGeneration } from '../../utils/authGeneration'
-import { RuntimeAccessCard } from './RuntimeAccessCard'
+import { RuntimeAccessCard } from '../../components/RuntimeAccessCard'
 import { Button } from '../../components/Button'
 
 const BUTTON = 'inline-flex min-h-8 items-center justify-center gap-1.5 rounded-md border border-control-line px-3 text-xs hover:bg-surface-hover disabled:opacity-50'

@@ -6,7 +6,7 @@ import type { ElysianGateway } from '../../contracts/adapters'
 import { GatewayProvider } from '../../adapters/GatewayProvider'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import { useDatabaseStore } from '../../stores/databaseStore'
-import { IMAGE_PULL_PREFERENCES_KEY } from '../container/imagePullPreferences'
+import { IMAGE_PULL_PREFERENCES_KEY } from '../../utils/imagePullPreferences'
 import { RealDatabaseCreateDialog } from './RealDatabaseCreateDialog'
 
 /**

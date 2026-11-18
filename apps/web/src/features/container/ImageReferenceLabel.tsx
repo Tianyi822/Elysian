@@ -1,6 +1,6 @@
 import * as Popover from '@radix-ui/react-popover'
 import { useEffect, useRef, useState } from 'react'
-import { displayImageName, registryHost } from './imageReference'
+import { displayImageName, registryHost } from '../../utils/imageReference'
 import { Button } from '../../components/Button'
 
 /** 名称保持简短；鼠标、键盘和触屏共用完整引用提示。 */

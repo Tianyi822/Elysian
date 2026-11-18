@@ -1,4 +1,4 @@
-import { ChatMarkdown } from './ChatMarkdown'
+import { ChatMarkdown } from '../../components/ChatMarkdown'
 import { ChatMessageCopy } from './ChatMessageCopy'
 
 /** 来自运行内核的终态结果，独立于模型生成的正文与工具过程。 */

@@ -1,5 +1,5 @@
 import { registryHost } from './imageReference'
-import type { ImageRegistryPreset } from '../../contracts/adapters'
+import type { ImageRegistryPreset } from '../contracts/adapters'
 
 export const CUSTOM_REGISTRY_ID = 'custom'
 

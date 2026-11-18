@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { invalidImageRegistries, officialImageRegistries } from '../../test/imageRegistryCases'
+import { invalidImageRegistries, officialImageRegistries } from '../test/imageRegistryCases'
 import {
   DEFAULT_IMAGE_REGISTRY,
   displayImageName,

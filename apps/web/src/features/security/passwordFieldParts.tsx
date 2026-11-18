@@ -1,12 +1,9 @@
 import type { SshPasswordStrength } from '@elysian/contracts'
 import { SSH_PASSWORD_STRENGTH_LABELS } from '@elysian/contracts'
 import { FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
-import { Eye, EyeOff } from '../../components/icons'
-import { Button } from '../../components/Button'
 
 /*
- * 密码输入域的共享部件：三段红黄绿强度彩条、随强度变色的输入框描边（聚焦态同色接管）
- * 与明暗切换按钮。SSH 管理的 Root 密码与用户管理的账号密码共用同一套，两处不再各写一份。
+ * SSH 管理的 Root 密码与用户管理的账号密码共用强度彩条与随强度变色的输入框描边。
  * 客户端强度只是预览：权威判定在服务端（弱密码拒绝，失败走既有 danger 通知）。
  */
 
@@ -66,26 +63,5 @@ export function PasswordStrengthBar({ strength }: { strength: SshPasswordStrengt
         {SSH_PASSWORD_STRENGTH_LABELS[strength]}
       </span>
     </div>
-  )
-}
-
-/** 明暗切换按钮：图标表达当前状态（掩码闭眼、明文睁眼）；按钮名与 tooltip 保持动作语义。 */
-export function PasswordVisibilityButton({
-  visible,
-  onToggle,
-}: {
-  visible: boolean
-  onToggle: (next: boolean) => void
-}) {
-  return (
-    <Button unstyled
-      type="button"
-      onClick={() => onToggle(!visible)}
-      aria-label={visible ? '隐藏密码' : '显示密码'}
-      title={visible ? '隐藏密码' : '显示密码'}
-      className="absolute top-1/2 right-1.5 -translate-y-1/2 rounded-lg p-1.5 text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg"
-    >
-      {visible ? <Eye aria-hidden size={14} /> : <EyeOff aria-hidden size={14} />}
-    </Button>
   )
 }

@@ -1,7 +1,7 @@
 import type { ReactNode } from 'react'
 import type { AgentAccessDecisionInput, AgentExecutionProfile, AgentOperation, AgentRuntimeAccess } from '@elysian/contracts'
-import { Check, Square, X } from '../../components/icons'
-import { Button } from '../../components/Button'
+import { Check, Square, X } from './icons'
+import { Button } from './Button'
 
 const BUTTON = 'inline-flex min-h-9 items-center justify-center gap-1.5 rounded-md border border-control-line px-3 text-xs hover:bg-surface-hover disabled:opacity-50'
 

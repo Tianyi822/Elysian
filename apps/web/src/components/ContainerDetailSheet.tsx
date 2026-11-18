@@ -1,14 +1,14 @@
 import * as Dialog from '@radix-ui/react-dialog'
-import { X } from '../../components/icons'
+import { X } from './icons'
 import { useRef } from 'react'
 import type { ReactNode } from 'react'
 import { CONTAINER_STATUS_LABELS, RESTART_POLICY_LABELS } from '@elysian/contracts'
 import type { Container } from '@elysian/contracts'
-import { IconButton } from '../../components/IconButton'
-import { StatusTag } from '../../components/StatusTag'
-import type { StatusTone } from '../../components/StatusTag'
-import { formatUptime } from '../../components/format'
-import { useContainersStore } from '../../stores/containersStore'
+import { IconButton } from './IconButton'
+import { StatusTag } from './StatusTag'
+import type { StatusTone } from './StatusTag'
+import { formatUptime } from './format'
+import { useContainersStore } from '../stores/containersStore'
 
 /* 与容器卡片同一套状态配色：状态一律「文字 + 颜色」表达。 */
 const STATUS_TONE: Record<Container['status'], StatusTone> = {

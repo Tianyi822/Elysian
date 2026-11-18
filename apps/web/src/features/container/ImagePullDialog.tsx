@@ -10,15 +10,15 @@ import { SearchInput } from '../../components/SearchInput'
 import { useImeEnterGuard } from '../../components/useImeEnterGuard'
 import { useContainersStore } from '../../stores/containersStore'
 import type { RegistryProbeResult, ImageRegistryPreset } from '../../contracts/adapters'
-import { readStoredImageRegistry, writeStoredImageRegistry } from './imagePullPreferences'
-import { CUSTOM_REGISTRY_ID, matchRegistryPreset } from './imageRegistryPresets'
+import { readStoredImageRegistry, writeStoredImageRegistry } from '../../utils/imagePullPreferences'
+import { CUSTOM_REGISTRY_ID, matchRegistryPreset } from '../../utils/imageRegistryPresets'
 import {
   DEFAULT_IMAGE_REGISTRY,
   isOfficialImageRegistry,
   parseImageReference,
   registryHost,
   validateRegistryUrl,
-} from './imageReference'
+} from '../../utils/imageReference'
 import { Button } from '../../components/Button'
 
 /**

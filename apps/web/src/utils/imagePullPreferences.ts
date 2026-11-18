@@ -1,5 +1,5 @@
-import { browserPreferenceStorage } from '../../app/theme/themePreferences'
-import type { PreferenceStorage } from '../../app/theme/themePreferences'
+import { browserPreferenceStorage } from '../app/theme/themePreferences'
+import type { PreferenceStorage } from '../app/theme/themePreferences'
 import { validateRegistryUrl } from './imageReference'
 
 export const IMAGE_PULL_PREFERENCES_KEY = 'elysian.image-pull-preferences.v1'

@@ -5,7 +5,7 @@ import type { AgentMemoryAdapter } from '../../contracts/agentMemory'
 import { captureAuthGeneration } from '../../utils/authGeneration'
 import { IconButton } from '../../components/IconButton'
 import { BookOpen, X } from '../../components/icons'
-import { ChatMarkdown } from './ChatMarkdown'
+import { ChatMarkdown } from '../../components/ChatMarkdown'
 import { Button } from '../../components/Button'
 
 const failure = (cause: unknown) => cause instanceof Error ? cause.message : '读取长期记忆失败'

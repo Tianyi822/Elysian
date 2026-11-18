@@ -2,7 +2,7 @@ import { render, screen, within } from '@testing-library/react'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { useMessageStore } from '../../stores/messageStore'
+import { useMessageStore } from '../stores/messageStore'
 import { ChatMarkdown } from './ChatMarkdown'
 import * as codeHighlight from './codeHighlight'
 

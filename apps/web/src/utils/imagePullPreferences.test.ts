@@ -1,5 +1,5 @@
 import { describe, expect, it, vi } from 'vitest'
-import { resilientPreferenceStorage } from '../../utils/preferenceStorage'
+import { resilientPreferenceStorage } from './preferenceStorage'
 import { IMAGE_PULL_PREFERENCES_KEY, readStoredImageRegistry, writeStoredImageRegistry } from './imagePullPreferences'
 
 function storage() {

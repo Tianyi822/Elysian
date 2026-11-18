@@ -1,5 +1,5 @@
 import { useLayoutEffect, useRef } from 'react'
-import { ChatMarkdown } from './ChatMarkdown'
+import { ChatMarkdown } from '../../components/ChatMarkdown'
 import { ChatMessageCopy } from './ChatMessageCopy'
 import { ChatReasoning } from './ChatReasoning'
 import { useSmoothedText } from './useSmoothedText'
