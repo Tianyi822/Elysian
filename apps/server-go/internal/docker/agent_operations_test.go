@@ -133,30 +133,51 @@ func execFrame(stream byte, value string) []byte {
 }
 
 func TestContainerExecCannotBypassUnknownCreationNameWithContainerID(t *testing.T) {
-	for _, structured := range []bool{false, true} {
-		t.Run(fmt.Sprint(structured), func(t *testing.T) {
-			facade, engine := execTaskFacade(t, "", nil)
-			pending, err := facade.submitContainerOperation(strings.Repeat("a", 64), "name:mysql-main", nil, func(context.Context, string) (any, error) {
-				return nil, errors.New("create receipt lost")
-			})
-			if err != nil || awaitContainerTask(t, facade, pending.ID).State != "unknown" {
-				t.Fatalf("未建立新建容器未知屏障: %v", err)
-			}
-			input := ContainerExecInput{ID: strings.Repeat("c", 64), RequestID: strings.Repeat("b", 64), Argv: []string{"true"}}
-			if structured {
-				input.Argv = nil
-				input.DatabaseChange = &seam.AgentDatabaseChange{Action: "create", Name: "orders", ExpectedRevision: "fixed"}
-			}
-			if _, err := facade.SubmitExec(context.Background(), input); err == nil || !strings.Contains(err.Error(), "结果未确认") {
-				t.Fatalf("容器 ID 绕过了按名称持久化的未知屏障: %v", err)
-			}
-			for _, call := range engine.Requests() {
-				if call.Method != http.MethodGet {
-					t.Fatalf("拒绝前派发了写操作: %+v", call)
-				}
-			}
-		})
+	facade, engine := execTaskFacade(t, "", nil)
+	pending, err := facade.submitContainerOperation(strings.Repeat("a", 64), "name:mysql-main", nil, func(context.Context, string) (any, error) {
+		return nil, errors.New("create receipt lost")
+	})
+	if err != nil || awaitContainerTask(t, facade, pending.ID).State != "unknown" {
+		t.Fatalf("未建立新建容器未知屏障: %v", err)
 	}
+	input := ContainerExecInput{ID: strings.Repeat("c", 64), RequestID: strings.Repeat("b", 64), Argv: []string{"true"}}
+	if _, err := facade.SubmitExec(context.Background(), input); err == nil || !strings.Contains(err.Error(), "结果未确认") {
+		t.Fatalf("容器 ID 绕过了按名称持久化的未知屏障: %v", err)
+	}
+	for _, call := range engine.Requests() {
+		if call.Method != http.MethodGet {
+			t.Fatalf("拒绝前派发了写操作: %+v", call)
+		}
+	}
+}
+
+// 受管数据库容器拦截：Registered 命中时固定拒绝任意 argv，不派发任务。
+func TestContainerExecRejectsManagedDatabaseContainers(t *testing.T) {
+	facade, engine := execTaskFacade(t, "", nil)
+	bridge := &registeredDatabaseBridge{}
+	facade.SetDatabaseContainers(bridge)
+	input := ContainerExecInput{ID: strings.Repeat("c", 64), RequestID: strings.Repeat("a", 64), Argv: []string{"true"}}
+	if _, err := facade.SubmitExec(context.Background(), input); err == nil || !strings.Contains(err.Error(), "受管数据库容器不支持执行任意命令") {
+		t.Fatalf("受管数据库容器应被固定文案拒绝: %v", err)
+	}
+	if bridge.calls != 1 {
+		t.Fatalf("Registered 拦截应恰好查询一次: %d", bridge.calls)
+	}
+	for _, call := range engine.Requests() {
+		if call.Method != http.MethodGet {
+			t.Fatalf("拒绝前派发了写操作: %+v", call)
+		}
+	}
+}
+
+type registeredDatabaseBridge struct{ calls int }
+
+func (b *registeredDatabaseBridge) Registered(context.Context, string) (bool, error) {
+	b.calls++
+	return true, nil
+}
+func (b *registeredDatabaseBridge) Lifecycle(context.Context, string, string) (bool, error) {
+	return false, nil
 }
 
 func execTaskFacade(t *testing.T, finalStatus string, stream func(context.Context, engineCall, func([]byte)) (seam.EngineResponse, error)) (*AgentFacade, *fakeEngine) {
@@ -282,15 +303,6 @@ func TestContainerExecRequiresConfirmedActualExitStatus(t *testing.T) {
 
 type lifecycleDatabaseBridge struct{ calls int }
 
-func (b *lifecycleDatabaseBridge) PrepareCreate(context.Context, seam.AgentServiceContainerInput, string) (func(context.Context) (any, error), bool, error) {
-	return nil, false, nil
-}
-func (b *lifecycleDatabaseBridge) PrepareChange(context.Context, string, string, seam.AgentDatabaseChange) (func(context.Context) (any, error), error) {
-	return nil, errors.New("unused")
-}
-func (b *lifecycleDatabaseBridge) Inspect(context.Context, string, *seam.AgentDatabaseInspection) (any, error) {
-	return nil, nil
-}
 func (b *lifecycleDatabaseBridge) Registered(context.Context, string) (bool, error) { return true, nil }
 func (b *lifecycleDatabaseBridge) Lifecycle(context.Context, string, string) (bool, error) {
 	b.calls++

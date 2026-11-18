@@ -24,12 +24,13 @@ const ContainerOperationDomain = "docker-container-operation"
 
 var agentOperationIDPattern = regexp.MustCompile(`^[a-f0-9]{64}$`)
 
+// ContainerExecInput 仅承载 argv 命令执行；databaseChange 参数已随数据库逻辑库
+// 退役（docker_container_exec 升 v3），旧冻结派发的该参数在解码时被忽略。
 type ContainerExecInput struct {
-	ID             string                    `json:"id"`
-	RequestID      string                    `json:"requestId"`
-	Argv           []string                  `json:"argv,omitempty"`
-	Workdir        string                    `json:"workdir,omitempty"`
-	DatabaseChange *seam.AgentDatabaseChange `json:"databaseChange,omitempty"`
+	ID        string   `json:"id"`
+	RequestID string   `json:"requestId"`
+	Argv      []string `json:"argv,omitempty"`
+	Workdir   string   `json:"workdir,omitempty"`
 }
 
 type ContainerOperationTask struct {
@@ -250,25 +251,12 @@ func (a *AgentFacade) SubmitService(ctx context.Context, input AgentServiceCreat
 	if _, err := a.validateServiceInput(input); err != nil {
 		return ContainerOperationTask{}, agentSubmitRejected(err)
 	}
-	imageID, err := a.resolveAgentImage(ctx, input.Image)
-	if err != nil {
+	// 数据库镜像不再经接缝拦截为受管数据库容器；镜像解析保留为提交前预检，
+	// 失败仍是未派发拒绝，不进入异步任务的未知屏障。
+	if _, err := a.resolveAgentImage(ctx, input.Image); err != nil {
 		return ContainerOperationTask{}, agentSubmitRejected(err)
 	}
-	var run func(context.Context) (any, error)
-	if a.databaseContainers != nil {
-		var handled bool
-		run, handled, err = a.databaseContainers.PrepareCreate(ctx, input, imageID)
-		if err != nil {
-			return ContainerOperationTask{}, agentSubmitRejected(err)
-		}
-		if !handled {
-			run = nil
-		}
-	}
-	if run == nil {
-		run = func(ctx context.Context) (any, error) { return a.createServiceAuthorized(ctx, input) }
-	}
-	return a.submitContainerOperation(input.RequestID, "name:"+input.Name, input, func(ctx context.Context, _ string) (any, error) { return run(ctx) })
+	return a.submitContainerOperation(input.RequestID, "name:"+input.Name, input, func(ctx context.Context, _ string) (any, error) { return a.createServiceAuthorized(ctx, input) })
 }
 
 func (a *AgentFacade) SubmitExec(ctx context.Context, input ContainerExecInput) (ContainerOperationTask, error) {
@@ -284,8 +272,8 @@ func (a *AgentFacade) SubmitExec(ctx context.Context, input ContainerExecInput) 
 	if err := a.CheckContainerMutation(ctx, input.ID, "", ""); err != nil {
 		return ContainerOperationTask{}, agentSubmitRejected(err)
 	}
-	if (len(input.Argv) > 0) == (input.DatabaseChange != nil) || input.DatabaseChange != nil && input.Workdir != "" || len(input.Argv) > 64 || len(input.Workdir) > 1024 || strings.ContainsRune(input.Workdir, 0) {
-		return ContainerOperationTask{}, agentSubmitRejected(shared.InvalidRequest("argv与databaseChange必须且只能提供一项，workdir仅用于argv"))
+	if len(input.Argv) > 64 || len(input.Workdir) > 1024 || strings.ContainsRune(input.Workdir, 0) {
+		return ContainerOperationTask{}, agentSubmitRejected(shared.InvalidRequest("容器命令参数无效或超限"))
 	}
 	for _, arg := range input.Argv {
 		if len(arg) > 16384 || strings.ContainsRune(arg, 0) {
@@ -294,16 +282,6 @@ func (a *AgentFacade) SubmitExec(ctx context.Context, input ContainerExecInput) 
 	}
 	if input.Workdir != "" && !strings.HasPrefix(input.Workdir, "/") {
 		return ContainerOperationTask{}, agentSubmitRejected(shared.InvalidRequest("容器工作目录必须为绝对路径"))
-	}
-	if input.DatabaseChange != nil {
-		if a.databaseContainers == nil {
-			return ContainerOperationTask{}, agentSubmitRejected(shared.InvalidRequest("数据库登记能力不可用"))
-		}
-		run, err := a.databaseContainers.PrepareChange(ctx, input.ID, input.RequestID, *input.DatabaseChange)
-		if err != nil {
-			return ContainerOperationTask{}, agentSubmitRejected(err)
-		}
-		return a.submitContainerOperation(input.RequestID, input.ID, input, func(ctx context.Context, _ string) (any, error) { return run(ctx) })
 	}
 	if len(input.Argv) == 0 || input.Argv[0] == "" {
 		return ContainerOperationTask{}, agentSubmitRejected(shared.InvalidRequest("容器命令不能为空"))
@@ -314,7 +292,7 @@ func (a *AgentFacade) SubmitExec(ctx context.Context, input ContainerExecInput) 
 			return ContainerOperationTask{}, agentSubmitRejected(err)
 		}
 		if registered {
-			return ContainerOperationTask{}, agentSubmitRejected(shared.InvalidRequest("受管数据库仅允许结构化databaseChange；诊断请使用inspect与logs"))
+			return ContainerOperationTask{}, agentSubmitRejected(shared.InvalidRequest("受管数据库容器不支持执行任意命令"))
 		}
 	}
 	if _, err := a.safeTarget(ctx, input.ID); err != nil {

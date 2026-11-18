@@ -16,26 +16,11 @@ type AgentServiceContainerInput struct {
 	Volumes      []string `json:"volumes"`
 }
 
-type AgentDatabaseChange struct {
-	Action           string `json:"action"`
-	Name             string `json:"name"`
-	ExpectedRevision string `json:"expectedRevision"`
-	Charset          string `json:"charset,omitempty"`
-}
-
-type AgentDatabaseInspection struct {
-	ID       string `json:"id"`
-	Metadata bool   `json:"metadata,omitempty"`
-	Metrics  bool   `json:"metrics,omitempty"`
-}
-
-// AgentDatabaseContainers is injected by app. Preparation has no effects;
-// returned functions execute only after the caller persists its task identity.
-// No credentials cross this boundary.
+// AgentDatabaseContainers is injected by app. The database logical-DB protocol
+// surface has been retired; the bridge only routes managed database container
+// lifecycle (start/stop/restart/remove) and exec interception. No credentials
+// cross this boundary.
 type AgentDatabaseContainers interface {
-	PrepareCreate(context.Context, AgentServiceContainerInput, string) (func(context.Context) (any, error), bool, error)
-	PrepareChange(context.Context, string, string, AgentDatabaseChange) (func(context.Context) (any, error), error)
-	Inspect(context.Context, string, *AgentDatabaseInspection) (any, error)
 	Lifecycle(context.Context, string, string) (bool, error)
 	Registered(context.Context, string) (bool, error)
 }
