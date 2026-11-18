@@ -33,3 +33,8 @@ export const CTL_TOOLBAR = 'toolbar'
 export const CTL_TILE = 'tile'
 /** 分段读数芯片（端口映射一类）。 */
 export const CTL_STAT = 'stat-chip'
+
+/** 紧凑弹窗表单保留各自的禁用态与布局。 */
+export const DIALOG_FORM_FIELD_CLASS = `${FORM_CONTROL_HEIGHT_CLASS} w-full min-w-0 rounded-lg border border-control-line bg-surface-raised px-3 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle`
+export const DIALOG_FORM_LABEL_CLASS = 'mb-2 block text-xs font-medium leading-5 text-fg-muted'
+export const DIALOG_FORM_ACTION_CLASS = `inline-flex ${FORM_CONTROL_HEIGHT_CLASS} items-center justify-center rounded-lg border border-line px-3 text-xs font-medium text-fg transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50`

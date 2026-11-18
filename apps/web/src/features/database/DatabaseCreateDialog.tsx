@@ -2,7 +2,7 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { ChipGroup } from '../../components/ChipGroup'
 import { useEffect, useRef, useState } from 'react'
 import type { DragEvent } from 'react'
-import { FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
+import { DIALOG_FORM_ACTION_CLASS, DIALOG_FORM_FIELD_CLASS, DIALOG_FORM_LABEL_CLASS } from '../../components/formControl'
 import { File, Loader2, Upload, X } from '../../components/icons'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { useDatabaseStore } from '../../stores/databaseStore'
@@ -19,9 +19,6 @@ import {
 import type { DatabaseCreateDraft, DatabaseCreateFormErrors, SqliteFileSource } from './databaseCreateForm'
 import { Button } from '../../components/Button'
 
-const FIELD = `${FORM_CONTROL_HEIGHT_CLASS} w-full min-w-0 rounded-lg border border-control-line bg-surface-raised px-3 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle`
-const LABEL = 'mb-2 block text-xs font-medium leading-5 text-fg-muted'
-const BUTTON = `inline-flex ${FORM_CONTROL_HEIGHT_CLASS} items-center justify-center rounded-lg border border-line px-3 text-xs font-medium text-fg transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50`
 const ERROR = 'mt-1 text-xs text-danger'
 
 function SqliteFileField({
@@ -58,7 +55,7 @@ function SqliteFileField({
           <p className="flex min-w-0 items-center gap-1.5 break-all font-mono text-xs text-fg"><File aria-hidden size={13} className="shrink-0 text-fg-subtle" />{draft.fileName}</p>
           <p className="text-xs text-fg-subtle">{draft.fileSizeMb === undefined ? '大小未知' : draft.fileSizeMb + ' MB'}</p>
         </> : <p className="text-xs text-fg-muted">把 SQLite 数据库文件拖到这里</p>}
-        <label htmlFor="db-create-file" className={BUTTON + (creating ? ' pointer-events-none opacity-50' : ' cursor-pointer')}>选择本地文件</label>
+        <label htmlFor="db-create-file" className={DIALOG_FORM_ACTION_CLASS + (creating ? ' pointer-events-none opacity-50' : ' cursor-pointer')}>选择本地文件</label>
         <input id="db-create-file" ref={inputRef} type="file" disabled={creating}
           accept={'.db,.sqlite,.sqlite3,' + SQLITE_FILE_SUFFIX + ',application/vnd.sqlite3,application/x-sqlite3'}
           className="sr-only" onChange={(event) => { if (event.target.files?.[0]) onPickFile(event.target.files[0]) }} />
@@ -144,11 +141,11 @@ export function DatabaseCreateDialog() {
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5">
           <section aria-labelledby="db-create-details-title">
             <h3 id="db-create-details-title" className="mb-3 text-sm font-semibold text-fg">数据库信息</h3>
-            <label htmlFor="db-create-name" className={LABEL}>数据库名（取自文件名） <span className="text-danger">*</span></label>
+            <label htmlFor="db-create-name" className={DIALOG_FORM_LABEL_CLASS}>数据库名（取自文件名） <span className="text-danger">*</span></label>
             <input id="db-create-name" value={draft.name} disabled={creating} onChange={(event) => patch({ name: event.target.value })}
               placeholder="例如 elysian-notes" autoComplete="off" spellCheck={false}
               aria-describedby={showErrors && errors.name ? 'db-create-name-error' : undefined}
-              className={FIELD + ' font-mono'} />
+              className={DIALOG_FORM_FIELD_CLASS + ' font-mono'} />
             {showErrors && errors.name ? <p id="db-create-name-error" className={ERROR} role="alert">{errors.name}</p> : null}
           </section>
           <SqliteFileField draft={draft} errors={errors} showErrors={showErrors} creating={creating}
@@ -158,8 +155,8 @@ export function DatabaseCreateDialog() {
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-line px-5 py-3">
           <p className="text-xs text-fg-subtle">{uploadPercent !== undefined ? '上传进度 ' + uploadPercent + '%' : '数据库文件保存在面板持久卷中。'}</p>
           <div className="ml-auto flex gap-2">
-            <Button variant="outline" type="button" onClick={closeCreate} disabled={creating} className={BUTTON}>取消</Button>
-            <Button variant="outline" type="button" onClick={submit} disabled={disabled} className={BUTTON + ' bg-surface-raised'}>
+            <Button variant="outline" type="button" onClick={closeCreate} disabled={creating} className={DIALOG_FORM_ACTION_CLASS}>取消</Button>
+            <Button variant="outline" type="button" onClick={submit} disabled={disabled} className={DIALOG_FORM_ACTION_CLASS + ' bg-surface-raised'}>
               {creating ? <Loader2 aria-hidden size={13} className="mr-1.5 animate-spin" /> : null}
               {creating ? draft.fileSource === 'upload' ? '上传中…' : '创建中…'
                 : draft.fileSource === 'upload' ? '上传并创建' : '创建'}

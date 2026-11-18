@@ -2,7 +2,7 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { useEffect, useState } from 'react'
 import type { ContainerImage, DatabaseContainerEngine, ImagePullProgress } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
-import { FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
+import { DIALOG_FORM_ACTION_CLASS, DIALOG_FORM_FIELD_CLASS, DIALOG_FORM_LABEL_CLASS, FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { Loader2, X } from '../../components/icons'
 import { useDatabaseStore } from '../../stores/databaseStore'
@@ -25,9 +25,7 @@ import { messageOf } from '../../utils/errorMessage'
 type Scope = 'localhost' | 'container-network' | 'any-host'
 
 const VERSION_PATTERN = /^\d+(?:\.\d+){0,2}(?:[-.][A-Za-z0-9]+)*$/
-const FIELD = `${FORM_CONTROL_HEIGHT_CLASS} w-full min-w-0 rounded-lg border border-control-line bg-surface-raised px-3 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle disabled:opacity-60`
-const LABEL = 'mb-2 block text-xs font-medium leading-5 text-fg-muted'
-const BUTTON = `inline-flex ${FORM_CONTROL_HEIGHT_CLASS} items-center justify-center rounded-lg border border-line px-3 text-xs font-medium text-fg transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50`
+const FIELD = DIALOG_FORM_FIELD_CLASS + ' disabled:opacity-60'
 const ACCESS_SCOPE_ITEMS = [
   { value: 'localhost', label: '仅宿主回环' },
   { value: 'container-network', label: '容器网络内' },
@@ -180,7 +178,7 @@ export function RealDatabaseCreateDialog({ engine }: { engine: DatabaseContainer
           <section aria-labelledby="db-image-title">
             <h3 id="db-image-title" className="mb-3 text-sm font-semibold text-fg">镜像与版本</h3>
             <div>
-              <label htmlFor="real-db-registry" className={LABEL}>镜像源</label>
+              <label htmlFor="real-db-registry" className={DIALOG_FORM_LABEL_CLASS}>镜像源</label>
               <SelectDropdown id="real-db-registry" ariaLabel="镜像源" fullWidth
                 disabled={busy}
                 items={sourceItems}
@@ -192,15 +190,15 @@ export function RealDatabaseCreateDialog({ engine }: { engine: DatabaseContainer
                 }} />
               {presetsLoading ? <p role="status" className="mt-1.5 text-xs text-fg-muted">正在读取镜像源…</p> : null}
               {presetId === CUSTOM_REGISTRY_ID && !presetsLoading ? <div className="mt-3">
-                <label htmlFor="real-db-registry-custom" className={LABEL}>自定义镜像源地址</label>
+                <label htmlFor="real-db-registry-custom" className={DIALOG_FORM_LABEL_CLASS}>自定义镜像源地址</label>
                 <input id="real-db-registry-custom" className={FIELD + ' font-mono'} disabled={busy} value={customAddress} onChange={(event) => { setCustomAddress(event.target.value); setRegistryAddress(event.target.value) }} placeholder="留空使用官方地址 registry-1.docker.io" autoComplete="off" spellCheck={false} />
                 {registryError ? <p role="alert" className="mt-1 text-xs text-danger">{registryError}</p> : null}
               </div> : null}
             </div>
             <div className="mt-4 grid gap-4 sm:grid-cols-2">
-              <div><span className={LABEL}>镜像名称</span><p className={FIELD + ' flex items-center font-mono'} aria-label="镜像名称">{repo}</p></div>
+              <div><span className={DIALOG_FORM_LABEL_CLASS}>镜像名称</span><p className={FIELD + ' flex items-center font-mono'} aria-label="镜像名称">{repo}</p></div>
               <div>
-                <label htmlFor="real-db-version" className={LABEL}>版本标签（不支持 latest）</label>
+                <label htmlFor="real-db-version" className={DIALOG_FORM_LABEL_CLASS}>版本标签（不支持 latest）</label>
                 <div className="flex min-w-0 gap-2">
                   <input id="real-db-version" className={FIELD + ' min-w-0 flex-1 font-mono'} disabled={busy} value={versionTag} onChange={(event) => { setVersionTag(event.target.value.trim()); setPullComplete(false); setPullError('') }} placeholder={engine === 'MariaDB' ? '例如 11.4' : engine === 'MySQL' ? '例如 8.4' : '例如 7.4'} autoComplete="off" spellCheck={false} />
                   <SelectDropdown ariaLabel="版本标签建议" disabled={busy || tags.length === 0} items={tagItems} value={undefined} onSelect={(tag) => { setVersionTag(tag); setPullComplete(false); setPullError('') }} fallbackLabel="选择版本" triggerClassName={`inline-flex ${FORM_CONTROL_HEIGHT_CLASS} shrink-0 items-center gap-1 whitespace-nowrap rounded-lg border border-control-line bg-surface-raised px-2 text-xs text-fg disabled:opacity-50`} />
@@ -216,7 +214,7 @@ export function RealDatabaseCreateDialog({ engine }: { engine: DatabaseContainer
             {validVersion && !registryError ? image ? <p role="status" className="mt-2 text-xs text-success">本地镜像已就绪：{repo}:{versionTag}</p> : <div className="mt-2 rounded-lg border border-line bg-surface p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-xs text-fg-muted">本地尚无 {repo}:{versionTag} 镜像</p>
-                <Button variant="outline" type="button" disabled={busy || Boolean(registryError)} onClick={() => void pull()} className={BUTTON}>{pulling ? '拉取中…' : '拉取镜像'}</Button>
+                <Button variant="outline" type="button" disabled={busy || Boolean(registryError)} onClick={() => void pull()} className={DIALOG_FORM_ACTION_CLASS}>{pulling ? '拉取中…' : '拉取镜像'}</Button>
               </div>
               {pulling ? <div className="mt-3" role="status" aria-live="polite">
                 <div className="flex flex-wrap justify-between gap-1 text-xs text-fg-muted">
@@ -237,11 +235,11 @@ export function RealDatabaseCreateDialog({ engine }: { engine: DatabaseContainer
           <section aria-labelledby="db-container-title" className="border-t border-line pt-5">
             <h3 id="db-container-title" className="mb-3 text-sm font-semibold text-fg">容器与访问</h3>
             <div className="grid gap-4 sm:grid-cols-2">
-              <div><label htmlFor="real-db-container" className={LABEL}>新容器名称</label><input id="real-db-container" className={FIELD} disabled={busy} value={containerName} onChange={(event) => setContainerName(event.target.value)} /></div>
-              <div><label htmlFor="real-db-scope" className={LABEL}>访问范围</label><SelectDropdown id="real-db-scope" ariaLabel="访问范围" fullWidth disabled={busy} items={ACCESS_SCOPE_ITEMS} value={scope} onSelect={setScope} /></div>
+              <div><label htmlFor="real-db-container" className={DIALOG_FORM_LABEL_CLASS}>新容器名称</label><input id="real-db-container" className={FIELD} disabled={busy} value={containerName} onChange={(event) => setContainerName(event.target.value)} /></div>
+              <div><label htmlFor="real-db-scope" className={DIALOG_FORM_LABEL_CLASS}>访问范围</label><SelectDropdown id="real-db-scope" ariaLabel="访问范围" fullWidth disabled={busy} items={ACCESS_SCOPE_ITEMS} value={scope} onSelect={setScope} /></div>
             </div>
             {scope === 'any-host' ? <div className="mt-4 space-y-3">
-              <div><label htmlFor="real-db-port" className={LABEL}>宿主端口</label><input id="real-db-port" type="number" min="1" max="65535" className={FIELD} disabled={busy} value={hostPort} onChange={(event) => setHostPort(event.target.value)} /></div>
+              <div><label htmlFor="real-db-port" className={DIALOG_FORM_LABEL_CLASS}>宿主端口</label><input id="real-db-port" type="number" min="1" max="65535" className={FIELD} disabled={busy} value={hostPort} onChange={(event) => setHostPort(event.target.value)} /></div>
               <label className="flex items-start gap-2 text-xs leading-5 text-warning"><input type="checkbox" className="mt-0.5" disabled={busy} checked={confirmPublic} onChange={(event) => setConfirmPublic(event.target.checked)} />确认数据库端口将监听所有宿主网卡</label>
               <p className="text-xs text-fg-subtle">创建成功后将自动在防火墙开放该端口。</p>
             </div> : null}
@@ -254,8 +252,8 @@ export function RealDatabaseCreateDialog({ engine }: { engine: DatabaseContainer
         <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 border-t border-line px-5 py-3">
           <p className="text-xs text-fg-subtle">{hint}</p>
           <div className="ml-auto flex gap-2">
-            <Button variant="outline" type="button" disabled={busy} onClick={close} className={BUTTON}>取消</Button>
-            <Button variant="outline" type="button" disabled={!canSubmit} onClick={submit} className={BUTTON + ' bg-surface-raised'}>
+            <Button variant="outline" type="button" disabled={busy} onClick={close} className={DIALOG_FORM_ACTION_CLASS}>取消</Button>
+            <Button variant="outline" type="button" disabled={!canSubmit} onClick={submit} className={DIALOG_FORM_ACTION_CLASS + ' bg-surface-raised'}>
               {creating ? <Loader2 aria-hidden size={13} className="mr-1.5 animate-spin" /> : null}
               {creating ? '处理中…' : '创建并启动'}
             </Button>
