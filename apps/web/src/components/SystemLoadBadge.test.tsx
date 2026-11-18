@@ -100,6 +100,22 @@ describe('顶栏系统负载', () => {
     expect(trigger).not.toHaveTextContent('0.18')
   })
 
+  it('侧栏负载明细使用 Peek Card，保留失败说明，Escape 关闭并归还焦点', async () => {
+    stubFetch(platformMemorySample(), 503)
+    render(<Tooltip.Provider><SystemLoadBadge navigation /></Tooltip.Provider>)
+    const user = userEvent.setup()
+    const trigger = screen.getByRole('button', { name: '系统负载' })
+    await user.click(trigger)
+
+    const dialog = await screen.findByRole('dialog', { name: '系统负载明细' })
+    expect(dialog).toHaveAttribute('data-easyui', 'peek-card')
+    expect(within(dialog).getByText('后端进程内存读取失败，稍后会再试。')).toBeInTheDocument()
+    expect(dialog.querySelector('polygon')).not.toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(dialog).not.toBeInTheDocument())
+    expect(trigger).toHaveFocus()
+  })
+
   it('明细常驻三档负载和 RSS，Go 运行时默认折叠且可用键盘切换', async () => {
     emitLoad({ m1: 0.42, m5: 0.18, m15: 0.07 })
     const trigger = await renderReady()

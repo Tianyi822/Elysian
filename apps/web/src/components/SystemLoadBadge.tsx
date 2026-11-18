@@ -11,6 +11,7 @@ import { formatDateTime } from './format'
 import { ChevronRight, CircleHelp, Gauge } from './icons'
 import { getLastResourceSample, onStreamEvent } from '../stores/eventStreamStore'
 import { Button } from './Button'
+import { PeekCard } from './easyui/PeekCard'
 
 /**
  * 系统负载指示器：合并这台机器的忙闲（load average）与面板自身内存。
@@ -139,6 +140,7 @@ function ScopeHelp() {
  * 导航底部常驻 1 分钟负载与面板内存，收起时通过图标进入明细。
  */
 export function SystemLoadBadge({ navigation = false, collapsed = false }: { navigation?: boolean; collapsed?: boolean }) {
+  const [open, setOpen] = useState(false)
   const view = usePlatformMemory()
   const load = useSystemLoad()
   const sample = view.status === 'ready' ? view.sample : null
@@ -159,7 +161,7 @@ export function SystemLoadBadge({ navigation = false, collapsed = false }: { nav
       : '后端内存读取失败，稍后会再试'
 
   return (
-    <Popover.Root>
+    <Popover.Root open={open} onOpenChange={setOpen}>
       <Tooltip.Root>
         <Tooltip.Trigger asChild>
           <Popover.Trigger asChild>
@@ -200,16 +202,9 @@ export function SystemLoadBadge({ navigation = false, collapsed = false }: { nav
         </Tooltip.Portal>
       </Tooltip.Root>
 
-      <Popover.Portal>
-        <Popover.Content
-          side={navigation ? collapsed ? 'right' : 'top' : 'bottom'}
-          align={navigation ? 'start' : 'end'}
-          sideOffset={6}
-          collisionPadding={8}
-          aria-label="系统负载明细"
-          className="panel-surface z-50 w-80 max-w-[calc(100vw-2rem)] p-3 text-xs shadow-lg"
-        >
-          <p className="border-b border-line pb-2 text-sm font-medium text-fg">系统负载</p>
+      <PeekCard open={open} placement={navigation ? 'top' : 'bottom'} ariaLabel="系统负载明细"
+        renderContent={() => <div className="text-xs">
+          <p className="border-b border-line pb-2.5 text-sm font-semibold text-fg">系统负载</p>
 
           <Section title="机器负载（load average）">
             {load ? (
@@ -266,9 +261,8 @@ export function SystemLoadBadge({ navigation = false, collapsed = false }: { nav
               采样于 {formatDateTime(sample.sampledAt)}
             </p>
           )}
-          <Popover.Arrow className="fill-surface-raised" />
-        </Popover.Content>
-      </Popover.Portal>
+        </div>}
+      />
     </Popover.Root>
   )
 }

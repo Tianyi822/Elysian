@@ -18,9 +18,11 @@
     "PressButton.tsx": "src/components/ui/PressButton.tsx",
     "DataTable.tsx": "src/components/ui/DataTable.tsx",
     "GooeyMenu.tsx": "src/components/ui/GooeyMenu.tsx",
+    "PeekCard.tsx": "src/components/ui/PeekCard.tsx",
     "Sidebar.tsx": "src/components/ui/sidebar.tsx"
   },
   "adaptations": [
+    "Take the custom-content Peek Card from EasyUI for system-load details. Retain the 288/320px panel, measured 19.6px corners, 8px gap, 16px padding, black surface, border and shadow, 0.96 scale and signed 6px/4px travel, snappy spring entrance and 120ms exit. Use Radix for the existing click trigger, viewport collision placement, Escape and focus restoration; the portal escapes the sidebar drawer, and exiting content is inert. Preserve all live diagnostic content and honor reduced motion.",
     "Map colors to existing semantic theme tokens and Chinese labels.",
     "Add an optional DataTable searchAction beside the built-in search field. The Docker image table keeps refresh next to search and pull in the existing right-hand toolbar slot instead of a row count; selection still replaces the normal toolbar.",
     "Preserve controlled values, disabled state, and reduced-motion support.",
@@ -48,6 +50,7 @@
   "fileRevisions": {
     "DataTable.tsx": "39206704aea017738282f706cf42796a44baa9cb",
     "GooeyMenu.tsx": "a4d68b641d39b0782cc83103cc407760da2fce4b",
+    "PeekCard.tsx": "f2287ce01ae6b6e7be28ca8d6a803dff91a20c96",
     "Sidebar.tsx": "a64cd82c1adc0b44ec4f495e45b3b4d76f1f0143"
   }
 }
