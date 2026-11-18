@@ -1,6 +1,6 @@
 import * as Dialog from '@radix-ui/react-dialog'
 import { Loader2, Trash2 } from '../../components/icons'
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
 import type { Container, ContainerImage } from '@elysian/contracts'
 import { imageUsageCount } from '../../adapters/mock/containerViews'
 import { useGateway } from '../../adapters/GatewayProvider'
@@ -31,11 +31,15 @@ export function ImageTable({
   images,
   containers,
   busy = false,
+  searchAction,
+  toolbar,
 }: {
   images: readonly ContainerImage[]
   containers: readonly Container[]
   /** 刷新在途：保留旧镜像行，仅标记可访问的忙碌状态。 */
   busy?: boolean
+  searchAction?: ReactNode
+  toolbar?: ReactNode
 }) {
   const gateway = useGateway()
   const removingImageIds = useContainersStore((s) => s.removingImageIds)
@@ -55,6 +59,9 @@ export function ImageTable({
         <DataTable rows={images} ariaLabel="镜像列表" selected={selected} onSelectionChange={setSelected} busy={busy}
           getRowLabel={image => `${image.name}:${image.tag}`}
           searchPlaceholder="搜索镜像"
+          className="dt-toolbar-inline-actions"
+          searchAction={searchAction}
+          toolbar={toolbar}
           columns={[
             { key: 'name', header: '名称:标签', primary: true, width: 'minmax(240px,2fr)', accessor: image => `${image.name}:${image.tag}`, cell: image => <>
               <div className="truncate"><ImageReferenceLabel name={image.name} tag={image.tag} />{image.otherTags?.length ? <span className="ml-2 text-xs text-fg-muted" title={image.otherTags.join('、')}>另有 {image.otherTags.length} 个标签</span> : null}</div>

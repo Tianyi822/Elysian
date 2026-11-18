@@ -1,3 +1,4 @@
+import * as Tooltip from '@radix-ui/react-tooltip'
 import { useEffect, useState } from 'react'
 import { Download } from '../../components/icons'
 import { SearchInput } from '../../components/SearchInput'
@@ -10,6 +11,7 @@ import { RefreshButton } from '../../components/RefreshState'
 import { CTL_TOOLBAR } from '../../components/formControl'
 import { Button } from '../../components/Button'
 import { ChipGroup } from '../../components/ChipGroup'
+import { TableCreateButton } from '../../components/TableCreateButton'
 import { DockerDependencyEntry } from './DockerDependencyEntry'
 import { CONTAINER_LIVE_RECONNECT_MESSAGE } from './containerCopy'
 import { useContainersStore } from '../../stores/containersStore'
@@ -21,6 +23,7 @@ import { ContainerDetailSheet } from './ContainerDetailSheet'
 import { ImagePullDialog } from './ImagePullDialog'
 import { ImageTable } from './ImageTable'
 import { TerminalWindow } from './TerminalWindow'
+import './containerToolbar.css'
 
 const STATUS_FILTERS: ReadonlyArray<{ value: ContainerStatus | 'all'; label: string }> = [
   { value: 'all', label: '全部' },
@@ -29,6 +32,24 @@ const STATUS_FILTERS: ReadonlyArray<{ value: ContainerStatus | 'all'; label: str
   { value: 'restarting', label: CONTAINER_STATUS_LABELS.restarting },
   { value: 'paused', label: CONTAINER_STATUS_LABELS.paused },
 ]
+
+function ImagePullButton({ onPress }: { onPress: () => void }) {
+  const label = '拉取镜像'
+  return <Tooltip.Root>
+    <Tooltip.Trigger asChild>
+      <Button type="button" onClick={onPress} aria-label={label}
+        className="image-pull-button h-[var(--dt-control-height)] whitespace-nowrap text-xs"
+        leftIcon={<Download aria-hidden size={14} />}>
+        <span className="image-pull-label">{label}</span>
+      </Button>
+    </Tooltip.Trigger>
+    <Tooltip.Portal>
+      <Tooltip.Content side="bottom" sideOffset={6} className="z-[80] rounded border border-control-line bg-surface-raised px-2 py-1 text-xs text-fg shadow-lg">
+        {label}<Tooltip.Arrow className="fill-surface-raised" />
+      </Tooltip.Content>
+    </Tooltip.Portal>
+  </Tooltip.Root>
+}
 
 export function ContainerPage() {
   const gateway = useGateway()
@@ -102,48 +123,27 @@ export function ContainerPage() {
         </p>
       ) : null}
       {view === 'grid' ? (
-        <div className={`${CTL_TOOLBAR} rect-toolbar mb-4 flex flex-wrap items-center gap-4 panel-surface px-4 py-3`}>
-          <ChipGroup ariaLabel="状态筛选" items={STATUS_FILTERS} value={statusFilter} onSelect={setStatusFilter}
-            className="basis-full items-start lg:basis-auto" />
-          {/* 窄屏两行：筛选 chip 一行，搜索框与创建容器一行（搜索撑开）；lg 起回到一行三段。 */}
-          <div className="relative min-w-32 flex-1 lg:w-56 lg:flex-none">
-            <SearchInput
-              id="container-search"
-              label="搜索容器名称"
-              value={search}
-              onChange={setSearch}
-              placeholder="搜索容器名称"
-              className="w-full"
-            />
+        <div className={`${CTL_TOOLBAR} rect-toolbar container-grid-toolbar mb-4 panel-surface px-3 py-3 sm:px-4`}>
+          <div className="flex flex-wrap items-center gap-x-3 gap-y-2">
+            <ChipGroup ariaLabel="状态筛选" items={STATUS_FILTERS} value={statusFilter} onSelect={setStatusFilter}
+              className="items-start" />
+            <div className="container-grid-toolbar-actions">
+              <SearchInput id="container-search" label="搜索容器名称" value={search} onChange={setSearch} />
+              <TableCreateButton label="创建容器" onPress={openCreate} />
+            </div>
           </div>
-          <Button
-            type="button"
-            onClick={() => openCreate()}
-            className="ml-auto h-9 text-xs"
-          >
-            创建容器
-          </Button>
-          <DockerDependencyEntry onReady={() => load(gateway)} />
+          <DockerDependencyEntry className="mt-2" onReady={() => load(gateway)} />
         </div>
       ) : null}
 
       {view === 'images' ? (
         <>
-          <div className={`${CTL_TOOLBAR} rect-toolbar mb-4 flex flex-wrap items-center justify-between gap-4 panel-surface px-4 py-3`}>
-            <p className="text-xs text-fg-muted">共 {images.length} 个镜像</p>
-            <div className="flex flex-wrap items-center gap-2">
-              <RefreshButton
-                onPress={() => void refreshImages(gateway)}
-                busy={imageRefreshStatus === 'loading'}
-                label="刷新镜像"
-              />
-              <Button type="button" onClick={() => setPullOpen(true)} className="h-9 text-xs" leftIcon={<Download aria-hidden size={14} />}>
-                拉取镜像
-              </Button>
-              <DockerDependencyEntry onReady={() => load(gateway)} />
-            </div>
-          </div>
-          <ImageTable images={images} containers={containers} busy={imageRefreshStatus === 'loading'} />
+          <DockerDependencyEntry className="mb-3" onReady={() => load(gateway)} />
+          <ImageTable images={images} containers={containers} busy={imageRefreshStatus === 'loading'}
+            searchAction={<RefreshButton onPress={() => void refreshImages(gateway)}
+              busy={imageRefreshStatus === 'loading'} label="刷新镜像" className="dt-toolbar-control-icon" />}
+            toolbar={<ImagePullButton onPress={() => setPullOpen(true)} />}
+          />
         </>
       ) : filtered.length === 0 ? (
         <EmptyState

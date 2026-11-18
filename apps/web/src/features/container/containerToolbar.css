@@ -1,0 +1,36 @@
+.container-grid-toolbar {
+  container: docker-toolbar / inline-size;
+  --easyui-search-height: var(--ctl-height);
+}
+
+/* Wrap only when the full filter group and the minimum usable search/action row cannot fit. */
+.container-grid-toolbar-actions {
+  display: grid;
+  grid-template-columns: minmax(min(9rem, 55cqw), 1fr) max-content;
+  flex: 1 1 min-content;
+  min-width: 0;
+  align-items: center;
+  gap: 0.5rem;
+}
+
+.container-grid-toolbar .dt-create-button { font-size: 0.75rem; }
+.container-grid-toolbar .dt-create-icon { display: none; }
+
+@container docker-toolbar (width < 36rem) {
+  .container-grid-toolbar .dt-create-button {
+    width: var(--ctl-height);
+    padding-inline: 0;
+    border-radius: 50%;
+  }
+  .container-grid-toolbar .dt-create-icon { display: block; }
+  .container-grid-toolbar .dt-create-label { display: none; }
+}
+
+@container (width < 26rem) {
+  .image-pull-button {
+    width: var(--dt-control-height);
+    padding-inline: 0;
+    border-radius: 50%;
+  }
+  .image-pull-label { display: none; }
+}

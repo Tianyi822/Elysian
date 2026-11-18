@@ -107,7 +107,7 @@ export const IOSSearchBar: React.FC<IOSSearchBarProps> = ({
       <div
         className={cn(
           'relative flex w-full min-w-0 items-center rounded-full border px-3.5 transition-colors duration-200 motion-reduce:transition-none',
-          size === 'sm' ? 'h-8' : 'h-10',
+          size === 'sm' ? 'h-[var(--easyui-search-height,2rem)]' : 'h-[var(--easyui-search-height,2.5rem)]',
           isFocused
             ? 'bg-surface-raised border-focus'
             : 'bg-surface border-control-line hover:bg-surface-raised'

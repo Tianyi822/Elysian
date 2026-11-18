@@ -435,6 +435,20 @@ describe('拉取镜像', () => {
     return { user, table: await screen.findByRole('table', { name: '镜像列表' }) }
   }
 
+  it('镜像工具栏依次放置搜索、刷新和拉取，不显示列表总行数', async () => {
+    await openImagesView()
+    const table = screen.getByRole('region', { name: '镜像列表' })
+    const search = within(table).getByRole('searchbox', { name: '搜索镜像' })
+    const refresh = within(table).getByRole('button', { name: '刷新镜像' })
+    const pull = within(table).getByRole('button', { name: '拉取镜像' })
+    const toolbar = search.closest<HTMLElement>('.dt-toolbar-normal')!
+    expect(within(toolbar).getAllByRole('button')).toEqual([refresh, pull])
+    expect(search.closest('label')?.nextElementSibling).toContainElement(refresh)
+    expect(pull).toHaveAttribute('aria-label', '拉取镜像')
+    expect(screen.queryByText(/^\d+\s*行$/)).not.toBeInTheDocument()
+    expect(screen.queryByText(/共\s*\d+\s*个镜像/)).not.toBeInTheDocument()
+  })
+
   it('每次选择镜像页签及点击刷新按钮都重新读取列表', async () => {
     const listImages = vi.fn(async () => [])
     const user = userEvent.setup()
