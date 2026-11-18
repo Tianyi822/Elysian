@@ -1,7 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import { EventEmitter } from 'node:events'
 import { describe, expect, it, vi } from 'vitest'
-import type { ResourceSamplePoint } from '../../contracts/adapters'
+import type { ResourceSamplePoint } from '../../contracts/resourceMetrics'
 import { createEventsHandler, createResourceHistoryHandler, parseHistoryRangeParam } from './mockEventsPlugin'
 import { listMockHistory, resetMockHistory, seedMockHistoryIfEmpty } from '../mock/resourceMetrics'
 

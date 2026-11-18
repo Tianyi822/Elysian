@@ -2,7 +2,7 @@ import { afterEach, describe, expect, it } from 'bun:test'
 import {
   timeRangeGranularity,
   type ResourceSamplePoint,
-} from '../mock/resourceMetrics.ts'
+} from '../../contracts/resourceMetrics.ts'
 import { isDockerEnv } from './isDockerEnv.ts'
 import { METRICS_SQLITE_PATH, openMemoryMetricsStore, type MetricsStore } from './metricsStore.ts'
 

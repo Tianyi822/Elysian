@@ -1,7 +1,7 @@
 import { render, screen, fireEvent, waitFor } from '@testing-library/react'
 import { describe, expect, it } from 'vitest'
 import { ResourceStatCard, sampleResourceTrend } from './ResourceStatCard'
-import type { ResourceSamplePoint } from '../../adapters/mock/resourceMetrics'
+import type { ResourceSamplePoint } from '../../contracts/resourceMetrics'
 
 const base: ResourceSamplePoint = { ts: 1000, cpu: 10, memory: 20, networkIo: 0, networkRx: 0, networkTx: 0, diskIo: 0, diskRead: 0, diskWrite: 0 }
 

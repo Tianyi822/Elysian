@@ -1,6 +1,7 @@
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import type { EventName } from '@elysian/contracts'
 import type { SystemLoad } from '../../contracts/adapters.ts'
+import { TIME_RANGES, type ResourceSamplePoint, type TimeRange } from '../../contracts/resourceMetrics.ts'
 import { createMockDataset } from '../mock/dataset.ts'
 import {
   INITIAL_LOAD,
@@ -8,9 +9,6 @@ import {
   listMockHistory,
   nextLoadWalk,
   seedMockHistoryIfEmpty,
-  TIME_RANGES,
-  type ResourceSamplePoint,
-  type TimeRange,
 } from '../mock/resourceMetrics.ts'
 import type { HostSamplePrev } from '../hostMetrics/readHostSample.ts'
 import { SSE_HEARTBEAT, formatSseFrame } from './parse.ts'

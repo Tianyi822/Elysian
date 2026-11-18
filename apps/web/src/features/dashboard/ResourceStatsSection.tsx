@@ -1,4 +1,4 @@
-import { RESOURCE_METRIC_LABELS, type TimeRange, type ResourceMetricKey, type ResourceSamplePoint } from '../../adapters/mock/resourceMetrics'
+import { RESOURCE_METRIC_LABELS, type TimeRange, type ResourceMetricKey, type ResourceSamplePoint } from '../../contracts/resourceMetrics'
 import { ResourceStatCard } from './ResourceStatCard'
 
 export function ResourceStatsSection({ resources, refreshing, range }: {

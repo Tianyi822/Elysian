@@ -2,12 +2,12 @@ import { act, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMockGateway } from '../../adapters/mock/gateway'
+import { createResourceMetrics } from '../../adapters/mock/resourceMetrics'
 import {
-  createResourceMetrics,
   RESOURCE_METRIC_LABELS,
   RESOURCE_METRIC_UNITS,
-} from '../../adapters/mock/resourceMetrics'
-import type { ResourceMetricKey } from '../../adapters/mock/resourceMetrics'
+  type ResourceMetricKey,
+} from '../../contracts/resourceMetrics'
 import type { ElysianGateway } from '../../contracts/adapters'
 import { useDashboardStore } from '../../stores/dashboardStore'
 import { useEventStreamStore } from '../../stores/eventStreamStore'

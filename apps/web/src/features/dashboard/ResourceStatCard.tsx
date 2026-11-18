@@ -1,6 +1,6 @@
 import { useId, useMemo } from 'react'
 import { StatCard } from '../../components/easyui/StatCard'
-import { DEFAULT_TIME_RANGE, timeRangeDurationMs, RESOURCE_METRIC_LABELS, RESOURCE_METRIC_UNITS, type TimeRange, type ResourceMetricKey, type ResourceSamplePoint } from '../../adapters/mock/resourceMetrics'
+import { DEFAULT_TIME_RANGE, timeRangeDurationMs, RESOURCE_METRIC_LABELS, RESOURCE_METRIC_UNITS, type TimeRange, type ResourceMetricKey, type ResourceSamplePoint } from '../../contracts/resourceMetrics'
 import { formatResourceMetricValue } from './formatMetricDisplay'
 
 const COLORS: Record<ResourceMetricKey, string> = {

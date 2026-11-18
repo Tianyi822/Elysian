@@ -1,4 +1,5 @@
 import type { AgentMCPCatalogProjection, AgentCapabilityRevocationQuery, AgentCapabilityRevocationPage, AgentMCPServer, AgentMCPServerInput, AgentUpdateMCPServerInput, AgentSkill, AgentSkillFilePreview, AgentSkillImportInput, AgentSkillImportTask, RuntimePage } from '@elysian/contracts'
+import type { ResourceSamplePoint, TimeRange } from './resourceMetrics'
 import type {
   PanelCommit,
   PanelInfo,
@@ -502,25 +503,9 @@ export interface SessionAdapter {
   logoutOtherSessions(): Promise<void>
 }
 
-/** 资源历史查询的时间窗（与仪表盘 FilterBar 选项对齐）。 */
-export type ResourceHistoryTimeRange = '5m' | '30m' | '1h' | '5h' | '7d'
-
-/** 资源采样点：毫秒时间戳为横轴。 */
-export type ResourceSamplePoint = {
-  ts: number
-  cpu: number
-  memory: number
-  networkIo: number
-  networkRx: number
-  networkTx: number
-  diskIo: number
-  diskRead: number
-  diskWrite: number
-}
-
 /** 按时间窗读取资源指标历史；Docker 运行时由同源持久化提供，本地开发使用内存缓冲。 */
 export interface ResourceHistoryAdapter {
-  list(range: ResourceHistoryTimeRange): Promise<readonly ResourceSamplePoint[]>
+  list(range: TimeRange): Promise<readonly ResourceSamplePoint[]>
 }
 
 /** 主机运行负载（1/5/15 分钟均值）与资源采样事件使用同一形状。 */

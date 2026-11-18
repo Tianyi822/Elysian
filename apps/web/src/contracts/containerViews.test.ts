@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest'
-import { CONTAINERS } from './containersData'
+import { CONTAINERS } from '../adapters/mock/containersData'
 import { formatPort, imageUsageCount } from './containerViews'
 
 describe('容器视图纯函数', () => {

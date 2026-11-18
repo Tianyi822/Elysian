@@ -6,7 +6,7 @@ import {
   timeRangeGranularity,
   type ResourceSamplePoint,
   type TimeRange,
-} from '../mock/resourceMetrics.ts'
+} from '../../contracts/resourceMetrics.ts'
 
 /**
  * 指标库路径：部署机器 ~/.Elysian/data/ 下（容器内 ~/.Elysian 经符号链接到持久卷）。

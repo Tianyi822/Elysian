@@ -1,8 +1,8 @@
 import {
   TIME_RANGE_LABELS,
   TIME_RANGES,
-} from '../../adapters/mock/resourceMetrics'
-import type { TimeRange } from '../../adapters/mock/resourceMetrics'
+  type TimeRange,
+} from '../../contracts/resourceMetrics'
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import { useNarrowViewport } from '../../app/layout/narrowViewport'
 import { PillNavigation } from '../../components/easyui/PillNavigation'

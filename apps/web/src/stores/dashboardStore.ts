@@ -4,8 +4,9 @@ import { create } from 'zustand'
 import {
   DEFAULT_TIME_RANGE,
   timeRangeDurationMs,
-} from '../adapters/mock/resourceMetrics'
-import type { ResourceSamplePoint, TimeRange } from '../adapters/mock/resourceMetrics'
+  type ResourceSamplePoint,
+  type TimeRange,
+} from '../contracts/resourceMetrics'
 import type { ElysianGateway } from '../contracts/adapters'
 import { onStreamEvent } from './eventStreamStore'
 

@@ -1,8 +1,5 @@
-import type {
-  ResourceHistoryAdapter,
-  ResourceHistoryTimeRange,
-  ResourceSamplePoint,
-} from '../../contracts/adapters'
+import type { ResourceHistoryAdapter } from '../../contracts/adapters'
+import type { ResourceSamplePoint, TimeRange } from '../../contracts/resourceMetrics'
 
 function isSamplePoint(value: unknown): value is ResourceSamplePoint {
   if (!value || typeof value !== 'object') return false
@@ -38,7 +35,7 @@ export function createHttpResourceHistoryAdapter(
   baseUrl = '/api/resources/history',
 ): ResourceHistoryAdapter {
   return {
-    async list(range: ResourceHistoryTimeRange): Promise<readonly ResourceSamplePoint[]> {
+    async list(range: TimeRange): Promise<readonly ResourceSamplePoint[]> {
       const url = `${baseUrl}?range=${encodeURIComponent(range)}`
       let response: Response
       try {
