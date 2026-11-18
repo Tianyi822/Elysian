@@ -1,6 +1,7 @@
 import { DataTable, type DataTableColumn } from '../../components/DataTable'
 import { TableBatchActions } from '../../components/TableBatchActions'
 import { useEffect, useRef, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import { useMessageStore } from '../../stores/messageStore'
 import { randomId } from '../../utils/randomId'
 import type { AgentCapabilityRevocation, AgentSkill, AgentSkillImportInput, AgentSkillImportTask } from '@elysian/contracts'
@@ -35,8 +36,28 @@ function sourceText(source: AgentSkill['source']) { return source.kind === 'zip'
 
 export function SkillsSection({ active }: { active: boolean }) {
   const gateway = useGateway()
-  const state = useAgentExtensionsStore()
-  const importsActive = selectImportsActive(state)
+  const state = useAgentExtensionsStore(useShallow(state => ({
+    skills: state.skills,
+    skillsStatus: state.skillsStatus,
+    skillsErrorMessage: state.skillsErrorMessage,
+    skillsRefreshing: state.skillsRefreshing,
+    togglingSkillIds: state.togglingSkillIds,
+    deleteTarget: state.deleteTarget,
+    deletingSkill: state.deletingSkill,
+    skillDetailOpen: state.skillDetail !== null,
+    runningImports: state.imports.filter(task => !terminal(task)).length,
+    loadSkills: state.loadSkills,
+    loadSkillDetail: state.loadSkillDetail,
+    setSkillEnabled: state.setSkillEnabled,
+    setSkillEnabledResult: state.setSkillEnabledResult,
+    deleteSkillResult: state.deleteSkillResult,
+    requestDeleteSkill: state.requestDeleteSkill,
+    cancelDeleteSkill: state.cancelDeleteSkill,
+    confirmDeleteSkill: state.confirmDeleteSkill,
+    loadImports: state.loadImports,
+    pollImports: state.pollImports,
+  })))
+  const importsActive = useAgentExtensionsStore(selectImportsActive)
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<(string | number)[]>([])
   const [importTarget, setImportTarget] = useState<AgentSkill | 'new'>()
@@ -49,7 +70,7 @@ export function SkillsSection({ active }: { active: boolean }) {
   useFeedbackMessage(active && state.skillsStatus === 'ready' ? state.skillsErrorMessage : null)
   const startImport = (target: AgentSkill | 'new') => { if (!pendingImport && (target !== 'new' || importTarget !== 'new')) setImportTarget(target); setImportOpen(true) }
   const rows = state.skills.filter(skill => [skill.manifest.name, skill.manifest.description, sourceText(skill.source)].some(value => value.toLowerCase().includes(search.trim().toLowerCase())))
-  const running = state.imports.filter(task => !terminal(task)).length
+  const running = state.runningImports
   const columns: DataTableColumn<AgentSkill>[] = [
     { key: 'name', header: '名称与描述', primary: true, width: 'minmax(0,3.2fr)', accessor: skill => skill.manifest.name, cell: skill => <><p className="truncate font-mono text-xs font-medium" title={skill.manifest.name}>{skill.manifest.name}</p><p className="truncate text-xs text-fg-subtle" title={skill.manifest.description}>{skill.manifest.description}</p></> },
     { key: 'source', header: '来源', width: 'minmax(0,2.8fr)', accessor: skill => sourceText(skill.source), cell: skill => <><p className="text-xs">{sourceLabels[skill.source.kind]}</p><p className="truncate text-xs text-fg-subtle" title={sourceText(skill.source)}>{skill.source.kind === 'zip' ? '上传的技能包' : sourceText(skill.source)}</p></> },
@@ -76,7 +97,7 @@ export function SkillsSection({ active }: { active: boolean }) {
     </div>
     {importTarget !== undefined && <SkillImportDialog key={importTarget === 'new' ? 'new' : `${importTarget.id}@${importTarget.revision}`} target={importTarget === 'new' ? undefined : importTarget} open={active && importOpen} onClose={() => setImportOpen(false)} onPending={setPendingImport} onAccepted={() => { setImportOpen(false); setImportTarget(undefined); setPendingImport(false); setRecordsOpen(true) }} />}
     <ImportRecords open={active && recordsOpen} onClose={() => setRecordsOpen(false)} />
-    <SkillDetail open={active && state.skillDetail !== null} />
+    <SkillDetail open={active && state.skillDetailOpen} />
     <ExtensionDialog title="删除 Skill" open={active && state.deleteTarget !== null} onClose={state.cancelDeleteSkill} footer={<><Button variant="outline" type="button" className={CTL_SECONDARY} disabled={state.deletingSkill} onClick={state.cancelDeleteSkill}>取消</Button><Button variant="destructive" type="button" className={CTL_DANGER} disabled={state.deletingSkill} onClick={() => void state.confirmDeleteSkill(gateway)}>{state.deletingSkill ? '正在删除…' : '确认删除'}</Button></>}><p className="text-sm">删除「{state.deleteTarget?.name}」的全部修订登记？</p><p className="text-xs leading-5 text-fg-muted">此操作不可撤回，引用它的会话将无法继续读取该 Skill。磁盘上的共享包文件与导入记录保留；这不是停用或新增撤销记录。</p></ExtensionDialog>
   </div>
 }
@@ -178,7 +199,19 @@ function SkillImportDialog({ target, open, onClose, onPending, onAccepted }: { t
 
 function ImportRecords({ open, onClose }: { open: boolean; onClose(): void }) {
   const gateway = useGateway()
-  const state = useAgentExtensionsStore()
+  const state = useAgentExtensionsStore(useShallow(state => ({
+    imports: state.imports,
+    importsStatus: state.importsStatus,
+    importsErrorMessage: state.importsErrorMessage,
+    importsRefreshing: state.importsRefreshing,
+    importsLoadingMore: state.importsLoadingMore,
+    importsHasMore: state.importsHasMore,
+    importActingIds: state.importActingIds,
+    loadImports: state.loadImports,
+    loadMoreImports: state.loadMoreImports,
+    cancelSkillImport: state.cancelSkillImport,
+    deleteSkillImportRecord: state.deleteSkillImportRecord,
+  })))
   const [deleting, setDeleting] = useState<string>()
   return <ExtensionDialog title="Skill 导入记录" open={open} onClose={onClose} wide>
     <div className="flex justify-end"><RefreshButton label="刷新导入记录" busy={state.importsRefreshing} onPress={() => void state.loadImports(gateway)} /></div>
@@ -195,7 +228,12 @@ function ImportRecords({ open, onClose }: { open: boolean; onClose(): void }) {
 
 function SkillDetail({ open }: { open: boolean }) {
   const gateway = useGateway()
-  const state = useAgentExtensionsStore()
+  const state = useAgentExtensionsStore(useShallow(state => ({
+    skillDetail: state.skillDetail,
+    closeSkillDetail: state.closeSkillDetail,
+    loadSkillFile: state.loadSkillFile,
+    loadSkillDetail: state.loadSkillDetail,
+  })))
   const detail = state.skillDetail
   const skill = detail?.item
   const [revision, setRevision] = useState('')

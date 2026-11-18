@@ -1,6 +1,9 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import { act, fireEvent, screen, within, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, within, waitFor } from '@testing-library/react'
+import { Profiler, type ProfilerOnRenderCallback } from 'react'
+import * as Tooltip from '@radix-ui/react-tooltip'
 import userEvent from '@testing-library/user-event'
+import { GatewayProvider } from '../../adapters/GatewayProvider'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import { AgentHttpError } from '../../contracts/agentHttpError'
 import { renderApp } from '../../test/renderApp'
@@ -8,6 +11,8 @@ import { resetAgentExtensionsData } from '../../adapters/mock/agent/agentExtensi
 import { useAgentExtensionsStore } from '../../stores/agentExtensionsStore'
 import { useAgentRuntimeStore } from '../../stores/agentRuntimeStore'
 import { useSessionStore } from '../../stores/sessionStore'
+import { McpSection } from './McpSection'
+import { SkillsSection } from './SkillsSection'
 
 beforeEach(() => {
   vi.restoreAllMocks()
@@ -183,6 +188,32 @@ describe('设置中的 Skill 配置', () => {
 })
 
 const makeGateway = () => createMockGateway({ eventStream: 'memory', eventIntervalMs: 60_000 })
+
+describe('扩展页状态订阅', () => {
+  it.each([
+    { list: 'listSkills', load: 'loadSkills', section: 'skills', other: 'mcp' },
+    { list: 'listMcpServers', load: 'loadMcpServers', section: 'mcp', other: 'skills' },
+  ] as const)('$section 刷新失败保留列表，不重渲染 $other', async ({ list, load, section, other }) => {
+    const gateway = makeGateway()
+    const renders = { skills: vi.fn<ProfilerOnRenderCallback>(), mcp: vi.fn<ProfilerOnRenderCallback>() }
+    render(<Tooltip.Provider><GatewayProvider gateway={gateway}>
+      <Profiler id="skills" onRender={renders.skills}><SkillsSection active /></Profiler>
+      <Profiler id="mcp" onRender={renders.mcp}><McpSection active /></Profiler>
+    </GatewayProvider></Tooltip.Provider>)
+    expect(await screen.findByRole('table', { name: 'Skill 配置列表' })).toBeInTheDocument()
+    expect(await screen.findByRole('table', { name: 'MCP 服务列表' })).toBeInTheDocument()
+    renders.skills.mockClear()
+    renders.mcp.mockClear()
+
+    vi.spyOn(gateway.agentExtensions, list).mockRejectedValueOnce(new Error('服务暂不可用'))
+    await act(() => useAgentExtensionsStore.getState()[load](gateway, { silent: true }))
+
+    expect(screen.getByRole('alert')).toHaveTextContent('刷新失败：服务暂不可用；当前保留的是上次读取结果。')
+    expect(screen.getByRole('table', { name: section === 'skills' ? 'Skill 配置列表' : 'MCP 服务列表' })).toBeInTheDocument()
+    expect(renders[section]).toHaveBeenCalled()
+    expect(renders[other]).not.toHaveBeenCalled()
+  })
+})
 
 describe('配置边界与请求恢复', () => {
   it.each(['keep', 'replace', 'clear'] as const)('HTTP Token %s：表单不回显，保存不触发探测', async mode => {

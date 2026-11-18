@@ -3,6 +3,7 @@ import { TableBatchActions } from '../../components/TableBatchActions'
 import { McpProbeDialog } from './McpProbeDialog'
 import { EMPTY_MCP_ACCESS, McpRequestedAccess } from './McpRequestedAccess'
 import { useEffect, useRef, useState } from 'react'
+import { useShallow } from 'zustand/react/shallow'
 import type { AgentMCPCatalogProjection, AgentMCPServer, AgentMCPServerInput } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { useAgentExtensionsStore } from '../../stores/agentExtensionsStore'
@@ -29,7 +30,19 @@ const mcpCredentialLabel = (server: AgentMCPServer) => server.transport === 'std
 
 export function McpSection({ active }: { active: boolean }) {
   const gateway = useGateway()
-  const state = useAgentExtensionsStore()
+  const state = useAgentExtensionsStore(useShallow(state => ({
+    mcpServers: state.mcpServers,
+    mcpStatus: state.mcpStatus,
+    mcpErrorMessage: state.mcpErrorMessage,
+    mcpRefreshing: state.mcpRefreshing,
+    mcpSaving: state.mcpSaving,
+    probe: state.probe,
+    loadMcpServers: state.loadMcpServers,
+    setMcpActive: state.setMcpActive,
+    probeMcpServer: state.probeMcpServer,
+    closeProbe: state.closeProbe,
+    closeCatalog: state.closeCatalog,
+  })))
   const [search, setSearch] = useState('')
   const [selected, setSelected] = useState<(string | number)[]>([])
   const [editing, setEditing] = useState<AgentMCPServer | 'new'>()
@@ -72,8 +85,14 @@ export function McpSection({ active }: { active: boolean }) {
 
 function McpServerDialog({ server, visible, onClose }: { server?: AgentMCPServer; visible: boolean; onClose(): void }) {
   const gateway = useGateway()
-  const state = useAgentExtensionsStore()
-  const latest = state.mcpServers.find(item => item.id === server?.id)
+  const state = useAgentExtensionsStore(useShallow(state => ({
+    latest: state.mcpServers.find(item => item.id === server?.id),
+    mcpSaveError: state.mcpSaveError,
+    clearMcpSaveError: state.clearMcpSaveError,
+    createMcpServer: state.createMcpServer,
+    updateMcpServer: state.updateMcpServer,
+  })))
+  const latest = state.latest
   const alive = useRef(true)
   useEffect(() => { alive.current = true; return () => { alive.current = false } }, [])
   const { submitting, inFlightOnly } = useInFlightSubmit()
@@ -145,7 +164,10 @@ function McpServerDialog({ server, visible, onClose }: { server?: AgentMCPServer
 
 function McpDetailDialog({ initial, visible, onClose }: { initial: AgentMCPServer; visible: boolean; onClose(): void }) {
   const gateway = useGateway()
-  const state = useAgentExtensionsStore()
+  const state = useAgentExtensionsStore(useShallow(state => ({
+    catalog: state.catalog,
+    loadMcpCatalog: state.loadMcpCatalog,
+  })))
   const [server, setServer] = useState(initial)
   const [revision, setRevision] = useState(initial.revision.toString())
   const [selectedRevision, setSelectedRevision] = useState(initial.revision)
