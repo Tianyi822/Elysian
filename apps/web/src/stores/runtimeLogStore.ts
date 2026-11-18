@@ -11,8 +11,20 @@ type RuntimeLogStatus = 'idle' | 'loading' | 'ready' | 'error'
 /** 清空完成提示的演示标注：容器内清的是服务器上的真实文件，不再带标注。 */
 const MOCK_SUFFIX = isDockerRuntime() ? '' : '（演示数据，只清空内存中的演示日志）'
 
-let loadRequestId = 0
-let pendingLoad: { gateway: ElysianGateway; key: string; auth: number; snapshot: readonly RuntimeLogEntry[]; promise: Promise<void> } | undefined
+type ReadScope = { gateway: ElysianGateway; key: string; auth: number; snapshot: readonly RuntimeLogEntry[] }
+let loaded: ReadScope | undefined
+let pendingLoad: (ReadScope & { promise: Promise<void> }) | undefined
+let pendingOlder: ReadScope | undefined
+
+function matchesScope(previous: ReadScope | undefined, next: ReadScope): boolean {
+  return previous?.gateway === next.gateway && previous.key === next.key && previous.auth === next.auth && previous.snapshot === next.snapshot
+}
+
+function invalidateReads() {
+  pendingLoad = undefined
+  pendingOlder = undefined
+  return { refreshing: false, manualRefreshing: false, loadingOlder: false, olderError: undefined }
+}
 
 function currentQuery(search: string): LogListQuery {
   const query: LogListQuery = {}
@@ -70,28 +82,33 @@ export const useRuntimeLogStore = create<RuntimeLogState>((set, get) => ({
   clearTarget: null,
 
   load(gateway, options) {
-    const auth = captureAuthGeneration(), key = JSON.stringify(currentQuery(get().search))
-    if (pendingLoad?.gateway === gateway && pendingLoad.auth === auth && pendingLoad.key === key && pendingLoad.snapshot === get().entries) {
+    if (get().clearing) return Promise.resolve()
+    const query = currentQuery(get().search)
+    const scope: ReadScope = { gateway, key: JSON.stringify(query), auth: captureAuthGeneration(), snapshot: get().entries }
+    if (pendingLoad && matchesScope(pendingLoad, scope)) {
       if (!options?.silent) set({ manualRefreshing: true })
       return pendingLoad.promise
     }
-    const requestId = ++loadRequestId
     const first = get().status !== 'ready'
-    const operation = { gateway, key, auth, snapshot: get().entries, promise: Promise.resolve() }
+    const operation = { ...scope, promise: Promise.resolve() }
     pendingLoad = operation
-    const current = () => requestId === loadRequestId && auth === captureAuthGeneration()
-    set({ refreshing: true, manualRefreshing: !options?.silent, status: first ? 'loading' : 'ready', errorMessage: undefined, olderError: undefined })
+    pendingOlder = undefined
+    const current = () => pendingLoad === operation && scope.auth === captureAuthGeneration() && scope.key === JSON.stringify(currentQuery(get().search))
+    const acceptsResult = () => current() && scope.snapshot === get().entries
+    set({ refreshing: true, manualRefreshing: !options?.silent, status: first ? 'loading' : 'ready', errorMessage: undefined, loadingOlder: false, olderError: undefined })
     operation.promise = (async () => {
       try {
-        const report = await gateway.logs.runtimeLog(currentQuery(get().search))
-        if (!current() || operation.snapshot !== get().entries) return
+        const report = await gateway.logs.runtimeLog(query)
+        if (!acceptsResult()) return
+        loaded = { ...scope, snapshot: report.entries }
         set({ status: 'ready', entries: report.entries, total: report.total, truncated: report.truncated, skippedLines: report.skippedLines, skippedFiles: report.skippedFiles, storage: report.storage, })
       } catch (error) {
-        if (current()) set({ status: first ? 'error' : 'ready', errorMessage: error instanceof Error ? error.message : '日志读取失败' })
+        if (acceptsResult()) set({ status: first ? 'error' : 'ready', errorMessage: error instanceof Error ? error.message : '日志读取失败' })
       } finally {
         if (pendingLoad === operation) {
+          const ownsBusy = current()
           pendingLoad = undefined
-          if (current()) set({ refreshing: false, manualRefreshing: false, })
+          if (ownsBusy) set({ refreshing: false, manualRefreshing: false })
         }
       }
     })()
@@ -99,31 +116,40 @@ export const useRuntimeLogStore = create<RuntimeLogState>((set, get) => ({
   },
 
   async loadOlder(gateway) {
-    const { truncated, entries, loadingOlder, refreshing, search } = get()
-    if (!truncated || entries.length === 0 || loadingOlder || refreshing) return
+    const { truncated, entries, loadingOlder, refreshing, clearing, search } = get()
+    if (!truncated || entries.length === 0 || loadingOlder || refreshing || clearing) return
+    const query = currentQuery(search)
+    const scope: ReadScope = { gateway, key: JSON.stringify(query), auth: captureAuthGeneration(), snapshot: entries }
+    if (!matchesScope(loaded, scope)) return
     const last = entries[entries.length - 1]!
+    pendingOlder = scope
+    const current = () => pendingOlder === scope && scope.auth === captureAuthGeneration() && scope.key === JSON.stringify(currentQuery(get().search))
+    const acceptsResult = () => current() && scope.snapshot === get().entries
     set({ loadingOlder: true, olderError: undefined })
     try {
       const report = await gateway.logs.runtimeLog({
-        ...currentQuery(search),
+        ...query,
         before: last.at,
         beforeId: logNumericSortKey(last.id),
       })
-      set({
-        entries: [...get().entries, ...report.entries],
-        truncated: report.truncated,
-        loadingOlder: false,
-      })
+      if (!acceptsResult()) return
+      const snapshot = [...entries, ...report.entries]
+      loaded = { ...scope, snapshot }
+      set({ entries: snapshot, truncated: report.truncated })
     } catch (error) {
-      set({
-        olderError: error instanceof Error ? error.message : '更早的记录加载失败',
-        loadingOlder: false,
-      })
+      if (acceptsResult()) set({ olderError: error instanceof Error ? error.message : '更早的记录加载失败' })
+    } finally {
+      if (pendingOlder === scope) {
+        const ownsBusy = current()
+        pendingOlder = undefined
+        if (ownsBusy) set({ loadingOlder: false })
+      }
     }
   },
 
   setSearch(search) {
-    set({ search })
+    const changed = search.trim() !== get().search.trim()
+    set({ search, ...(changed ? invalidateReads() : {}) })
   },
 
   openClear(category) {
@@ -137,8 +163,8 @@ export const useRuntimeLogStore = create<RuntimeLogState>((set, get) => ({
   async clear(gateway) {
     const category = get().clearTarget
     if (!category || get().clearing) return
-    loadRequestId += 1; pendingLoad = undefined
-    set({ clearing: true })
+    loaded = undefined
+    set({ ...invalidateReads(), clearing: true })
     try {
       const report = await gateway.logs.clearLogs(category)
       useMessageStore.getState().notify({

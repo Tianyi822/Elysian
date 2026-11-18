@@ -107,9 +107,11 @@ describe('操作日志 store', () => {
   it('loadOlder 带末行游标并拼接；失败保留原条目', async () => {
     const page1 = SEED_OPERATION_LOGS.slice(0, 2)
     const page2 = SEED_OPERATION_LOGS.slice(2, 4)
+    let olderFailure = false
     const gateway = gatewayWith({
       operationLogs: async (query) => {
         if (query?.before) {
+          if (olderFailure) throw new Error('更早页不可用')
           return {
             entries: page2,
             total: 4,
@@ -133,13 +135,9 @@ describe('操作日志 store', () => {
     await useOperationLogStore.getState().loadOlder(gateway)
     expect(useOperationLogStore.getState().entries).toEqual([...page1, ...page2])
 
-    useOperationLogStore.setState({ entries: page1, truncated: true, olderError: undefined })
-    const failing = gatewayWith({
-      operationLogs: async () => {
-        throw new Error('更早页不可用')
-      },
-    })
-    await useOperationLogStore.getState().loadOlder(failing)
+    await useOperationLogStore.getState().load(gateway)
+    olderFailure = true
+    await useOperationLogStore.getState().loadOlder(gateway)
     expect(useOperationLogStore.getState().entries).toEqual(page1)
     expect(useOperationLogStore.getState().olderError).toBeTruthy()
     expect(logNumericSortKey(page1[page1.length - 1]!.id)).toBe(11)

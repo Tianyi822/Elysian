@@ -24,8 +24,20 @@ export type OperationLogResultFilter = 'all' | OperationLogOutcome
 /** 清空完成提示的演示标注：容器内清的是服务器上的真实文件，不再带标注。 */
 const MOCK_SUFFIX = isDockerRuntime() ? '' : '（演示数据，只清空内存中的演示日志）'
 
-let loadRequestId = 0
-let pendingLoad: { gateway: ElysianGateway; key: string; auth: number; snapshot: readonly OperationLogEntry[]; promise: Promise<void> } | undefined
+type ReadScope = { gateway: ElysianGateway; key: string; auth: number; snapshot: readonly OperationLogEntry[] }
+let loaded: ReadScope | undefined
+let pendingLoad: (ReadScope & { promise: Promise<void> }) | undefined
+let pendingOlder: ReadScope | undefined
+
+function matchesScope(previous: ReadScope | undefined, next: ReadScope): boolean {
+  return previous?.gateway === next.gateway && previous.key === next.key && previous.auth === next.auth && previous.snapshot === next.snapshot
+}
+
+function invalidateReads() {
+  pendingLoad = undefined
+  pendingOlder = undefined
+  return { refreshing: false, loadingOlder: false, olderError: undefined }
+}
 
 function currentQuery(state: {
   categoryFilter: OperationLogCategoryFilter
@@ -96,29 +108,33 @@ export const useOperationLogStore = create<OperationLogState>((set, get) => ({
   clearing: false,
   clearTarget: null,
 
-  load(gateway, _options) {
-    const auth = captureAuthGeneration(), key = JSON.stringify(currentQuery(get()))
-    if (pendingLoad?.gateway === gateway && pendingLoad.auth === auth && pendingLoad.key === key && pendingLoad.snapshot === get().entries) {
-
+  load(gateway) {
+    if (get().clearing) return Promise.resolve()
+    const query = currentQuery(get())
+    const scope: ReadScope = { gateway, key: JSON.stringify(query), auth: captureAuthGeneration(), snapshot: get().entries }
+    if (pendingLoad && matchesScope(pendingLoad, scope)) {
       return pendingLoad.promise
     }
-    const requestId = ++loadRequestId
     const first = get().status !== 'ready'
-    const operation = { gateway, key, auth, snapshot: get().entries, promise: Promise.resolve() }
+    const operation = { ...scope, promise: Promise.resolve() }
     pendingLoad = operation
-    const current = () => requestId === loadRequestId && auth === captureAuthGeneration()
-    set({ refreshing: true,  status: first ? 'loading' : 'ready', errorMessage: undefined, olderError: undefined })
+    pendingOlder = undefined
+    const current = () => pendingLoad === operation && scope.auth === captureAuthGeneration() && scope.key === JSON.stringify(currentQuery(get()))
+    const acceptsResult = () => current() && scope.snapshot === get().entries
+    set({ refreshing: true, status: first ? 'loading' : 'ready', errorMessage: undefined, loadingOlder: false, olderError: undefined })
     operation.promise = (async () => {
       try {
-        const report = await gateway.logs.operationLogs(currentQuery(get()))
-        if (!current() || operation.snapshot !== get().entries) return
+        const report = await gateway.logs.operationLogs(query)
+        if (!acceptsResult()) return
+        loaded = { ...scope, snapshot: report.entries }
         set({ status: 'ready', entries: report.entries, total: report.total, truncated: report.truncated, skippedLines: report.skippedLines, skippedFiles: report.skippedFiles, storage: report.storage, })
       } catch (error) {
-        if (current()) set({ status: first ? 'error' : 'ready', errorMessage: error instanceof Error ? error.message : '日志读取失败' })
+        if (acceptsResult()) set({ status: first ? 'error' : 'ready', errorMessage: error instanceof Error ? error.message : '日志读取失败' })
       } finally {
         if (pendingLoad === operation) {
+          const ownsBusy = current()
           pendingLoad = undefined
-          if (current()) set({ refreshing: false,  })
+          if (ownsBusy) set({ refreshing: false })
         }
       }
     })()
@@ -126,39 +142,47 @@ export const useOperationLogStore = create<OperationLogState>((set, get) => ({
   },
 
   async loadOlder(gateway) {
-    const { truncated, entries, loadingOlder, refreshing } = get()
-    if (!truncated || entries.length === 0 || loadingOlder || refreshing) return
+    const { truncated, entries, loadingOlder, refreshing, clearing } = get()
+    if (!truncated || entries.length === 0 || loadingOlder || refreshing || clearing) return
+    const query = currentQuery(get())
+    const scope: ReadScope = { gateway, key: JSON.stringify(query), auth: captureAuthGeneration(), snapshot: entries }
+    if (!matchesScope(loaded, scope)) return
     const last = entries[entries.length - 1]!
+    pendingOlder = scope
+    const current = () => pendingOlder === scope && scope.auth === captureAuthGeneration() && scope.key === JSON.stringify(currentQuery(get()))
+    const acceptsResult = () => current() && scope.snapshot === get().entries
     set({ loadingOlder: true, olderError: undefined })
     try {
       const report = await gateway.logs.operationLogs({
-        ...currentQuery(get()),
+        ...query,
         before: last.at,
         beforeId: logNumericSortKey(last.id),
       })
-      set({
-        entries: [...get().entries, ...report.entries],
-        truncated: report.truncated,
-        loadingOlder: false,
-      })
+      if (!acceptsResult()) return
+      const snapshot = [...entries, ...report.entries]
+      loaded = { ...scope, snapshot }
+      set({ entries: snapshot, truncated: report.truncated })
     } catch (error) {
-      set({
-        olderError: error instanceof Error ? error.message : '更早的记录加载失败',
-        loadingOlder: false,
-      })
+      if (acceptsResult()) set({ olderError: error instanceof Error ? error.message : '更早的记录加载失败' })
+    } finally {
+      if (pendingOlder === scope) {
+        const ownsBusy = current()
+        pendingOlder = undefined
+        if (ownsBusy) set({ loadingOlder: false })
+      }
     }
   },
 
   setCategoryFilter(categoryFilter) {
-    set({ categoryFilter })
+    set({ categoryFilter, ...(categoryFilter !== get().categoryFilter ? invalidateReads() : {}) })
   },
 
   setResultFilter(resultFilter) {
-    set({ resultFilter })
+    set({ resultFilter, ...(resultFilter !== get().resultFilter ? invalidateReads() : {}) })
   },
 
   setSearch(search) {
-    set({ search })
+    set({ search, ...(search.trim() !== get().search.trim() ? invalidateReads() : {}) })
   },
 
   openClear(category) {
@@ -172,8 +196,8 @@ export const useOperationLogStore = create<OperationLogState>((set, get) => ({
   async clear(gateway) {
     const category = get().clearTarget
     if (!category || get().clearing) return
-    loadRequestId += 1; pendingLoad = undefined
-    set({ clearing: true })
+    loaded = undefined
+    set({ ...invalidateReads(), clearing: true })
     try {
       const report = await gateway.logs.clearLogs(category)
       useMessageStore.getState().notify({
