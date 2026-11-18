@@ -2,7 +2,10 @@ import { create } from 'zustand'
 import type { ElysianGateway, SessionMode } from '../contracts/adapters'
 import { advanceAuthGeneration, setUnauthorizedListener } from '../adapters/http/unauthorized'
 import { useAgentChatStore } from './agentChatStore'
+import { useLoginLogStore } from './loginLogStore'
+import { useOperationLogStore } from './operationLogStore'
 import { usePanelStore } from './panelStore'
+import { useRuntimeLogStore } from './runtimeLogStore'
 import { useSshStore } from './sshStore'
 import { useTerminalsStore } from './terminalsStore'
 import { useContainersStore } from './containersStore'
@@ -10,6 +13,13 @@ import { useContainersStore } from './containersStore'
 function clearTerminalDisplay() {
   useTerminalsStore.getState().resetLocal()
   useContainersStore.getState().clearTerminalDisplay()
+}
+
+function resetLogSession(mode: SessionMode | undefined) {
+  if (mode === 'demo') return
+  useRuntimeLogStore.getState().resetSession()
+  useOperationLogStore.getState().resetSession()
+  useLoginLogStore.getState().resetSession()
 }
 
 /**
@@ -93,9 +103,12 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
         if (generation !== sessionGeneration) return
         const status = await gateway.session.status(returnTo)
         if (generation !== sessionGeneration) return
-        if (get().phase !== (status.authenticated ? 'authed' : 'anonymous')) advanceAuthGeneration()
+        const phase = status.authenticated ? 'authed' : 'anonymous'
+        const previous = get()
+        if (previous.phase !== phase) advanceAuthGeneration()
+        if (phase === 'anonymous' || previous.phase !== 'authed' || previous.mode !== status.mode) resetLogSession(status.mode)
         if (!status.authenticated) { useAgentChatStore.getState().clearDisplay(); usePanelStore.getState().clearDisplay(); useSshStore.getState().clearDisplay(); clearTerminalDisplay() }
-        set({ phase: status.authenticated ? 'authed' : 'anonymous', mode: status.mode,
+        set({ phase, mode: status.mode,
           devAccount: status.devAccount, username: status.authenticated ? (status.username ?? 'admin') : undefined,
           returnTo: status.returnTo, returnToFor: returnTo })
       } catch {
@@ -125,6 +138,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
         useAgentChatStore.getState().clearDisplay()
         usePanelStore.getState().clearDisplay(); useSshStore.getState().clearDisplay()
         clearTerminalDisplay()
+        resetLogSession(current.mode)
         set({ phase: 'anonymous', username: undefined, notice: get().notice ?? '登录状态已失效，请重新登录' })
       } catch {
         // 网络故障保留页面；真实 API 仍由服务端鉴权。
@@ -147,6 +161,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
     useAgentChatStore.getState().clearDisplay()
     usePanelStore.getState().clearDisplay(); useSshStore.getState().clearDisplay()
     clearTerminalDisplay()
+    resetLogSession(get().mode)
     // 登录成功即消费一次性提示：它只在「密码刚改过、还没重新登录」的窗口内成立。
     set({ phase: 'authed', username, notice: null })
   },
@@ -158,6 +173,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
     useAgentChatStore.getState().clearDisplay()
     usePanelStore.getState().clearDisplay(); useSshStore.getState().clearDisplay()
     clearTerminalDisplay()
+    resetLogSession(get().mode)
     // 先关闭页面闸门，使仍在挂载的聊天组件没有机会重新读取公开内容。
     set({ phase: 'anonymous', username: undefined })
     try {
@@ -169,6 +185,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
         useAgentChatStore.getState().clearDisplay()
         usePanelStore.getState().clearDisplay(); useSshStore.getState().clearDisplay()
         clearTerminalDisplay()
+        resetLogSession(get().mode)
         set({ phase: 'anonymous', username: undefined })
       }
     }
@@ -181,6 +198,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
     useAgentChatStore.getState().clearDisplay()
     usePanelStore.getState().clearDisplay(); useSshStore.getState().clearDisplay()
     clearTerminalDisplay()
+    resetLogSession(get().mode)
     set({ phase: 'anonymous', username: undefined })
   },
 }))

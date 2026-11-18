@@ -38,6 +38,7 @@ type LoginLogState = {
   loadOlder: (gateway: ElysianGateway) => Promise<void>
   setStatusFilter: (statusFilter: LoginLogStatusFilter) => void
   setSearch: (search: string) => void
+  resetSession: () => void
 }
 
 export const useLoginLogStore = create<LoginLogState>((set, get) => {
@@ -47,7 +48,7 @@ export const useLoginLogStore = create<LoginLogState>((set, get) => {
     read: (gateway, query) => gateway.logs.loginLogs(query),
     timeOf: entry => entry.time,
   })
-  return {
+  const initialDisplay = {
     status: 'idle',
     errorMessage: undefined,
     entries: [],
@@ -55,14 +56,22 @@ export const useLoginLogStore = create<LoginLogState>((set, get) => {
     truncated: false,
     skippedLines: 0,
     skippedFiles: 0,
-    statusFilter: 'all',
     search: '',
     refreshing: false,
     loadingOlder: false,
     olderError: undefined,
+  } satisfies Partial<LoginLogState>
 
+  return {
+    ...initialDisplay,
+    statusFilter: 'all',
     load: reader.load,
     loadOlder: reader.loadOlder,
+
+    resetSession() {
+      reader.invalidateReads({ dropSnapshot: true })
+      set(initialDisplay)
+    },
 
     setStatusFilter(statusFilter) {
       set({ statusFilter, ...(statusFilter !== get().statusFilter ? reader.invalidateReads() : {}) })

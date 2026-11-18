@@ -47,9 +47,11 @@ type RuntimeLogState = {
   openClear: (category: PlatformLogCategory) => void
   closeClear: () => void
   clear: (gateway: ElysianGateway) => Promise<void>
+  resetSession: () => void
 }
 
 export const useRuntimeLogStore = create<RuntimeLogState>((set, get) => {
+  let activeClear: symbol | undefined
   const reader = createLogReader<RuntimeLogEntry, LogListQuery, RuntimeLogState>({
     get, set,
     queryFor: state => currentQuery(state.search),
@@ -59,7 +61,7 @@ export const useRuntimeLogStore = create<RuntimeLogState>((set, get) => {
     trackStorage: true,
     trackManualRefresh: true,
   })
-  return {
+  const initialDisplay = {
     status: 'idle',
     errorMessage: undefined,
     entries: [],
@@ -75,9 +77,18 @@ export const useRuntimeLogStore = create<RuntimeLogState>((set, get) => {
     olderError: undefined,
     clearing: false,
     clearTarget: null,
+  } satisfies Partial<RuntimeLogState>
 
+  return {
+    ...initialDisplay,
     load: reader.load,
     loadOlder: reader.loadOlder,
+
+    resetSession() {
+      activeClear = undefined
+      reader.invalidateReads({ dropSnapshot: true })
+      set(initialDisplay)
+    },
 
     setSearch(search) {
       const changed = search.trim() !== get().search.trim()
@@ -95,17 +106,23 @@ export const useRuntimeLogStore = create<RuntimeLogState>((set, get) => {
     async clear(gateway) {
       const category = get().clearTarget
       if (!category || get().clearing) return
+      const operation = Symbol()
+      activeClear = operation
       set({ ...reader.invalidateReads({ dropSnapshot: true }), clearing: true })
       try {
         const report = await gateway.logs.clearLogs(category)
+        if (activeClear !== operation) return
         useMessageStore.getState().notify({
           tone: 'success',
           message: `${PLATFORM_LOG_CATEGORY_LABELS[report.category]}已清空：删除 ${report.rowCount} 条记录，释放 ${formatLogBytes(report.totalBytes)}${MOCK_SUFFIX}`,
         })
+        activeClear = undefined
         set({ clearTarget: null, clearing: false })
         // 清空后重新读取：正常会读到一条「已清空」留痕（自指留痕），不是空表。
         await get().load(gateway, { silent: true })
       } catch (error) {
+        if (activeClear !== operation) return
+        activeClear = undefined
         // 失败保留弹窗（用户可重试）：只解除忙碌态，不动 clearTarget。
         useMessageStore.getState().notify({
           tone: 'danger',

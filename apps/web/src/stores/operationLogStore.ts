@@ -73,9 +73,11 @@ type OperationLogState = {
   openClear: (category: PlatformLogCategory) => void
   closeClear: () => void
   clear: (gateway: ElysianGateway) => Promise<void>
+  resetSession: () => void
 }
 
 export const useOperationLogStore = create<OperationLogState>((set, get) => {
+  let activeClear: symbol | undefined
   const reader = createLogReader<OperationLogEntry, OperationLogListQuery, OperationLogState>({
     get, set,
     queryFor: currentQuery,
@@ -84,7 +86,7 @@ export const useOperationLogStore = create<OperationLogState>((set, get) => {
     blocked: state => state.clearing,
     trackStorage: true,
   })
-  return {
+  const initialDisplay = {
     status: 'idle',
     errorMessage: undefined,
     entries: [],
@@ -93,17 +95,26 @@ export const useOperationLogStore = create<OperationLogState>((set, get) => {
     skippedLines: 0,
     skippedFiles: 0,
     storage: undefined,
-    categoryFilter: 'all',
-    resultFilter: 'all',
     search: '',
     refreshing: false,
     loadingOlder: false,
     olderError: undefined,
     clearing: false,
     clearTarget: null,
+  } satisfies Partial<OperationLogState>
 
+  return {
+    ...initialDisplay,
+    categoryFilter: 'all',
+    resultFilter: 'all',
     load: reader.load,
     loadOlder: reader.loadOlder,
+
+    resetSession() {
+      activeClear = undefined
+      reader.invalidateReads({ dropSnapshot: true })
+      set(initialDisplay)
+    },
 
     setCategoryFilter(categoryFilter) {
       set({ categoryFilter, ...(categoryFilter !== get().categoryFilter ? reader.invalidateReads() : {}) })
@@ -128,16 +139,22 @@ export const useOperationLogStore = create<OperationLogState>((set, get) => {
     async clear(gateway) {
       const category = get().clearTarget
       if (!category || get().clearing) return
+      const operation = Symbol()
+      activeClear = operation
       set({ ...reader.invalidateReads({ dropSnapshot: true }), clearing: true })
       try {
         const report = await gateway.logs.clearLogs(category)
+        if (activeClear !== operation) return
         useMessageStore.getState().notify({
           tone: 'success',
           message: `${PLATFORM_LOG_CATEGORY_LABELS[report.category]}已清空：删除 ${report.rowCount} 条记录，释放 ${formatLogBytes(report.totalBytes)}${MOCK_SUFFIX}`,
         })
+        activeClear = undefined
         set({ clearTarget: null, clearing: false })
         await get().load(gateway, { silent: true })
       } catch (error) {
+        if (activeClear !== operation) return
+        activeClear = undefined
         useMessageStore.getState().notify({
           tone: 'danger',
           message: `清空失败：${error instanceof Error ? error.message : '未知错误'}`,

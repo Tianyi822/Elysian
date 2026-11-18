@@ -6,12 +6,14 @@ import type { ElysianGateway } from '../contracts/adapters'
 import { useLoginLogStore } from './loginLogStore'
 import { useOperationLogStore } from './operationLogStore'
 import { useRuntimeLogStore } from './runtimeLogStore'
+import { useSessionStore } from './sessionStore'
 
 type LogReads = {
   entries: readonly { id: string }[]
   refreshing: boolean
   loadingOlder: boolean
   olderError: string | undefined
+  errorMessage: string | undefined
   load(gateway: ElysianGateway): Promise<void>
   loadOlder(gateway: ElysianGateway): Promise<void>
   setSearch(search: string): void
@@ -119,6 +121,29 @@ function logReadSuite<R extends { entries: readonly { id: string }[]; truncated:
       advanceAuthGeneration()
       await state().loadOlder(gateway)
       expect(read).toHaveBeenCalledTimes(3)
+    })
+
+    it.each(['首载成功', '分页失败'] as const)('旧会话迟到的%s不改变新会话首载', async (outcome) => {
+      const { gateway, page, read } = await fixture()
+      const session = useSessionStore.getState()
+      useSessionStore.setState({ phase: 'authed', mode: 'real' })
+      if (outcome === '分页失败') await state().load(gateway)
+      const old = deferred<R>(), next = deferred<R>()
+      read.mockReturnValueOnce(old.promise).mockReturnValueOnce(next.promise)
+      const loadingOld = outcome === '首载成功' ? state().load(gateway) : state().loadOlder(gateway)
+      expect(state().refreshing || state().loadingOlder).toBe(true)
+
+      session.expire()
+      await session.login(gateway, 'admin', 'example')
+      const loadingNew = state().load(gateway)
+      if (outcome === '首载成功') old.resolve(page(1))
+      else old.reject(new Error('旧会话分页失败'))
+      await loadingOld
+
+      expect(state()).toMatchObject({ entries: [], refreshing: true, loadingOlder: false, olderError: undefined, errorMessage: undefined })
+      next.resolve(page(2))
+      await loadingNew
+      expect(state()).toMatchObject({ entries: page(2).entries, refreshing: false })
     })
 
     if (clear) it('清空开始即废弃在途分页，成功后读取新的首屏', async () => {
