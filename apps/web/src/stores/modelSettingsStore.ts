@@ -7,6 +7,7 @@ import { isDockerRuntime } from '../utils/isDockerRuntime'
 import { demoNoticeSuffix } from '../utils/demoNotice'
 import type { ElysianGateway } from '../contracts/adapters'
 import { useMessageStore } from './messageStore'
+import { createRequestGuard } from './requestGuard'
 import { tableBatchFailure as batchFailure, type TableBatchOutcome as BatchMutationResult } from '../utils/tableBatch'
 
 /** 模型配置的修订冲突保留表单草稿，由用户确认最新修订后提交。 */
@@ -58,7 +59,7 @@ const initial = { status: 'idle' as const, models: [], services: [], reloading: 
 
 export const useModelSettingsStore = create<ModelSettingsState>((set, get) => {
   let sequence = 0
-  let writeEpoch = 0
+  const writes = createRequestGuard()
   let pendingRead: { gateway: ElysianGateway; auth: number; models: readonly AgentModelProfile[]; services: readonly AgentModelService[]; promise: Promise<void> } | undefined
   const read = (gateway: ElysianGateway, refresh: boolean): Promise<void> => {
     const auth = captureAuthGeneration()
@@ -99,8 +100,7 @@ export const useModelSettingsStore = create<ModelSettingsState>((set, get) => {
         models: current.models.map(model => ({ id: model.id, model: model.model, contextTokens: model.contextTokens,
           outputTokens: model.outputTokens, capabilities: model.capabilities, enabled: ids.has(model.id) ? enabled : model.enabled })),
       }
-      const generation = writeEpoch, auth = captureAuthGeneration()
-      const isCurrent = () => generation === writeEpoch && auth === captureAuthGeneration()
+      const isCurrent = writes.capture()
       sequence += 1; pendingRead = undefined
       set({ saving: true, reloading: false, errorMessage: undefined })
       try {
@@ -129,47 +129,55 @@ export const useModelSettingsStore = create<ModelSettingsState>((set, get) => {
       }
       if ((input.provider === 'deepseek' || input.provider === 'zhipu') && input.active && !(input.credential === undefined ? current?.hasCredential : input.credential.trim())) { set({ errorMessage: input.provider === 'deepseek' ? '启用 DeepSeek 服务前请配置 API Key' : '启用智谱服务前请配置 API Key' }); return false }
       if (get().saving) return false
+      const isCurrent = writes.capture()
       sequence += 1; pendingRead = undefined
       set({ saving: true, errorMessage: undefined, reloading: false })
       try {
         const service = editing
           ? await gateway.modelSettings.updateModelService(editing.id, { ...input, expectedRevision: editing.revision })
           : await gateway.modelSettings.createModelService(input)
+        if (!isCurrent()) return false
         set(state => { const services = [...state.services.filter(item => item.id !== service.id), service]; return { services, models: services.flatMap(item => item.models) } })
         notify(`模型服务「${service.name}」已${editing ? '更新' : '创建'}${demoNoticeSuffix(isDockerRuntime())}`)
         await read(gateway, false)
-        return true
+        return isCurrent()
       } catch (error) {
+        if (!isCurrent()) return false
         const message = isRevisionConflict(error) ? '模型服务已被其他修改更新，已读取最新修订，表单草稿已保留' : messageOf(error)
         if (isRevisionConflict(error)) await read(gateway, false)
+        if (!isCurrent()) return false
         set({ errorMessage: message })
         notify(message, 'danger')
         return false
-      } finally { set({ saving: false }) }
+      } finally { if (isCurrent()) set({ saving: false }) }
     },
     async saveModel(gateway, input, editing) {
       const current = get().models.find((item) => item.id === editing?.id)
       const invalid = validateModelInput(input, current?.hasCredential)
       if (invalid) { set({ errorMessage: invalid }); return false }
       if (get().saving) return false
+      const isCurrent = writes.capture()
       sequence += 1; pendingRead = undefined
       set({ saving: true, errorMessage: undefined, reloading: false })
       try {
         const profile = editing
           ? await gateway.modelSettings.updateModelProfile(editing.id, { ...input, expectedRevision: editing.revision })
           : await gateway.modelSettings.createModelProfile(input)
+        if (!isCurrent()) return false
         set((state) => ({ models: [...state.models.filter((item) => item.id !== profile.id), profile] }))
         notify(`模型配置「${profile.model}」已${editing ? '更新' : '创建'}（修订 ${profile.revision}）${demoNoticeSuffix(isDockerRuntime())}`)
         await read(gateway, false)
-        return true
+        return isCurrent()
       } catch (error) {
+        if (!isCurrent()) return false
         const message = isRevisionConflict(error) ? '模型配置已被其他修改更新，已重新读取最新修订，请基于最新内容重试' : messageOf(error)
         if (isRevisionConflict(error)) await read(gateway, false)
+        if (!isCurrent()) return false
         set({ errorMessage: message })
         notify(message, 'danger')
         return false
-      } finally { set({ saving: false }) }
+      } finally { if (isCurrent()) set({ saving: false }) }
     },
-    reset() { sequence += 1; writeEpoch += 1; pendingRead = undefined; set(initial) },
+    reset() { sequence += 1; writes.invalidate(); pendingRead = undefined; set(initial) },
   }
 })

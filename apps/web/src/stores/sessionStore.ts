@@ -11,6 +11,7 @@ import { useSshStore } from './sshStore'
 import { useTerminalsStore } from './terminalsStore'
 import { useContainersStore } from './containersStore'
 import { useDatabaseStore } from './databaseStore'
+import { useModelSettingsStore } from './modelSettingsStore'
 
 function clearPrivateDisplays() {
   useAgentChatStore.getState().clearDisplay()
@@ -19,6 +20,7 @@ function clearPrivateDisplays() {
   useTerminalsStore.getState().resetLocal()
   useContainersStore.getState().clearTerminalDisplay()
   useDatabaseStore.getState().clearDisplay()
+  useModelSettingsStore.getState().reset()
 }
 
 function resetLogSession(mode: SessionMode | undefined) {

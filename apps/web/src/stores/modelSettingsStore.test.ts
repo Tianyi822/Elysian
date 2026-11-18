@@ -4,6 +4,7 @@ import type {
   AgentModelProfileInput,
 } from '@elysian/contracts'
 import type { ElysianGateway } from '../contracts/adapters'
+import { createMockGateway } from '../adapters/mock/gateway'
 import { ModelSettingsMockAdapter } from '../adapters/mock/agent/modelSettingsMockAdapter'
 import { AgentHttpError } from '../contracts/agentHttpError'
 import {
@@ -13,6 +14,7 @@ import {
 } from '../adapters/mock/agent/modelSettingsData'
 import { useMessageStore } from './messageStore'
 import { useModelSettingsStore } from './modelSettingsStore'
+import { useSessionStore } from './sessionStore'
 
 /*
  * store 层测试跑在确定性 mock 适配器上：验证六态装载、前端上限拦截、
@@ -32,7 +34,7 @@ const MODEL_INPUT: AgentModelProfileInput = {
   active: true, credential: 'store-test-key',
 }
 
-beforeEach(async () => { resetModelSettingsData(); useModelSettingsStore.getState().reset(); useMessageStore.getState().clear() })
+beforeEach(async () => { resetModelSettingsData(); useModelSettingsStore.getState().reset(); await useMessageStore.getState().clear() })
 describe('模型设置保存与冲突回读', () => {
   it('新建模型（提交凭据）后列表回显 hasCredential=true 且凭据不回显', async () => {
     const { gateway } = makeGateway()
@@ -64,6 +66,35 @@ describe('模型设置保存与冲突回读', () => {
     })
     expect(await first).toBe(true)
     expect(useModelSettingsStore.getState().saving).toBe(false)
+  })
+
+  it('旧模型保存失败不覆盖重新登录后在途的保存', async () => {
+    const { adapter } = makeGateway()
+    const gateway = { ...createMockGateway({ eventStream: 'memory' }), modelSettings: adapter }
+    useSessionStore.setState({ phase: 'authed', mode: 'real' })
+    const session = useSessionStore.getState()
+    const store = useModelSettingsStore.getState()
+    let rejectOld!: (error: Error) => void
+    let rejectNew!: (error: Error) => void
+    const create = vi.spyOn(adapter, 'createModelProfile')
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectOld = reject }))
+      .mockImplementationOnce(() => new Promise((_resolve, reject) => { rejectNew = reject }))
+    const first = store.saveModel(gateway, MODEL_INPUT)
+    await session.logout(gateway)
+    await session.login(gateway, 'admin', 'password')
+    const second = store.saveModel(gateway, MODEL_INPUT)
+
+    rejectOld(new Error('旧模型保存失败'))
+    expect(await first).toBe(false)
+    const current = useModelSettingsStore.getState()
+    const notifications = useMessageStore.getState().messages.slice()
+    rejectNew?.(new Error('当前模型保存失败'))
+    await second
+
+    expect(create).toHaveBeenCalledTimes(2)
+    expect(current).toMatchObject({ saving: true, errorMessage: undefined })
+    expect(notifications).toEqual([])
+    expect(useModelSettingsStore.getState()).toMatchObject({ saving: false, errorMessage: '当前模型保存失败' })
   })
 
   it('模型 CAS 冲突同样回读合并（revision-conflict 家族）', async () => {
@@ -179,6 +210,28 @@ describe('模型表格批量启停', () => {
 
 describe('服务级原子保存', () => {
   const serviceInput = { name: '共用服务', provider: 'openai-compatible' as const, apiFormat: 'responses' as const, baseUrl: MODEL_INPUT.baseUrl, active: true, credential: 'fake-shared-key', models: ['a', 'b'].map(model => ({ name: model, model, contextTokens: 32000, outputTokens: 4096, capabilities: MODEL_INPUT.capabilities, enabled: true })) }
+  it('重新登录清空旧模型目录，迟到的保存回执不写回或刷新', async () => {
+    const { adapter } = makeGateway()
+    const gateway = { ...createMockGateway({ eventStream: 'memory' }), modelSettings: adapter }
+    useSessionStore.setState({ phase: 'authed', mode: 'real' })
+    const session = useSessionStore.getState()
+    const store = useModelSettingsStore.getState()
+    const list = vi.spyOn(adapter, 'listModelServices')
+    await store.load(gateway)
+    const prior = useModelSettingsStore.getState().services[0]!
+    let finish!: (value: typeof prior) => void
+    vi.spyOn(adapter, 'createModelService').mockImplementationOnce(() => new Promise(resolve => { finish = resolve }))
+    const save = store.saveService(gateway, serviceInput)
+    await session.logout(gateway)
+    await session.login(gateway, 'admin', 'password')
+    list.mockClear()
+    finish({ ...prior, name: serviceInput.name })
+
+    expect(await save).toBe(false)
+    expect(list).not.toHaveBeenCalled()
+    expect(useModelSettingsStore.getState()).toMatchObject({ status: 'idle', models: [], services: [], saving: false })
+    expect(useMessageStore.getState().messages).toEqual([])
+  })
   it('同组模型一次保存，重复提交被拦截，凭据不会进入 store', async () => {
     const { gateway, adapter } = makeGateway()
     await useModelSettingsStore.getState().load(gateway)
