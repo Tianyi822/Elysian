@@ -41,6 +41,8 @@ import type {
   ComposeCheckResult,
   ContainerImage,
   ImagePullProgress,
+  DatabaseContainerEngine,
+  DatabaseContainerInstance,
   DatabaseEngine,
   DatabaseInstance,
   DependencyProbeReport,
@@ -200,23 +202,24 @@ export interface ContainerAdapter {
 
 /**
  * 创建数据库的输入：表单收集后经 adapter 提交；Docker 运行时由 HTTP adapter 落地。
- * 分两支——服务型由容器承载、要账号与访问权限；文件型（SQLite）只是一个本地文件，
- * 没有容器也没有账号；真实 SQLite 的路径与大小由服务端决定。
+ * 分两支——容器行由面板初始化数据库容器（管理员凭据由服务端生成并存入登记，
+ * 客户端不收集任何账号）；文件型（SQLite）只是一个本地文件，没有容器也没有账号；
+ * 真实 SQLite 的路径与大小由服务端决定。
  */
 export type DatabaseCreateContainerInput = {
   kind: 'container'
-  engine: DatabaseEngine
-  name: string
-  /** 字符集；仅 MariaDB/MySQL 有意义。 */
-  charset?: string
-  username: string
-  password: string
+  engine: DatabaseContainerEngine
+  /** 数据库版本标签；拒绝 latest 与变体标签。 */
+  versionTag: string
+  /** 新容器名。 */
+  containerName: string
+  /** 本地镜像的完整 ID（先经容器域拉取，再提交创建）。 */
+  imageId: string
   accessScope: 'localhost' | 'container-network' | 'any-host'
-  containerId: string
-  versionTag?: string
+  /** any-host 档的宿主端口。 */
   hostPort?: number
+  /** any-host 档的公开访问确认。 */
   confirmPublic?: boolean
-  target?: { kind: 'new'; imageId: string; containerName: string } | { kind: 'managed'; containerId: string } | { kind: 'adopt'; containerId: string; admin: { username: string; password: string } }
 }
 
 export type DatabaseCreateFileInput = {
@@ -232,27 +235,36 @@ export type DatabaseCreateFileInput = {
 
 export type DatabaseCreateInput = DatabaseCreateContainerInput | DatabaseCreateFileInput
 
-/** 数据库区适配接口：Docker 运行时走 HTTP/WebSocket。 */
+/** 数据库区适配接口：Docker 运行时走 HTTP（容器行与 SQLite 文行共用同源前缀）。 */
 /** 数据库创建结果：实例之外带回任意主机访问端口的防火墙自动开放事实（其他场景为 null）。 */
 export type DatabaseCreateResult = {
-  instance: DatabaseInstance
+  instance: DatabaseContainerInstance | DatabaseInstance
   firewallPort: FirewallPortSync | null
 }
 
 export interface DatabaseAdapter {
-  list(): Promise<readonly DatabaseInstance[]>
-  /** 创建容器数据库或 SQLite 文件；任意主机访问的端口自动开放结果随实例带回。 */
+  /** 数据库容器行：以 Docker 容器清单为事实源、按数据库镜像筛选。 */
+  list(): Promise<readonly DatabaseContainerInstance[]>
+  /** SQLite 文件行。 */
+  listSqlite(): Promise<readonly DatabaseInstance[]>
+  /** 创建数据库容器或 SQLite 文件；任意主机访问的端口自动开放结果随实例带回。 */
   create(input: DatabaseCreateInput, onProgress?: (percent: number) => void): Promise<DatabaseCreateResult>
-  /** 删除目标逻辑库或 SQLite 文件；真实容器与卷由独立操作删除。 */
-  remove(databaseId: string): Promise<void>
-  discover?(engine: Exclude<DatabaseEngine, 'SQLite'>, versionTag?: string): Promise<{ images: readonly ContainerImage[]; containers: readonly { id: string; name: string; accessScope: string; managed: boolean; versionTag: string }[] }>
-  reveal?(databaseId: string): Promise<{ username: string; password: string }>
-  removeContainer?(databaseId: string): Promise<void>
-  reconcile?(databaseId: string): Promise<DatabaseInstance>
-  forget?(databaseId: string): Promise<void>
-  openTerminal?(databaseId: string): Promise<{ execute(input: string): Promise<readonly string[]>; close(): void }>
+  /** 删除 SQLite 文件（连待处理登记与残留文件一并清理）。 */
+  removeSqlite(fileId: string): Promise<void>
+  /** 删除数据库容器及其专属卷，并清整组登记；服务端核验容器与卷五元标签、镜像与挂载。 */
+  removeContainer(containerId: string): Promise<void>
+  /** 读取面板创建容器时初始化的管理员凭据；只直读登记，不做任何登录验证。 */
+  reveal(containerId: string): Promise<{ username: string; password: string }>
+  /** 纯 Docker 事实核对容器行（容器存在、运行中、镜像匹配、专属卷挂载）；通过后清除 needs-attention。 */
+  reconcile(containerId: string): Promise<DatabaseContainerInstance>
+  /** 核对 SQLite 文件行。 */
+  reconcileSqlite(fileId: string): Promise<DatabaseInstance>
+  /** 仅容器已不存在时清整组登记（不删容器与卷）；容器仍在时服务端拒绝。 */
+  forget(containerId: string): Promise<void>
+  /** 清理 SQLite 待处理登记。 */
+  forgetSqlite(fileId: string): Promise<void>
   /** 下载一致性 SQLite 快照；失败（含会话过期）抛中文错误，不再静默下载错误 JSON。 */
-  downloadSqlite?(databaseId: string): Promise<void>
+  downloadSqlite(fileId: string): Promise<void>
 }
 
 /**

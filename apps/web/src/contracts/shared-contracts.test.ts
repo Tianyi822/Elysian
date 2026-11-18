@@ -2,7 +2,15 @@ import { existsSync, readFileSync, readdirSync } from 'node:fs'
 import { join } from 'node:path'
 import { describe, expect, it } from 'vitest'
 import * as contracts from '@elysian/contracts'
-import { DATABASE_ENGINES, DATABASE_STATUS_LABELS, DATABASE_STATUSES } from '@elysian/contracts'
+import {
+  DATABASE_CONTAINER_STATUS_LABELS,
+  DATABASE_CONTAINER_STATUSES,
+  DATABASE_ENGINES,
+  DATABASE_STATUS_LABELS,
+  DATABASE_STATUSES,
+  DATABASE_TAB_ENGINES,
+} from '@elysian/contracts'
+import type { DatabaseContainerInstance } from '@elysian/contracts'
 
 /*
  * 契约包的契约测试：枚举与标签表一一对应、职责模块词典完整、事件模式齐备，
@@ -53,6 +61,11 @@ const ENUM_TABLES: ReadonlyArray<{
     name: 'ContainerStatus',
     values: contracts.CONTAINER_STATUSES,
     labels: contracts.CONTAINER_STATUS_LABELS,
+  },
+  {
+    name: 'DatabaseContainerStatus',
+    values: contracts.DATABASE_CONTAINER_STATUSES,
+    labels: contracts.DATABASE_CONTAINER_STATUS_LABELS,
   },
   { name: 'RestartPolicy', values: contracts.RESTART_POLICIES, labels: contracts.RESTART_POLICY_LABELS },
   {
@@ -307,7 +320,7 @@ describe('容器事件', () => {
 })
 
 describe('数据库域词典', () => {
-  it('四个引擎按首字母升序，暂未接入的 MongoDB 与 PgSQL 不在清单内', () => {
+  it('四个引擎按首字母升序保留，SQLite 是文件行标记，暂未接入的 MongoDB 与 PgSQL 不在清单内', () => {
     expect([...DATABASE_ENGINES]).toEqual([
       'MariaDB',
       'MySQL',
@@ -319,9 +332,66 @@ describe('数据库域词典', () => {
     expect(DATABASE_ENGINES).not.toContain('SQLServer')
   })
 
-  it('状态取值与中文标签一一对应', () => {
+  it('容器页签词表只有三个服务引擎，SQLite 不占页签', () => {
+    expect([...DATABASE_TAB_ENGINES]).toEqual(['MariaDB', 'MySQL', 'Redis'])
+    expect(DATABASE_TAB_ENGINES).not.toContain('SQLite')
+  })
+
+  it('文件与容器使用各自的状态词典，缺失容器可标示待清理登记', () => {
     expect([...DATABASE_STATUSES]).toEqual(['running', 'warning', 'stopped'])
     expect(Object.keys(DATABASE_STATUS_LABELS).sort()).toEqual([...DATABASE_STATUSES].sort())
+    expect(DATABASE_STATUS_LABELS.warning).toBe('连接偏高')
+    expect([...DATABASE_CONTAINER_STATUSES]).toEqual(['running', 'stopped', 'missing'])
+    expect(Object.keys(DATABASE_CONTAINER_STATUS_LABELS).sort()).toEqual(
+      [...DATABASE_CONTAINER_STATUSES].sort(),
+    )
+    // warning 只属于 SQLite 文件行，容器词典不收录该取值。
+    expect(DATABASE_CONTAINER_STATUSES).not.toContain('warning' as never)
+  })
+
+  it('容器行字段序与冻结键序逐字对齐：服务端 containerInstance 声明序即响应键序，memory 在 credentialsVerified 之后、needsAttention 之前', () => {
+    // 内联基准行按 DatabaseContainerInstance 声明序写字段：Object.keys 的顺序即冻结键序，
+    // 与 Go 侧 routes_test 的 Golden JSON 同一清单。
+    const row: DatabaseContainerInstance = {
+      id: 'ctr-1',
+      engine: 'MySQL',
+      name: 'mysql-primary',
+      version: '8.4.2',
+      status: 'running',
+      image: 'mysql:8.4.2',
+      containerId: 'ctr-1',
+      source: 'managed',
+      versionTag: '8.4.2',
+      ports: [],
+      networks: ['elysian-db-local'],
+      volumeName: 'elysian-db-0f0e0d0c0b0a09080706050403020100',
+      address: { host: '127.0.0.1', port: 3306 },
+      credentialUsername: 'root',
+      credentialsVerified: true,
+      memory: { usedGb: 1.5, totalGb: 4 },
+      needsAttention: false,
+      updatedAt: '2026-09-12T08:00:00.000Z',
+    }
+    expect(Object.keys(row)).toEqual([
+      'id',
+      'engine',
+      'name',
+      'version',
+      'status',
+      'image',
+      'containerId',
+      'source',
+      'versionTag',
+      'ports',
+      'networks',
+      'volumeName',
+      'address',
+      'credentialUsername',
+      'credentialsVerified',
+      'memory',
+      'needsAttention',
+      'updatedAt',
+    ])
   })
 })
 

@@ -1,7 +1,7 @@
 import { act, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { DATABASE_ENGINES } from '@elysian/contracts'
+import { DATABASE_TAB_ENGINES } from '@elysian/contracts'
 import type { ElysianGateway } from '../../contracts/adapters'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import { useDatabaseStore } from '../../stores/databaseStore'
@@ -14,7 +14,13 @@ import { stubNarrowViewport } from '../../test/viewport'
  */
 function switchGateway(): ElysianGateway {
   const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
-  return { ...base, databases: { ...base.databases, list: async () => [] } }
+  return {
+    ...base,
+    databases: Object.assign(Object.create(base.databases), {
+      list: async () => [],
+      listSqlite: async () => [],
+    }),
+  }
 }
 
 /** 内容区的平铺分段控件与窄屏下拉。 */
@@ -44,7 +50,7 @@ afterEach(() => {
 })
 
 describe('数据库类型切换', () => {
-  it('按首字母升序平铺四个类型，不含 SQLServer', () => {
+  it('平铺三个容器引擎页签，SQLite 是固定分区不占页签', () => {
     renderApp('/databases', { gateway: switchGateway() })
 
     const items = within(segmentGroup()).getAllByRole('button')
@@ -52,13 +58,12 @@ describe('数据库类型切换', () => {
       'MariaDB',
       'MySQL',
       'Redis',
-      'SQLite',
     ])
-    expect(DATABASE_ENGINES).not.toContain('SQLServer')
+    expect(DATABASE_TAB_ENGINES).not.toContain('SQLite')
     expect(items[0]).toHaveAttribute('aria-pressed', 'true')
   })
 
-  it('点击平铺项切换当前类型，选中态随点击移动', async () => {
+  it('点击平铺项切换当前引擎，选中态随点击移动', async () => {
     const user = userEvent.setup()
     renderApp('/databases', { gateway: switchGateway() })
 
@@ -75,22 +80,22 @@ describe('数据库类型切换', () => {
     expect(useDatabaseStore.getState().engine).toBe('Redis')
   })
 
-  it('页面未关闭时往返其他页面仍停在上次类型，重新打开面板回到第一个', async () => {
+  it('页面未关闭时往返其他页面仍停在上次引擎，重新打开面板回到第一个', async () => {
     const user = userEvent.setup()
     const { router } = renderApp('/databases', { gateway: switchGateway() })
 
-    await user.click(within(segmentGroup()).getByRole('button', { name: 'SQLite' }))
+    await user.click(within(segmentGroup()).getByRole('button', { name: 'MySQL' }))
 
-    // 会话内记忆：切到别的页面再回来，store 单例保留上次类型。
+    // 会话内记忆：切到别的页面再回来，store 单例保留上次引擎。
     await act(async () => { await router.navigate('/') })
     await act(async () => { await router.navigate('/databases') })
-    expect(within(segmentGroup()).getByRole('button', { name: 'SQLite' })).toHaveAttribute(
+    expect(within(segmentGroup()).getByRole('button', { name: 'MySQL' })).toHaveAttribute(
       'aria-pressed',
       'true',
     )
-    expect(useDatabaseStore.getState().engine).toBe('SQLite')
+    expect(useDatabaseStore.getState().engine).toBe('MySQL')
 
-    // 关闭页面后重新打开等于新的页面会话：内存回到初始值，类型回到第一个。
+    // 关闭页面后重新打开等于新的页面会话：内存回到初始值，引擎回到第一个。
     act(() => { useDatabaseStore.setState({ engine: 'MariaDB' }) })
     expect(within(segmentGroup()).getByRole('button', { name: 'MariaDB' })).toHaveAttribute(
       'aria-pressed',
@@ -106,24 +111,24 @@ describe('数据库类型切换', () => {
     await user.click(trigger())
 
     const options = await screen.findAllByRole('option')
-    expect(options).toHaveLength(DATABASE_ENGINES.length)
-    expect(options.map((option) => option.textContent)).toEqual([...DATABASE_ENGINES])
+    expect(options).toHaveLength(DATABASE_TAB_ENGINES.length)
+    expect(options.map((option) => option.textContent)).toEqual([...DATABASE_TAB_ENGINES])
     expect(screen.getByRole('option', { name: 'MariaDB' })).toHaveAttribute(
       'aria-selected',
       'true',
     )
 
-    await user.click(screen.getByRole('option', { name: 'SQLite' }))
+    await user.click(screen.getByRole('option', { name: 'MySQL' }))
 
     expect(screen.queryByRole('option')).not.toBeInTheDocument()
-    expect(gooeyControl()).toHaveTextContent('SQLite')
-    expect(within(segmentGroup()).getByRole('button', { name: 'SQLite' })).toHaveAttribute(
+    expect(gooeyControl()).toHaveTextContent('MySQL')
+    expect(within(segmentGroup()).getByRole('button', { name: 'MySQL' })).toHaveAttribute(
       'aria-pressed',
       'true',
     )
   })
 
-  it('内容区放得下四个类型时保持平铺，只藏胶囊菜单', () => {
+  it('内容区放得下三个引擎时保持平铺，只藏胶囊菜单', () => {
     // jsdom 量不出任何宽度、也没有媒体查询，按「宽屏且放得下」处理：平铺参与布局，下拉只在收起时出场。
     renderApp('/databases', { gateway: switchGateway() })
 
@@ -131,9 +136,9 @@ describe('数据库类型切换', () => {
     expect(gooeyControl()).toHaveClass('hidden')
   })
 
-  it('四个类型超出可用宽度时收起，改显胶囊菜单', () => {
+  it('三个引擎超出可用宽度时收起，改显胶囊菜单', () => {
     // 判断依据是真实宽度，jsdom 里一切尺寸都是 0（视口按宽屏算）：把窄屏导航触发器量成工具行装不下的宽度，
-    // 类型切换的可用宽度不足时应收成下拉。
+    // 引擎切换的可用宽度不足时应收成下拉。
     const original = Element.prototype.getBoundingClientRect
     vi.spyOn(Element.prototype, 'getBoundingClientRect').mockImplementation(function (
       this: Element,

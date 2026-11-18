@@ -1,20 +1,29 @@
 import { describe, expect, it } from 'vitest'
-import type { DatabaseInstance } from '@elysian/contracts'
-import { CONTAINER_IMAGES, CONTAINERS } from '../../adapters/mock/containersData'
+import type { Container, DatabaseContainerInstance, DatabaseInstance } from '@elysian/contracts'
 import { projectDatabaseCard } from './projectDatabaseCard'
 
-// 投影只消费实例自身的字段：fixture 内联在测试里，不再依赖演示数据集。
-const MARIADB: DatabaseInstance = {
-  id: 'db-mariadb-primary',
+// 投影只消费行自身字段与容器数据集：fixture 内联在测试里，不再依赖演示数据集。
+const CONTAINER_ROW: DatabaseContainerInstance = {
+  id: 'ctr-mariadb-primary',
   engine: 'MariaDB',
   name: 'mariadb-primary',
   version: '10.11.8',
   status: 'running',
+  image: 'mariadb:10.11.8',
   containerId: 'ctr-mariadb-primary',
+  source: 'managed',
+  versionTag: '10.11.8',
+  ports: [{ containerPort: 3306, hostPort: 13306, protocol: 'tcp', hostIp: '127.0.0.1' }],
+  networks: ['elysian-db-local'],
+  volumeName: 'elysian-db-0f0e0d0c0b0a09080706050403020100',
+  address: { host: '127.0.0.1', port: 13306 },
+  credentialUsername: 'root',
+  credentialsVerified: true,
+  needsAttention: false,
   updatedAt: '2026-09-12T08:00:00.000Z',
 }
 
-const SQLITE: DatabaseInstance = {
+const SQLITE_ROW: DatabaseInstance = {
   id: 'db-sqlite-notes',
   engine: 'SQLite',
   name: 'elysian-notes',
@@ -25,32 +34,49 @@ const SQLITE: DatabaseInstance = {
   updatedAt: '2026-09-12T08:00:00.000Z',
 }
 
-const containerById = new Map(CONTAINERS.map((container) => [container.id, container]))
-const imageById = new Map(CONTAINER_IMAGES.map((image) => [image.id, image]))
+const CONTAINER: Container = {
+  id: 'ctr-mariadb-primary',
+  name: 'mariadb-primary',
+  status: 'running',
+  imageId: 'img-mariadb',
+  ports: [],
+  createdAt: '2026-09-12T08:00:00.000Z',
+  command: 'mariadbd',
+  env: [],
+  volumes: [],
+  restartPolicy: 'always',
+}
 
 describe('数据库卡片投影', () => {
-  it('服务型按 containerId 取到来源容器的名称与镜像', () => {
-    const view = projectDatabaseCard(MARIADB, containerById, imageById)
-    if (view.kind !== 'container') throw new Error('服务型实例应投影成容器来源')
+  it('容器行自带镜像引用，容器数据集用于就地打开详情面板', () => {
+    const view = projectDatabaseCard(CONTAINER_ROW, new Map([[CONTAINER.id, CONTAINER]]))
+    if (view.kind !== 'container') throw new Error('容器行应投影成容器视图')
 
+    expect(view.imageLabel).toBe('mariadb:10.11.8')
     expect(view.container?.name).toBe('mariadb-primary')
-    expect(view.imageLabel).toBe('mariadb:10.11')
     expect(view.missingContainer).toBe(false)
   })
 
-  it('容器缺失时给出缺失标记而不是空行', () => {
-    const view = projectDatabaseCard(MARIADB, new Map(), new Map())
-    if (view.kind !== 'container') throw new Error('服务型实例应投影成容器来源')
+  it('容器数据集缺失该容器时给出缺失标记而不是空行', () => {
+    const view = projectDatabaseCard(CONTAINER_ROW, new Map())
+    if (view.kind !== 'container') throw new Error('容器行应投影成容器视图')
 
     expect(view.container).toBeUndefined()
     expect(view.missingContainer).toBe(true)
   })
 
-  it('文件型（SQLite）按文件路径与大小投影，不涉及容器', () => {
-    const view = projectDatabaseCard(SQLITE, new Map(), new Map())
-    if (view.kind !== 'file') throw new Error('文件型实例应投影成文件来源')
+  it('文件行（SQLite）按文件路径与大小投影，不涉及容器', () => {
+    const view = projectDatabaseCard(SQLITE_ROW, new Map())
+    if (view.kind !== 'file') throw new Error('文件行应投影成文件视图')
 
     expect(view.filePath).toBe('/srv/elysian/data/sqlite/elysian-notes.db')
     expect(view.fileSizeMb).toBe(4.2)
+  })
+
+  it('文件行缺路径时投影为空串占位，卡片如实渲染', () => {
+    const view = projectDatabaseCard({ ...SQLITE_ROW, filePath: undefined }, new Map())
+    if (view.kind !== 'file') throw new Error('文件行应投影成文件视图')
+
+    expect(view.filePath).toBe('')
   })
 })

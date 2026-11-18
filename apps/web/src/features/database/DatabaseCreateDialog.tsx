@@ -79,10 +79,11 @@ export function DatabaseCreateDialog() {
   const gateway = useGateway()
   const engine = useDatabaseStore((state) => state.engine)
   const open = useDatabaseStore((state) => state.createOpen)
+  const createKind = useDatabaseStore((state) => state.createKind)
   const creating = useDatabaseStore((state) => state.creating)
   const createError = useDatabaseStore((state) => state.createError)
   const uploadPercent = useDatabaseStore((state) => state.uploadPercent)
-  const databases = useDatabaseStore((state) => state.databases)
+  const sqliteFiles = useDatabaseStore((state) => state.sqliteFiles)
   const closeCreate = useDatabaseStore((state) => state.closeCreate)
   const createDatabase = useDatabaseStore((state) => state.createDatabase)
   const [draft, setDraft] = useState(() => emptyDraft())
@@ -100,9 +101,10 @@ export function DatabaseCreateDialog() {
   }, [open])
 
   if (!open) return null
-  if (engine !== 'SQLite') return <RealDatabaseCreateDialog engine={engine} />
+  // 创建目标由 openCreate(kind) 决定：容器行走 RealDatabaseCreateDialog，这里只承载 SQLite 文件表单。
+  if (createKind !== 'file') return <RealDatabaseCreateDialog engine={engine} />
   const errors = {
-    ...validateDatabaseCreateDraft(draft, databases),
+    ...validateDatabaseCreateDraft(draft, sqliteFiles),
     ...(selectedFile && selectedFile.size > 256 * 1024 ** 2 ? { file: 'SQLite 文件超过 256 MiB 上传上限' } : {}),
   }
   const disabled = creating || (showErrors && hasDatabaseCreateErrors(errors))

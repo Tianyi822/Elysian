@@ -25,7 +25,8 @@ const ALLOWED_HOSTNAMES: readonly string[] = ['127.0.0.1', 'localhost', '[::1]']
  * dev 与 preview 共享的 API 代理配置。必须用对象形式且不设 changeOrigin——vite 对字符串简写
  * 强制包一层 changeOrigin:true（改写 Host 头，转发后 Origin 与 Host 不一致，server 同源守卫
  * 将 403 拒掉全部写请求），对象形式才保持原 Host 头。
- * 终端/docker/databases 是 WebSocket，需额外设 ws:true 才代理升级请求。
+ * 终端与 docker 是 WebSocket，需额外设 ws:true 才代理升级请求；数据库 SQL 会话已退役，
+ * /api/databases 只有普通 HTTP 请求。
  * /api/events 与 /api/resources/history 的 SSE 事件流由 elysianEventsVitePlugin 提供，不经代理。
  */
 const apiProxy = {
@@ -40,7 +41,7 @@ const apiProxy = {
   '/api/logs': { target: apiOrigin },
   '/api/docker': { target: apiOrigin, ws: true },
   '/api/container-apps': { target: apiOrigin },
-  '/api/databases': { target: apiOrigin, ws: true },
+  '/api/databases': { target: apiOrigin },
   '/api/websites': { target: apiOrigin },
   '/api/terminals': { target: apiOrigin, ws: true },
 }

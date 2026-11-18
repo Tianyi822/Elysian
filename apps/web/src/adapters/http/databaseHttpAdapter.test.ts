@@ -3,8 +3,9 @@ import { advanceAuthGeneration, setUnauthorizedListener } from './unauthorized'
 import { createHttpDatabaseAdapter, sqliteDownloadName } from './databaseHttpAdapter'
 
 /*
- * 数据库 HTTP adapter 的 401 出口：request 出口、downloadSqlite 的 fetch blob 改造
- * （不再 <a href> 导航——401 有明确中文反馈、不把错误 JSON 当文件保存）。
+ * 数据库 HTTP adapter 的出口：新端点形状（容器行与 SQLite 文件分流）、
+ * request 出口的 401 拦截、downloadSqlite 的 fetch blob 改造（不再 <a href> 导航——
+ * 401 有明确中文反馈、不把错误 JSON 当文件保存）。
  */
 
 afterEach(() => {
@@ -32,14 +33,73 @@ class FakeXHR {
   constructor() { FakeXHR.last = this }
 }
 
-describe('createHttpDatabaseAdapter 401 拦截', () => {
-  it.each(['missing', 'blocked'])('WebSocket %s 时异步拒绝，供连接状态和通知统一收口', async failure => {
-    vi.stubGlobal('WebSocket', failure === 'missing' ? undefined : class { constructor() { throw new DOMException('blocked', 'SecurityError') } })
-    let pending: Promise<unknown> | undefined
-    expect(() => { pending = createHttpDatabaseAdapter().openTerminal?.('db-1') }).not.toThrow()
-    await expect(pending).rejects.toThrow('浏览器无法建立数据库终端连接')
+/** 捕获 fetch 的请求参数：断言端点路径与请求体形状。 */
+function stubFetch(handler: (url: string, init?: RequestInit) => Response): { requests: { url: string; init?: RequestInit }[] } {
+  const requests: { url: string; init?: RequestInit }[] = []
+  vi.stubGlobal('fetch', vi.fn(async (url: string, init?: RequestInit) => {
+    requests.push({ url, init })
+    return handler(url, init)
+  }))
+  return { requests }
+}
+
+describe('createHttpDatabaseAdapter 端点形状', () => {
+  it('list 走容器行端点，listSqlite 走 /sqlite，两路显式分流', async () => {
+    const containerRow = { id: 'ctr-1', engine: 'MariaDB', name: 'db', version: '10.11', status: 'running', image: 'mariadb:10.11', containerId: 'ctr-1', ports: [], networks: [], credentialsVerified: false, needsAttention: false, updatedAt: '2026-09-12T08:00:00.000Z' }
+    const sqliteRow = { id: 'sqlite-1', engine: 'SQLite', name: 'notes', version: '3.46', status: 'running', updatedAt: '2026-09-12T08:00:00.000Z' }
+    const { requests } = stubFetch((url) => jsonResponse(url.endsWith('/sqlite') ? [sqliteRow] : [containerRow]))
+    const adapter = createHttpDatabaseAdapter()
+
+    expect(await adapter.list()).toEqual([containerRow])
+    expect(await adapter.listSqlite()).toEqual([sqliteRow])
+    expect(requests.map((request) => request.url)).toEqual(['/api/databases/', '/api/databases/sqlite'])
   })
 
+  it.each([
+    { name: 'reveal 管理员凭据', invoke: (a: ReturnType<typeof createHttpDatabaseAdapter>) => a.reveal('ctr-1'), path: '/api/databases/ctr-1/reveal', method: 'POST' },
+    { name: 'reconcile 容器核对', invoke: (a: ReturnType<typeof createHttpDatabaseAdapter>) => a.reconcile('ctr-1'), path: '/api/databases/ctr-1/reconcile', method: 'POST' },
+    { name: 'reconcileSqlite 文件核对', invoke: (a: ReturnType<typeof createHttpDatabaseAdapter>) => a.reconcileSqlite('sqlite-1'), path: '/api/databases/sqlite/sqlite-1/reconcile', method: 'POST' },
+    { name: 'forget 容器登记', invoke: (a: ReturnType<typeof createHttpDatabaseAdapter>) => a.forget('ctr-1'), path: '/api/databases/ctr-1/registration', method: 'DELETE' },
+    { name: 'forgetSqlite 文件登记', invoke: (a: ReturnType<typeof createHttpDatabaseAdapter>) => a.forgetSqlite('sqlite-1'), path: '/api/databases/sqlite/sqlite-1/registration', method: 'DELETE' },
+    { name: 'removeSqlite 带确认短语', invoke: (a: ReturnType<typeof createHttpDatabaseAdapter>) => a.removeSqlite('sqlite-1'), path: '/api/databases/sqlite/sqlite-1', method: 'DELETE' },
+    { name: 'removeContainer 带确认短语', invoke: (a: ReturnType<typeof createHttpDatabaseAdapter>) => a.removeContainer('ctr-1'), path: '/api/databases/ctr-1/container', method: 'DELETE' },
+  ])('$name 请求正确的端点', async ({ invoke, path, method }) => {
+    const { requests } = stubFetch(() => jsonResponse(method === 'POST' ? {} : { ok: true }))
+    await invoke(createHttpDatabaseAdapter())
+    expect(requests).toHaveLength(1)
+    expect(requests[0]!.url).toBe(path)
+    expect(requests[0]!.init?.method).toBe(method)
+  })
+
+  it('removeSqlite 与 removeContainer 的确认短语按目标类型区分', async () => {
+    const { requests } = stubFetch(() => jsonResponse({ ok: true }))
+    const adapter = createHttpDatabaseAdapter()
+    await adapter.removeSqlite('sqlite-1')
+    await adapter.removeContainer('ctr-1')
+    expect(JSON.parse(String(requests[0]!.init?.body))).toEqual({ confirm: 'DELETE_SQLITE_FILE' })
+    expect(JSON.parse(String(requests[1]!.init?.body))).toEqual({ confirm: 'DELETE_CONTAINER_AND_DATA' })
+  })
+
+  it('创建容器只提交新建容器的目标字段，不携带逻辑库或账号', async () => {
+    const { requests } = stubFetch(() => jsonResponse({ instance: {}, firewallPort: null }))
+    await createHttpDatabaseAdapter().create({
+      kind: 'container', engine: 'MySQL', versionTag: '8.4', containerName: 'elysian-mysql',
+      imageId: 'sha256:abc', accessScope: 'any-host', hostPort: 43306, confirmPublic: true,
+    })
+    expect(requests[0]!.url).toBe('/api/databases/')
+    expect(JSON.parse(String(requests[0]!.init?.body))).toEqual({
+      engine: 'MySQL', versionTag: '8.4', containerName: 'elysian-mysql', imageId: 'sha256:abc',
+      accessScope: 'any-host', hostPort: 43306, confirmPublic: true,
+    })
+  })
+
+  it('容器创建缺少镜像或版本时在前端挡下', async () => {
+    const adapter = createHttpDatabaseAdapter()
+    await expect(adapter.create({ kind: 'container', engine: 'Redis', versionTag: '', containerName: 'x', imageId: '', accessScope: 'localhost' })).rejects.toThrow('请选择数据库镜像版本')
+  })
+})
+
+describe('createHttpDatabaseAdapter 401 拦截', () => {
   it('request 出口的 401：上报并抛中文登录失效错误', async () => {
     const listener = vi.fn()
     setUnauthorizedListener(listener)

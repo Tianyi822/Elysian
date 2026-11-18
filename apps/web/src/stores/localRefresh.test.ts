@@ -81,7 +81,7 @@ const cases = [
     load: (state, gateway) => state.load(gateway),
     select: state => ({ status: state.status, snapshot: state.projects, error: state.errorMessage }) }),
   refreshCase({ name: '数据库', store: useDatabaseStore, empty: [],
-    gateway: (base, read) => ({ ...base, databases: adapter(base.databases, { list: read }) }),
+    gateway: (base, read) => ({ ...base, databases: adapter(base.databases, { list: read, listSqlite: async () => [] }) }),
     load: (state, gateway) => state.load(gateway),
     select: state => ({ status: state.status, snapshot: state.databases, error: state.errorMessage }) }),
   refreshCase({ name: '文件目录', store: useFilesStore, empty: [],

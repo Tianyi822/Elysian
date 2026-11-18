@@ -89,7 +89,8 @@ afterEach(async () => {
   localStorage.removeItem(UI_PREFERENCES_KEY)
   useSecurityStore.setState({ tab: 'firewall' })
   useLogsStore.setState({ tab: 'runtime' })
-  useDatabaseStore.setState({ engine: 'MariaDB' })
+  // 数据库 store 的会话内单例状态：引擎页签回到第一个，创建目标与文件行一并复位。
+  useDatabaseStore.setState({ engine: 'MariaDB', createKind: 'file', sqliteFiles: [], sqliteStatus: 'idle', sqliteErrorMessage: undefined })
   useContainersStore.setState({ view: 'grid' })
   useSettingsTabStore.setState({ tab: 'maintenance' })
 })

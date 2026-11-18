@@ -1,5 +1,5 @@
 import { withRequestDeadline } from './requestDeadline'
-import type { DatabaseInstance, DatabaseEngine, ContainerImage } from '@elysian/contracts'
+import type { DatabaseContainerInstance, DatabaseInstance } from '@elysian/contracts'
 import type { DatabaseAdapter, DatabaseCreateInput, DatabaseCreateResult } from '../../contracts/adapters'
 import { captureAuthGeneration, fetchWithSession, reportUnauthorized, reportUnauthorizedStatus } from './unauthorized'
 import { parseFirewallPortSync } from './firewallHttpAdapter'
@@ -13,7 +13,7 @@ export function sqliteDownloadName(disposition: string | null, fallbackId: strin
 }
 
 function request<T>(path: string, init?: RequestInit): Promise<T> {
-  return withRequestDeadline(init, (bounded) => readJson<T>(path, bounded), path.includes("/install") || (init?.method === "POST" && path === "/") ? 30 * 60_000 : undefined)
+  return withRequestDeadline(init, (bounded) => readJson<T>(path, bounded), init?.method === 'POST' && path === '/' ? 30 * 60_000 : undefined)
 }
 
 async function readJson<T>(path: string, init?: RequestInit): Promise<T> {
@@ -30,58 +30,10 @@ async function readJson<T>(path: string, init?: RequestInit): Promise<T> {
   return body
 }
 
-async function openTerminal(id: string): Promise<{ execute(input: string): Promise<readonly string[]>; close(): void }> {
-  const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:'
-  let socket: WebSocket
-  try { socket = new WebSocket(`${protocol}//${location.host}${BASE}/${encodeURIComponent(id)}/terminal`) }
-  catch { throw new Error('浏览器无法建立数据库终端连接，请检查浏览器网络策略或更换浏览器重试') }
-  const queue: ((frame: { type: string; text?: string; lines?: string[] }) => void)[] = []
-  let closed = false
-  let inFlight = false
-  socket.onmessage = (event) => {
-    try {
-      const frame = JSON.parse(String(event.data)) as { type: string; text?: string; lines?: string[] }
-      if (frame.type === 'ready') { queue.shift()?.(frame); return }
-      queue.shift()?.(frame)
-    } catch { /* 畸形服务帧交给等待超时处理。 */ }
-  }
-  socket.onclose = () => { closed = true; for (const resolve of queue.splice(0)) resolve({ type: 'error', text: '数据库连接已断开' }) }
-  const ready = new Promise<void>((resolve, reject) => {
-    const timer = setTimeout(() => { socket.close(); reject(new Error('数据库连接超时')) }, 10_000)
-    queue.push((frame) => {
-      clearTimeout(timer)
-      if (frame.type === 'ready') resolve()
-      else reject(new Error(frame.text ?? '数据库连接失败'))
-    })
-  })
-  return ready.then(() => ({
-    execute(input) {
-      if (closed) return Promise.reject(new Error('数据库连接已断开'))
-      if (inFlight) return Promise.reject(new Error('上一条数据库命令仍在执行'))
-      inFlight = true
-      return new Promise<readonly string[]>((resolve, reject) => {
-        const timer = setTimeout(() => {
-          inFlight = false
-          closed = true
-          socket.close()
-          reject(new Error('数据库操作超时，连接已中断'))
-        }, 20_000)
-        queue.push((frame) => {
-          clearTimeout(timer)
-          inFlight = false
-          if (frame.type === 'output') resolve(frame.lines ?? [])
-          else reject(new Error(frame.text ?? '数据库操作失败'))
-        })
-        socket.send(JSON.stringify({ type: 'execute', text: input }))
-      })
-    },
-    close() { closed = true; socket.close() },
-  }))
-}
-
 export function createHttpDatabaseAdapter(): DatabaseAdapter {
   return {
-    list: () => request<DatabaseInstance[]>('/'),
+    list: () => request<DatabaseContainerInstance[]>('/'),
+    listSqlite: () => request<DatabaseInstance[]>('/sqlite'),
     async create(input: DatabaseCreateInput, onProgress): Promise<DatabaseCreateResult> {
       if (input.kind === 'file') {
         if (input.origin === 'created') return { instance: await request<DatabaseInstance>('/sqlite', { method: 'POST', body: JSON.stringify({ name: input.name }) }), firewallPort: null }
@@ -107,32 +59,24 @@ export function createHttpDatabaseAdapter(): DatabaseAdapter {
         })
         return { instance, firewallPort: null }
       }
-      if (!input.versionTag || !input.target) throw new Error('请选择数据库版本和容器')
-      const body = await request<{ instance: DatabaseInstance; firewallPort: unknown }>('/', { method: 'POST', body: JSON.stringify({
-        engine: input.engine, versionTag: input.versionTag,
-        name: input.engine === 'Redis' ? '0' : input.name,
-        charset: input.charset, user: { username: input.username, password: input.password },
-        accessScope: input.accessScope, hostPort: input.hostPort, confirmPublic: input.confirmPublic, target: input.target,
+      if (!input.versionTag || !input.imageId) throw new Error('请选择数据库镜像版本')
+      const body = await request<{ instance: DatabaseContainerInstance; firewallPort: unknown }>('/', { method: 'POST', body: JSON.stringify({
+        engine: input.engine, versionTag: input.versionTag, containerName: input.containerName, imageId: input.imageId,
+        accessScope: input.accessScope, hostPort: input.hostPort, confirmPublic: input.confirmPublic,
       }) })
       return { instance: body.instance, firewallPort: parseFirewallPortSync(body.firewallPort ?? null) }
     },
-    async remove(id) {
-      if (id.startsWith('sqlite-')) {
-        await request(`/sqlite/${encodeURIComponent(id)}`, { method: 'DELETE', body: JSON.stringify({ confirm: 'DELETE_SQLITE_FILE' }) })
-        return
-      }
-      await request(`/${encodeURIComponent(id)}`, { method: 'DELETE' })
+    async removeSqlite(id) {
+      await request(`/sqlite/${encodeURIComponent(id)}`, { method: 'DELETE', body: JSON.stringify({ confirm: 'DELETE_SQLITE_FILE' }) })
     },
-    discover(engine: Exclude<DatabaseEngine, 'SQLite'>, versionTag?: string) {
-      return request<{ images: readonly ContainerImage[]; containers: readonly { id: string; name: string; accessScope: string; managed: boolean; versionTag: string }[] }>(`/discover?engine=${encodeURIComponent(engine)}${versionTag === undefined ? '' : `&versionTag=${encodeURIComponent(versionTag)}`}`)
-    },
-    reveal: (id) => request(`/${encodeURIComponent(id)}/reveal`, { method: 'POST' }),
     async removeContainer(id) {
       await request(`/${encodeURIComponent(id)}/container`, { method: 'DELETE', body: JSON.stringify({ confirm: 'DELETE_CONTAINER_AND_DATA' }) })
     },
-    reconcile: (id) => request(`${id.startsWith('sqlite-') ? '/sqlite' : ''}/${encodeURIComponent(id)}/reconcile`, { method: 'POST' }),
-    async forget(id) { await request(`${id.startsWith('sqlite-') ? '/sqlite' : ''}/${encodeURIComponent(id)}/registration`, { method: 'DELETE' }) },
-    openTerminal,
+    reveal: (id) => request(`/${encodeURIComponent(id)}/reveal`, { method: 'POST' }),
+    reconcile: (id) => request(`/${encodeURIComponent(id)}/reconcile`, { method: 'POST' }),
+    reconcileSqlite: (id) => request(`/sqlite/${encodeURIComponent(id)}/reconcile`, { method: 'POST' }),
+    async forget(id) { await request(`/${encodeURIComponent(id)}/registration`, { method: 'DELETE' }) },
+    async forgetSqlite(id) { await request(`/sqlite/${encodeURIComponent(id)}/registration`, { method: 'DELETE' }) },
     /**
      * 下载一致性 SQLite 快照。用 fetch 取 blob 触发下载而不是 `<a href>` 导航：
      * 导航下载够不到 401 拦截，会话过期时会把错误 JSON 当文件保存；演示文件很小，

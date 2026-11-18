@@ -80,10 +80,26 @@ describe('模板外壳', () => {
           async list() {
             return []
           },
+          async listSqlite() {
+            return []
+          },
           async create() {
             throw new Error('本用例不创建数据库')
           },
-          async remove() {},
+          async removeSqlite() {},
+          async removeContainer() {},
+          async reveal() {
+            throw new Error('本用例不读取凭据')
+          },
+          async reconcile() {
+            throw new Error('本用例不核对容器')
+          },
+          async reconcileSqlite() {
+            throw new Error('本用例不核对文件')
+          },
+          async forget() {},
+          async forgetSqlite() {},
+          async downloadSqlite() {},
         },
       },
     })

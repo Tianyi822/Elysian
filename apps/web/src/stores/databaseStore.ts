@@ -1,177 +1,147 @@
 import { captureAuthGeneration } from '../adapters/http/unauthorized'
 import { create } from 'zustand'
-import { DATABASE_ENGINES, type Container, type ContainerImage, type DatabaseEngine, type DatabaseInstance } from '@elysian/contracts'
+import {
+  DATABASE_TAB_ENGINES,
+  type Container,
+  type ContainerImage,
+  type DatabaseContainerEngine,
+  type DatabaseContainerInstance,
+  type DatabaseInstance,
+} from '@elysian/contracts'
 import type { ElysianGateway, DatabaseCreateInput } from '../contracts/adapters'
 import { useMessageStore } from './messageStore'
 import { notifyFirewallPortSync } from './firewallPortNotice'
 
-/** 命令编辑、历史与显示由第三方终端持有，store 只保存连接身份与状态。 */
-export type SqlSession = {
-  id: string
-  databaseId: string
-  status: 'connecting' | 'connected' | 'error'
-  errorMessage?: string
-}
-
-export const SESSION_BANNER = '数据库协议会话'
-let sessionSequence = 0
-let connectionGeneration = 0
-let liveSession: { execute(input: string): Promise<readonly string[]>; close(): void } | undefined
+type DatabaseKind = 'container' | 'file'
+type LoadStatus = 'idle' | 'loading' | 'ready' | 'error'
 
 export type DatabaseState = {
-  engine: DatabaseEngine
-  status: 'idle' | 'loading' | 'ready' | 'error'
-  databases: readonly DatabaseInstance[]
-  /** 卡片的来源容器行要从容器数据集现取名与镜像，因此与数据库一起取。 */
+  /** 容器分区页签：只在三引擎词表内取值，SQLite 文件以固定分区呈现、不占页签。 */
+  engine: DatabaseContainerEngine
+  status: LoadStatus
+  sqliteStatus: LoadStatus
+  /** 数据库容器行（GET /api/databases）。 */
+  databases: readonly DatabaseContainerInstance[]
+  /** SQLite 文件行（GET /api/databases/sqlite）。 */
+  sqliteFiles: readonly DatabaseInstance[]
+  /** 卡片详情面板要从容器数据集现取完整容器行，因此与数据库一起取。 */
   containers: readonly Container[]
   images: readonly ContainerImage[]
   errorMessage?: string
+  sqliteErrorMessage?: string
   /** 列表手动刷新在途：仅驱动对应刷新按钮。 */
   refreshing: boolean
-  /** SQL 会话；同一时刻最多一个，undefined 表示没有打开。 */
-  session?: SqlSession
-  /** 添加数据库弹窗的开关与提交中标记。 */
+  /** 创建弹窗的开关与目标（容器行或 SQLite 文件）。 */
   createOpen: boolean
+  createKind: 'container' | 'file'
   creating: boolean
   createError?: string
   uploadPercent?: number
-  /** 正在执行删除的数据库 id：卡片动作行据此禁用。 */
-  removingDatabaseIds: readonly string[]
-  setEngine(engine: DatabaseEngine): void
+  /** 正在删除的容器行 id：卡片动作行据此禁用。 */
+  removingContainerIds: readonly string[]
+  /** 正在删除的 SQLite 文件行 id。 */
+  removingSqliteIds: readonly string[]
+  setEngine(engine: DatabaseContainerEngine): void
   load(gateway: ElysianGateway): Promise<void>
   refresh(gateway: ElysianGateway, showIndicator?: boolean): Promise<void>
-  openSession(databaseId: string, gateway?: ElysianGateway): void
-  closeSession(): void
-  interruptSession(gateway: ElysianGateway): Promise<void>
-  submitStatement(gateway: ElysianGateway, line: string): Promise<readonly string[]>
-  openCreate(): void
+  refreshAfterMutation(gateway: ElysianGateway, kind: DatabaseKind): Promise<void>
+  openCreate(kind: 'container' | 'file'): void
   closeCreate(): void
   createDatabase(gateway: ElysianGateway, input: DatabaseCreateInput): Promise<void>
-  removeDatabase(gateway: ElysianGateway, databaseId: string): Promise<void>
+  removeContainer(gateway: ElysianGateway, containerId: string): Promise<void>
+  removeSqliteFile(gateway: ElysianGateway, fileId: string): Promise<void>
 }
 
-let pendingLoad: { gateway: ElysianGateway; auth: number; snapshot: readonly DatabaseInstance[]; promise: Promise<void> } | undefined
+type PendingLoad = {
+  gateway: ElysianGateway
+  auth: number
+  promise: Promise<void>
+}
 
-/** 数据库区的界面状态：类型筛选不进 URL、不写界面偏好——store 是模块单例，页面未关闭时记住上次类型，重新打开面板回到第一个。 */
+const pendingLoads: Partial<Record<DatabaseKind, PendingLoad>> = {}
+
+function refreshDataset(gateway: ElysianGateway, kind: DatabaseKind, showIndicator = false, afterMutation = false) {
+  const auth = captureAuthGeneration()
+  const container = kind === 'container'
+  const status = container ? 'status' : 'sqliteStatus'
+  const errorMessage = container ? 'errorMessage' : 'sqliteErrorMessage'
+  const label = container ? '数据库容器' : 'SQLite 文件'
+  const { getState, setState } = useDatabaseStore
+  const pending = pendingLoads[kind]
+  const sameRequestContext = pending?.gateway === gateway && pending.auth === auth
+  if (sameRequestContext && !afterMutation) {
+    if (showIndicator && container) setState({ refreshing: true })
+    return pending.promise
+  }
+  const state = getState()
+  const hadData = state[status] === 'ready'
+  const operation = { gateway, auth, promise: Promise.resolve() }
+  pendingLoads[kind] = operation
+  const current = () => pendingLoads[kind] === operation && auth === captureAuthGeneration()
+  setState({
+    [status]: hadData ? 'ready' : 'loading',
+    ...(!hadData ? { [errorMessage]: undefined } : {}),
+    ...(container ? { refreshing: showIndicator || (sameRequestContext && state.refreshing) } : {}),
+  })
+  operation.promise = (async () => {
+    try {
+      if (container) {
+        const [databases, containers, images] = await Promise.all([
+          gateway.databases.list(), gateway.containers.list(), gateway.containers.listImages(),
+        ])
+        if (current()) setState({ status: 'ready', databases, containers, images, errorMessage: undefined })
+      } else {
+        const sqliteFiles = await gateway.databases.listSqlite()
+        if (current()) setState({ sqliteStatus: 'ready', sqliteFiles, sqliteErrorMessage: undefined })
+      }
+    } catch (error) {
+      if (!current()) return
+      const message = error instanceof Error ? error.message : `读取${label}失败`
+      if (hadData && getState()[errorMessage] !== message) {
+        useMessageStore.getState().notify({ tone: 'danger', message: `${label}刷新失败。${message}` })
+      }
+      setState({ [status]: hadData ? 'ready' : 'error', [errorMessage]: message })
+    } finally {
+      if (pendingLoads[kind] === operation) {
+        delete pendingLoads[kind]
+        if (container && auth === captureAuthGeneration()) setState({ refreshing: false })
+      }
+    }
+  })()
+  return operation.promise
+}
+
+/** 数据库区的界面状态：引擎页签不进 URL、不写界面偏好——store 是模块单例，页面未关闭时记住上次引擎，重新打开面板回到第一个。 */
 export const useDatabaseStore = create<DatabaseState>((set, get) => ({
-  engine: DATABASE_ENGINES[0],
+  engine: DATABASE_TAB_ENGINES[0],
   status: 'idle',
+  sqliteStatus: 'idle',
   databases: [],
+  sqliteFiles: [],
   containers: [],
   images: [],
   refreshing: false,
-  session: undefined,
   createOpen: false,
+  createKind: 'file',
   creating: false,
   createError: undefined,
   uploadPercent: undefined,
-  removingDatabaseIds: [],
+  removingContainerIds: [],
+  removingSqliteIds: [],
   setEngine: (engine) => {
     set({ engine })
   },
   load(gateway) { return get().refresh(gateway) },
-  /** 默认静默；手动刷新只驱动对应按钮，保留已读取的实例和会话。 */
-  refresh(gateway, showIndicator = false) {
-    const auth = captureAuthGeneration()
-    if (pendingLoad?.gateway === gateway && pendingLoad.auth === auth && pendingLoad.snapshot === get().databases) {
-      if (showIndicator) set({ refreshing: true })
-      return pendingLoad.promise
-    }
-    const hadData = get().status === 'ready'
-    const operation = { gateway, auth, snapshot: get().databases, promise: Promise.resolve() }
-    pendingLoad = operation
-    const current = () => pendingLoad === operation && auth === captureAuthGeneration()
-    set({ status: hadData ? 'ready' : 'loading', refreshing: showIndicator, ...(!hadData ? { errorMessage: undefined } : {}) })
-    operation.promise = (async () => {
-      try {
-        const [databases, containers, images] = await Promise.all([
-          gateway.databases.list(), gateway.containers.list(), gateway.containers.listImages(),
-        ])
-        if (current() && operation.snapshot === get().databases) set({ status: 'ready', databases, containers, images, errorMessage: undefined })
-      } catch (error) {
-        if (!current()) return
-        const message = error instanceof Error ? error.message : '读取数据库数据失败'
-        if (hadData && get().errorMessage !== message) useMessageStore.getState().notify({ tone: 'danger', message: `数据库状态刷新失败：${message}` })
-        set({ status: hadData ? 'ready' : 'error', errorMessage: message })
-      } finally {
-        if (pendingLoad === operation) {
-          pendingLoad = undefined
-          if (auth === captureAuthGeneration()) set({ refreshing: false })
-        }
-      }
-    })()
-    return operation.promise
+  /** 默认静默；手动刷新只驱动对应按钮，保留已读取的行。 */
+  async refresh(gateway, showIndicator = false) {
+    await Promise.all([refreshDataset(gateway, 'container', showIndicator), refreshDataset(gateway, 'file')])
+  },
+  refreshAfterMutation(gateway, kind) {
+    return refreshDataset(gateway, kind, false, true)
   },
 
-  openSession(databaseId, gateway) {
-    connectionGeneration += 1
-    const generation = connectionGeneration
-    liveSession?.close()
-    liveSession = undefined
-    const id = `database-session-${++sessionSequence}`
-    set({ session: { id, databaseId, status: 'connecting' } })
-    if (!gateway?.databases.openTerminal) {
-      set({ session: { id, databaseId, status: 'error', errorMessage: '数据库协议终端不可用' } })
-      return
-    }
-    void gateway.databases.openTerminal(databaseId).then((connection) => {
-      if (generation !== connectionGeneration || get().session?.id !== id) { connection.close(); return }
-      liveSession = connection
-      set({ session: { id, databaseId, status: 'connected' } })
-    }).catch((error: unknown) => {
-      if (generation !== connectionGeneration || get().session?.id !== id) return
-      const errorMessage = `数据库连接失败：${error instanceof Error ? error.message : '未知错误'}`
-      set({ session: { id, databaseId, status: 'error', errorMessage } })
-    })
-  },
-  closeSession() {
-    connectionGeneration += 1
-    liveSession?.close()
-    liveSession = undefined
-    set({ session: undefined })
-  },
-  async interruptSession(gateway) {
-    const session = get().session
-    if (!session || !gateway.databases.openTerminal) return
-    const generation = ++connectionGeneration
-    liveSession?.close()
-    liveSession = undefined
-    set({ session: { ...session, status: 'connecting', errorMessage: undefined } })
-    try {
-      const connection = await gateway.databases.openTerminal(session.databaseId)
-      if (generation !== connectionGeneration || get().session?.id !== session.id) { connection.close(); return }
-      liveSession = connection
-      set({ session: { ...session, status: 'connected', errorMessage: undefined } })
-    } catch (error) {
-      if (generation !== connectionGeneration || get().session?.id !== session.id) return
-      const errorMessage = `数据库重新连接失败：${error instanceof Error ? error.message : '未知错误'}`
-      set({ session: { ...session, status: 'error', errorMessage } })
-    }
-  },
-
-  async submitStatement(gateway, statement) {
-    const session = get().session
-    const connection = liveSession
-    const generation = connectionGeneration
-    if (!session || session.status !== 'connected' || !connection) throw new Error('数据库连接尚未建立')
-    if (!statement.trim()) return []
-    try {
-      const output = await connection.execute(statement)
-      if (generation !== connectionGeneration || get().session?.id !== session.id || connection !== liveSession) {
-        throw new DOMException('数据库会话已变更', 'AbortError')
-      }
-      void get().refresh(gateway)
-      return output
-    } catch (error) {
-      if (generation !== connectionGeneration || get().session?.id !== session.id || connection !== liveSession) {
-        throw new DOMException('数据库会话已变更', 'AbortError')
-      }
-      throw error
-    }
-  },
-
-  openCreate() {
-    set({ createOpen: true, createError: undefined })
+  openCreate(kind) {
+    set({ createOpen: true, createKind: kind, createError: undefined })
   },
   closeCreate() {
     set({ createOpen: false, createError: undefined })
@@ -187,12 +157,13 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
         .getState()
         .notify({ tone: 'success', message: `数据库 ${created.name} 已创建` })
       notifyFirewallPortSync(firewallPort)
-      set((state) => ({
-        databases: [...state.databases, created],
-        createOpen: false,
-      }))
+      if (created.engine === 'SQLite') {
+        set((state) => ({ sqliteFiles: [...state.sqliteFiles.filter((file) => file.id !== created.id), created], createOpen: false }))
+      } else {
+        set((state) => ({ databases: [...state.databases.filter((row) => row.id !== created.id), created], createOpen: false }))
+      }
       // 创建是真实变更：立即向服务端核对列表，不用本地拼接的状态冒充服务端事实。
-      void get().refresh(gateway)
+      void get().refreshAfterMutation(gateway, input.kind)
     } catch (error) {
       const detail = error instanceof Error ? error.message : '未知错误'
       set({ createError: detail })
@@ -202,26 +173,44 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     }
   },
 
-  async removeDatabase(gateway, databaseId) {
-    const database = get().databases.find((item) => item.id === databaseId)
-    if (!database) return
-    if (get().removingDatabaseIds.includes(databaseId)) return
-    set((state) => ({ removingDatabaseIds: [...state.removingDatabaseIds, databaseId] }))
+  async removeContainer(gateway, containerId) {
+    const row = get().databases.find((item) => item.id === containerId)
+    if (!row) return
+    if (get().removingContainerIds.includes(containerId)) return
+    set((state) => ({ removingContainerIds: [...state.removingContainerIds, containerId] }))
     try {
-      await gateway.databases.remove(databaseId)
+      const forget = row.status === 'missing' && (row.source !== 'managed' || !row.volumeName)
+      if (forget) await gateway.databases.forget(containerId)
+      else await gateway.databases.removeContainer(containerId)
       useMessageStore
         .getState()
-        .notify({ tone: 'success', message: database.engine === 'Redis' ? 'Redis DB 0 已清空，容器与持久卷仍保留' : `数据库 ${database.name} 已删除` })
-      // 删除是真实变更：关掉关联会话并向服务端核对，列表以服务端状态为准。
-      if (get().session?.databaseId === databaseId) get().closeSession()
-      await get().refresh(gateway)
-      set((state) => ({ removingDatabaseIds: state.removingDatabaseIds.filter((id) => id !== databaseId) }))
+        .notify({ tone: 'success', message: forget ? `数据库容器 ${row.name} 的登记已清理` : `数据库容器 ${row.name} 已删除` })
     } catch (error) {
       const detail = error instanceof Error ? error.message : '未知错误'
-      useMessageStore.getState().notify({ tone: 'danger', message: `删除数据库失败：${detail}` })
-      set((state) => ({
-        removingDatabaseIds: state.removingDatabaseIds.filter((id) => id !== databaseId),
-      }))
+      useMessageStore.getState().notify({ tone: 'danger', message: `删除数据库容器失败：${detail}` })
+    } finally {
+      // 删除容器和删卷分两步；错误也可能留下待清理登记。
+      await get().refreshAfterMutation(gateway, 'container')
+      set((state) => ({ removingContainerIds: state.removingContainerIds.filter((id) => id !== containerId) }))
+    }
+  },
+
+  async removeSqliteFile(gateway, fileId) {
+    const row = get().sqliteFiles.find((item) => item.id === fileId)
+    if (!row) return
+    if (get().removingSqliteIds.includes(fileId)) return
+    set((state) => ({ removingSqliteIds: [...state.removingSqliteIds, fileId] }))
+    try {
+      await gateway.databases.removeSqlite(fileId)
+      useMessageStore
+        .getState()
+        .notify({ tone: 'success', message: `SQLite 文件 ${row.name} 已删除` })
+      await get().refreshAfterMutation(gateway, 'file')
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : '未知错误'
+      useMessageStore.getState().notify({ tone: 'danger', message: `删除 SQLite 文件失败：${detail}` })
+    } finally {
+      set((state) => ({ removingSqliteIds: state.removingSqliteIds.filter((id) => id !== fileId) }))
     }
   },
 }))

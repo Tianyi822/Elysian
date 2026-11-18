@@ -1,17 +1,18 @@
-import type { Container, ContainerImage, DatabaseInstance } from '@elysian/contracts'
-import { isFileBacked } from '@elysian/contracts'
+import type { Container, DatabaseContainerInstance, DatabaseInstance } from '@elysian/contracts'
 
 /**
- * 卡片视图：服务型按来源容器渲染，文件型（SQLite）按文件路径渲染——
- * 两类来源的差异集中在这里，卡片的 JSX 只读视图、不判断引擎。
+ * 卡片视图：容器行渲染 Docker 容器事实，文件行（SQLite）按文件路径渲染——
+ * 两类行的差异集中在这里，卡片的 JSX 只读视图、不判断行类型。
+ * 行类型以 engine 判别：'SQLite' 是文件行标记，容器行引擎只在三服务引擎内。
  */
 export type DatabaseCardView =
   | {
       kind: 'container'
+      /** 容器数据集中的完整容器行（ContainerDetailSheet 消费）；缺失时卡片如实说明。 */
       container?: Container
-      /** `镜像:标签`，容器缺失时为空串。 */
+      /** 容器镜像的完整引用（行自带 Docker inspect 事实）。 */
       imageLabel: string
-      /** 来源容器在数据集里找不到：卡片如实说明，不静默留空。 */
+      /** 容器数据集里找不到该容器：详情入口禁用，不静默留空。 */
       missingContainer: boolean
     }
   | {
@@ -22,28 +23,24 @@ export type DatabaseCardView =
       fileSizeMb?: number
     }
 
-/** 按来源合成卡片视图；容器与镜像数据来自各自数据集，这里不复制它们的字段。 */
+/** 按行类型合成卡片视图；容器行自带全部事实，容器数据集只用于就地打开详情面板。 */
 export function projectDatabaseCard(
-  database: DatabaseInstance,
+  row: DatabaseContainerInstance | DatabaseInstance,
   containerById: ReadonlyMap<string, Container>,
-  imageById: ReadonlyMap<string, ContainerImage>,
 ): DatabaseCardView {
-  if (isFileBacked(database)) {
+  if (row.engine === 'SQLite') {
     return {
       kind: 'file',
-      filePath: database.filePath ?? '',
-      fileSizeMb: database.fileSizeMb,
+      filePath: row.filePath ?? '',
+      fileSizeMb: row.fileSizeMb,
     }
   }
 
-  const container = database.containerId ? containerById.get(database.containerId) : undefined
-  if (!container) return { kind: 'container', imageLabel: '', missingContainer: true }
-
-  const image = imageById.get(container.imageId)
+  const container = containerById.get(row.containerId)
   return {
     kind: 'container',
     container,
-    imageLabel: image ? `${image.name}:${image.tag}` : '',
-    missingContainer: false,
+    imageLabel: row.image,
+    missingContainer: !container,
   }
 }

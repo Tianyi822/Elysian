@@ -23,7 +23,7 @@ export function GatewayProvider({
       createMockGateway({
         // 防火墙、SSH、主机账号、文件管理、容器列表、网站管理与日志端点只在容器内的
         // dev/preview 中间件挂载；宿主机本地开发走内存演示。
-        // 数据库域固定走 HTTP adapter（/api/databases），不做本地 mock 分流。
+        // 数据库域固定走 HTTP adapter（/api/databases）：容器管理与 SQLite 文件都不做本地 mock 分流。
         firewall: isDockerRuntime() ? 'http' : 'mock',
         ssh: isDockerRuntime() ? 'http' : 'mock',
         users: isDockerRuntime() ? 'http' : 'mock',

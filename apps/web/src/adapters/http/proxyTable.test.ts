@@ -37,8 +37,8 @@ const HTTP_ENDPOINTS: readonly { label: string; path: string }[] = [
   { label: '终端', path: `${TERMINAL_MOUNT}/ws` },
 ]
 
-/** 需要 WebSocket 代理（ws: true）的键：终端与容器管理。 */
-const WS_PROXY_KEYS: readonly string[] = [TERMINAL_MOUNT, DOCKER_MOUNT, DATABASE_MOUNT]
+/** 需要 WebSocket 代理（ws: true）的键：终端与容器管理。数据库 SQL 会话已退役。 */
+const WS_PROXY_KEYS: readonly string[] = [TERMINAL_MOUNT, DOCKER_MOUNT]
 
 /** 由本进程 elysianEventsVitePlugin 承载、绝不进代理表的端点。 */
 const PLUGIN_ENDPOINTS: readonly string[] = ['/api/events', '/api/resources/history']
