@@ -5,6 +5,7 @@ import { resetAgentExtensionsData } from '../adapters/mock/agent/agentExtensions
 import { useMessageStore } from './messageStore'
 import { useAgentExtensionsStore, selectImportsActive } from './agentExtensionsStore'
 import { AgentHttpError } from '../contracts/agentHttpError'
+import { advanceAuthGeneration } from '../utils/authGeneration'
 
 /*
  * 技能与 MCP 域 store 测试：走 mock 网关（演示状态机），覆盖六态切换、
@@ -273,8 +274,10 @@ describe('MCP 服务', () => {
 })
 
 describe('扩展配置的异步边界', () => {
-  it('登出代次变化与 reset 都阻止迟到的列表和探测回灌', async () => {
-    const { advanceAuthGeneration } = await import('../utils/authGeneration')
+  it.each([
+    { label: '登录代次变化', invalidate: advanceAuthGeneration },
+    { label: '重置 store', invalidate: () => useAgentExtensionsStore.getState().reset() },
+  ])('$label 阻止迟到的列表和探测回灌', async ({ invalidate }) => {
     const servers = await gateway.agentExtensions.listMcpServers()
     const catalog = await gateway.agentExtensions.probeMcpServer('mcp-demo-http', 2)
     let resolveList!: (items: typeof servers) => void
@@ -284,12 +287,33 @@ describe('扩展配置的异步边界', () => {
     const store = useAgentExtensionsStore.getState()
     const list = store.loadMcpServers(gateway)
     const probe = store.probeMcpServer(gateway, 'mcp-demo-http', 2)
-    advanceAuthGeneration()
-    store.reset()
+    invalidate()
+    const state = useAgentExtensionsStore.getState()
     resolveList(servers); resolveProbe(catalog)
     await Promise.all([list, probe])
-    expect(useAgentExtensionsStore.getState()).toMatchObject({ mcpServers: [], mcpStatus: 'idle', probe: null })
+    expect(useAgentExtensionsStore.getState()).toBe(state)
     expect(useMessageStore.getState().messages).toEqual([])
+  })
+
+  it('不同技能的启停可以并行，两份回执都能写回', async () => {
+    const store = useAgentExtensionsStore.getState()
+    await store.loadSkills(gateway)
+    const first = useAgentExtensionsStore.getState().skills[0]!
+    const second = useAgentExtensionsStore.getState().skills[1]!
+    const firstUpdate = { ...first, enabled: !first.enabled, revision: first.revision + 1 }
+    const secondUpdate = { ...second, enabled: !second.enabled, revision: second.revision + 1 }
+    let resolveFirst!: (skill: typeof first) => void
+    vi.spyOn(gateway.agentExtensions, 'setSkillEnabled')
+      .mockImplementationOnce(() => new Promise(resolve => { resolveFirst = resolve }))
+      .mockResolvedValueOnce(secondUpdate)
+
+    const pending = store.setSkillEnabledResult(gateway, first, firstUpdate.enabled)
+    await expect(store.setSkillEnabledResult(gateway, second, secondUpdate.enabled)).resolves.toEqual({ status: 'succeeded' })
+    expect(useAgentExtensionsStore.getState().togglingSkillIds).toEqual([first.id])
+    resolveFirst(firstUpdate)
+    await expect(pending).resolves.toEqual({ status: 'succeeded' })
+    expect(useAgentExtensionsStore.getState().skills).toEqual(expect.arrayContaining([firstUpdate, secondUpdate]))
+    expect(useAgentExtensionsStore.getState().togglingSkillIds).toEqual([])
   })
 
   it('刷新失败仍保留上次 MCP 和 Skill 表格', async () => {

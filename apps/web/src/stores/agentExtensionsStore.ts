@@ -1,4 +1,3 @@
-import { captureAuthGeneration } from '../utils/authGeneration'
 import { create } from 'zustand'
 import type {
   AgentMCPCatalogProjection,
@@ -14,6 +13,7 @@ import type { ElysianGateway } from '../contracts/adapters'
 import { AgentHttpError } from '../contracts/agentHttpError'
 import { isDockerRuntime } from '../utils/isDockerRuntime'
 import { useMessageStore } from './messageStore'
+import { createRequestGuard } from './requestGuard'
 import { tableBatchFailure as batchFailure, type TableBatchOutcome as BatchMutationResult } from '../utils/tableBatch'
 
 /*
@@ -142,12 +142,12 @@ export type AgentExtensionsState = {
 }
 
 export const useAgentExtensionsStore = create<AgentExtensionsState>((set, get) => {
-  let epoch = 0
-  const pendingLists = new Map<string, { gateway: ElysianGateway; auth: number; generation: number; snapshot: unknown; promise: Promise<void> }>()
-  let skillDetailRequest = 0
-  let skillFileRequest = 0
-  let probeRequest = 0
-  let catalogRequest = 0
+  const requests = createRequestGuard()
+  const pendingLists = new Map<string, { gateway: ElysianGateway; isCurrent: () => boolean; snapshot: unknown; promise: Promise<void> }>()
+  const skillDetailRequest = createRequestGuard()
+  const skillFileRequest = createRequestGuard()
+  const probeRequest = createRequestGuard()
+  const catalogRequest = createRequestGuard()
   const pendingProbes = new Map<string, Promise<AgentMCPCatalogProjection>>()
   /** 导入任务由非终态转终态时静默重读技能目录；成功/失败各给一次操作反馈。 */
   const noteImportTransitions = (previous: readonly AgentSkillImportTask[], next: readonly AgentSkillImportTask[]): boolean => {
@@ -211,16 +211,15 @@ export const useAgentExtensionsStore = create<AgentExtensionsState>((set, get) =
     catalog: null,
 
     loadSkills(gateway, options) {
-      const generation = epoch, auth = captureAuthGeneration()
       const previous = pendingLists.get('skills')
-      if (previous?.gateway === gateway && previous.generation === generation && previous.auth === auth && previous.snapshot === get().skills) {
+      if (previous?.gateway === gateway && previous.isCurrent() && previous.snapshot === get().skills) {
         if (!options?.silent) set({ skillsRefreshing: true })
         return previous.promise
       }
       const inPlace = get().skillsStatus === 'ready'
-      const operation = { gateway, generation, auth, snapshot: get().skills, promise: Promise.resolve() }
+      const operation = { gateway, isCurrent: requests.capture(), snapshot: get().skills, promise: Promise.resolve() }
       pendingLists.set('skills', operation)
-      const current = () => generation === epoch && auth === captureAuthGeneration() && pendingLists.get('skills') === operation
+      const current = () => operation.isCurrent() && pendingLists.get('skills') === operation
       set({ skillsStatus: inPlace ? 'ready' : 'loading', skillsRefreshing: inPlace && !options?.silent, skillsErrorMessage: undefined })
       operation.promise = (async () => {
         try {
@@ -231,36 +230,28 @@ export const useAgentExtensionsStore = create<AgentExtensionsState>((set, get) =
         } finally {
           if (pendingLists.get('skills') === operation) {
             pendingLists.delete('skills')
-            if (generation === epoch && auth === captureAuthGeneration()) set({ skillsRefreshing: false })
+            if (operation.isCurrent()) set({ skillsRefreshing: false })
           }
         }
       })()
       return operation.promise
     },
     async loadSkillDetail(gateway, skillId, revision) {
-      const generation = epoch
-      const auth = captureAuthGeneration()
-      const isCurrent = () => generation === epoch && auth === captureAuthGeneration()
-      const request = ++skillDetailRequest
-      skillFileRequest += 1
+      const isCurrent = skillDetailRequest.replace()
+      skillFileRequest.invalidate()
       set({ skillDetail: { skillId, revision, loading: true, file: null } })
       try {
         const item = await gateway.agentExtensions.getSkill(skillId, revision)
         if (!isCurrent()) return
-        if (request === skillDetailRequest) {
-          set({ skillDetail: { skillId, revision: item.revision, loading: false, item, file: null } })
-          if (item.files.some(file => file.path === 'SKILL.md')) void get().loadSkillFile(gateway, skillId, item.revision, 'SKILL.md')
-        }
+        set({ skillDetail: { skillId, revision: item.revision, loading: false, item, file: null } })
+        if (item.files.some(file => file.path === 'SKILL.md')) void get().loadSkillFile(gateway, skillId, item.revision, 'SKILL.md')
       } catch (error) {
         if (!isCurrent()) return
-        if (request === skillDetailRequest) set({ skillDetail: { skillId, revision, loading: false, errorMessage: messageOf(error), file: null } })
+        set({ skillDetail: { skillId, revision, loading: false, errorMessage: messageOf(error), file: null } })
       }
     },
     async loadSkillFile(gateway, skillId, revision, path) {
-      const generation = epoch
-      const auth = captureAuthGeneration()
-      const isCurrent = () => generation === epoch && auth === captureAuthGeneration()
-      const request = ++skillFileRequest
+      const isCurrent = skillFileRequest.replace()
       const current = get().skillDetail
       if (current === null || current.skillId !== skillId || current.revision !== revision || current.item === undefined) return
       set({ skillDetail: { ...current, file: { path, status: 'loading' } } })
@@ -268,26 +259,24 @@ export const useAgentExtensionsStore = create<AgentExtensionsState>((set, get) =
         const preview = await gateway.agentExtensions.getSkillFile(skillId, revision, path)
         if (!isCurrent()) return
         const latest = get().skillDetail
-        if (request === skillFileRequest && latest?.skillId === skillId && latest.revision === revision && latest.file?.path === path) {
+        if (latest?.skillId === skillId && latest.revision === revision && latest.file?.path === path) {
           set({ skillDetail: { ...latest, file: { path, status: 'ready', preview } } })
         }
       } catch (error) {
         if (!isCurrent()) return
         const latest = get().skillDetail
-        if (request === skillFileRequest && latest?.skillId === skillId && latest.revision === revision && latest.file?.path === path) {
+        if (latest?.skillId === skillId && latest.revision === revision && latest.file?.path === path) {
           set({ skillDetail: { ...latest, file: { path, status: 'error', errorMessage: messageOf(error) } } })
         }
       }
     },
     closeSkillDetail() {
-      skillDetailRequest += 1
-      skillFileRequest += 1
+      skillDetailRequest.invalidate()
+      skillFileRequest.invalidate()
       set({ skillDetail: null })
     },
     async setSkillEnabled(gateway, skillId, expectedRevision, enabled) {
-      const generation = epoch
-      const auth = captureAuthGeneration()
-      const isCurrent = () => generation === epoch && auth === captureAuthGeneration()
+      const isCurrent = requests.capture()
       if (get().deletingSkill || get().togglingSkillIds.includes(skillId)) return
       set({ togglingSkillIds: [...get().togglingSkillIds, skillId] })
       try {
@@ -309,8 +298,7 @@ export const useAgentExtensionsStore = create<AgentExtensionsState>((set, get) =
       const current = get().skills.find(item => item.id === skill.id)
       if (!current || current.revision !== skill.revision) return { status: 'failed', error: 'Skill 修订已变化，请重新选择后重试' }
       if (get().deletingSkill || get().togglingSkillIds.includes(skill.id)) return { status: 'failed', error: 'Skill 正在修改，请稍后重试' }
-      const generation = epoch, auth = captureAuthGeneration()
-      const isCurrent = () => generation === epoch && auth === captureAuthGeneration()
+      const isCurrent = requests.capture()
       set({ togglingSkillIds: [...get().togglingSkillIds, skill.id] })
       try {
         const item = await gateway.agentExtensions.setSkillEnabled(skill.id, skill.revision, enabled)
@@ -326,8 +314,7 @@ export const useAgentExtensionsStore = create<AgentExtensionsState>((set, get) =
       const current = get().skills.find(item => item.id === skill.id)
       if (!current || current.revision !== skill.revision) return { status: 'failed', error: 'Skill 修订已变化，请重新选择后重试' }
       if (get().deletingSkill || get().togglingSkillIds.includes(skill.id)) return { status: 'failed', error: 'Skill 正在修改，请稍后重试' }
-      const generation = epoch, auth = captureAuthGeneration()
-      const isCurrent = () => generation === epoch && auth === captureAuthGeneration()
+      const isCurrent = requests.capture()
       set({ deletingSkill: true })
       try {
         await gateway.agentExtensions.deleteSkill(skill.id, skill.revision)
@@ -346,9 +333,7 @@ export const useAgentExtensionsStore = create<AgentExtensionsState>((set, get) =
       set({ deleteTarget: null })
     },
     async confirmDeleteSkill(gateway) {
-      const generation = epoch
-      const auth = captureAuthGeneration()
-      const isCurrent = () => generation === epoch && auth === captureAuthGeneration()
+      const isCurrent = requests.capture()
       const target = get().deleteTarget
       if (target === null || get().deletingSkill || get().togglingSkillIds.includes(target.skillId)) return
       set({ deletingSkill: true })
@@ -370,16 +355,15 @@ export const useAgentExtensionsStore = create<AgentExtensionsState>((set, get) =
     },
 
     loadImports(gateway, options) {
-      const generation = epoch, auth = captureAuthGeneration()
       const previous = pendingLists.get('imports')
-      if (previous?.gateway === gateway && previous.generation === generation && previous.auth === auth && previous.snapshot === get().imports) {
+      if (previous?.gateway === gateway && previous.isCurrent() && previous.snapshot === get().imports) {
         if (!options?.silent) set({ importsRefreshing: true })
         return previous.promise
       }
       const inPlace = get().importsStatus === 'ready'
-      const operation = { gateway, generation, auth, snapshot: get().imports, promise: Promise.resolve() }
+      const operation = { gateway, isCurrent: requests.capture(), snapshot: get().imports, promise: Promise.resolve() }
       pendingLists.set('imports', operation)
-      const current = () => generation === epoch && auth === captureAuthGeneration() && pendingLists.get('imports') === operation
+      const current = () => operation.isCurrent() && pendingLists.get('imports') === operation
       set({ importsStatus: inPlace ? 'ready' : 'loading', importsRefreshing: inPlace && !options?.silent, importsErrorMessage: undefined })
       operation.promise = (async () => {
         try {
@@ -390,16 +374,14 @@ export const useAgentExtensionsStore = create<AgentExtensionsState>((set, get) =
         } finally {
           if (pendingLists.get('imports') === operation) {
             pendingLists.delete('imports')
-            if (generation === epoch && auth === captureAuthGeneration()) set({ importsRefreshing: false })
+            if (operation.isCurrent()) set({ importsRefreshing: false })
           }
         }
       })()
       return operation.promise
     },
     async loadMoreImports(gateway) {
-      const generation = epoch
-      const auth = captureAuthGeneration()
-      const isCurrent = () => generation === epoch && auth === captureAuthGeneration()
+      const isCurrent = requests.capture()
       const state = get()
       if (state.importsLoadingMore || !state.importsHasMore) return
       set({ importsLoadingMore: true })
@@ -423,9 +405,8 @@ export const useAgentExtensionsStore = create<AgentExtensionsState>((set, get) =
     },
     async pollImports(gateway, signal) {
       const snapshot = get().imports
-      const generation = epoch
-      const auth = captureAuthGeneration()
-      const isCurrent = () => generation === epoch && auth === captureAuthGeneration() && !signal?.aborted && snapshot === get().imports
+      const requestIsCurrent = requests.capture()
+      const isCurrent = () => requestIsCurrent() && !signal?.aborted && snapshot === get().imports
       const page = await gateway.agentExtensions.listSkillImports({ limit: 50 }, signal)
       if (!isCurrent()) return
       const onPage = new Set(page.items.map(task => task.id))
@@ -444,9 +425,7 @@ export const useAgentExtensionsStore = create<AgentExtensionsState>((set, get) =
       notify('info', `Skill 导入已受理，可在导入记录查看进度${MOCK_SUFFIX}`)
     },
     async submitSkillImport(gateway, input, archive) {
-      const generation = epoch
-      const auth = captureAuthGeneration()
-      const isCurrent = () => generation === epoch && auth === captureAuthGeneration()
+      const isCurrent = requests.capture()
       set({ importSubmitError: null })
       try {
         const task = await gateway.agentExtensions.createSkillImport(input, archive)
@@ -461,9 +440,7 @@ export const useAgentExtensionsStore = create<AgentExtensionsState>((set, get) =
       }
     },
     async cancelSkillImport(gateway, importId) {
-      const generation = epoch
-      const auth = captureAuthGeneration()
-      const isCurrent = () => generation === epoch && auth === captureAuthGeneration()
+      const isCurrent = requests.capture()
       if (get().importActingIds.includes(importId)) return
       set({ importActingIds: [...get().importActingIds, importId] })
       try {
@@ -489,9 +466,7 @@ export const useAgentExtensionsStore = create<AgentExtensionsState>((set, get) =
       }
     },
     async deleteSkillImportRecord(gateway, importId) {
-      const generation = epoch
-      const auth = captureAuthGeneration()
-      const isCurrent = () => generation === epoch && auth === captureAuthGeneration()
+      const isCurrent = requests.capture()
       if (get().importActingIds.includes(importId)) return
       set({ importActingIds: [...get().importActingIds, importId] })
       try {
@@ -513,16 +488,15 @@ export const useAgentExtensionsStore = create<AgentExtensionsState>((set, get) =
     },
 
     loadMcpServers(gateway, options) {
-      const generation = epoch, auth = captureAuthGeneration()
       const previous = pendingLists.get('mcp')
-      if (previous?.gateway === gateway && previous.generation === generation && previous.auth === auth && previous.snapshot === get().mcpServers) {
+      if (previous?.gateway === gateway && previous.isCurrent() && previous.snapshot === get().mcpServers) {
         if (!options?.silent) set({ mcpRefreshing: true })
         return previous.promise
       }
       const inPlace = get().mcpStatus === 'ready'
-      const operation = { gateway, generation, auth, snapshot: get().mcpServers, promise: Promise.resolve() }
+      const operation = { gateway, isCurrent: requests.capture(), snapshot: get().mcpServers, promise: Promise.resolve() }
       pendingLists.set('mcp', operation)
-      const current = () => generation === epoch && auth === captureAuthGeneration() && pendingLists.get('mcp') === operation
+      const current = () => operation.isCurrent() && pendingLists.get('mcp') === operation
       set({ mcpStatus: inPlace ? 'ready' : 'loading', mcpRefreshing: inPlace && !options?.silent, mcpErrorMessage: undefined })
       operation.promise = (async () => {
         try {
@@ -533,16 +507,14 @@ export const useAgentExtensionsStore = create<AgentExtensionsState>((set, get) =
         } finally {
           if (pendingLists.get('mcp') === operation) {
             pendingLists.delete('mcp')
-            if (generation === epoch && auth === captureAuthGeneration()) set({ mcpRefreshing: false })
+            if (operation.isCurrent()) set({ mcpRefreshing: false })
           }
         }
       })()
       return operation.promise
     },
     async createMcpServer(gateway, input) {
-      const generation = epoch
-      const auth = captureAuthGeneration()
-      const isCurrent = () => generation === epoch && auth === captureAuthGeneration()
+      const isCurrent = requests.capture()
       if (get().mcpSaving) return false
       set({ mcpSaving: true, mcpSaveError: null })
       try {
@@ -560,9 +532,7 @@ export const useAgentExtensionsStore = create<AgentExtensionsState>((set, get) =
       }
     },
     async updateMcpServer(gateway, serverId, input) {
-      const generation = epoch
-      const auth = captureAuthGeneration()
-      const isCurrent = () => generation === epoch && auth === captureAuthGeneration()
+      const isCurrent = requests.capture()
       if (get().mcpSaving) return false
       set({ mcpSaving: true, mcpSaveError: null })
       try {
@@ -596,8 +566,7 @@ export const useAgentExtensionsStore = create<AgentExtensionsState>((set, get) =
           ...(current.stdio.grantRevision !== undefined ? { grantRevision: current.stdio.grantRevision } : {}),
         } }),
       }
-      const generation = epoch, auth = captureAuthGeneration()
-      const isCurrent = () => generation === epoch && auth === captureAuthGeneration()
+      const isCurrent = requests.capture()
       set({ mcpSaving: true, mcpSaveError: null })
       try {
         const item = await gateway.agentExtensions.updateMcpServer(server.id, input)
@@ -616,11 +585,8 @@ export const useAgentExtensionsStore = create<AgentExtensionsState>((set, get) =
       set({ mcpSaveError: null })
     },
     async probeMcpServer(gateway, serverId, revision) {
-      const generation = epoch
-      const auth = captureAuthGeneration()
-      const isCurrent = () => generation === epoch && auth === captureAuthGeneration()
+      const isCurrent = probeRequest.replace()
       const key = `${serverId}@${revision}`
-      const request = ++probeRequest
       set({ probe: { serverId, revision, status: 'loading' } })
       let pending = pendingProbes.get(key)
       if (pending === undefined) {
@@ -630,10 +596,9 @@ export const useAgentExtensionsStore = create<AgentExtensionsState>((set, get) =
       try {
         const projection = await pending
         if (!isCurrent()) return
-        if (request === probeRequest) set({ probe: { serverId, revision, status: 'ready', projection } })
+        set({ probe: { serverId, revision, status: 'ready', projection } })
       } catch (error) {
         if (!isCurrent()) return
-        if (request !== probeRequest) return
         const resourceBusy = error instanceof AgentHttpError && error.code === 'resource-busy'
         set({ probe: { serverId, revision, status: 'error', errorMessage: messageOf(error), ...(resourceBusy ? { resourceBusy: true } : {}) } })
       } finally {
@@ -641,37 +606,34 @@ export const useAgentExtensionsStore = create<AgentExtensionsState>((set, get) =
       }
     },
     async loadMcpCatalog(gateway, serverId, revision, digest) {
-      const generation = epoch
-      const auth = captureAuthGeneration()
-      const isCurrent = () => generation === epoch && auth === captureAuthGeneration()
-      const request = ++catalogRequest
+      const isCurrent = catalogRequest.replace()
       set({ catalog: { serverId, revision, digest, status: 'loading' } })
       try {
         const projection = await gateway.agentExtensions.getMcpCatalog(serverId, revision, digest)
         if (!isCurrent()) return
-        if (request === catalogRequest) set({ catalog: { serverId, revision, digest, status: 'ready', projection } })
+        set({ catalog: { serverId, revision, digest, status: 'ready', projection } })
       } catch (error) {
         if (!isCurrent()) return
-        if (request === catalogRequest) set({ catalog: { serverId, revision, digest, status: 'error', errorMessage: messageOf(error) } })
+        set({ catalog: { serverId, revision, digest, status: 'error', errorMessage: messageOf(error) } })
       }
     },
     closeProbe() {
-      probeRequest += 1
+      probeRequest.invalidate()
       set({ probe: null })
     },
     closeCatalog() {
-      catalogRequest += 1
+      catalogRequest.invalidate()
       set({ catalog: null })
     },
 
     reset() {
       pendingLists.clear()
-      epoch += 1
+      requests.invalidate()
       pendingProbes.clear()
-      skillDetailRequest += 1
-      skillFileRequest += 1
-      probeRequest += 1
-      catalogRequest += 1
+      skillDetailRequest.invalidate()
+      skillFileRequest.invalidate()
+      probeRequest.invalidate()
+      catalogRequest.invalidate()
       set({
         skillsStatus: 'idle',
         skillsErrorMessage: undefined,
