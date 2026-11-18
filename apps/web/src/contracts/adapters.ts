@@ -47,6 +47,7 @@ import type {
   DatabaseInstance,
   DependencyProbeReport,
   ElysianEvent,
+  Events,
   EventStreamHandlers,
   FileEntry,
   FileSearchResult,
@@ -59,6 +60,7 @@ import type {
   OperationLogListQuery,
   OperationLogListReport,
   PlatformLogCategory,
+  PlatformMemorySample,
   RuntimeLogListReport,
   SshAdapter,
   Unsubscribe,
@@ -519,6 +521,14 @@ export interface ResourceHistoryAdapter {
   list(range: ResourceHistoryTimeRange): Promise<readonly ResourceSamplePoint[]>
 }
 
+/** 主机运行负载（1/5/15 分钟均值）与资源采样事件使用同一形状。 */
+export type SystemLoad = Events['resource/sample']['load']
+
+/** 面板进程内存，与主机负载及仪表盘采样口径独立。 */
+export interface PlatformMemoryAdapter {
+  read(signal?: AbortSignal): Promise<PlatformMemorySample>
+}
+
 /**
  * 宿主依赖检测接缝：现场探测宿主 Docker Engine 与 Caddy 管理通道的就绪性。
  * Docker 运行时经同源 HTTP（/api/platform/dependencies，服务端每次请求现场探测、
@@ -612,5 +622,6 @@ export interface ElysianGateway {
   terminals: TerminalAdapter
   websites: WebsitesAdapter
   resources: ResourceHistoryAdapter
+  platformMemory: PlatformMemoryAdapter
   dependencies: DependenciesAdapter
 }

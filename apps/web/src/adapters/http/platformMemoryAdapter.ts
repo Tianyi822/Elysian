@@ -1,24 +1,23 @@
+import type { PlatformMemorySample } from '@elysian/contracts'
+import type { PlatformMemoryAdapter } from '../../contracts/adapters'
 import { withRequestDeadline } from './requestDeadline'
-import { parsePlatformMemoryResponse, type PlatformMemorySample } from '../platformMemory/types'
+import { parsePlatformMemoryResponse } from '../platformMemory/types'
 import { fetchWithSession, reportUnauthorized } from './unauthorized'
 
-export type { PlatformMemorySample }
-
-export function fetchPlatformMemory(url = '/api/platform/memory', signal?: AbortSignal): Promise<PlatformMemorySample> {
-  return withRequestDeadline({ signal }, (init) => readPlatformMemory(url, init.signal ?? undefined))
+export function createHttpPlatformMemoryAdapter(): PlatformMemoryAdapter {
+  return {
+    read: (signal) => withRequestDeadline({ signal }, (init) => readPlatformMemory(init.signal)),
+  }
 }
 
 /**
  * 浏览器侧同源读取 Go 后端进程内存，
  * 这里只做 JSON 形状校验与中文错误。
  */
-async function readPlatformMemory(
-  url = '/api/platform/memory',
-  signal?: AbortSignal,
-): Promise<PlatformMemorySample> {
+async function readPlatformMemory(signal: RequestInit['signal']): Promise<PlatformMemorySample> {
   let response: Response
   try {
-    response = await fetchWithSession(url, { cache: 'no-store', signal })
+    response = await fetchWithSession('/api/platform/memory', { cache: 'no-store', signal })
   } catch {
     throw new Error('平台内存采集失败')
   }

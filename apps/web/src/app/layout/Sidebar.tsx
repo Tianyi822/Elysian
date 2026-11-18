@@ -2,6 +2,7 @@ import { useEffect, useLayoutEffect, useMemo, useRef, useState, type PointerEven
 import { NavLink, useLocation } from 'react-router'
 import * as Dialog from '@radix-ui/react-dialog'
 import { motion, useReducedMotion } from 'framer-motion'
+import { useGateway } from '../../adapters/GatewayProvider'
 import { SidebarPanel } from '../../components/easyui/Sidebar'
 import { Bot, GripVertical, PanelLeftClose } from '../../components/icons'
 import { Button } from '../../components/Button'
@@ -19,6 +20,7 @@ import {
 } from '../navigationOrder'
 import { QuickActions } from './QuickActions'
 import { SystemLoadBadge } from '../../components/SystemLoadBadge'
+import { useSystemLoad } from '../../stores/systemLoadStore'
 
 type DragSession = {
   pointerId: number
@@ -37,6 +39,12 @@ function measureSlots(list: HTMLElement): { tops: number[]; stride: number } | n
   const stride = tops.length >= 2 ? tops[1]! - tops[0]! : nodes[0]!.getBoundingClientRect().height
   if (stride <= 0) return null
   return { tops, stride }
+}
+
+function SidebarSystemLoad({ collapsed }: { collapsed: boolean }) {
+  const { platformMemory } = useGateway()
+  const { memory, load } = useSystemLoad(platformMemory)
+  return <SystemLoadBadge navigation collapsed={collapsed} memory={memory} load={load} />
 }
 
 /** 桌面侧边栏与窄屏抽屉共用同一份导航与底部快捷操作。 */
@@ -188,7 +196,7 @@ export function Sidebar({
       className="grid size-7 shrink-0 place-items-center rounded-[8px] text-sidebar-muted hover:bg-sidebar-hover hover:text-sidebar-fg focus-visible:ring-2 focus-visible:ring-focus">
       <PanelLeftClose aria-hidden size={18} />
     </Button></Dialog.Close> : undefined}
-    footer={<><SystemLoadBadge navigation collapsed={collapsed} /><QuickActions collapsed={collapsed} /></>}
+    footer={<><SidebarSystemLoad collapsed={collapsed} /><QuickActions collapsed={collapsed} /></>}
     renderLink={(item, props) => <NavLink {...props} to={item.id} end={NAV_ITEMS.find(nav => nav.to === item.id)?.end} draggable={false} />}
     itemAttributes={item => {
       const index = items.findIndex(nav => nav.to === item.id)

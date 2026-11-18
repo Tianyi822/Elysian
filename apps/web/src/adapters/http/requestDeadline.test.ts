@@ -4,7 +4,7 @@ import { createHttpFirewallAdapter } from './firewallHttpAdapter'
 import { createHttpSshAdapter } from './sshHttpAdapter'
 import { createHttpUsersAdapter } from './usersHttpAdapter'
 import { createHttpSessionAdapter } from './sessionHttpAdapter'
-import { fetchPlatformMemory } from './platformMemoryAdapter'
+import { createHttpPlatformMemoryAdapter } from './platformMemoryAdapter'
 import { setUnauthorizedListener } from './unauthorized'
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); setUnauthorizedListener(() => {}) })
@@ -32,7 +32,7 @@ describe('有界 JSON 请求接缝', () => {
     () => createHttpSshAdapter().overview(),
     () => createHttpUsersAdapter().list(),
     () => createHttpSessionAdapter().status(),
-    () => fetchPlatformMemory(),
+    () => createHttpPlatformMemoryAdapter().read(),
   ])('安全、会话及顶栏读取共用 15 秒时限', async (read) => {
     vi.useFakeTimers(); vi.stubGlobal('fetch', vi.fn(() => new Promise(() => {})))
     const result = expect(read()).rejects.toThrow('读取超时')

@@ -1,4 +1,4 @@
-import type { SystemLoad } from '../mock/resourceMetrics.ts'
+import type { SystemLoad } from '../../contracts/adapters.ts'
 
 export const PROC_LOADAVG = '/proc/loadavg'
 export const PROC_MEMINFO = '/proc/meminfo'

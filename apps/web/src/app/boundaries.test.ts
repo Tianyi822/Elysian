@@ -57,4 +57,9 @@ describe('浏览器侧边界', () => {
       expect(source, `${file} 不应依赖 @deepseek-ai/cordis`).not.toMatch(/@deepseek-ai\/cordis/)
     }
   })
+
+  it('系统负载徽标只接收展示数据，不引入适配器实现', () => {
+    const source = readFileSync(join(WEB_SRC, 'components/SystemLoadBadge.tsx'), 'utf8')
+    expect(source).not.toMatch(/['"]\.\.\/adapters\//)
+  })
 })

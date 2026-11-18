@@ -1,65 +1,14 @@
 import * as Popover from '@radix-ui/react-popover'
 import * as Tooltip from '@radix-ui/react-tooltip'
-import { useEffect, useId, useMemo, useState, useSyncExternalStore } from 'react'
+import { useId, useState } from 'react'
 import type { ReactNode } from 'react'
-import { fetchPlatformMemory } from '../adapters/http/platformMemoryAdapter'
-import { createPlatformMemorySource } from '../adapters/platformMemory/platformMemorySource'
-import type { PlatformMemoryView } from '../adapters/platformMemory/platformMemorySource'
-import type { PlatformMemorySample } from '../adapters/platformMemory/types'
-import type { SystemLoad } from '../adapters/mock/resourceMetrics'
+import type { PlatformMemorySample } from '@elysian/contracts'
+import type { SystemLoad } from '../contracts/adapters'
+import type { PlatformMemoryView } from '../stores/systemLoadStore'
 import { formatDateTime } from './format'
 import { ChevronRight, CircleHelp, Gauge } from './icons'
-import { getLastResourceSample, onStreamEvent } from '../stores/eventStreamStore'
 import { Button } from './Button'
 import { PeekCard } from './easyui/PeekCard'
-
-/**
- * 系统负载指示器：合并这台机器的忙闲（load average）与面板自身内存。
- *
- * 负载随事件流每拍到达，内存在前台每 5 秒共享采一次后端进程；两个口径不同，常驻读数只给
- * 1 分钟负载与内存用量，三档负载与内存明细收在点击浮层里分节列出。
- * 采不到时如实显示失败或占位，不伪造数字。
- */
-
-export const SAMPLE_INTERVAL_MS = 5_000
-
-const platformMemorySource = createPlatformMemorySource(readPlatformMemory, SAMPLE_INTERVAL_MS)
-
-/** 周期读取服务端进程内存，后台暂停、恢复立即读取；同页默认订阅共用一个采样器。 */
-export function usePlatformMemory(
-  intervalMs = SAMPLE_INTERVAL_MS,
-  read: (signal?: AbortSignal) => Promise<PlatformMemorySample> = readPlatformMemory,
-): PlatformMemoryView {
-  const source = useMemo(() => read === readPlatformMemory && intervalMs === SAMPLE_INTERVAL_MS
-    ? platformMemorySource
-    : createPlatformMemorySource(read, intervalMs), [intervalMs, read])
-  return useSyncExternalStore(source.subscribe, source.getSnapshot, source.getSnapshot)
-}
-
-function readPlatformMemory(signal?: AbortSignal): Promise<PlatformMemorySample> {
-  return fetchPlatformMemory('/api/platform/memory', signal)
-}
-
-/**
- * 最新一拍的 load average：事件流每拍带过来，挂载晚于首拍时从缓存回放。
- * 事件流没接通时保持 undefined，界面显示占位而不是 0（0 会被读成机器空闲）。
- */
-export function useSystemLoad(): SystemLoad | undefined {
-  const [load, setLoad] = useState<SystemLoad | undefined>(() => readLoad(getLastResourceSample()))
-  useEffect(
-    () =>
-      onStreamEvent((event) => {
-        const next = readLoad(event)
-        if (next) setLoad(next)
-      }),
-    [],
-  )
-  return load
-}
-
-function readLoad(event: ReturnType<typeof getLastResourceSample>): SystemLoad | undefined {
-  return event?.name === 'resource/sample' ? event.payload.load : undefined
-}
 
 function formatMiB(valueMb: number): string {
   return `${valueMb.toFixed(1)} MiB`
@@ -139,10 +88,13 @@ function ScopeHelp() {
 /**
  * 导航底部常驻 1 分钟负载与面板内存，收起时通过图标进入明细。
  */
-export function SystemLoadBadge({ navigation = false, collapsed = false }: { navigation?: boolean; collapsed?: boolean }) {
+export function SystemLoadBadge({ memory: view, load, navigation = false, collapsed = false }: {
+  memory: PlatformMemoryView
+  load?: SystemLoad
+  navigation?: boolean
+  collapsed?: boolean
+}) {
   const [open, setOpen] = useState(false)
-  const view = usePlatformMemory()
-  const load = useSystemLoad()
   const sample = view.status === 'ready' ? view.sample : null
   const residentPercent = sample ? memoryPercent(sample.rssMb, sample.systemTotalMb) : null
   const memoryText = sample

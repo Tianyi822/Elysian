@@ -1,10 +1,11 @@
 import * as Tooltip from '@radix-ui/react-tooltip'
-import { act, fireEvent, render, screen } from '@testing-library/react'
+import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { createMemoryRouter, RouterProvider } from 'react-router'
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import { GatewayProvider } from '../../adapters/GatewayProvider'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import { useEventStreamStore } from '../../stores/eventStreamStore'
+import { platformMemorySample } from '../../test/platformMemorySample'
 import { ThemeProvider } from '../theme/ThemeProvider'
 import { AppShell } from './AppShell'
 import { ShellPageFallback, useShellLayout, type ShellLayout } from './ShellLayoutContext'
@@ -15,7 +16,7 @@ function Probe() {
   return <ShellPageFallback><div role="status">测试页面状态</div></ShellPageFallback>
 }
 
-function renderShell(path = '/') {
+function renderShell(path = '/', gateway = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })) {
   const router = createMemoryRouter([{
     element: <AppShell />,
     children: [
@@ -24,15 +25,38 @@ function renderShell(path = '/') {
       { path: '/agent/approvals', element: <Probe /> },
     ],
   }], { initialEntries: [path] })
-  render(<ThemeProvider><Tooltip.Provider><GatewayProvider gateway={createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })}>
+  render(<ThemeProvider><Tooltip.Provider><GatewayProvider gateway={gateway}>
     <RouterProvider router={router} />
   </GatewayProvider></Tooltip.Provider></ThemeProvider>)
   return router
 }
 
-afterEach(() => { useEventStreamStore.getState().disconnect() })
+afterEach(() => {
+  useEventStreamStore.getState().disconnect()
+  vi.useRealTimers()
+})
 
 describe('业务页与外壳布局接缝', () => {
+  it('桌面与窄屏抽屉共享进程内存快照，失败后由同一个采样器恢复', async () => {
+    vi.useFakeTimers()
+    const gateway = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
+    const read = vi.fn(async () => platformMemorySample()).mockRejectedValueOnce(new Error('offline'))
+    renderShell('/', { ...gateway, platformMemory: { read } })
+    await act(async () => {})
+    const desktop = within(screen.getByRole('complementary', { name: '桌面主导航' })).getByRole('button', { name: '系统负载' })
+    expect(desktop).toHaveTextContent('采集失败')
+
+    act(() => currentLayout.openNavigation())
+    const drawer = within(screen.getByRole('dialog', { name: '主导航' })).getByRole('button', { name: '系统负载' })
+    expect(drawer).toHaveTextContent('采集失败')
+    expect(read).toHaveBeenCalledTimes(1)
+
+    await act(async () => { await vi.advanceTimersByTimeAsync(5_000) })
+    expect(read).toHaveBeenCalledTimes(2)
+    expect(desktop).toHaveTextContent('80.0 MiB')
+    expect(drawer).toHaveTextContent('80.0 MiB')
+  })
+
   it('聊天页不折叠主导航，继承进入前收展，聊天内改动离开后还原', async () => {
     const router = renderShell()
     expect(screen.getByRole('complementary', { name: '桌面主导航' })).not.toHaveAttribute('data-collapsed')

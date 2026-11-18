@@ -1,3 +1,4 @@
+import type { SystemLoad } from '../../contracts/adapters.ts'
 import { DATASET_BASE_TIME, DATASET_SEED } from './dataset.ts'
 import { createRandom, intBetween } from './seed.ts'
 
@@ -320,9 +321,6 @@ export function sliceResourceMetrics(
  * 按天种子序列与实时叠加层（旧路径）：仪表盘主路径已迁至 ResourceSamplePoint；
  * 事件流与其它测试仍可能引用 appendLiveResourceSample，保留至后续任务切换。
  */
-
-/** 系统负载（load average，1/5/15 分钟均值）的 mock 形状。 */
-export type SystemLoad = { m1: number; m5: number; m15: number }
 
 export const INITIAL_LOAD: SystemLoad = { m1: 0.16, m5: 0.09, m15: 0.05 }
 

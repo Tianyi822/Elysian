@@ -33,6 +33,7 @@ import { createHttpFilesAdapter } from '../http/filesHttpAdapter'
 import { createHttpContainersAdapter } from '../http/containersHttpAdapter'
 import { createHttpWebsitesAdapter } from '../http/websitesHttpAdapter'
 import { createHttpDependenciesAdapter } from '../http/dependenciesHttpAdapter'
+import { createHttpPlatformMemoryAdapter } from '../http/platformMemoryAdapter'
 import { createHttpSessionAdapter } from '../http/sessionHttpAdapter'
 import { createTerminalWsAdapter } from '../http/terminalWsAdapter'
 import { createHttpDatabaseAdapter } from '../http/databaseHttpAdapter'
@@ -134,6 +135,8 @@ export function createGateway(
     terminals,
     websites,
     resources,
+    // 本地也能经 Vite 代理读取 Go 进程；没有后端时按真实读取失败呈现。
+    platformMemory: createHttpPlatformMemoryAdapter(),
     dependencies,
     modelSettings,
     agentRuntime,
