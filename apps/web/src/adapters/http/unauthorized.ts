@@ -20,6 +20,12 @@ export async function fetchWithSession(...args: Parameters<typeof fetch>): Promi
   return response
 }
 
+/** 异步解析完成后，确认响应仍能更新当前登录会话。 */
+export function isCurrentSessionResponse(response: Response): boolean {
+  const generation = responseGenerations.get(response)
+  return generation === undefined || generation === captureAuthGeneration()
+}
+
 /** 注册全局 401 监听；后注册者覆盖前者（sessionStore 模块在加载时接上）。 */
 export function setUnauthorizedListener(next: UnauthorizedListener): void {
   listener = next

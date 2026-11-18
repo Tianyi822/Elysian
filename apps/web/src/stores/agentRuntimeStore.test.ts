@@ -3,6 +3,7 @@ import type { AgentRuntimeInfo } from '@elysian/contracts'
 import type { ElysianGateway } from '../contracts/adapters'
 import { demoAgentRuntimeInfo } from '../adapters/mock/agent/agentRuntimeMock'
 import { useAgentRuntimeStore } from './agentRuntimeStore'
+import { useSessionStore } from './sessionStore'
 
 function gatewayWith(info: AgentRuntimeInfo, error?: Error): ElysianGateway {
   return {
@@ -93,5 +94,23 @@ describe('agentRuntimeStore', () => {
     expect(useAgentRuntimeStore.getState().unavailableReason).toBe('存储故障')
     await useAgentRuntimeStore.getState().load(gatewayWith(info), { silent: true })
     expect(useAgentRuntimeStore.getState().unavailableReason).toBeUndefined()
+  })
+
+  it('会话失效清空运行时报告，迟到的读取不能恢复旧状态', async () => {
+    const store = useAgentRuntimeStore.getState()
+    store.reset()
+    const info = demoAgentRuntimeInfo()
+    await store.load(gatewayWith(info))
+    store.reportUnavailable('旧会话的存储故障')
+    let finish!: (value: AgentRuntimeInfo) => void
+    const result = new Promise<AgentRuntimeInfo>(resolve => { finish = resolve })
+    const gateway = { agentRuntime: { runtime: () => result } } as unknown as ElysianGateway
+    const pending = store.load(gateway)
+
+    useSessionStore.getState().expire()
+    finish(info)
+    await pending
+
+    expect(useAgentRuntimeStore.getState()).toMatchObject({ status: 'idle', info: undefined, unavailableReason: undefined, reloading: false })
   })
 })

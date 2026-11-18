@@ -1,7 +1,7 @@
 import type { RuntimePage } from '@elysian/contracts'
 import { AgentHttpError } from '../../../contracts/agentHttpError'
 import { withRequestDeadline } from '../requestDeadline'
-import { fetchWithSession, reportUnauthorized } from '../unauthorized'
+import { fetchWithSession, isCurrentSessionResponse, reportUnauthorized } from '../unauthorized'
 
 type AgentUnavailableReporter = (reason: string) => void
 
@@ -15,7 +15,7 @@ async function parseAgentResponse(response: Response, onGlobalUnavailable?: Agen
     const code = row !== null && typeof row.code === 'string' ? row.code : undefined
     if (detail !== null) {
       const error = new AgentHttpError(detail, code, response.status)
-      if (isAgentGlobalUnavailableError(error)) onGlobalUnavailable?.(detail)
+      if (isAgentGlobalUnavailableError(error) && isCurrentSessionResponse(response)) onGlobalUnavailable?.(detail)
       throw error
     }
     throw new Error(`Agent 请求失败：HTTP ${response.status}`)

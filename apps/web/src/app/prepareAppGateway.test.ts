@@ -45,6 +45,26 @@ describe('Agent 不可用接线', () => {
     await expect(gateway.agentExtensions.listMcpServers()).rejects.toMatchObject({ status: 503, code, message: reason })
     expect(useAgentRuntimeStore.getState().unavailableReason).toBeUndefined()
   })
+
+  it('会话失效后迟到的内核级 503 保留原错误，且不覆盖当前禁写原因', async () => {
+    const response = new Response(null, { status: 503 })
+    const reason = '旧会话的记录副本尚未恢复'
+    const code = 'record-storage-unavailable'
+    let finish!: (value: { error: string; code: string }) => void
+    const body = new Promise<{ error: string; code: string }>(resolve => { finish = resolve })
+    const readBody = vi.spyOn(response, 'json').mockReturnValue(body)
+    vi.stubGlobal('fetch', vi.fn(async () => response))
+    const gateway = await prepareAppGateway(true)
+    const read = gateway.modelSettings.listModelServices()
+    await vi.waitFor(() => expect(readBody).toHaveBeenCalledOnce())
+
+    useSessionStore.getState().expire()
+    useAgentRuntimeStore.getState().reportUnavailable('当前故障')
+    finish({ error: reason, code })
+
+    await expect(read).rejects.toMatchObject({ status: 503, code, message: reason })
+    expect(useAgentRuntimeStore.getState().unavailableReason).toBe('当前故障')
+  })
 })
 afterEach(() => vi.unstubAllGlobals())
 

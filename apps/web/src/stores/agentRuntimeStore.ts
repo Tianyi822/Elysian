@@ -2,11 +2,12 @@ import { create } from 'zustand'
 import type { AgentRuntimeInfo } from '@elysian/contracts'
 import type { ElysianGateway } from '../contracts/adapters'
 import { messageOf } from '../utils/errorMessage'
+import { createRequestGuard } from './requestGuard'
 
 /*
  * 模型设置使用的 Agent 运行时能力报告：先判定内核可用性与
  * 12 个能力位。读取走 gateway.agentRuntime.runtime()（GET /api/agent/runtime，唯一在
- * 内核不可用时也可读的端点）；闭包 sequence 丢弃过期响应。静默重载不整块白屏，
+ * 内核不可用时也可读的端点）；请求守卫丢弃过期响应。静默重载不整块白屏，
  * 只刷新 info，读取失败保留上次报告。
  */
 
@@ -20,18 +21,18 @@ export type AgentRuntimeState = {
   reloading: boolean
   load(gateway: ElysianGateway, options?: { silent?: boolean; signal?: AbortSignal }): Promise<void>
   reportUnavailable(reason: string): void
-  /** 测试复位：回到未加载状态。 */
+  /** 清空当前会话的报告和禁写状态。 */
   reset(): void
 }
 
 export const useAgentRuntimeStore = create<AgentRuntimeState>((set, get) => {
-  let loadSequence = 0
+  const loadGuard = createRequestGuard()
   let unavailableVersion = 0
   return {
     status: 'idle',
     reloading: false,
     async load(gateway, options) {
-      const sequence = ++loadSequence
+      const isCurrent = loadGuard.replace()
       const observedUnavailableVersion = unavailableVersion
       const inPlace = get().status === 'ready'
       if (!options?.silent) {
@@ -41,13 +42,13 @@ export const useAgentRuntimeStore = create<AgentRuntimeState>((set, get) => {
       }
       try {
         const info = await gateway.agentRuntime.runtime(options?.signal)
-        if (sequence !== loadSequence || options?.signal?.aborted) return
+        if (!isCurrent() || options?.signal?.aborted) return
         set({
           status: 'ready', info, reloading: false, errorMessage: undefined,
           ...(observedUnavailableVersion === unavailableVersion ? { unavailableReason: undefined } : {}),
         })
       } catch (error) {
-        if (sequence !== loadSequence || options?.signal?.aborted) return
+        if (!isCurrent() || options?.signal?.aborted) return
         set({
           status: inPlace ? 'ready' : 'error',
           reloading: false,
@@ -61,7 +62,7 @@ export const useAgentRuntimeStore = create<AgentRuntimeState>((set, get) => {
       set({ unavailableReason: reason })
     },
     reset() {
-      loadSequence += 1
+      loadGuard.invalidate()
       unavailableVersion += 1
       set({ status: 'idle', info: undefined, errorMessage: undefined, unavailableReason: undefined, reloading: false })
     },
