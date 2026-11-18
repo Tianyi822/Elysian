@@ -358,6 +358,10 @@ export function parseContainer(value: unknown): Container {
   if (startedAt !== undefined && typeof startedAt !== 'string') {
     throw new Error('容器启动时间响应无效')
   }
+  const removeBlockedReason = row.removeBlockedReason
+  if (removeBlockedReason !== undefined && typeof removeBlockedReason !== 'string') {
+    throw new Error('容器删除保护响应无效')
+  }
   return {
     id: row.id,
     name: row.name,
@@ -371,6 +375,7 @@ export function parseContainer(value: unknown): Container {
     env: row.env.map((pair) => parseEnvPair(pair)),
     volumes: row.volumes.map((volume) => parseVolumeMount(volume)),
     restartPolicy: restartPolicy as RestartPolicy,
+    ...(removeBlockedReason !== undefined ? { removeBlockedReason } : {}),
   }
 }
 
@@ -848,6 +853,10 @@ export function createHttpContainersAdapter(
           },
         ),
       )
+    },
+
+    async removeContainer(containerId) {
+      await requestNoContent(`${baseUrl}/containers/${encodeURIComponent(containerId)}`, { method: 'DELETE' })
     },
 
     async create(input: ContainerCreateInput) {

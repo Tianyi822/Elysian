@@ -82,6 +82,18 @@ export function runContainerAdapterContract(make: () => ContainerAdapter): void 
       await expect(adapter.requestAction('ctr-not-exist', 'stop')).rejects.toThrow()
     })
 
+    it('只移除停止态容器，不删除镜像', async () => {
+      const adapter = make()
+      const containers = await adapter.list()
+      const stopped = containers.find((container) => container.status === 'stopped' && !container.removeBlockedReason)!
+      const running = containers.find((container) => container.status === 'running')!
+      const images = await adapter.listImages()
+      await expect(adapter.removeContainer(running.id)).rejects.toThrow()
+      await adapter.removeContainer(stopped.id)
+      expect((await adapter.list()).map(({ id }) => id)).toEqual(containers.filter(({ id }) => id !== stopped.id).map(({ id }) => id))
+      expect(await adapter.listImages()).toEqual(images)
+    })
+
     it('create 用已有镜像创建出运行中的容器，list 能读到', async () => {
       const adapter = make()
       const images = await adapter.listImages()

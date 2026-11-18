@@ -152,6 +152,8 @@ export interface ContainerAdapter {
   cancelTerminalConnect?(): void
   /** 请求容器动作（启动/停止/重启）：Docker 运行时落到真实容器，本地演示改写内存数据集。 */
   requestAction(containerId: string, action: ContainerAction): Promise<Container>
+  /** 仅删除符合条件的停止态容器，不删除镜像或挂载卷。 */
+  removeContainer(containerId: string): Promise<void>
   /** 创建容器：Docker 运行时创建真实容器，本地演示追加内存数据集并推 container/created。 */
   create(input: ContainerCreateInput): Promise<Container>
   /**

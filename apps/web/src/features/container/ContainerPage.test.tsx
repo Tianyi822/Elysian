@@ -22,7 +22,7 @@ function pageGateway(overrides: Partial<ElysianGateway['containers']> = {}): Ely
   const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
   const containers = Object.assign(
     {
-      list: async () => [...CONTAINERS],
+      list: () => base.containers.list(),
       // listImages 直通真实 mock 数据集：删除镜像要落实到数据集，读种子常量会绕过它。
       listRegistryPresets: () => base.containers.listRegistryPresets(),
       listImages: () => base.containers.listImages(),
@@ -42,6 +42,7 @@ function pageGateway(overrides: Partial<ElysianGateway['containers']> = {}): Ely
       terminalCompletions: (id: string, input: string) => base.containers.terminalCompletions!(id, input),
       disconnectTerminal: (sessionId: string) => base.containers.disconnectTerminal(sessionId),
       create: (input: ContainerCreateInput) => base.containers.create(input),
+      removeContainer: (id: string) => base.containers.removeContainer(id),
       removeImage: (imageId: string) => base.containers.removeImage(imageId),
       pullImage: (...args: Parameters<ElysianGateway['containers']['pullImage']>) => base.containers.pullImage(...args),
       watchLive: (handlers: Parameters<typeof base.containers.watchLive>[0]) => base.containers.watchLive(handlers),

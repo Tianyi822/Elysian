@@ -62,6 +62,11 @@ describe('parseContainerListResponse', () => {
   it('paused、hostIp、value: null 能通过解析', () => {
     expect(parseContainer(baseContainer)).toEqual(baseContainer)
   })
+
+  it('容器归属保护提示经过校验，旧响应可省略', () => {
+    expect(parseContainer({ ...baseContainer, removeBlockedReason: '网站容器须在网站页处理' }).removeBlockedReason).toBe('网站容器须在网站页处理')
+    expect(() => parseContainer({ ...baseContainer, removeBlockedReason: true })).toThrow('容器删除保护响应无效')
+  })
 })
 
 describe('parseContainerImageListResponse', () => {
@@ -91,6 +96,21 @@ describe('parseContainerPolicyResponse', () => {
 })
 
 describe('createHttpContainersAdapter', () => {
+  it('removeContainer 只发 DELETE，接受 204 并透传 409 原因', async () => {
+    const fetchMock = vi.fn().mockResolvedValueOnce(new Response(null, { status: 204 }))
+      .mockResolvedValueOnce(jsonResponse({ error: '容器正在运行，请先停止再删除' }, 409))
+    vi.stubGlobal('fetch', fetchMock)
+    try {
+      const adapter = createHttpContainersAdapter()
+      await expect(adapter.removeContainer('container/name')).resolves.toBeUndefined()
+      expect(fetchMock).toHaveBeenCalledExactlyOnceWith('/api/docker/containers/container%2Fname', { method: 'DELETE', signal: expect.any(AbortSignal) })
+      await expect(adapter.removeContainer('active')).rejects.toThrow('容器正在运行，请先停止再删除')
+      expect(fetchMock).toHaveBeenCalledTimes(2)
+    } finally {
+      vi.unstubAllGlobals()
+    }
+  })
+
   it('list() 请求 GET /api/docker/containers', async () => {
     const fetchMock = vi.fn(async () => jsonResponse({ containers: [baseContainer] }))
     vi.stubGlobal('fetch', fetchMock)

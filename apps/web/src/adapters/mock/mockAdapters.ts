@@ -534,6 +534,7 @@ export class MockContainerAdapter implements ContainerAdapter {
       onAction: (containerId: string) => void
       scheduleRestart: (containerId: string) => void
       onCreate: (containerId: string) => void
+      onRemove?: (containerId: string) => void
     },
     private readonly options: {
       /** 注入时钟：tag 与任务时间戳都取它，测试不依赖当前时间。 */
@@ -651,6 +652,17 @@ export class MockContainerAdapter implements ContainerAdapter {
     }
     this.hooks.onAction(containerId)
     return { ...container }
+  }
+
+  async removeContainer(containerId: string): Promise<void> {
+    const containers = this.dataset().containers
+    const index = containers.findIndex((container) => container.id === containerId)
+    const container = containers[index]
+    if (!container) throw new Error('容器不存在')
+    if (container.removeBlockedReason) throw new Error(container.removeBlockedReason)
+    if (container.status !== 'stopped') throw new Error('容器未停止，无法删除')
+    containers.splice(index, 1)
+    this.hooks.onRemove?.(containerId)
   }
 
   async create(input: ContainerCreateInput): Promise<Container> {

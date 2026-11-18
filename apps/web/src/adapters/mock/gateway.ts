@@ -105,6 +105,7 @@ export function createGateway(
           },
           scheduleRestart: (containerId) => containerEvents.scheduleRestart(containerId),
           onCreate: (containerId) => containerEvents.emitCreated(containerId),
+          onRemove: (containerId) => containerEvents.emitRemoved(containerId),
         })
   const logs = options.logs === 'http' ? createHttpLogsAdapter() : new MockLogsAdapter()
   const websites =

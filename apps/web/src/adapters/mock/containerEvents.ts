@@ -104,6 +104,12 @@ export function createContainerEventsLayer(
     emitUpdated,
     /** 创建生效后立即推全量容器事件。 */
     emitCreated,
+    emitRemoved(containerId: string) {
+      restartIn.delete(containerId)
+      controlled.delete(containerId)
+      usage = usage.filter((sample) => sample.containerId !== containerId)
+      emit({ id: `ctr-evt-${++seq}`, name: 'container/removed', at: new Date().toISOString(), payload: { containerId } })
+    },
     /** 人工接管后退出演示循环。 */
     markControlled: (id: string) => controlled.add(id),
     /** 重启在下一拍完成。 */

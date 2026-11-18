@@ -30,6 +30,7 @@ function gatewayWith(overrides: Partial<ElysianGateway['containers']> = {}): Ely
       terminalCompletions: () => [],
       disconnectTerminal: async () => {},
       requestAction: async (id: string) => CONTAINERS.find((c) => c.id === id)!,
+      removeContainer: async () => {},
       create: async () => CONTAINERS[0]!,
       removeImage: async () => {},
       pullImage: async ({ name, tag }: { name: string; tag: string }) => ({
