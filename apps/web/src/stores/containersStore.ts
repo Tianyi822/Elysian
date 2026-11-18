@@ -12,6 +12,7 @@ import { deactivateRawTerminal, disposeRawTerminal, rawTerminalRuntime } from '.
 import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
 import {
   containerActionSuccessMessage,
+  containerRemoveBlockedReason,
   CONTAINER_TERMINAL_CLOSE_FALLBACK,
 } from '../features/container/containerCopy'
 import { getLastContainerSample, onStreamEvent } from './eventStreamStore'
@@ -68,10 +69,11 @@ function applySamples(samples: readonly ContainerSample[]): void {
 
 /*
  * 事件回灌：container/sample 更新采样表（以最近一拍为准，载荷未覆盖的容器显示 —），
- * container/updated 更新状态列并清掉该容器的忙碌标记。
+ * container/updated 更新状态列；HTTP 动作的忙碌标记只在请求结清时释放。
  */
 let detachLive: Unsubscribe | undefined
 let activeGateway: ElysianGateway | undefined
+let containerActionScope: { gateway: ElysianGateway; auth: number } | undefined
 let pendingLoad: { gateway: ElysianGateway; auth: number; snapshot: readonly Container[]; promise: Promise<void> } | undefined
 let imageRevision = 0
 let imageActionGeneration = captureAuthGeneration()
@@ -83,18 +85,53 @@ let imagePullController: AbortController | undefined
 async function refreshAfterResync(): Promise<void> {
   const gateway = activeGateway
   if (!gateway) return
+  const auth = captureAuthGeneration()
+  const snapshot = useContainersStore.getState().containers
   const revision = imageRevision
   try {
     const [containers, images] = await Promise.all([
       gateway.containers.list(),
       gateway.containers.listImages(),
     ])
+    if (activeGateway !== gateway || auth !== captureAuthGeneration()) return
     const canCommitImages = revision === imageRevision
     if (canCommitImages) imageRevision += 1
-    useContainersStore.setState({ containers, ...(canCommitImages ? { images } : {}) })
+    useContainersStore.setState((state) => ({
+      ...(snapshot === state.containers ? { containers } : {}),
+      ...(canCommitImages ? { images } : {}),
+    }))
   } catch {
     // 重同步失败时保留当前列表，等待下一拍 resync 或用户手动刷新。
   }
+}
+
+function applyContainerRemoval(containerId: string, gateway?: ElysianGateway): void {
+  const { terminal } = useContainersStore.getState()
+  const closesTerminal = terminal?.containerId === containerId
+  useContainersStore.setState((state) => {
+    const { [containerId]: _sample, ...samples } = state.samples
+    return {
+      containers: state.containers.filter((container) => container.id !== containerId),
+      samples,
+      detailContainerId: state.detailContainerId === containerId ? undefined : state.detailContainerId,
+      terminal: closesTerminal ? undefined : state.terminal,
+    }
+  })
+  if (closesTerminal) releaseTerminalSession(gateway, terminal)
+}
+
+function containerMutationCurrent(gateway: ElysianGateway): () => boolean {
+  const auth = captureAuthGeneration()
+  if (containerActionScope?.gateway !== gateway || containerActionScope.auth !== auth) {
+    containerActionScope = { gateway, auth }
+    useContainersStore.setState({ busyActions: [] })
+  }
+  const scope = containerActionScope
+  return () => containerActionScope === scope && captureAuthGeneration() === auth
+}
+
+function containerBusy(keys: readonly string[], id: string): boolean {
+  return keys.some((key) => key.startsWith(`${id}:`))
 }
 
 function attachLiveEvents(): void {
@@ -127,28 +164,11 @@ function attachLiveEvents(): void {
           }
           return { ...container, status }
         }),
-        busyActions: state.busyActions.filter((key) => !key.startsWith(`${containerId}:`)),
       }))
       return
     }
     if (event.name === 'container/removed') {
-      const { containerId } = event.payload
-      useContainersStore.setState((state) => {
-        const { [containerId]: _sample, ...samples } = state.samples
-        return {
-          containers: state.containers.filter((container) => container.id !== containerId),
-          samples,
-          detailContainerId:
-            state.detailContainerId === containerId ? undefined : state.detailContainerId,
-          terminal: (() => {
-            if (state.terminal?.containerId !== containerId) return state.terminal
-            // connecting 态同样取消：pending WS 也要关掉，不能留给服务端空闲超时收敛。
-            releaseTerminalSession(activeGateway, state.terminal)
-            return undefined
-          })(),
-          busyActions: state.busyActions.filter((key) => !key.startsWith(`${containerId}:`)),
-        }
-      })
+      applyContainerRemoval(event.payload.containerId, activeGateway)
       return
     }
     if (event.name === 'container/resync') {
@@ -200,6 +220,7 @@ export const useContainersStore = create<{
   openCreate: () => void
   closeCreate: () => void
   createContainer: (gateway: ElysianGateway, input: ContainerCreateInput) => Promise<void>
+  removeContainer: (gateway: ElysianGateway, containerId: string) => Promise<void>
   removeImage: (gateway: ElysianGateway, imageId: string) => Promise<TableBatchOutcome>
   pullImage: (gateway: ElysianGateway, input: { name: string; tag: string; registry?: string }) => Promise<void>
   cancelImagePull: () => void
@@ -235,6 +256,7 @@ export const useContainersStore = create<{
   load(gateway) {
     activeGateway = gateway
     attachLiveEvents()
+    containerMutationCurrent(gateway)
     const auth = captureAuthGeneration()
     if (imageActionGeneration !== auth) { imageActionGeneration = auth; set({ removingImageIds: [] }) }
     if (pendingLoad?.gateway === gateway && pendingLoad.auth === auth && pendingLoad.snapshot === get().containers) return pendingLoad.promise
@@ -521,22 +543,59 @@ export const useContainersStore = create<{
   },
 
   async runAction(gateway, containerId, action) {
+    const current = containerMutationCurrent(gateway)
+    if (containerBusy(get().busyActions, containerId)) return
     const key = `${containerId}:${action}`
     const name = get().containers.find((c) => c.id === containerId)?.name ?? containerId
     set((state) => ({ busyActions: [...state.busyActions, key] }))
     try {
       await gateway.containers.requestAction(containerId, action)
+      if (!current()) return
       useMessageStore.getState().notify({
         tone: 'success',
         message: containerActionSuccessMessage(action, name, isDockerRuntime()),
       })
     } catch (error) {
+      if (!current()) return
       const detail = error instanceof Error ? error.message : '未知错误'
       useMessageStore
         .getState()
         .notify({ tone: 'danger', message: `容器 ${name} 操作失败：${detail}` })
     } finally {
-      set((state) => ({ busyActions: state.busyActions.filter((k) => k !== key) }))
+      if (current()) set((state) => ({ busyActions: state.busyActions.filter((k) => k !== key) }))
+    }
+  },
+
+  async removeContainer(gateway, containerId) {
+    const current = containerMutationCurrent(gateway)
+    const container = get().containers.find((candidate) => candidate.id === containerId)
+    if (!container || containerRemoveBlockedReason(container, containerBusy(get().busyActions, containerId))) return
+    const key = `${containerId}:remove`
+    set((state) => ({ busyActions: [...state.busyActions, key] }))
+    try {
+      await gateway.containers.removeContainer(containerId)
+      if (!current()) return
+      applyContainerRemoval(containerId, gateway)
+      useMessageStore.getState().notify({ tone: 'success', message: `容器 ${container.name} 已删除${isDockerRuntime() ? '' : '（演示）'}` })
+    } catch (error) {
+      if (!current()) return
+      const detail = error instanceof Error ? error.message : '未知错误'
+      useMessageStore.getState().notify({ tone: 'danger', message: `未能确认删除容器 ${container.name}：${detail}` })
+      const snapshot = get().containers
+      try {
+        const containers = await gateway.containers.list()
+        if (!current() || snapshot !== get().containers) return
+        const actual = containers.find((candidate) => candidate.id === containerId)
+        if (actual) {
+          set({ containers: snapshot.map((candidate) => candidate.id === containerId ? actual : candidate) })
+        } else {
+          applyContainerRemoval(containerId, gateway)
+        }
+      } catch {
+        // 回读失败保留上次事实，不自动重投删除。
+      }
+    } finally {
+      if (current()) set((state) => ({ busyActions: state.busyActions.filter((candidate) => candidate !== key) }))
     }
   },
 }))

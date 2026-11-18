@@ -15,6 +15,12 @@ import { useContainersStore } from './containersStore'
 import { advanceAuthGeneration } from '../adapters/http/unauthorized'
 import { CONTAINERS, CONTAINER_IMAGES } from '../adapters/mock/containersData'
 
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  const promise = new Promise<T>((complete) => { resolve = complete })
+  return { promise, resolve }
+}
+
 function gatewayWith(overrides: Partial<ElysianGateway['containers']> = {}): ElysianGateway {
   return {
     containers: {
@@ -180,7 +186,7 @@ describe('containersStore', () => {
     expect(containerRestartConfirmDescription(false)).toContain('演示数据')
   })
 
-  it('container/sample 更新采样表；container/updated 更新状态并清忙碌标记', async () => {
+  it('container/sample 更新采样；container/updated 更新状态但不提前释放 HTTP 动作锁', async () => {
     await useContainersStore.getState().load(gatewayWith())
     useContainersStore.setState({ busyActions: ['ctr-nginx-proxy:stop'] })
 
@@ -190,7 +196,72 @@ describe('containersStore', () => {
     emitToStore?.(event('container/updated', { containerId: 'ctr-nginx-proxy', status: 'stopped', startedAt: null }))
     const state = useContainersStore.getState()
     expect(state.containers.find((c) => c.id === 'ctr-nginx-proxy')?.status).toBe('stopped')
-    expect(state.busyActions).toHaveLength(0)
+    expect(state.busyActions).toEqual(['ctr-nginx-proxy:stop'])
+  })
+
+  it('删除期间禁止其他动作；实时事件先到也不会让旧列表恢复卡片', async () => {
+    const target = CONTAINERS.find((row) => row.status === 'stopped')!
+    const response = deferred<void>()
+    const stale = deferred<readonly Container[]>()
+    const removeContainer = vi.fn(() => response.promise)
+    const requestAction = vi.fn(async () => target)
+    const disconnectTerminal = vi.fn(async () => {})
+    const list = vi.fn().mockResolvedValueOnce([...CONTAINERS]).mockReturnValue(stale.promise)
+    const gateway = gatewayWith({ list, removeContainer, requestAction, disconnectTerminal })
+    const store = useContainersStore.getState()
+    await store.load(gateway)
+    useContainersStore.setState({
+      terminal: { containerId: target.id, sessionId: 'session', status: 'connected' },
+      detailContainerId: target.id,
+    })
+    const removal = store.removeContainer(gateway, target.id)
+    await store.removeContainer(gateway, target.id)
+    await store.runAction(gateway, target.id, 'start')
+    expect(removeContainer).toHaveBeenCalledExactlyOnceWith(target.id)
+    expect(requestAction).not.toHaveBeenCalled()
+
+    emitToStore?.(event('container/resync', {}))
+    emitToStore?.(event('container/removed', { containerId: target.id }))
+    expect(useContainersStore.getState().terminal).toBeUndefined()
+    expect(useContainersStore.getState().detailContainerId).toBeUndefined()
+    expect(disconnectTerminal).toHaveBeenCalledExactlyOnceWith('session')
+    stale.resolve([...CONTAINERS])
+    response.resolve()
+    await removal
+    expect(useContainersStore.getState().containers.some(({ id }) => id === target.id)).toBe(false)
+    expect(useContainersStore.getState().busyActions).toHaveLength(0)
+    expect(useMessageStore.getState().messages).toHaveLength(1)
+  })
+
+  it('删除遇到状态冲突只读回查结果，不重试写请求', async () => {
+    const target = CONTAINERS.find((row) => row.status === 'stopped')!
+    const active = { ...target, status: 'running' as const }
+    const list = vi.fn().mockResolvedValueOnce([target]).mockResolvedValueOnce([active])
+    const removeContainer = vi.fn().mockRejectedValue(new Error('容器正在运行，请先停止再删除'))
+    const gateway = gatewayWith({ list, removeContainer })
+    await useContainersStore.getState().load(gateway)
+    await useContainersStore.getState().removeContainer(gateway, target.id)
+    expect(removeContainer).toHaveBeenCalledExactlyOnceWith(target.id)
+    expect(list).toHaveBeenCalledTimes(2)
+    expect(useContainersStore.getState().containers).toEqual([active])
+    expect(useMessageStore.getState().messages.at(-1)?.message).toContain('容器正在运行')
+    expect(useContainersStore.getState().busyActions).toHaveLength(0)
+  })
+
+  it('旧登录的删除回执不改变新登录的列表或通知', async () => {
+    const target = CONTAINERS.find((row) => row.status === 'stopped')!
+    const response = deferred<void>()
+    const gateway = gatewayWith({ removeContainer: () => response.promise })
+    const store = useContainersStore.getState()
+    await store.load(gateway)
+    const removal = store.removeContainer(gateway, target.id)
+    advanceAuthGeneration()
+    await store.load(gatewayWith({ list: async () => [target] }))
+    response.resolve()
+    await removal
+    expect(useContainersStore.getState().containers).toEqual([target])
+    expect(useContainersStore.getState().busyActions).toHaveLength(0)
+    expect(useMessageStore.getState().messages).toHaveLength(0)
   })
 
   it('runAction 成功发通知并清忙碌；失败发危险通知', async () => {
