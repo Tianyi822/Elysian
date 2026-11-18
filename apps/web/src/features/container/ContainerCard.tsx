@@ -1,6 +1,6 @@
 import * as Dialog from '@radix-ui/react-dialog'
-import { Info, Play, RotateCw, Square, Terminal as TerminalIcon } from '../../components/icons'
-import { useState } from 'react'
+import { Info, Play, RotateCw, Square, Terminal as TerminalIcon, Trash2 } from '../../components/icons'
+import { useId, useRef, useState } from 'react'
 import type { Container } from '@elysian/contracts'
 import { CONTAINER_STATUS_LABELS, classifyPortBind } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
@@ -11,6 +11,7 @@ import { CTL_CARD_ACTION, CTL_STAT, CTL_TILE } from '../../components/formContro
 import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
 import {
   containerRestartConfirmDescription,
+  containerRemoveBlockedReason,
   containerStopConfirmDescription,
 } from './containerCopy'
 import { useContainersStore } from '../../stores/containersStore'
@@ -31,9 +32,15 @@ function portBindLabel(hostIp: string | undefined): string | null {
   return null
 }
 
-/** 危险操作的确认文案与按钮语义：停止是破坏性的用危险色，重启是扰动性的用警告色。 */
-function confirmCopy(action: 'stop' | 'restart', name: string) {
+type ConfirmAction = 'stop' | 'restart' | 'remove'
+
+function confirmCopy(action: ConfirmAction, name: string) {
   const docker = isDockerRuntime()
+  if (action === 'remove') return {
+    title: `确认删除容器「${name}」？`,
+    description: `此操作无法撤销。容器可写层中的数据将丢失，镜像、挂载卷和宿主机文件会保留。${docker ? '' : '此操作仅影响演示数据。'}`,
+    confirmLabel: '确认删除',
+  }
   return {
     title: action === 'stop' ? `确认停止容器「${name}」？` : `确认重启容器「${name}」？`,
     description:
@@ -49,10 +56,18 @@ export function ContainerCard({ container }: { container: Container }) {
   const sample = useContainersStore((s) => s.samples[container.id])
   const image = useContainersStore((s) => s.images.find((i) => i.id === container.imageId))
   const busy = useContainersStore((s) => s.busyActions.some((key) => key.startsWith(`${container.id}:`)))
+  const removing = useContainersStore((s) => s.busyActions.includes(`${container.id}:remove`))
   const openDetail = useContainersStore((s) => s.openDetail)
   const openTerminal = useContainersStore((s) => s.openTerminal)
   const runAction = useContainersStore((s) => s.runAction)
-  const [confirmAction, setConfirmAction] = useState<'stop' | 'restart' | null>(null)
+  const removeContainer = useContainersStore((s) => s.removeContainer)
+  const [confirmAction, setConfirmAction] = useState<ConfirmAction | null>(null)
+  const confirmTrigger = useRef<HTMLButtonElement>(null)
+  const cancelButton = useRef<HTMLButtonElement>(null)
+  const detailButton = useRef<HTMLButtonElement>(null)
+  const removeReasonId = useId()
+  const removeReason = removing ? '正在删除容器…' : containerRemoveBlockedReason(container, busy)
+  const copy = confirmAction && confirmCopy(confirmAction, container.name)
 
   const pausedBlocked = container.status === 'paused'
   const pausedTitle = '容器已暂停，面板暂不支持恢复'
@@ -155,7 +170,7 @@ export function ContainerCard({ container }: { container: Container }) {
           <TerminalIcon aria-hidden size={13} />
           终端
         </Button>
-        <Button variant="outline" type="button" className={CTL_CARD_ACTION} onClick={() => openDetail(container.id)}>
+        <Button ref={detailButton} variant="outline" type="button" className={CTL_CARD_ACTION} onClick={() => openDetail(container.id)}>
           <Info aria-hidden size={13} />
           详情
         </Button>
@@ -176,7 +191,7 @@ export function ContainerCard({ container }: { container: Container }) {
             className={CTL_CARD_ACTION}
             disabled={actionsDisabled}
             title={pausedBlocked ? pausedTitle : undefined}
-            onClick={() => setConfirmAction('stop')}
+            onClick={(event) => { confirmTrigger.current = event.currentTarget; setConfirmAction('stop') }}
           >
             <Square aria-hidden size={13} />
             停止
@@ -187,14 +202,29 @@ export function ContainerCard({ container }: { container: Container }) {
           className={CTL_CARD_ACTION}
           disabled={actionsDisabled || container.status === 'stopped'}
           title={pausedBlocked ? pausedTitle : undefined}
-          onClick={() => setConfirmAction('restart')}
+          onClick={(event) => { confirmTrigger.current = event.currentTarget; setConfirmAction('restart') }}
         >
           <RotateCw aria-hidden size={13} />
           重启
         </Button>
+        <span className="inline-flex" title={removeReason}>
+          <Button
+            variant="destructive"
+            type="button"
+            className={CTL_CARD_ACTION}
+            disabled={Boolean(removeReason)}
+            isLoading={removing}
+            aria-describedby={removeReason ? removeReasonId : undefined}
+            leftIcon={<Trash2 aria-hidden size={13} />}
+            onClick={(event) => { confirmTrigger.current = event.currentTarget; setConfirmAction('remove') }}
+          >
+            删除
+          </Button>
+          {removeReason ? <span id={removeReasonId} className="sr-only">{removeReason}</span> : null}
+        </span>
       </div>
 
-      {confirmAction ? (
+      {confirmAction && copy ? (
         <Dialog.Root
           open
           onOpenChange={(open) => {
@@ -204,33 +234,40 @@ export function ContainerCard({ container }: { container: Container }) {
           <Dialog.Portal>
             <Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" />
             <Dialog.Content
-              aria-describedby={undefined}
+              onOpenAutoFocus={(event) => { event.preventDefault(); cancelButton.current?.focus() }}
+              onCloseAutoFocus={(event) => {
+                event.preventDefault()
+                const trigger = confirmTrigger.current
+                if (trigger?.isConnected && !trigger.disabled) trigger.focus()
+                else detailButton.current?.focus()
+              }}
               className="fixed left-1/2 top-1/2 z-[61] w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 panel-surface p-4 shadow-xl"
             >
-              <Dialog.Title className="text-sm font-semibold">
-                {confirmCopy(confirmAction, container.name).title}
+              <Dialog.Title className="break-all text-sm font-semibold">
+                {copy.title}
               </Dialog.Title>
-              <p className="mt-1.5 text-xs text-fg-muted">
-                {confirmCopy(confirmAction, container.name).description}
-              </p>
+              <Dialog.Description className="mt-1.5 text-xs text-fg-muted">{copy.description}</Dialog.Description>
+              {confirmAction === 'remove' && removeReason ? <p role="status" className="mt-2 text-xs text-warning">{removeReason}</p> : null}
               <div className="mt-4 flex justify-end gap-2">
-                <Button variant="outline"
+                <Button ref={cancelButton} variant="outline"
                   type="button"
                   onClick={() => setConfirmAction(null)}
                   className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted transition-colors hover:text-fg"
                 >
                   取消
                 </Button>
-                <Button variant={confirmAction === 'stop' ? 'destructive' : 'warning'}
+                <Button variant={confirmAction === 'restart' ? 'warning' : 'destructive'}
                   type="button"
+                  disabled={confirmAction === 'remove' ? Boolean(removeReason) : actionsDisabled}
                   onClick={() => {
                     const action = confirmAction
                     setConfirmAction(null)
-                    void runAction(gateway, container.id, action)
+                    if (action === 'remove') void removeContainer(gateway, container.id)
+                    else void runAction(gateway, container.id, action)
                   }}
                   className="px-3 text-xs"
                 >
-                  {confirmCopy(confirmAction, container.name).confirmLabel}
+                  {copy.confirmLabel}
                 </Button>
               </div>
             </Dialog.Content>
