@@ -6,6 +6,7 @@ import { DIALOG_FORM_ACTION_CLASS, DIALOG_FORM_FIELD_CLASS, DIALOG_FORM_LABEL_CL
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { Loader2, X } from '../../components/icons'
 import { useDatabaseStore } from '../../stores/databaseStore'
+import { useContainersStore } from '../../stores/containersStore'
 import { formatBytes } from '../../utils/formatBytes'
 import { readStoredImageRegistry, writeStoredImageRegistry } from '../../utils/imagePullPreferences'
 import { CUSTOM_REGISTRY_ID, matchRegistryPreset } from '../../utils/imageRegistryPresets'
@@ -59,7 +60,7 @@ export function RealDatabaseCreateDialog({ engine }: { engine: DatabaseContainer
   const refreshAfterMutation = useDatabaseStore((state) => state.refreshAfterMutation)
   const creating = useDatabaseStore((state) => state.creating)
   const createError = useDatabaseStore((state) => state.createError)
-  const images = useDatabaseStore((state) => state.images)
+  const images = useContainersStore((state) => state.images)
 
   const [presets, setPresets] = useState<readonly ImageRegistryPreset[]>([])
   const [presetsLoading, setPresetsLoading] = useState(true)

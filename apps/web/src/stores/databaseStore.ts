@@ -2,8 +2,6 @@ import { captureAuthGeneration } from '../utils/authGeneration'
 import { create } from 'zustand'
 import {
   DATABASE_TAB_ENGINES,
-  type Container,
-  type ContainerImage,
   type DatabaseContainerEngine,
   type DatabaseContainerInstance,
   type DatabaseInstance,
@@ -13,6 +11,7 @@ import { useMessageStore } from './messageStore'
 import { notifyFirewallPortSync } from './firewallPortNotice'
 import { messageOf } from '../utils/errorMessage'
 import { withBusyId, withoutBusyId } from './busyIds'
+import { readContainerInventory } from './containersStore'
 
 type DatabaseKind = 'container' | 'file'
 type LoadStatus = 'idle' | 'loading' | 'ready' | 'error'
@@ -26,9 +25,6 @@ export type DatabaseState = {
   databases: readonly DatabaseContainerInstance[]
   /** SQLite 文件行（GET /api/databases/sqlite）。 */
   sqliteFiles: readonly DatabaseInstance[]
-  /** 卡片详情面板要从容器数据集现取完整容器行，因此与数据库一起取。 */
-  containers: readonly Container[]
-  images: readonly ContainerImage[]
   errorMessage?: string
   sqliteErrorMessage?: string
   /** 列表手动刷新在途：仅驱动对应刷新按钮。 */
@@ -88,10 +84,10 @@ function refreshDataset(gateway: ElysianGateway, kind: DatabaseKind, showIndicat
   operation.promise = (async () => {
     try {
       if (container) {
-        const [databases, containers, images] = await Promise.all([
-          gateway.databases.list(), gateway.containers.list(), gateway.containers.listImages(),
+        const [databases] = await Promise.all([
+          gateway.databases.list(), readContainerInventory(gateway, { fresh: afterMutation }),
         ])
-        if (current()) setState({ status: 'ready', databases, containers, images, errorMessage: undefined })
+        if (current()) setState({ status: 'ready', databases, errorMessage: undefined })
       } else {
         const sqliteFiles = await gateway.databases.listSqlite()
         if (current()) setState({ sqliteStatus: 'ready', sqliteFiles, sqliteErrorMessage: undefined })
@@ -120,8 +116,6 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   sqliteStatus: 'idle',
   databases: [],
   sqliteFiles: [],
-  containers: [],
-  images: [],
   refreshing: false,
   createOpen: false,
   createKind: 'file',

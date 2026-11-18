@@ -65,8 +65,8 @@ export function DatabasePage() {
   const engine = useDatabaseStore((state) => state.engine)
   const databases = useDatabaseStore((state) => state.databases)
   const sqliteFiles = useDatabaseStore((state) => state.sqliteFiles)
-  const containers = useDatabaseStore((state) => state.containers)
-  const images = useDatabaseStore((state) => state.images)
+  const containers = useContainersStore((state) => state.containers)
+  const openContainerDetail = useContainersStore((state) => state.openDetail)
   const errorMessage = useDatabaseStore((state) => state.errorMessage)
   const refreshing = useDatabaseStore((state) => state.refreshing)
   const load = useDatabaseStore((state) => state.load)
@@ -93,24 +93,6 @@ export function DatabasePage() {
     () => new Map(containers.map((container) => [container.id, container])),
     [containers],
   )
-  const imageById = useMemo(() => new Map(images.map((image) => [image.id, image])), [images])
-
-  // 容器行就地打开详情侧边栏，不跳容器页：容器页数据可能还没加载过，
-  // 把这一只容器与它的镜像补进容器 store（与容器数据集同源同形），详情面板据此渲染。
-  const openContainerDetail = (containerId: string) => {
-    const container = containerById.get(containerId)
-    if (!container) return
-    const image = imageById.get(container.imageId)
-    useContainersStore.setState((state) => ({
-      containers: state.containers.some((c) => c.id === containerId)
-        ? state.containers
-        : [...state.containers, container],
-      images: !image || state.images.some((i) => i.id === image.id)
-        ? state.images
-        : [...state.images, image],
-      detailContainerId: containerId,
-    }))
-  }
 
   const filtered = databases.filter((row) => row.engine === engine)
 

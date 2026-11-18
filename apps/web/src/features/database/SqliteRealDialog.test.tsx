@@ -10,7 +10,7 @@ import { DatabaseCreateDialog } from './DatabaseCreateDialog'
 vi.mock('../../utils/isDockerRuntime', () => ({ isDockerRuntime: () => true }))
 
 // 引擎页签不再含 SQLite（文件以固定分区呈现），打开文件表单只需 createOpen + createKind。
-beforeEach(() => useDatabaseStore.setState({ engine: 'MariaDB', createKind: 'file', createOpen: true, creating: false, databases: [], sqliteFiles: [], containers: [], images: [] }))
+beforeEach(() => useDatabaseStore.setState({ engine: 'MariaDB', createKind: 'file', createOpen: true, creating: false, databases: [], sqliteFiles: [] }))
 
 it('Docker 环境上传真实 File，不提供可编辑路径', async () => {
   const user = userEvent.setup()

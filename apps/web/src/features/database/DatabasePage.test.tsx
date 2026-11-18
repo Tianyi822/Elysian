@@ -123,8 +123,6 @@ beforeEach(() => {
     sqliteStatus: 'idle',
     databases: [],
     sqliteFiles: [],
-    containers: [],
-    images: [],
     errorMessage: undefined,
     sqliteErrorMessage: undefined,
     createOpen: false,
@@ -133,7 +131,7 @@ beforeEach(() => {
     removingContainerIds: [],
     removingSqliteIds: [],
   })
-  useContainersStore.setState({ view: 'grid', detailContainerId: undefined })
+  useContainersStore.setState(useContainersStore.getInitialState(), true)
 })
 
 /**
@@ -391,6 +389,28 @@ describe('数据库页面', () => {
 
     expect(router.state.location.pathname).toBe('/databases')
     expect(await screen.findByRole('dialog', { name: 'mariadb-primary' })).toBeInTheDocument()
+  })
+
+  it('数据库回读到已停止的容器时，详情显示同一状态', async () => {
+    const user = userEvent.setup()
+    const { gateway, containerRows } = pageGateway()
+    await useContainersStore.getState().load(gateway)
+    const container = useContainersStore.getState().containers.find(item => item.id === MARIADB_ROW.containerId)!
+    expect(container.status).toBe('running')
+
+    const list = gateway.containers.list.bind(gateway.containers)
+    vi.spyOn(gateway.containers, 'list').mockImplementation(async () => (await list()).map(item =>
+      item.id === container.id ? { ...item, status: 'stopped' } : item,
+    ))
+    containerRows[0]!.status = 'stopped'
+
+    renderApp('/databases', { gateway })
+    const card = await screen.findByRole('article', { name: 'MariaDB 数据库容器 mariadb-primary' })
+    expect(within(card).getByText('已停止')).toBeInTheDocument()
+    await user.click(within(card).getByRole('button', { name: /镜像/ }))
+
+    const detail = await screen.findByRole('dialog', { name: 'mariadb-primary' })
+    expect(within(detail).getByText('已停止')).toBeInTheDocument()
   })
 
   it('容器读取失败时仍显示 SQLite 文件，重试后恢复容器卡片', async () => {

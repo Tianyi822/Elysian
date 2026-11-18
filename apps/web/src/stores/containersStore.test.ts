@@ -12,8 +12,10 @@ import {
   containerStopConfirmDescription,
 } from '../utils/containerCopy'
 import { useContainersStore } from './containersStore'
+import { useDatabaseStore } from './databaseStore'
 import { advanceAuthGeneration } from '../utils/authGeneration'
 import { CONTAINERS, CONTAINER_IMAGES } from '../adapters/mock/containersData'
+import { createMockGateway } from '../adapters/mock/gateway'
 
 function deferred<T>() {
   let resolve!: (value: T) => void
@@ -108,6 +110,32 @@ describe('containersStore', () => {
     const state = useContainersStore.getState()
     expect(state.status).toBe('error')
     expect(state.errorMessage).toBe('连接失败')
+  })
+
+  it('两页合用在途清单，数据库变更后重读拒绝较旧的 Docker 快照', async () => {
+    const stale = deferred<readonly Container[]>()
+    const updated = CONTAINERS.slice(1)
+    const list = vi.fn().mockReturnValueOnce(stale.promise).mockResolvedValue(updated)
+    const listImages = vi.fn().mockResolvedValueOnce(CONTAINER_IMAGES).mockResolvedValue([])
+    const base = createMockGateway({ eventStream: 'memory' })
+    vi.spyOn(base.databases, 'list').mockResolvedValue([])
+    vi.spyOn(base.databases, 'listSqlite').mockResolvedValue([])
+    const gateway = { ...gatewayWith({ list, listImages }), databases: base.databases }
+    useDatabaseStore.setState(useDatabaseStore.getInitialState(), true)
+
+    const containerRead = useContainersStore.getState().load(gateway)
+    const databaseRead = useDatabaseStore.getState().load(gateway)
+    expect(list).toHaveBeenCalledTimes(1)
+    expect(listImages).toHaveBeenCalledTimes(1)
+
+    await useDatabaseStore.getState().refreshAfterMutation(gateway, 'container')
+    expect(list).toHaveBeenCalledTimes(2)
+    expect(listImages).toHaveBeenCalledTimes(2)
+    stale.resolve(CONTAINERS)
+    await Promise.all([containerRead, databaseRead])
+
+    expect(useContainersStore.getState()).toMatchObject({ status: 'ready', containers: updated, images: [] })
+    expect(useDatabaseStore.getState()).toMatchObject({ status: 'ready', refreshing: false })
   })
 
   it('container/updated 的 startedAt 字符串写回、null 清掉字段', async () => {

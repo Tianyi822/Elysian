@@ -6,6 +6,7 @@ import type { ElysianGateway } from '../../contracts/adapters'
 import { GatewayProvider } from '../../adapters/GatewayProvider'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import { useDatabaseStore } from '../../stores/databaseStore'
+import { useContainersStore } from '../../stores/containersStore'
 import { IMAGE_PULL_PREFERENCES_KEY } from '../../utils/imagePullPreferences'
 import { RealDatabaseCreateDialog } from './RealDatabaseCreateDialog'
 
@@ -29,8 +30,9 @@ beforeEach(() => {
   useDatabaseStore.setState({
     status: 'ready', engine: 'MySQL',
     createOpen: true, createKind: 'container', creating: false, createError: undefined,
-    databases: [], sqliteFiles: [], containers: [], images: [],
+    databases: [], sqliteFiles: [],
   })
+  useContainersStore.setState(useContainersStore.getInitialState(), true)
 })
 
 afterEach(() => {
@@ -145,7 +147,7 @@ it('访问范围三档保留：任意主机需端口与公网确认，提交载�
   const create = vi.fn(async () => ({ instance: created, firewallPort: null }))
   const gateway = dialogGateway({ images: [image], create })
   // 弹窗的本地镜像判断读 store 的镜像清单：页面的列表刷新已把本地镜像装进 store，测试里等价播种。
-  useDatabaseStore.setState({ images: [image] })
+  useContainersStore.setState({ images: [image] })
   render(<GatewayProvider gateway={gateway}><RealDatabaseCreateDialog engine="MySQL" /></GatewayProvider>)
   const dialog = screen.getByRole('dialog', { name: '添加 MySQL 数据库' })
 
