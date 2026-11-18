@@ -96,7 +96,7 @@ export {
   Trash2,
   TriangleAlert,
   Upload,
-  UserRound,
+  User,
   Video,
   X,
   ZoomIn,

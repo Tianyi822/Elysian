@@ -2,7 +2,7 @@ import { useState } from 'react'
 import * as Popover from '@radix-ui/react-popover'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import type { ReactNode } from 'react'
-import { LogOut, Monitor, Moon, Sun, UserRound } from '../../components/icons'
+import { LogOut, Monitor, Moon, Sun, User } from '../../components/icons'
 import type { IconComponent } from '../../components/icons'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { IconButton } from '../../components/IconButton'
@@ -41,14 +41,10 @@ function ActionItem({
   )
 }
 
-/** 操作者头像：圆形底加人像图标，替代原先借「运」字占位的写法。 */
 function OperatorMark() {
   return (
-    <span
-      aria-hidden
-      className="inline-flex size-5 shrink-0 items-center justify-center rounded-full bg-sidebar-active text-sidebar-fg"
-    >
-      <UserRound size={14} />
+    <span className="inline-flex size-5 shrink-0 items-center justify-center">
+      <User aria-hidden size={18} />
     </span>
   )
 }
