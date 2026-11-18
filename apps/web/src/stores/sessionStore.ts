@@ -10,10 +10,15 @@ import { useRuntimeLogStore } from './runtimeLogStore'
 import { useSshStore } from './sshStore'
 import { useTerminalsStore } from './terminalsStore'
 import { useContainersStore } from './containersStore'
+import { useDatabaseStore } from './databaseStore'
 
-function clearTerminalDisplay() {
+function clearPrivateDisplays() {
+  useAgentChatStore.getState().clearDisplay()
+  usePanelStore.getState().clearDisplay()
+  useSshStore.getState().clearDisplay()
   useTerminalsStore.getState().resetLocal()
   useContainersStore.getState().clearTerminalDisplay()
+  useDatabaseStore.getState().clearDisplay()
 }
 
 function resetLogSession(mode: SessionMode | undefined) {
@@ -108,7 +113,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
         const previous = get()
         if (previous.phase !== phase) advanceAuthGeneration()
         if (phase === 'anonymous' || previous.phase !== 'authed' || previous.mode !== status.mode) resetLogSession(status.mode)
-        if (!status.authenticated) { useAgentChatStore.getState().clearDisplay(); usePanelStore.getState().clearDisplay(); useSshStore.getState().clearDisplay(); clearTerminalDisplay() }
+        if (!status.authenticated) clearPrivateDisplays()
         set({ phase, mode: status.mode,
           devAccount: status.devAccount, username: status.authenticated ? (status.username ?? 'admin') : undefined,
           returnTo: status.returnTo, returnToFor: returnTo })
@@ -136,9 +141,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
         }
         advanceAuthGeneration()
         invalidateChecks()
-        useAgentChatStore.getState().clearDisplay()
-        usePanelStore.getState().clearDisplay(); useSshStore.getState().clearDisplay()
-        clearTerminalDisplay()
+        clearPrivateDisplays()
         resetLogSession(current.mode)
         set({ phase: 'anonymous', username: undefined, notice: get().notice ?? '登录状态已失效，请重新登录' })
       } catch {
@@ -159,9 +162,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
     advanceAuthGeneration()
     invalidateChecks()
     // 新登录恢复上次选中的会话，公开数据重新经过服务端鉴权读取。
-    useAgentChatStore.getState().clearDisplay()
-    usePanelStore.getState().clearDisplay(); useSshStore.getState().clearDisplay()
-    clearTerminalDisplay()
+    clearPrivateDisplays()
     resetLogSession(get().mode)
     // 登录成功即消费一次性提示：它只在「密码刚改过、还没重新登录」的窗口内成立。
     set({ phase: 'authed', username, notice: null })
@@ -171,9 +172,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
     advanceAuthGeneration()
     invalidateChecks()
     const revision = ++authRevision
-    useAgentChatStore.getState().clearDisplay()
-    usePanelStore.getState().clearDisplay(); useSshStore.getState().clearDisplay()
-    clearTerminalDisplay()
+    clearPrivateDisplays()
     resetLogSession(get().mode)
     // 先关闭页面闸门，使仍在挂载的聊天组件没有机会重新读取公开内容。
     set({ phase: 'anonymous', username: undefined })
@@ -183,9 +182,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
       if (revision === authRevision) {
         advanceAuthGeneration()
         invalidateChecks()
-        useAgentChatStore.getState().clearDisplay()
-        usePanelStore.getState().clearDisplay(); useSshStore.getState().clearDisplay()
-        clearTerminalDisplay()
+        clearPrivateDisplays()
         resetLogSession(get().mode)
         set({ phase: 'anonymous', username: undefined })
       }
@@ -196,9 +193,7 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
     advanceAuthGeneration()
     invalidateChecks()
     authRevision += 1
-    useAgentChatStore.getState().clearDisplay()
-    usePanelStore.getState().clearDisplay(); useSshStore.getState().clearDisplay()
-    clearTerminalDisplay()
+    clearPrivateDisplays()
     resetLogSession(get().mode)
     set({ phase: 'anonymous', username: undefined })
   },

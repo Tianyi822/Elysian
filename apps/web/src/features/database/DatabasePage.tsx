@@ -45,6 +45,7 @@ import { useFeedbackMessage } from '../../components/useFeedbackMessage'
 import { useMessageStore } from '../../stores/messageStore'
 import { Button } from '../../components/Button'
 import { messageOf } from '../../utils/errorMessage'
+import { captureAuthGeneration } from '../../utils/authGeneration'
 
 const CONTAINER_STATUS_TONE: Record<DatabaseContainerStatus, StatusTone> = {
   running: 'success',
@@ -239,36 +240,44 @@ function DatabaseContainerCard({
   const { copy: copyCredential } = useClipboardCopy()
 
   const performAction = async (action: () => Promise<unknown>, message: string) => {
+    const auth = captureAuthGeneration()
     setActionError('')
     try {
       await action()
+      if (auth !== captureAuthGeneration()) return
       useMessageStore.getState().notify({ tone: 'success', message })
       await useDatabaseStore.getState().refreshAfterMutation(gateway, 'container')
     } catch (error) {
-      setActionError(messageOf(error, '数据库操作失败'))
+      if (auth === captureAuthGeneration()) setActionError(messageOf(error, '数据库操作失败'))
     }
   }
 
   const revealAndCopy = async (field: 'username' | 'password') => {
+    const auth = captureAuthGeneration()
     try {
       const secret = await gateway.databases.reveal(row.id)
+      if (auth !== captureAuthGeneration()) return
       await copyCredential(secret[field], field === 'username' ? '管理员用户名' : '管理员密码')
-      setActionError('')
-    } catch (error) { setActionError(messageOf(error, '读取管理员凭据失败')) }
+      if (auth === captureAuthGeneration()) setActionError('')
+    } catch (error) {
+      if (auth === captureAuthGeneration()) setActionError(messageOf(error, '读取管理员凭据失败'))
+    }
   }
 
   const powerAction: 'start' | 'stop' = row.status === 'running' ? 'stop' : 'start'
   const togglePower = async () => {
+    const auth = captureAuthGeneration()
     setActionError('')
     setPowerBusy(true)
     try {
       await gateway.containers.requestAction(row.containerId, powerAction)
+      if (auth !== captureAuthGeneration()) return
       useMessageStore.getState().notify({ tone: 'success', message: powerAction === 'stop' ? `已停止容器 ${row.name}` : `已启动容器 ${row.name}` })
       await useDatabaseStore.getState().refreshAfterMutation(gateway, 'container')
     } catch (error) {
-      setActionError(messageOf(error, '容器操作失败'))
+      if (auth === captureAuthGeneration()) setActionError(messageOf(error, '容器操作失败'))
     } finally {
-      setPowerBusy(false)
+      if (auth === captureAuthGeneration()) setPowerBusy(false)
     }
   }
 
@@ -417,13 +426,15 @@ function SqliteFileCard({
   const { copied: pathCopied, copy: copyFilePath } = useClipboardCopy()
 
   const performAction = async (action: () => Promise<unknown>, message: string, changed = false) => {
+    const auth = captureAuthGeneration()
     setActionError('')
     try {
       await action()
+      if (auth !== captureAuthGeneration()) return
       useMessageStore.getState().notify({ tone: 'success', message })
       if (changed) await useDatabaseStore.getState().refreshAfterMutation(gateway, 'file')
     } catch (error) {
-      setActionError(messageOf(error, '数据库操作失败'))
+      if (auth === captureAuthGeneration()) setActionError(messageOf(error, '数据库操作失败'))
     }
   }
 

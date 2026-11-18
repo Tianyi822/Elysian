@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { act, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, expect, it, vi } from 'vitest'
 import type { ContainerImage, DatabaseContainerInstance, ImagePullProgress } from '@elysian/contracts'
@@ -7,6 +7,7 @@ import { GatewayProvider } from '../../adapters/GatewayProvider'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import { useDatabaseStore } from '../../stores/databaseStore'
 import { useContainersStore } from '../../stores/containersStore'
+import { useSessionStore } from '../../stores/sessionStore'
 import { IMAGE_PULL_PREFERENCES_KEY } from '../../utils/imagePullPreferences'
 import { RealDatabaseCreateDialog } from './RealDatabaseCreateDialog'
 
@@ -118,6 +119,27 @@ it('latest 被拒；拉取镜像带进度与源地址，完成后提示本地镜
   await waitFor(() => expect(create).toHaveBeenCalledWith(expect.objectContaining({
     kind: 'container', engine: 'MySQL', versionTag: '8.4', containerName: 'elysian-mysql', imageId: image.id,
   })))
+})
+
+it('会话失效后的镜像拉取回执不刷新清单', async () => {
+  const user = userEvent.setup()
+  let finish!: (image: ContainerImage) => void
+  const result = new Promise<ContainerImage>(resolve => { finish = resolve })
+  const pullImage = vi.fn(() => result)
+  const gateway = dialogGateway({ pullImage })
+  render(<GatewayProvider gateway={gateway}><RealDatabaseCreateDialog engine="MySQL" /></GatewayProvider>)
+  const dialog = screen.getByRole('dialog', { name: '添加 MySQL 数据库' })
+  await user.type(within(dialog).getByRole('textbox', { name: /版本标签/ }), '8.4')
+  await user.click(within(dialog).getByRole('button', { name: '拉取镜像' }))
+  expect(pullImage).toHaveBeenCalledOnce()
+
+  await act(async () => {
+    useSessionStore.getState().expire()
+    finish(image)
+  })
+
+  expect(gateway.containers.listImages).not.toHaveBeenCalled()
+  expect(gateway.databases.list).not.toHaveBeenCalled()
 })
 
 it('拉取失败在行内报错并可重试', async () => {

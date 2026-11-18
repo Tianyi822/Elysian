@@ -12,6 +12,7 @@ import { notifyFirewallPortSync } from './firewallPortNotice'
 import { messageOf } from '../utils/errorMessage'
 import { withBusyId, withoutBusyId } from './busyIds'
 import { readContainerInventory } from './containersStore'
+import { createRequestGuard } from './requestGuard'
 
 type DatabaseKind = 'container' | 'file'
 type LoadStatus = 'idle' | 'loading' | 'ready' | 'error'
@@ -39,6 +40,7 @@ export type DatabaseState = {
   removingContainerIds: readonly string[]
   /** 正在删除的 SQLite 文件行 id。 */
   removingSqliteIds: readonly string[]
+  clearDisplay(): void
   setEngine(engine: DatabaseContainerEngine): void
   load(gateway: ElysianGateway): Promise<void>
   refresh(gateway: ElysianGateway, showIndicator?: boolean): Promise<void>
@@ -57,6 +59,24 @@ type PendingLoad = {
 }
 
 const pendingLoads: Partial<Record<DatabaseKind, PendingLoad>> = {}
+const mutations = createRequestGuard()
+
+const initialDisplay = {
+  status: 'idle',
+  sqliteStatus: 'idle',
+  databases: [],
+  sqliteFiles: [],
+  errorMessage: undefined,
+  sqliteErrorMessage: undefined,
+  refreshing: false,
+  createOpen: false,
+  createKind: 'file',
+  creating: false,
+  createError: undefined,
+  uploadPercent: undefined,
+  removingContainerIds: [],
+  removingSqliteIds: [],
+} as const
 
 function refreshDataset(gateway: ElysianGateway, kind: DatabaseKind, showIndicator = false, afterMutation = false) {
   const auth = captureAuthGeneration()
@@ -112,18 +132,13 @@ function refreshDataset(gateway: ElysianGateway, kind: DatabaseKind, showIndicat
 /** 数据库区的界面状态：引擎页签不进 URL、不写界面偏好——store 是模块单例，页面未关闭时记住上次引擎，重新打开面板回到第一个。 */
 export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   engine: DATABASE_TAB_ENGINES[0],
-  status: 'idle',
-  sqliteStatus: 'idle',
-  databases: [],
-  sqliteFiles: [],
-  refreshing: false,
-  createOpen: false,
-  createKind: 'file',
-  creating: false,
-  createError: undefined,
-  uploadPercent: undefined,
-  removingContainerIds: [],
-  removingSqliteIds: [],
+  ...initialDisplay,
+  clearDisplay() {
+    delete pendingLoads.container
+    delete pendingLoads.file
+    mutations.invalidate()
+    set(initialDisplay)
+  },
   setEngine: (engine) => {
     set({ engine })
   },
@@ -144,11 +159,15 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   },
 
   async createDatabase(gateway, input) {
+    const current = mutations.capture()
     set({ creating: true, uploadPercent: undefined, createError: undefined })
     try {
       const { instance: created, firewallPort } = input.kind === 'file' && input.origin === 'uploaded'
-        ? await gateway.databases.create(input, (percent) => set({ uploadPercent: percent }))
+        ? await gateway.databases.create(input, (percent) => {
+          if (current()) set({ uploadPercent: percent })
+        })
         : await gateway.databases.create(input)
+      if (!current()) return
       useMessageStore
         .getState()
         .notify({ tone: 'success', message: `数据库 ${created.name} 已创建` })
@@ -161,11 +180,12 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
       // 创建是真实变更：立即向服务端核对列表，不用本地拼接的状态冒充服务端事实。
       void get().refreshAfterMutation(gateway, input.kind)
     } catch (error) {
+      if (!current()) return
       const detail = messageOf(error)
       set({ createError: detail })
       useMessageStore.getState().notify({ tone: 'danger', message: `创建数据库失败：${detail}` })
     } finally {
-      set({ creating: false, uploadPercent: undefined })
+      if (current()) set({ creating: false, uploadPercent: undefined })
     }
   },
 
@@ -174,21 +194,26 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     if (!row) return
     const removingContainerIds = withBusyId(get().removingContainerIds, containerId)
     if (!removingContainerIds) return
+    const current = mutations.capture()
     set({ removingContainerIds })
     try {
       const forget = row.status === 'missing' && (row.source !== 'managed' || !row.volumeName)
       if (forget) await gateway.databases.forget(containerId)
       else await gateway.databases.removeContainer(containerId)
+      if (!current()) return
       useMessageStore
         .getState()
         .notify({ tone: 'success', message: forget ? `数据库容器 ${row.name} 的登记已清理` : `数据库容器 ${row.name} 已删除` })
     } catch (error) {
+      if (!current()) return
       const detail = messageOf(error)
       useMessageStore.getState().notify({ tone: 'danger', message: `删除数据库容器失败：${detail}` })
     } finally {
       // 删除容器和删卷分两步；错误也可能留下待清理登记。
-      await get().refreshAfterMutation(gateway, 'container')
-      set((state) => ({ removingContainerIds: withoutBusyId(state.removingContainerIds, containerId) }))
+      if (current()) {
+        await get().refreshAfterMutation(gateway, 'container')
+        if (current()) set((state) => ({ removingContainerIds: withoutBusyId(state.removingContainerIds, containerId) }))
+      }
     }
   },
 
@@ -197,18 +222,21 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
     if (!row) return
     const removingSqliteIds = withBusyId(get().removingSqliteIds, fileId)
     if (!removingSqliteIds) return
+    const current = mutations.capture()
     set({ removingSqliteIds })
     try {
       await gateway.databases.removeSqlite(fileId)
+      if (!current()) return
       useMessageStore
         .getState()
         .notify({ tone: 'success', message: `SQLite 文件 ${row.name} 已删除` })
       await get().refreshAfterMutation(gateway, 'file')
     } catch (error) {
+      if (!current()) return
       const detail = messageOf(error)
       useMessageStore.getState().notify({ tone: 'danger', message: `删除 SQLite 文件失败：${detail}` })
     } finally {
-      set((state) => ({ removingSqliteIds: withoutBusyId(state.removingSqliteIds, fileId) }))
+      if (current()) set((state) => ({ removingSqliteIds: withoutBusyId(state.removingSqliteIds, fileId) }))
     }
   },
 }))

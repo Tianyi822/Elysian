@@ -84,6 +84,7 @@ export function createHttpDatabaseAdapter(): DatabaseAdapter {
      * blob 常驻内存可忽略，换回「401 有明确中文反馈」。
      */
     async downloadSqlite(id) {
+      const auth = captureAuthGeneration()
       const url = `${BASE}/sqlite/${encodeURIComponent(id)}/download`
       let response: Response
       try {
@@ -96,6 +97,7 @@ export function createHttpDatabaseAdapter(): DatabaseAdapter {
         throw new Error('SQLite 下载失败')
       }
       const blob = await response.blob()
+      if (auth !== captureAuthGeneration()) throw new Error('登录状态已变更，请重新下载')
       const objectUrl = URL.createObjectURL(blob)
       try {
         const link = document.createElement('a')

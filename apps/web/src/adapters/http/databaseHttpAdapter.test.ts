@@ -139,6 +139,26 @@ describe('createHttpDatabaseAdapter 401 拦截', () => {
     expect(listener).not.toHaveBeenCalled()
   })
 
+  it('读取 SQLite 下载正文期间登录代次变更时，不保存旧响应', async () => {
+    const response = new Response(null)
+    let finish!: (blob: Blob) => void
+    const body = new Promise<Blob>(resolve => { finish = resolve })
+    const readBody = vi.spyOn(response, 'blob').mockReturnValue(body)
+    vi.stubGlobal('fetch', vi.fn(async () => response))
+    const click = vi.spyOn(HTMLAnchorElement.prototype, 'click').mockImplementation(() => {})
+    try {
+      const download = createHttpDatabaseAdapter().downloadSqlite('sqlite-demo')
+      await vi.waitFor(() => expect(readBody).toHaveBeenCalledOnce())
+      advanceAuthGeneration()
+      finish(new Blob(['sqlite-bytes']))
+
+      await expect(download).rejects.toThrow('登录状态已变更，请重新下载')
+      expect(click).not.toHaveBeenCalled()
+    } finally {
+      click.mockRestore()
+    }
+  })
+
   it.each([false, true])('SQLite 上传 401 仍拒绝请求，仅当前登录代次上报（旧请求：%s）', async (stale) => {
     const listener = vi.fn()
     setUnauthorizedListener(listener)

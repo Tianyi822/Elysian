@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { DatabaseContainerInstance, DatabaseInstance } from '@elysian/contracts'
@@ -7,6 +7,7 @@ import { createMockGateway } from '../../adapters/mock/gateway'
 import { useContainersStore } from '../../stores/containersStore'
 import { useDatabaseStore } from '../../stores/databaseStore'
 import { useMessageStore } from '../../stores/messageStore'
+import { useSessionStore } from '../../stores/sessionStore'
 import { renderApp } from '../../test/renderApp'
 
 /**
@@ -301,6 +302,26 @@ describe('数据库页面', () => {
     expect(reveal).toHaveBeenCalledWith('ctr-mariadb-primary')
   })
 
+  it('会话失效后迟到的凭据不写入剪贴板', async () => {
+    const user = userEvent.setup()
+    let finish!: (value: { username: string; password: string }) => void
+    const result = new Promise<{ username: string; password: string }>((resolve) => { finish = resolve })
+    const reveal = vi.fn(() => result)
+    const { gateway } = pageGateway({ reveal })
+    await navigator.clipboard.writeText('保留的文本')
+    renderApp('/databases', { gateway })
+
+    const card = await screen.findByRole('article', { name: 'MariaDB 数据库容器 mariadb-primary' })
+    await user.click(within(card).getByRole('button', { name: '复制密码' }))
+    expect(reveal).toHaveBeenCalledOnce()
+    await act(async () => {
+      useSessionStore.getState().expire()
+      finish({ username: 'root', password: '旧会话凭据' })
+    })
+
+    await expect(navigator.clipboard.readText()).resolves.toBe('保留的文本')
+  })
+
   it('启停复用容器动作：停止后列表以服务端状态为准翻成已停止', async () => {
     const user = userEvent.setup()
     const { base, gateway, containerRows } = pageGateway()
@@ -317,6 +338,29 @@ describe('数据库页面', () => {
     expect(await within(card).findByText('已停止')).toBeInTheDocument()
     expect(within(card).getByRole('button', { name: '启动' })).toBeInTheDocument()
     expect(useMessageStore.getState().messages).toContainEqual(expect.objectContaining({ tone: 'success', message: '已停止容器 mariadb-primary' }))
+  })
+
+  it('会话失效后的容器停止回执不发送通知或刷新数据库', async () => {
+    const user = userEvent.setup()
+    const { gateway } = pageGateway()
+    const target = (await gateway.containers.list()).find(item => item.id === MARIADB_ROW.containerId)!
+    let finish!: (value: typeof target) => void
+    const result = new Promise<typeof target>(resolve => { finish = resolve })
+    const requestAction = vi.spyOn(gateway.containers, 'requestAction').mockReturnValue(result)
+    const list = vi.spyOn(gateway.databases, 'list')
+    renderApp('/databases', { gateway })
+
+    const card = await screen.findByRole('article', { name: 'MariaDB 数据库容器 mariadb-primary' })
+    await user.click(within(card).getByRole('button', { name: '停止' }))
+    expect(requestAction).toHaveBeenCalledWith(target.id, 'stop')
+    list.mockClear()
+    await act(async () => {
+      useSessionStore.getState().expire()
+      finish({ ...target, status: 'stopped' })
+    })
+
+    expect(list).not.toHaveBeenCalled()
+    expect(useMessageStore.getState().messages).not.toContainEqual(expect.objectContaining({ message: '已停止容器 mariadb-primary' }))
   })
 
   it('删除容器及数据需要确认：取消不删，确认后行消失且通知不带 mock 标注', async () => {

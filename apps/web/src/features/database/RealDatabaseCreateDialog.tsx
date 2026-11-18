@@ -15,6 +15,7 @@ import { useFeedbackMessage } from '../../components/useFeedbackMessage'
 import { Button } from '../../components/Button'
 import type { ImageRegistryPreset } from '../../contracts/adapters'
 import { messageOf } from '../../utils/errorMessage'
+import { captureAuthGeneration } from '../../utils/authGeneration'
 
 /**
  * 添加数据库容器：镜像版本查询与拉取复用容器域既有接缝（imageTags / pullImage），
@@ -122,19 +123,23 @@ export function RealDatabaseCreateDialog({ engine }: { engine: DatabaseContainer
 
   const pull = async () => {
     if (pulling || !validVersion || registryError || image) return
+    const auth = captureAuthGeneration()
     setPulling(true)
     setProgress(undefined)
     setPullError('')
     setPullComplete(false)
     try {
-      await gateway.containers.pullImage({ name: repo, tag: versionTag, ...(registryAddress.trim() ? { registry: registryAddress.trim() } : {}) }, setProgress)
+      await gateway.containers.pullImage({ name: repo, tag: versionTag, ...(registryAddress.trim() ? { registry: registryAddress.trim() } : {}) }, progress => {
+        if (auth === captureAuthGeneration()) setProgress(progress)
+      })
+      if (auth !== captureAuthGeneration()) return
       // 拉取是真实变更：核对共享数据集，让「本地镜像已就绪」以最新镜像清单为准。
       await refreshAfterMutation(gateway, 'container')
-      setPullComplete(true)
+      if (auth === captureAuthGeneration()) setPullComplete(true)
     } catch (error) {
-      setPullError(messageOf(error, '镜像拉取失败'))
+      if (auth === captureAuthGeneration()) setPullError(messageOf(error, '镜像拉取失败'))
     } finally {
-      setPulling(false)
+      if (auth === captureAuthGeneration()) setPulling(false)
     }
   }
 
