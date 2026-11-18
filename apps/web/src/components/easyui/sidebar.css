@@ -1,0 +1,29 @@
+/* Extra room on wide desktops; the default rail and mobile drawer retain EasyUI density. */
+@media (min-width: 1440px) {
+  .desktop-navigation {
+    --sidebar-rail-inset: 12px;
+    --sidebar-row-inset: 14px;
+  }
+  .desktop-navigation[data-collapsed] {
+    --sidebar-rail-inset: 8px;
+    --sidebar-row-inset: 8px;
+  }
+  .desktop-navigation .sidebar-header { height: 64px; }
+  .desktop-navigation:not([data-collapsed]) .sidebar-header { padding-inline: 24px; }
+  .desktop-navigation:not([data-collapsed]) .sidebar-brand { gap: 10px; }
+  .desktop-navigation .sidebar-brand-mark { width: 36px; height: 36px; }
+  .desktop-navigation .sidebar-brand-mark > svg { width: 22px; height: 22px; }
+  .desktop-navigation .sidebar-brand-name { font-size: 18px; line-height: 24px; }
+
+  .desktop-navigation .sidebar-rail { padding-inline: var(--sidebar-rail-inset); }
+  .desktop-navigation [data-sidebar-hover] { inset-inline: var(--sidebar-rail-inset); }
+  .desktop-navigation .sidebar-row-group { row-gap: 4px; }
+  .desktop-navigation .sidebar-row { height: 40px; }
+  .desktop-navigation .sidebar-row-action { align-self: stretch; }
+  .desktop-navigation:not([data-collapsed]) .sidebar-row { padding-inline-start: var(--sidebar-row-inset); }
+  .desktop-navigation[data-collapsed] :is(.nav-link, [data-sidebar-toggle]) { padding-inline: var(--sidebar-row-inset); }
+  .desktop-navigation[data-collapsed] .sidebar-row { width: 100%; }
+  .desktop-navigation .sidebar-row-label { font-size: 15px; }
+  .desktop-navigation .sidebar-row-icon { width: 24px; height: 24px; }
+  .desktop-navigation .sidebar-row-icon > svg { width: 20px; height: 20px; }
+}

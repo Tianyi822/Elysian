@@ -178,11 +178,11 @@ export function Sidebar({
     // React Router owns the navigation; the official panel only closes the drawer.
     onActiveChange={() => {}}
     onNavigate={onNavigate}
-    header={<div className={`flex items-center ${collapsed ? 'gap-0' : 'gap-2'}`}>
-      <span className="grid size-6 shrink-0 place-items-center rounded-full bg-sidebar-fg text-sidebar"><Bot aria-hidden size={16} /></span>
+    header={<div className={`sidebar-brand flex items-center ${collapsed ? 'gap-0' : 'gap-2'}`}>
+      <span className="sidebar-brand-mark grid size-6 shrink-0 place-items-center rounded-full bg-sidebar-fg text-sidebar"><Bot aria-hidden size={16} /></span>
       <motion.span initial={false} animate={{ opacity: collapsed ? 0 : 1, width: collapsed ? 0 : 'auto' }}
         transition={{ duration: reduced ? 0 : 0.15 }} aria-hidden={collapsed || undefined}
-        className="overflow-hidden whitespace-nowrap text-sm font-semibold text-sidebar-fg">Elysian</motion.span>
+        className="sidebar-brand-name overflow-hidden whitespace-nowrap text-sm font-semibold text-sidebar-fg">Elysian</motion.span>
     </div>}
     headerAction={drawer ? <Dialog.Close asChild><Button unstyled type="button" aria-label="关闭主导航"
       className="grid size-7 shrink-0 place-items-center rounded-[8px] text-sidebar-muted hover:bg-sidebar-hover hover:text-sidebar-fg focus-visible:ring-2 focus-visible:ring-focus">

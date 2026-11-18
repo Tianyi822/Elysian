@@ -171,7 +171,7 @@ export function SystemLoadBadge({ navigation = false, collapsed = false }: { nav
               className={[
                 'inline-flex items-center whitespace-nowrap rounded-lg text-xs outline-none transition-colors focus-visible:ring-2 focus-visible:ring-focus',
                 navigation
-                  ? `${collapsed ? 'h-9 w-10 justify-center' : 'h-9 w-full px-2.5'} gap-3 hover:bg-sidebar-hover`
+                  ? `sidebar-row ${collapsed ? 'h-9 w-10 justify-center' : 'h-9 w-full px-2.5'} gap-3 hover:bg-sidebar-hover`
                   : 'gap-2 px-1.5 py-1 hover:bg-surface-raised',
                 view.status === 'error'
                   ? 'text-danger'
@@ -180,7 +180,7 @@ export function SystemLoadBadge({ navigation = false, collapsed = false }: { nav
                     : navigation ? 'text-sidebar-muted' : 'text-fg-subtle',
               ].join(' ')}
             >
-              <span className={`inline-flex shrink-0 items-center justify-center ${navigation ? 'size-5 [&>svg]:size-[18px]' : ''}`}>
+              <span className={`inline-flex shrink-0 items-center justify-center ${navigation ? 'sidebar-row-icon size-5 [&>svg]:size-[18px]' : ''}`}>
                 <Gauge aria-hidden size={16} />
               </span>
               <span className={collapsed ? 'sr-only' : 'tabular-nums'}>{loadText}</span>

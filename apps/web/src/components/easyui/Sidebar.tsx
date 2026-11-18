@@ -15,6 +15,7 @@ import { ChevronRight, PanelLeft } from "lucide-react";
 import { Button, type ButtonProps } from "../Button";
 import { observeElementSize } from "../../utils/observeElementSize";
 import { cn } from "./utils";
+import "./sidebar.css";
 
 const spring = { type: "spring", stiffness: 420, damping: 36, mass: 0.8 } as const;
 const EXPANDED = 248;
@@ -184,7 +185,7 @@ export function SidebarPanel({
               className="absolute inset-0 rounded-[8px] bg-sidebar-active"
             />
           )}
-          <span className="relative grid size-5 shrink-0 place-items-center [&>svg]:size-[18px]">{item.icon}</span>
+          <span className="sidebar-row-icon relative grid size-5 shrink-0 place-items-center [&>svg]:size-[18px]">{item.icon}</span>
           <motion.span
             initial={false}
             animate={{ opacity: collapsed ? 0 : 1 }}
@@ -218,7 +219,7 @@ export function SidebarPanel({
       'aria-label': collapsed ? item.label : undefined,
       'aria-expanded': hasChildren ? isOpen : undefined,
       'aria-current': isActive ? 'page' as const : undefined,
-      className: cn('nav-link relative flex h-9 w-full items-center gap-3 rounded-[8px] px-2.5 text-sm no-underline outline-none transition-colors focus-visible:ring-2 focus-visible:ring-focus/50',
+      className: cn('nav-link sidebar-row sidebar-row-label relative flex h-9 w-full items-center gap-3 rounded-[8px] px-2.5 text-sm no-underline outline-none transition-colors focus-visible:ring-2 focus-visible:ring-focus/50',
         isActive || childActive ? 'text-sidebar-fg' : 'text-sidebar-muted hover:text-sidebar-fg',
         Boolean(action) && 'pr-9'),
       children,
@@ -290,7 +291,7 @@ export function SidebarPanel({
         {header && (
           <div
             className={cn(
-              "flex h-14 shrink-0 items-center justify-between overflow-hidden px-4",
+              "sidebar-header flex h-14 shrink-0 items-center justify-between overflow-hidden px-4",
               collapsed && "w-14 justify-center px-0"
             )}
           >
@@ -305,7 +306,7 @@ export function SidebarPanel({
           onMouseLeave={() => {
             setHovering(false);
           }}
-          className="relative min-h-0 flex-1 space-y-1 overflow-y-auto overflow-x-hidden p-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
+          className="sidebar-rail relative min-h-0 flex-1 space-y-1 overflow-y-auto overflow-x-hidden p-2 [scrollbar-width:none] [&::-webkit-scrollbar]:hidden"
         >
           {hoverBox && (
             <motion.span
@@ -319,7 +320,7 @@ export function SidebarPanel({
           )}
 
           {sections.map((section, i) => (
-            <div key={i} className="space-y-0.5">
+            <div key={i} className="sidebar-row-group flex flex-col gap-0.5">
               {section.title &&
                 (collapsed ? (
                   <div className="mx-2.5 my-2 h-px bg-sidebar-line" />
@@ -334,7 +335,7 @@ export function SidebarPanel({
         </nav>
 
         {(footer || onToggle) && (
-          <div className="shrink-0 space-y-1 border-t border-sidebar-line p-2">
+          <div className="sidebar-rail shrink-0 space-y-1 border-t border-sidebar-line p-2">
             {footer}
             {onToggle && (
               <Button unstyled
@@ -344,9 +345,9 @@ export function SidebarPanel({
                 aria-expanded={!collapsed}
                 aria-keyshortcuts="Meta+B Control+B"
                 data-sidebar-toggle
-                className="flex h-9 w-full items-center gap-3 rounded-[8px] px-2.5 text-sm text-sidebar-muted outline-none transition-colors hover:bg-sidebar-hover hover:text-sidebar-fg focus-visible:ring-2 focus-visible:ring-focus/50"
+                className="sidebar-row sidebar-row-label flex h-9 w-full items-center gap-3 rounded-[8px] px-2.5 text-sm text-sidebar-muted outline-none transition-colors hover:bg-sidebar-hover hover:text-sidebar-fg focus-visible:ring-2 focus-visible:ring-focus/50"
               >
-                <span className="grid size-5 shrink-0 place-items-center">
+                <span className="sidebar-row-icon grid size-5 shrink-0 place-items-center">
                   <PanelLeft aria-hidden className="size-[18px]" />
                 </span>
                 <motion.span

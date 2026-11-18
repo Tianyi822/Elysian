@@ -25,16 +25,16 @@ function ActionItem({
 }) {
   return (
     /* 按钮外壳放在行容器上：主操作与行尾图标视觉上同属一枚控件，点击区域各自独立。 */
-    <div className="flex h-9 w-full items-center gap-1 rounded-[8px] pl-2.5 pr-1 text-sidebar-muted transition-colors hover:bg-sidebar-hover hover:text-sidebar-fg">
+    <div className="sidebar-row flex h-9 w-full items-center gap-1 rounded-[8px] pl-2.5 pr-1 text-sidebar-muted transition-colors hover:bg-sidebar-hover hover:text-sidebar-fg">
       <Button unstyled
         type="button"
         onClick={onClick}
-        className="flex min-w-0 flex-1 items-center gap-3 text-left"
+        className="sidebar-row-action flex min-w-0 flex-1 items-center gap-3 text-left"
       >
-        <span className="inline-flex size-5 shrink-0 items-center justify-center">
+        <span className="sidebar-row-icon inline-flex size-5 shrink-0 items-center justify-center">
           <Icon aria-hidden size={18} />
         </span>
-        <span className="min-w-0 truncate text-sm">{label}</span>
+        <span className="sidebar-row-label min-w-0 truncate text-sm">{label}</span>
       </Button>
       {trailing}
     </div>
@@ -43,7 +43,7 @@ function ActionItem({
 
 function OperatorMark() {
   return (
-    <span className="inline-flex size-5 shrink-0 items-center justify-center">
+    <span className="sidebar-row-icon inline-flex size-5 shrink-0 items-center justify-center">
       <User aria-hidden size={18} />
     </span>
   )
@@ -52,9 +52,9 @@ function OperatorMark() {
 /** 与主题行同一套行高、图标槽与字号，放在切换主题下方。身份本身不是按钮，登出挂在行尾。 */
 function OperatorRow({ username, trailing }: { username: string; trailing?: ReactNode }) {
   return (
-    <div className="flex h-9 w-full items-center gap-3 pl-2.5 pr-1 text-sidebar-muted">
+    <div className="sidebar-row flex h-9 w-full items-center gap-3 pl-2.5 pr-1 text-sidebar-muted">
       <OperatorMark />
-      <span title={username} className="min-w-0 flex-1 truncate text-sm">{username}</span>
+      <span title={username} className="sidebar-row-label min-w-0 flex-1 truncate text-sm">{username}</span>
       {trailing}
     </div>
   )
@@ -81,7 +81,7 @@ function CollapsedTrigger({
     <Button unstyled
       type="button"
       aria-label={label}
-      className="flex h-9 w-10 items-center justify-center rounded-[8px] text-sidebar-muted transition-colors hover:bg-sidebar-hover hover:text-sidebar-fg"
+      className="sidebar-row flex h-9 w-10 items-center justify-center rounded-[8px] text-sidebar-muted transition-colors hover:bg-sidebar-hover hover:text-sidebar-fg"
     >
       {children}
     </Button>
@@ -163,9 +163,11 @@ export function QuickActions({ collapsed = false }: { collapsed?: boolean }) {
     <section aria-label="快捷操作">
       {collapsed ? (
         /* 折叠态一个位置只留一枚图标：主题与身份各成一次点击，动作在浮层里带文字列出。 */
-        <div className="flex flex-col gap-0.5">
+        <div className="sidebar-row-group flex flex-col gap-0.5">
           <CollapsedTrigger label="主题设置" actions={themeActions}>
-            {theme === 'dark' ? <Sun aria-hidden size={17} /> : <Moon aria-hidden size={17} />}
+            <span className="sidebar-row-icon inline-flex items-center justify-center">
+              {theme === 'dark' ? <Sun aria-hidden size={17} /> : <Moon aria-hidden size={17} />}
+            </span>
           </CollapsedTrigger>
           <CollapsedTrigger
             label={username}
@@ -175,7 +177,7 @@ export function QuickActions({ collapsed = false }: { collapsed?: boolean }) {
           </CollapsedTrigger>
         </div>
       ) : (
-        <div className="flex flex-col gap-0.5">
+        <div className="sidebar-row-group flex flex-col gap-0.5">
           {/* 主题变化本身就是可见反馈，不再发通知。 */}
           <ActionItem
             label={toggleLabel}
