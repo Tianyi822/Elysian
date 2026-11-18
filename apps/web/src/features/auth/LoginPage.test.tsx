@@ -188,9 +188,11 @@ describe('LoginPage', () => {
     await user.keyboard('{Enter}')
 
     const card = within(await screen.findByRole('dialog', { name: '重置密码' }))
-    expect(card.getByText('sudo ely resetpwd')).toBeVisible()
-    expect(card.getByText(/服务器终端/)).toBeVisible()
-    expect(card.getByText(/现有会话将失效/)).toBeVisible()
+    await waitFor(() => {
+      expect(card.getByText('sudo ely resetpwd')).toBeVisible()
+      expect(card.getByText(/服务器终端/)).toBeVisible()
+      expect(card.getByText(/现有会话将失效/)).toBeVisible()
+    })
     expect(help).toHaveAttribute('aria-expanded', 'true')
     expect(login).not.toHaveBeenCalled()
     expect(router.state.location.pathname).toBe('/login')
