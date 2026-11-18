@@ -1,4 +1,4 @@
-import { render, screen, waitFor, within } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
@@ -126,6 +126,31 @@ describe('构建镜像弹窗', () => {
       ])),
     )
     await waitFor(() => expect(onClose).toHaveBeenCalled())
+  })
+
+  it('嵌套确认阻止外部关闭，Escape 只取消确认且不提交构建', async () => {
+    const submitAppBuild = vi.fn()
+    const gateway = await dialogGateway(() => ({
+      previewAppBuild: async () => structuredClone(dockerfilePlan),
+      submitAppBuild,
+    }))
+    const { user, onClose } = renderDialog(gateway)
+    await user.click(screen.getByRole('button', { name: '预览构建' }))
+    await screen.findByText(/elysian\/demo-app\/app/)
+    const start = screen.getByRole('button', { name: '开始构建' })
+    await user.click(start)
+
+    const confirm = await screen.findByRole('dialog', { name: '确认开始构建？' })
+    expect(confirm).toHaveAccessibleDescription(expect.stringContaining('Dockerfile 构建'))
+    expect(within(confirm).getByRole('button', { name: '取消' })).toHaveFocus()
+    fireEvent.pointerDown(document.body, { pointerType: 'mouse' })
+    expect(confirm).toBeInTheDocument()
+
+    await user.keyboard('{Escape}')
+    expect(confirm).not.toBeInTheDocument()
+    expect(start).toBeInTheDocument()
+    expect(onClose).not.toHaveBeenCalled()
+    expect(submitAppBuild).not.toHaveBeenCalled()
   })
 
   it('dockerfile 输入一变旧预览即失效，重新预览后才可提交且提交值为新预览值', async () => {

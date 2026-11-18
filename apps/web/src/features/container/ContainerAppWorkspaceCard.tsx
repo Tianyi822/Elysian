@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
-import * as Dialog from '@radix-ui/react-dialog'
+import { ConfirmDialog } from '../../components/ConfirmDialog'
 import {
   Check,
   ChevronDown,
@@ -458,81 +458,47 @@ export function ContainerAppWorkspaceCard({
             ) : null}
           </section>
         </article>
-        <Dialog.Root open={pending !== null} onOpenChange={(open) => { if (!open) setPending(null) }}>
-          <Dialog.Portal>
-            <Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" />
-            <Dialog.Content
-              aria-describedby="app-delete-description"
-              className="fixed left-1/2 top-1/2 z-[61] w-[min(30rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 panel-surface p-4 shadow-xl"
-            >
-              <Dialog.Title className="text-sm font-semibold">
-                {pending?.kind === 'app' ? `确认删除工作区「${app.displayName}」？` : '确认删除该文件？'}
-              </Dialog.Title>
-              <p id="app-delete-description" className="mt-1.5 text-xs text-fg-muted">
-                {pending?.kind === 'app'
-                  ? '该目录及其中的全部文件都会从磁盘移除，已被容器使用的挂载会失效。此操作不可撤销。'
-                  : '文件会从磁盘移除，compose 里指向它的引用会挂不上。此操作不可撤销。'}
-              </p>
-              <code className="mt-2 block break-all rounded-lg border border-danger/40 bg-danger/10 px-2.5 py-1.5 font-mono text-xs text-fg">
-                {pending?.kind === 'file'
-                  ? containerAppFilePath(app, { path: pending.path })
-                  : app.directory}
-              </code>
-              <div className="mt-4 flex justify-end gap-2">
-                <Button variant="outline" type="button" onClick={() => setPending(null)} className={`${CTL_SECONDARY} px-3`}>
-                  取消
-                </Button>
-                <Button variant="destructive"
-                  type="button"
-                  onClick={() => {
-                    const target = pending
-                    setPending(null)
-                    if (target?.kind === 'app') void remove(gateway, app.slug)
-                    if (target?.kind === 'file') void removeFile(gateway, app.slug, target.path)
-                  }}
-                  className={`${CTL_DANGER} px-3`}
-                >
-                  确认删除
-                </Button>
-              </div>
-            </Dialog.Content>
-          </Dialog.Portal>
-        </Dialog.Root>
-        <Dialog.Root
-          open={cancelTarget !== null}
-          onOpenChange={(open) => { if (!open) setCancelTarget(null) }}
+        <ConfirmDialog
+          open={pending !== null}
+          title={pending?.kind === 'app' ? `确认删除工作区「${app.displayName}」？` : '确认删除该文件？'}
+          surface={{ 'aria-describedby': 'app-delete-description', className: 'w-[min(30rem,calc(100vw-2rem))] p-4 shadow-xl' }}
+          description={
+            <p id="app-delete-description" className="mt-1.5 text-xs text-fg-muted">
+              {pending?.kind === 'app'
+                ? '该目录及其中的全部文件都会从磁盘移除，已被容器使用的挂载会失效。此操作不可撤销。'
+                : '文件会从磁盘移除，compose 里指向它的引用会挂不上。此操作不可撤销。'}
+            </p>
+          }
+          danger confirmLabel="确认删除" cancelClassName="px-3" confirmClassName="px-3"
+          onClose={() => setPending(null)}
+          onConfirm={() => {
+            const target = pending
+            setPending(null)
+            if (target?.kind === 'app') void remove(gateway, app.slug)
+            if (target?.kind === 'file') void removeFile(gateway, app.slug, target.path)
+          }}
         >
-          <Dialog.Portal>
-            <Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" />
-            <Dialog.Content
-              aria-describedby="cancel-build-description"
-              className="fixed left-1/2 top-1/2 z-[61] w-[min(28rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 panel-surface p-4 shadow-xl"
-            >
-              <Dialog.Title className="text-sm font-semibold">
-                取消构建任务 {cancelTarget ? buildTargetsLabel(cancelTarget) : ''}？
-              </Dialog.Title>
-              <p id="cancel-build-description" className="mt-1.5 text-xs text-fg-muted">
-                已完成的镜像会保留。取消后如需再次构建，用「重新构建」发起一个新任务。
-              </p>
-              <div className="mt-4 flex justify-end gap-2">
-                <Button variant="outline" type="button" onClick={() => setCancelTarget(null)} className={`${CTL_SECONDARY} px-3`}>
-                  继续构建
-                </Button>
-                <Button variant="destructive"
-                  type="button"
-                  onClick={() => {
-                    const target = cancelTarget
-                    setCancelTarget(null)
-                    if (target) void cancelBuild(gateway, app.slug, target.id)
-                  }}
-                  className={`${CTL_DANGER} px-3`}
-                >
-                  确认取消
-                </Button>
-              </div>
-            </Dialog.Content>
-          </Dialog.Portal>
-        </Dialog.Root>
+          <code className="mt-2 block break-all rounded-lg border border-danger/40 bg-danger/10 px-2.5 py-1.5 font-mono text-xs text-fg">
+            {pending?.kind === 'file' ? containerAppFilePath(app, { path: pending.path }) : app.directory}
+          </code>
+        </ConfirmDialog>
+        <ConfirmDialog
+          open={cancelTarget !== null}
+          title={`取消构建任务 ${cancelTarget ? buildTargetsLabel(cancelTarget) : ''}？`}
+          surface={{ 'aria-describedby': 'cancel-build-description', className: 'w-[min(28rem,calc(100vw-2rem))] p-4 shadow-xl' }}
+          description={
+            <p id="cancel-build-description" className="mt-1.5 text-xs text-fg-muted">
+              已完成的镜像会保留。取消后如需再次构建，用「重新构建」发起一个新任务。
+            </p>
+          }
+          danger confirmLabel="确认取消" cancelLabel="继续构建" cancelClassName="px-3" confirmClassName="px-3"
+          onClose={() => setCancelTarget(null)}
+          onConfirm={() => {
+            const target = cancelTarget
+            setCancelTarget(null)
+            if (target) void cancelBuild(gateway, app.slug, target.id)
+          }}
+        />
         {buildDialogOpen ? (
           <ContainerBuildDialog app={app} onClose={() => setBuildDialogOpen(false)} />
         ) : null}

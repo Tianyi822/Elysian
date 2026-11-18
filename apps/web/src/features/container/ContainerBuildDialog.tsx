@@ -6,6 +6,7 @@ import type { ContainerApp, ContainerBuildSubmitInput } from '@elysian/contracts
 import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../utils/isDockerRuntime'
 import { CTL_FIELD, CTL_PRIMARY, CTL_SECONDARY } from '../../components/formControl'
+import { ConfirmDialog } from '../../components/ConfirmDialog'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { SuggestionInput } from '../../components/SuggestionInput'
 import { newBuildRequestId, useContainerAppsStore } from '../../stores/containerAppsStore'
@@ -416,56 +417,42 @@ function ConfirmBuildDialog({
   onConfirm: () => void
 }) {
   return (
-    <Dialog.Root open onOpenChange={(open) => { if (!open) onCancel() }}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[62] bg-overlay" />
-        <Dialog.Content
-          aria-describedby="confirm-build-description"
-          onPointerDownOutside={(event) => event.preventDefault()}
-          onInteractOutside={(event) => event.preventDefault()}
-          className="fixed left-1/2 top-1/2 z-[63] w-[min(30rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 panel-surface p-4 shadow-xl"
-        >
-          <Dialog.Title className="text-sm font-semibold">确认开始构建？</Dialog.Title>
-          <div id="confirm-build-description" className="mt-2 space-y-1 text-xs">
-            <p>
-              工作区：<span className="font-mono">{app.slug}</span>
-            </p>
-            <p>模式：{input.mode === 'dockerfile' ? 'Dockerfile 构建' : 'compose 服务构建'}</p>
-            {input.mode === 'compose' ? (
-              <p>
-                compose 文件：<span className="font-mono">{input.compose}</span>
+    <ConfirmDialog
+      title="确认开始构建？"
+      surface={{
+        layer: 'nested', preventOutsideDismiss: true,
+        'aria-describedby': 'confirm-build-description',
+        className: 'w-[min(30rem,calc(100vw-2rem))] p-4 shadow-xl',
+      }}
+      busy={submitting}
+      confirmLabel={submitting ? <><Loader2 aria-hidden size={13} className="animate-spin" />提交中…</> : '确认并开始构建'}
+      cancelClassName="px-3" confirmClassName="gap-1.5 px-3"
+      onClose={onCancel} onConfirm={onConfirm}
+    >
+      <div id="confirm-build-description" className="mt-2 space-y-1 text-xs">
+        <p>
+          工作区：<span className="font-mono">{app.slug}</span>
+        </p>
+        <p>模式：{input.mode === 'dockerfile' ? 'Dockerfile 构建' : 'compose 服务构建'}</p>
+        {input.mode === 'compose' ? (
+          <p>
+            compose 文件：<span className="font-mono">{input.compose}</span>
+          </p>
+        ) : null}
+        <ul className="space-y-1">
+          {contextLines.map((line) => (
+            <li key={line.label}>
+              <p className="break-all">
+                {line.label}：<span className="font-mono">{line.value}</span>
               </p>
-            ) : null}
-            <ul className="space-y-1">
-              {contextLines.map((line) => (
-                <li key={line.label}>
-                  <p className="break-all">
-                    {line.label}：<span className="font-mono">{line.value}</span>
-                  </p>
-                  {line.detail ? <p className="break-all text-fg-subtle">{line.detail}</p> : null}
-                </li>
-              ))}
-            </ul>
-            <p className="rounded-lg border border-warning/40 bg-warning/10 px-2.5 py-1.5 text-warning">{notice}</p>
-            <p className="text-fg-subtle">{CONTEXT_SNAPSHOT_NOTICE}</p>
-            <p className="text-fg-subtle">构建为异步任务，提交后可在「构建任务」区查看进度与日志。</p>
-          </div>
-          <div className="mt-4 flex justify-end gap-2">
-            <Button variant="outline" type="button" onClick={onCancel} className={`${CTL_SECONDARY} px-3`}>
-              取消
-            </Button>
-            <Button variant="primary"
-              type="button"
-              onClick={onConfirm}
-              disabled={submitting}
-              className={`${CTL_PRIMARY} gap-1.5 px-3`}
-            >
-              {submitting ? <Loader2 aria-hidden size={13} className="animate-spin" /> : null}
-              {submitting ? '提交中…' : '确认并开始构建'}
-            </Button>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+              {line.detail ? <p className="break-all text-fg-subtle">{line.detail}</p> : null}
+            </li>
+          ))}
+        </ul>
+        <p className="rounded-lg border border-warning/40 bg-warning/10 px-2.5 py-1.5 text-warning">{notice}</p>
+        <p className="text-fg-subtle">{CONTEXT_SNAPSHOT_NOTICE}</p>
+        <p className="text-fg-subtle">构建为异步任务，提交后可在「构建任务」区查看进度与日志。</p>
+      </div>
+    </ConfirmDialog>
   )
 }

@@ -75,12 +75,19 @@ describe('清空日志的二次确认', () => {
   })
 
   it('打开后焦点不在「确认清空」按钮上（误按回车不能删日志）', async () => {
-    renderDialog(gatewayWith())
+    const user = userEvent.setup()
+    const clearLogs = vi.fn(gatewayWith().logs.clearLogs)
+    renderDialog(gatewayWith({ clearLogs }))
 
     const dialog = await screen.findByRole('dialog')
     const confirm = within(dialog).getByRole('button', { name: '确认清空' })
     expect(confirm).not.toHaveFocus()
-    expect(document.activeElement).toBe(dialog)
+    expect(dialog).toHaveFocus()
+    expect(dialog).toHaveAccessibleDescription(expect.stringContaining('清空后无法恢复'))
+    await user.keyboard('{Enter}')
+    expect(clearLogs).not.toHaveBeenCalled()
+    await user.tab()
+    expect(within(dialog).getByRole('button', { name: '取消' })).toHaveFocus()
   })
 
   it('取消不删除：弹窗关闭且没有请求发出', async () => {

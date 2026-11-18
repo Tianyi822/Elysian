@@ -1219,13 +1219,19 @@ describe('会话列表编辑入口', () => {
     const message = '会话存在结果未确认的执行（如面板重启时的在途操作），暂不能删除；需经执行对账接口确认停止后解除'
     const { backend } = setupSessions()
     await waitFor(() => expect(useAgentChatStore.getState().remoteSession?.id).toBe('server-session'))
-    backend.api.deleteSession.mockRejectedValueOnce(new AgentHttpError(message, 'session-unresolved', 409))
+    let rejectDelete!: (error: Error) => void
+    backend.api.deleteSession.mockImplementationOnce(() => new Promise((_, reject) => { rejectDelete = reject }))
     await user.click(screen.getAllByRole('button', { name: '编辑会话' })[0]!)
     await user.click(await screen.findByRole('menuitem', { name: '删除会话' }))
-    await user.click(await screen.findByRole('button', { name: '确认删除' }))
     const dialog = await screen.findByRole('dialog', { name: `删除会话「${longTitle}」？` })
+    await user.click(within(dialog).getByRole('button', { name: '确认删除' }))
+    expect(within(dialog).getByRole('button', { name: '取消' })).toBeDisabled()
+    expect(within(dialog).getByRole('button', { name: '删除中…' })).toBeDisabled()
+    await user.keyboard('{Escape}')
+    expect(dialog).toBeInTheDocument()
+    rejectDelete(new AgentHttpError(message, 'session-unresolved', 409))
     expect(await within(dialog).findByRole('alert')).toHaveTextContent(message)
-    expect(within(dialog).getByRole('alert')).toBeInTheDocument()
+    expect(within(dialog).getByRole('button', { name: '取消' })).toBeEnabled()
     expect(useMessageStore.getState().messages.filter(item => item.message === message)).toHaveLength(1)
     // 弹窗打开时页面被 aria-hidden，行仍在用 DOM 断言；会话指针未动。
     expect([...document.querySelectorAll('.chat-session-row')].some(row => row.textContent?.includes(longTitle))).toBe(true)

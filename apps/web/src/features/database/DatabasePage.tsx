@@ -1,6 +1,6 @@
 import type { ReactNode } from 'react'
 import { useEffect, useMemo, useState } from 'react'
-import * as Dialog from '@radix-ui/react-dialog'
+import { ConfirmDialog } from '../../components/ConfirmDialog'
 import {
   Cable,
   ChevronRight,
@@ -398,31 +398,19 @@ function DatabaseContainerCard({
         </div>
       </div>
       {confirmRemove ? (
-        <Dialog.Root
-          open
-          onOpenChange={(next) => {
-            if (!next) setConfirmRemove(false)
-          }}
-        >
-          <Dialog.Portal>
-            <Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" />
-            <Dialog.Content
-              aria-describedby={undefined}
-              className="fixed left-1/2 top-1/2 z-[61] w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 panel-surface p-4 shadow-xl"
-            >
-              <Dialog.Title className="text-sm font-semibold">
-                {missing ? `${removeLabel}？` : '删除容器及全部数据？'}
-              </Dialog.Title>
-              <p className="mt-2 text-xs text-danger">
-                {missing ? (hasManagedVolume ? `将删除 ${row.name} 的残留专属卷及面板登记。卷内数据无法恢复。` : `将清理 ${row.name} 的面板登记。`) : `将删除数据库容器 ${row.name} 及其专属持久卷，全部数据无法恢复。此操作无法撤销。`}
-              </p>
-              <div className="mt-4 flex justify-end gap-2">
-                <Button variant="outline" type="button" onClick={() => setConfirmRemove(false)} className="rounded border border-line px-3 py-1.5 text-xs">取消</Button>
-                <Button variant="destructive" type="button" onClick={() => { setConfirmRemove(false); onRemove() }} className="rounded border border-danger px-3 py-1.5 text-xs text-danger">确认{removeLabel}</Button>
-              </div>
-            </Dialog.Content>
-          </Dialog.Portal>
-        </Dialog.Root>
+        <ConfirmDialog
+          title={missing ? `${removeLabel}？` : '删除容器及全部数据？'}
+          description={
+            <p className="mt-2 text-xs text-danger">
+              {missing ? (hasManagedVolume ? `将删除 ${row.name} 的残留专属卷及面板登记。卷内数据无法恢复。` : `将清理 ${row.name} 的面板登记。`) : `将删除数据库容器 ${row.name} 及其专属持久卷，全部数据无法恢复。此操作无法撤销。`}
+            </p>
+          }
+          danger confirmLabel={`确认${removeLabel}`}
+          cancelClassName="rounded border border-line px-3 py-1.5 text-xs"
+          confirmClassName="rounded border border-danger px-3 py-1.5 text-xs text-danger"
+          onClose={() => setConfirmRemove(false)}
+          onConfirm={() => { setConfirmRemove(false); onRemove() }}
+        />
       ) : null}
     </article>
   )
@@ -534,46 +522,13 @@ function SqliteFileCard({
         </div>
       </div>
       {confirmRemove ? (
-        <Dialog.Root
-          open
-          onOpenChange={(next) => {
-            if (!next) setConfirmRemove(false)
-          }}
-        >
-          <Dialog.Portal>
-            <Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" />
-            <Dialog.Content
-              aria-describedby={undefined}
-              className="fixed left-1/2 top-1/2 z-[61] w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 panel-surface p-4 shadow-xl"
-            >
-              <Dialog.Title className="text-sm font-semibold">
-                确认删除 SQLite 文件「{file.name}」？
-              </Dialog.Title>
-              <p className="mt-1.5 text-xs text-fg-muted">
-                将永久删除面板管理目录中的实际 SQLite 数据库文件。请先下载快照备份；此操作无法撤销。
-              </p>
-              <div className="mt-4 flex justify-end gap-2">
-                <Button variant="outline"
-                  type="button"
-                  onClick={() => setConfirmRemove(false)}
-                  className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted transition-colors hover:text-fg"
-                >
-                  取消
-                </Button>
-                <Button variant="destructive"
-                  type="button"
-                  onClick={() => {
-                    setConfirmRemove(false)
-                    onRemove()
-                  }}
-                  className="rounded-lg border border-danger/50 bg-danger/10 px-3 py-1.5 text-xs font-medium text-danger transition-colors hover:bg-danger/20"
-                >
-                  确认删除
-                </Button>
-              </div>
-            </Dialog.Content>
-          </Dialog.Portal>
-        </Dialog.Root>
+        <ConfirmDialog
+          title={`确认删除 SQLite 文件「${file.name}」？`}
+          description={<p className="mt-1.5 text-xs text-fg-muted">将永久删除面板管理目录中的实际 SQLite 数据库文件。请先下载快照备份；此操作无法撤销。</p>}
+          danger confirmLabel="确认删除"
+          onClose={() => setConfirmRemove(false)}
+          onConfirm={() => { setConfirmRemove(false); onRemove() }}
+        />
       ) : null}
     </article>
   )

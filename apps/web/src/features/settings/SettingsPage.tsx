@@ -2,7 +2,7 @@ import { useMessageStore } from '../../stores/messageStore'
 import { Navigate, useSearchParams } from 'react-router'
 import { ExtensionSettingsSection } from './ExtensionSettingsSection'
 import { useAgentExtensionsStore } from '../../stores/agentExtensionsStore'
-import * as Dialog from '@radix-ui/react-dialog'
+import { ConfirmDialog } from '../../components/ConfirmDialog'
 import { PanelMaintenanceSettings } from './PanelMaintenanceSettings'
 import { useEffect, useId, useState } from 'react'
 import type { FormEvent } from 'react'
@@ -274,19 +274,18 @@ function AccountSecuritySettings() {
         </Button>
       </form>
     </section>
-    <Dialog.Root open={confirmKind !== null} onOpenChange={(open) => { if (!open) setConfirmKind(null) }}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" />
-        <Dialog.Content className="fixed left-1/2 top-1/2 z-[61] w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 panel-surface p-4 shadow-xl">
-          <Dialog.Title className="text-sm font-semibold text-fg">{confirmKind === 'username' ? '确认修改用户名' : '确认修改密码'}</Dialog.Title>
-          <Dialog.Description className="mt-2 text-xs leading-5 text-fg-muted">{confirmKind === 'username' ? '修改后，所有已登录设备都会退出，请用新用户名重新登录。' : '修改后，所有已登录设备都会退出，请用新密码重新登录。'}</Dialog.Description>
-          <div className="mt-4 flex justify-end gap-2">
-            <Dialog.Close asChild><Button variant="outline" type="button" className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted">取消</Button></Dialog.Close>
-            <Button variant="primary" type="button" disabled={submitting} className="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium text-fg" onClick={() => void (confirmKind === 'username' ? confirmUsernameChange() : confirmPasswordChange())}>确认修改</Button>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+    <ConfirmDialog
+      open={confirmKind !== null}
+      title={confirmKind === 'username' ? '确认修改用户名' : '确认修改密码'}
+      titleClassName="text-sm font-semibold text-fg"
+      describe
+      description={<p className="mt-2 text-xs leading-5 text-fg-muted">{confirmKind === 'username' ? '修改后，所有已登录设备都会退出，请用新用户名重新登录。' : '修改后，所有已登录设备都会退出，请用新密码重新登录。'}</p>}
+      busy={submitting} confirmLabel="确认修改"
+      cancelClassName="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted"
+      confirmClassName="rounded-lg border border-line bg-surface px-3 py-1.5 text-xs font-medium text-fg"
+      onClose={() => setConfirmKind(null)}
+      onConfirm={() => void (confirmKind === 'username' ? confirmUsernameChange() : confirmPasswordChange())}
+    />
     </div>
   )
 }

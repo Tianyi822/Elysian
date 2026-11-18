@@ -1,9 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
-import * as Dialog from '@radix-ui/react-dialog'
+import { ConfirmDialog } from '../../components/ConfirmDialog'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { captureAuthGeneration } from '../../utils/authGeneration'
 import { useAgentChatStore } from '../../stores/agentChatStore'
-import { Button } from '../../components/Button'
 
 /**
  * 删除会话确认弹窗：标题点名会话，说明聊天记录与运行历史一并清除且不可恢复；
@@ -53,36 +52,16 @@ export function SessionRemoveDialog({ target, onClose }: {
   }
 
   return (
-    <Dialog.Root open onOpenChange={next => { if (!next && !removing) onClose() }}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" />
-        <Dialog.Content
-          aria-describedby={undefined}
-          className="fixed left-1/2 top-1/2 z-[61] w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 panel-surface p-4 shadow-xl"
-        >
-          <Dialog.Title className="text-sm font-semibold">删除会话「{target.title}」？</Dialog.Title>
-          <p className="mt-1.5 text-xs text-fg-muted">删除将立即终止该会话的运行和待执行任务，清除聊天记录与运行历史，且不可恢复。已发生的外部变更不会回滚。</p>
-          {error && <p role="alert" className="mt-2 text-xs text-danger">{error}</p>}
-          <div className="mt-4 flex justify-end gap-2">
-            <Button variant="outline"
-              type="button"
-              onClick={onClose}
-              disabled={removing}
-              className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted transition-colors hover:text-fg disabled:opacity-50"
-            >
-              取消
-            </Button>
-            <Button variant="destructive"
-              type="button"
-              disabled={removing}
-              onClick={() => { void submit() }}
-              className="rounded-lg border border-danger/50 bg-danger/10 px-3 py-1.5 text-xs font-medium text-danger transition-colors hover:bg-danger/20 disabled:cursor-not-allowed disabled:opacity-50"
-            >
-              {removing ? '删除中…' : '确认删除'}
-            </Button>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+    <ConfirmDialog
+      title={`删除会话「${target.title}」？`}
+      description={<p className="mt-1.5 text-xs text-fg-muted">删除将立即终止该会话的运行和待执行任务，清除聊天记录与运行历史，且不可恢复。已发生的外部变更不会回滚。</p>}
+      danger busy={removing} blockCloseWhileBusy confirmLabel={removing ? '删除中…' : '确认删除'}
+      cancelClassName="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted transition-colors hover:text-fg disabled:opacity-50"
+      confirmClassName="rounded-lg border border-danger/50 bg-danger/10 px-3 py-1.5 text-xs font-medium text-danger transition-colors hover:bg-danger/20 disabled:cursor-not-allowed disabled:opacity-50"
+      onClose={onClose}
+      onConfirm={() => void submit()}
+    >
+      {error && <p role="alert" className="mt-2 text-xs text-danger">{error}</p>}
+    </ConfirmDialog>
   )
 }

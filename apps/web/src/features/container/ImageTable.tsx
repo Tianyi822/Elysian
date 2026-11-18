@@ -1,4 +1,4 @@
-import * as Dialog from '@radix-ui/react-dialog'
+import { ConfirmDialog } from '../../components/ConfirmDialog'
 import { Loader2, Trash2 } from '../../components/icons'
 import { useState, type ReactNode } from 'react'
 import type { Container, ContainerImage } from '@elysian/contracts'
@@ -157,63 +157,37 @@ export function ImageTable({
           </div>
         ) : null}
 
-        <Dialog.Root
+        <ConfirmDialog
           open={pendingDelete !== null}
-          onOpenChange={(open) => {
-            if (!open) setPendingDelete(null)
+          title={`确认删除镜像「${pendingDelete?.name}:${pendingDelete?.tag}」？`}
+          danger confirmLabel="确认删除"
+          onClose={() => setPendingDelete(null)}
+          onConfirm={() => {
+            const image = pendingDelete
+            setPendingDelete(null)
+            if (image) void removeImage(gateway, image.id)
           }}
         >
-          <Dialog.Portal>
-            <Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" />
-            <Dialog.Content
-              aria-describedby={undefined}
-              className="fixed left-1/2 top-1/2 z-[61] w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 panel-surface p-4 shadow-xl"
-            >
-              <Dialog.Title className="text-sm font-semibold">
-                确认删除镜像「{pendingDelete?.name}:{pendingDelete?.tag}」？
-              </Dialog.Title>
-              {docker ? (
-                <>
-                  <p className="mt-1.5 text-xs text-fg-muted">
-                    将移除该镜像的全部标签。正在使用它的容器会阻止删除。
-                  </p>
-                  {pendingDelete ? (
-                    <ul className="mt-2 space-y-0.5 font-mono text-xs text-fg-muted">
-                      <li>{`${pendingDelete.name}:${pendingDelete.tag}`}</li>
-                      {pendingDelete.otherTags?.map((tag) => (
-                        <li key={tag}>{tag}</li>
-                      ))}
-                    </ul>
-                  ) : null}
-                </>
-              ) : (
-                <p className="mt-1.5 text-xs text-fg-muted">
-                  将从演示数据集中移除该镜像，正在运行的容器不受影响。这一步不会触碰任何真实环境。
-                </p>
-              )}
-              <div className="mt-4 flex justify-end gap-2">
-                <Button variant="outline"
-                  type="button"
-                  onClick={() => setPendingDelete(null)}
-                  className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted transition-colors hover:text-fg"
-                >
-                  取消
-                </Button>
-                <Button variant="destructive"
-                  type="button"
-                  onClick={() => {
-                    const image = pendingDelete
-                    setPendingDelete(null)
-                    if (image) void removeImage(gateway, image.id)
-                  }}
-                  className="rounded-lg border border-danger/50 bg-danger/10 px-3 py-1.5 text-xs font-medium text-danger transition-colors hover:bg-danger/20"
-                >
-                  确认删除
-                </Button>
-              </div>
-            </Dialog.Content>
-          </Dialog.Portal>
-        </Dialog.Root>
+          {docker ? (
+            <>
+              <p className="mt-1.5 text-xs text-fg-muted">
+                将移除该镜像的全部标签。正在使用它的容器会阻止删除。
+              </p>
+              {pendingDelete ? (
+                <ul className="mt-2 space-y-0.5 font-mono text-xs text-fg-muted">
+                  <li>{`${pendingDelete.name}:${pendingDelete.tag}`}</li>
+                  {pendingDelete.otherTags?.map((tag) => (
+                    <li key={tag}>{tag}</li>
+                  ))}
+                </ul>
+              ) : null}
+            </>
+          ) : (
+            <p className="mt-1.5 text-xs text-fg-muted">
+              将从演示数据集中移除该镜像，正在运行的容器不受影响。这一步不会触碰任何真实环境。
+            </p>
+          )}
+        </ConfirmDialog>
       </section>
     </div>
   )

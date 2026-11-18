@@ -1,8 +1,7 @@
-import * as Dialog from '@radix-ui/react-dialog'
+import { ConfirmDialog } from '../../components/ConfirmDialog'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../utils/isDockerRuntime'
 import { useSshStore } from '../../stores/sshStore'
-import { Button } from '../../components/Button'
 
 /** 删除 SSH 密钥的确认弹窗：取消不删，确认后按运行时从演示数据集或本机授权文件移除。 */
 export function SshKeyRemoveDialog() {
@@ -19,40 +18,16 @@ export function SshKeyRemoveDialog() {
     : '删除后这份私钥作废，演示数据集里它的公钥会一并移除。这一步不会触碰任何真实授权文件。'
 
   return (
-    <Dialog.Root open onOpenChange={(open) => { if (!open) closeRemoveKey() }}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" />
-        <Dialog.Content
-          aria-describedby={undefined}
-          className="fixed left-1/2 top-1/2 z-[61] w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 panel-surface p-4 shadow-xl"
-        >
-          <Dialog.Title className="text-sm font-semibold">
-            确认删除 SSH 密钥「{removeKeyTarget.name}」？
-          </Dialog.Title>
-          <p className="mt-1.5 text-xs text-fg-muted">{description}</p>
-          <div className="mt-4 flex justify-end gap-2">
-            <Button variant="outline"
-              type="button"
-              onClick={() => closeRemoveKey()}
-              className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted transition-colors hover:text-fg"
-            >
-              取消
-            </Button>
-            <Button variant="destructive"
-              type="button"
-              disabled={removingKeyIds.includes(removeKeyTarget.id)}
-              onClick={() => {
-                const keyId = removeKeyTarget.id
-                closeRemoveKey()
-                void removeKey(gateway, keyId)
-              }}
-              className="rounded-lg border border-danger/50 bg-danger/10 px-3 py-1.5 text-xs font-medium text-danger transition-colors hover:bg-danger/20 disabled:opacity-50"
-            >
-              确认删除
-            </Button>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+    <ConfirmDialog
+      title={`确认删除 SSH 密钥「${removeKeyTarget.name}」？`}
+      description={<p className="mt-1.5 text-xs text-fg-muted">{description}</p>}
+      danger busy={removingKeyIds.includes(removeKeyTarget.id)} confirmLabel="确认删除"
+      onClose={closeRemoveKey}
+      onConfirm={() => {
+        const keyId = removeKeyTarget.id
+        closeRemoveKey()
+        void removeKey(gateway, keyId)
+      }}
+    />
   )
 }

@@ -1,7 +1,6 @@
-import * as Dialog from '@radix-ui/react-dialog'
+import { ConfirmDialog } from '../../components/ConfirmDialog'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { useWebsitesStore } from '../../stores/websitesStore'
-import { Button } from '../../components/Button'
 
 /**
  * 删除项目确认弹窗：删除是危险动作，确认文案明示会连站点目录一起删除；
@@ -16,45 +15,23 @@ export function WebsitesRemoveDialog() {
 
   if (!removeTarget) return null
   const removing = busyProjectIds.includes(removeTarget.id)
+  const title = `确认删除项目「${removeTarget.name}」？`
 
   return (
-    <Dialog.Root open onOpenChange={(next) => { if (!next) closeRemove() }}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-50 bg-overlay" />
-        <Dialog.Content
-          aria-describedby={undefined}
-          onPointerDownOutside={(event) => event.preventDefault()}
-          onInteractOutside={(event) => event.preventDefault()}
-          className="fixed left-1/2 top-1/2 z-[55] flex w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden panel-surface shadow-2xl"
-        >
-          <Dialog.Title className="sr-only">确认删除项目「{removeTarget.name}」？</Dialog.Title>
-          <div className="flex flex-col gap-2 px-4 py-4">
-            <p className="text-sm font-medium text-fg">
-              确认删除项目「{removeTarget.name}」？
-            </p>
-            <p className="text-xs text-fg-muted">
-              将停止并删除站点容器、删除站点目录 {removeTarget.rootDir}（含其中全部文件）、移除登记并回收反向代理配置，不可恢复。
-            </p>
-          </div>
-          <div className="flex items-center justify-end gap-2 border-t border-line px-4 py-2.5">
-            <Button variant="outline"
-              type="button"
-              onClick={() => closeRemove()}
-              className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted transition-colors hover:text-fg"
-            >
-              取消
-            </Button>
-            <Button variant="destructive"
-              type="button"
-              disabled={removing}
-              onClick={() => void removeProject(gateway, removeTarget)}
-              className="rounded-lg border border-danger/50 bg-danger/10 px-3 py-1.5 text-xs font-medium text-danger transition-colors hover:bg-danger/20 disabled:opacity-50"
-            >
-              {removing ? '删除中…' : '确认删除'}
-            </Button>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+    <ConfirmDialog
+      title={title} titleClassName="sr-only"
+      surface={{ layer: 'lower', preventOutsideDismiss: true, className: 'flex w-[min(24rem,calc(100vw-2rem))] flex-col overflow-hidden shadow-2xl' }}
+      footerClassName="flex items-center justify-end gap-2 border-t border-line px-4 py-2.5"
+      danger busy={removing} confirmLabel={removing ? '删除中…' : '确认删除'}
+      onClose={closeRemove}
+      onConfirm={() => void removeProject(gateway, removeTarget)}
+    >
+      <div className="flex flex-col gap-2 px-4 py-4">
+        <p className="text-sm font-medium text-fg">{title}</p>
+        <p className="text-xs text-fg-muted">
+          将停止并删除站点容器、删除站点目录 {removeTarget.rootDir}（含其中全部文件）、移除登记并回收反向代理配置，不可恢复。
+        </p>
+      </div>
+    </ConfirmDialog>
   )
 }

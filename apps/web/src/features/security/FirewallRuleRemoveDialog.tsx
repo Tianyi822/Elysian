@@ -1,7 +1,6 @@
-import * as Dialog from '@radix-ui/react-dialog'
+import { ConfirmDialog } from '../../components/ConfirmDialog'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { useFirewallStore } from '../../stores/firewallStore'
-import { Button } from '../../components/Button'
 
 /** 删除规则的确认弹窗：取消不删，确认后按运行时从演示数据集或系统防火墙移除（端口/IP/转发三类共用）。 */
 export function FirewallRuleRemoveDialog() {
@@ -15,37 +14,15 @@ export function FirewallRuleRemoveDialog() {
   const kindLabel = removeTarget.kind === 'port' ? '端口规则' : removeTarget.kind === 'ip' ? 'IP 规则' : '端口转发'
 
   return (
-    <Dialog.Root open onOpenChange={(open) => { if (!open) closeRemove() }}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" />
-        <Dialog.Content
-          aria-describedby={undefined}
-          className="fixed left-1/2 top-1/2 z-[61] w-[min(24rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 panel-surface p-4 shadow-xl"
-        >
-          <Dialog.Title className="text-sm font-semibold">确认删除{kindLabel}「{removeTarget.label}」？</Dialog.Title>
-          <div className="mt-4 flex justify-end gap-2">
-            <Button variant="outline"
-              type="button"
-              onClick={() => closeRemove()}
-              className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted transition-colors hover:text-fg"
-            >
-              取消
-            </Button>
-            <Button variant="destructive"
-              type="button"
-              disabled={removingRuleIds.includes(removeTarget.id)}
-              onClick={() => {
-                const { kind, id } = removeTarget
-                closeRemove()
-                void removeRule(gateway, kind, id)
-              }}
-              className="rounded-lg border border-danger/50 bg-danger/10 px-3 py-1.5 text-xs font-medium text-danger transition-colors hover:bg-danger/20 disabled:opacity-50"
-            >
-              确认删除
-            </Button>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+    <ConfirmDialog
+      title={`确认删除${kindLabel}「${removeTarget.label}」？`}
+      danger busy={removingRuleIds.includes(removeTarget.id)} confirmLabel="确认删除"
+      onClose={closeRemove}
+      onConfirm={() => {
+        const { kind, id } = removeTarget
+        closeRemove()
+        void removeRule(gateway, kind, id)
+      }}
+    />
   )
 }

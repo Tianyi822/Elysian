@@ -1,4 +1,4 @@
-import * as Dialog from '@radix-ui/react-dialog'
+import { ConfirmDialog } from '../../components/ConfirmDialog'
 import { useRef } from 'react'
 import {
   PLATFORM_LOG_CATEGORY_LABELS,
@@ -9,7 +9,6 @@ import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../utils/isDockerRuntime'
 import { formatLoginTime } from '../../components/format'
 import { useRuntimeLogStore } from '../../stores/runtimeLogStore'
-import { Button } from '../../components/Button'
 
 /**
  * 清空日志的二次确认：破坏性动作要用户再点一次，并逐字写明清空之后不可恢复。
@@ -40,59 +39,37 @@ export function ClearLogsDialog() {
   const oldestAt = storage?.oldestAt ?? null
 
   return (
-    <Dialog.Root open onOpenChange={(open) => { if (!open) closeClear() }}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" />
-        <Dialog.Content
-          ref={contentRef}
-          // 容器可聚焦 + 接管打开时的自动聚焦：初始焦点不落在「确认清空」上，
-          // Tab 的第一站因此是顺序在前的「取消」。
-          tabIndex={-1}
-          onOpenAutoFocus={(event) => {
-            event.preventDefault()
-            contentRef.current?.focus()
-          }}
-          className="fixed left-1/2 top-1/2 z-[61] w-[min(26rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 panel-surface p-4 shadow-xl"
-        >
-          <Dialog.Title className="text-sm font-semibold">{`确认清空${label}？`}</Dialog.Title>
-          {/* 正文是必读信息：aria-describedby 指向它（Radix 默认启用，不要关掉）。 */}
-          <Dialog.Description asChild>
-            <div className="mt-1.5 space-y-1.5 text-xs text-fg-muted">
-              <p>
-                {`将删除服务器上${label}的全部记录。最近一次刷新时：共 ${rowCount} 条、约 ${formatLogBytes(totalBytes)}。`}
-              </p>
-              <p>
-                日志最早可追溯到
-                {oldestAt ? ` ${formatLoginTime(oldestAt)}` : ' ——（当前没有日志）'}。
-              </p>
-              <p>{`${label}${logRetentionText(clearTarget)}。`}</p>
-              <p className="font-medium text-danger">
-                清空后无法恢复，也不会留下备份；系统服务自己的日志（如 sshd.log）不受影响。
-              </p>
-              {isDockerRuntime() ? null : (
-                <p>演示数据：只清空内存中的演示日志，不触碰任何文件。</p>
-              )}
-            </div>
-          </Dialog.Description>
-          <div className="mt-4 flex justify-end gap-2">
-            <Button variant="outline"
-              type="button"
-              onClick={() => closeClear()}
-              className="rounded-lg border border-line px-3 py-1.5 text-xs text-fg-muted transition-colors hover:text-fg"
-            >
-              取消
-            </Button>
-            <Button variant="destructive"
-              type="button"
-              disabled={clearing}
-              onClick={() => void clear(gateway)}
-              className="rounded-lg border border-danger/50 bg-danger/10 px-3 py-1.5 text-xs font-medium text-danger transition-colors hover:bg-danger/20 disabled:opacity-50"
-            >
-              {clearing ? '清空中…' : '确认清空'}
-            </Button>
-          </div>
-        </Dialog.Content>
-      </Dialog.Portal>
-    </Dialog.Root>
+    <ConfirmDialog
+      title={`确认清空${label}？`}
+      describe
+      description={
+        <div className="mt-1.5 space-y-1.5 text-xs text-fg-muted">
+          <p>
+            {`将删除服务器上${label}的全部记录。最近一次刷新时：共 ${rowCount} 条、约 ${formatLogBytes(totalBytes)}。`}
+          </p>
+          <p>
+            日志最早可追溯到
+            {oldestAt ? ` ${formatLoginTime(oldestAt)}` : ' ——（当前没有日志）'}。
+          </p>
+          <p>{`${label}${logRetentionText(clearTarget)}。`}</p>
+          <p className="font-medium text-danger">
+            清空后无法恢复，也不会留下备份；系统服务自己的日志（如 sshd.log）不受影响。
+          </p>
+          {isDockerRuntime() ? null : (
+            <p>演示数据：只清空内存中的演示日志，不触碰任何文件。</p>
+          )}
+        </div>
+      }
+      surface={{
+        className: 'w-[min(26rem,calc(100vw-2rem))] p-4 shadow-xl',
+        ref: contentRef,
+        // 初始焦点留在弹窗容器；第一下 Tab 才到「取消」。
+        tabIndex: -1,
+        onOpenAutoFocus: (event) => { event.preventDefault(); contentRef.current?.focus() },
+      }}
+      danger busy={clearing} confirmLabel={clearing ? '清空中…' : '确认清空'}
+      onClose={closeClear}
+      onConfirm={() => void clear(gateway)}
+    />
   )
 }

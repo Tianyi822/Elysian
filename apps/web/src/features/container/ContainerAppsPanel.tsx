@@ -7,6 +7,7 @@ import { isDockerRuntime } from '../../utils/isDockerRuntime'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
 import { RefreshButton } from '../../components/RefreshState'
 import { CTL_FIELD, CTL_PRIMARY, CTL_SECONDARY, CTL_TOOLBAR } from '../../components/formControl'
+import { DialogSurface } from '../../components/DialogSurface'
 import { useContainerAppsStore } from '../../stores/containerAppsStore'
 import { ContainerAppEditorSheet } from './ContainerAppEditorSheet'
 import { ContainerAppWorkspaceCard } from './ContainerAppWorkspaceCard'
@@ -141,85 +142,81 @@ function CreateAppDialog({ onClose }: { onClose: () => void }) {
 
   return (
     <Dialog.Root open onOpenChange={(open) => { if (!open) onClose() }}>
-      <Dialog.Portal>
-        <Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" />
-        <Dialog.Content
-          aria-describedby="create-app-description"
-          onPointerDownOutside={(event) => event.preventDefault()}
-          onInteractOutside={(event) => event.preventDefault()}
-          className="fixed left-1/2 top-1/2 z-[61] w-[min(28rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 panel-surface p-4 shadow-xl"
-        >
-          <div className="flex items-center justify-between gap-3">
-            <Dialog.Title className="text-sm font-medium">新建工作区</Dialog.Title>
-            <Button variant="ghost" size="icon"
-              type="button"
-              onClick={onClose}
-              aria-label="关闭弹窗"
-              className="inline-flex size-7 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg"
-            >
-              <X aria-hidden size={15} />
-            </Button>
-          </div>
-          <p id="create-app-description" className="mt-1.5 text-xs text-fg-muted">
-            标识会直接作为目录名，只能用小写字母、数字、下划线和连字符；建好后不能改名。
-          </p>
-          <div className="mt-3 space-y-3">
-            <div>
-              <label htmlFor="create-app-slug" className="mb-1 flex items-center gap-1 text-xs font-medium text-fg-muted">
-                工作区标识<span className="text-danger">*</span>
-              </label>
-              <input
-                id="create-app-slug"
-                value={slug}
-                onChange={(event) => setSlug(event.target.value)}
-                placeholder="gateway-prod"
-                autoComplete="off"
-                spellCheck={false}
-                aria-describedby={showErrors && slugError ? 'create-app-slug-error' : undefined}
-                className={`${CTL_FIELD} font-mono`}
-              />
-              {showErrors && slugError ? (
-                <p id="create-app-slug-error" className="mt-1 text-xs text-danger">
-                  {slugError}
-                </p>
-              ) : null}
-            </div>
-            <div>
-              <label htmlFor="create-app-name" className="mb-1 block text-xs font-medium text-fg-muted">
-                展示名（可选）
-              </label>
-              <input
-                id="create-app-name"
-                value={displayName}
-                onChange={(event) => setDisplayName(event.target.value)}
-                placeholder="留空使用工作区标识"
-                autoComplete="off"
-                aria-describedby={showErrors && nameError ? 'create-app-name-error' : undefined}
-                className={CTL_FIELD}
-              />
-              {showErrors && nameError ? (
-                <p id="create-app-name-error" className="mt-1 text-xs text-danger">
-                  {nameError}
-                </p>
-              ) : null}
-            </div>
-            {createError ? (
-              <p role="alert" className="text-xs text-danger">
-                {createError}
+      <DialogSurface
+        aria-describedby="create-app-description"
+        preventOutsideDismiss
+        className="w-[min(28rem,calc(100vw-2rem))] p-4 shadow-xl"
+      >
+        <div className="flex items-center justify-between gap-3">
+          <Dialog.Title className="text-sm font-medium">新建工作区</Dialog.Title>
+          <Button variant="ghost" size="icon"
+            type="button"
+            onClick={onClose}
+            aria-label="关闭弹窗"
+            className="inline-flex size-7 items-center justify-center rounded-lg text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg"
+          >
+            <X aria-hidden size={15} />
+          </Button>
+        </div>
+        <p id="create-app-description" className="mt-1.5 text-xs text-fg-muted">
+          标识会直接作为目录名，只能用小写字母、数字、下划线和连字符；建好后不能改名。
+        </p>
+        <div className="mt-3 space-y-3">
+          <div>
+            <label htmlFor="create-app-slug" className="mb-1 flex items-center gap-1 text-xs font-medium text-fg-muted">
+              工作区标识<span className="text-danger">*</span>
+            </label>
+            <input
+              id="create-app-slug"
+              value={slug}
+              onChange={(event) => setSlug(event.target.value)}
+              placeholder="gateway-prod"
+              autoComplete="off"
+              spellCheck={false}
+              aria-describedby={showErrors && slugError ? 'create-app-slug-error' : undefined}
+              className={`${CTL_FIELD} font-mono`}
+            />
+            {showErrors && slugError ? (
+              <p id="create-app-slug-error" className="mt-1 text-xs text-danger">
+                {slugError}
               </p>
             ) : null}
           </div>
-          <div className="mt-4 flex justify-end gap-2">
-            <Button variant="outline" type="button" onClick={onClose} className={`${CTL_SECONDARY} px-3`}>
-              取消
-            </Button>
-            <Button variant="primary" type="button" onClick={submit} disabled={creating} className={`${CTL_PRIMARY} gap-1.5 px-3`}>
-              {creating ? <Loader2 aria-hidden size={13} className="animate-spin" /> : null}
-              {creating ? '创建中…' : '创建工作区'}
-            </Button>
+          <div>
+            <label htmlFor="create-app-name" className="mb-1 block text-xs font-medium text-fg-muted">
+              展示名（可选）
+            </label>
+            <input
+              id="create-app-name"
+              value={displayName}
+              onChange={(event) => setDisplayName(event.target.value)}
+              placeholder="留空使用工作区标识"
+              autoComplete="off"
+              aria-describedby={showErrors && nameError ? 'create-app-name-error' : undefined}
+              className={CTL_FIELD}
+            />
+            {showErrors && nameError ? (
+              <p id="create-app-name-error" className="mt-1 text-xs text-danger">
+                {nameError}
+              </p>
+            ) : null}
           </div>
-        </Dialog.Content>
-      </Dialog.Portal>
+          {createError ? (
+            <p role="alert" className="text-xs text-danger">
+              {createError}
+            </p>
+          ) : null}
+        </div>
+        <div className="mt-4 flex justify-end gap-2">
+          <Button variant="outline" type="button" onClick={onClose} className={`${CTL_SECONDARY} px-3`}>
+            取消
+          </Button>
+          <Button variant="primary" type="button" onClick={submit} disabled={creating} className={`${CTL_PRIMARY} gap-1.5 px-3`}>
+            {creating ? <Loader2 aria-hidden size={13} className="animate-spin" /> : null}
+            {creating ? '创建中…' : '创建工作区'}
+          </Button>
+        </div>
+      </DialogSurface>
     </Dialog.Root>
   )
 }

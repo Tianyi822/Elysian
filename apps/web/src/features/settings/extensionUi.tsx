@@ -5,6 +5,7 @@ import { ToggleSwitch } from '../../components/ToggleSwitch'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { MoreHorizontal, X } from '../../components/icons'
 import { ScrollArea } from '../../components/ScrollArea'
+import { DialogSurface } from '../../components/DialogSurface'
 import { Button } from '../../components/Button'
 import { IconButton } from '../../components/IconButton'
 import { EXTENSION_TOOLTIP_CONTENT_CLASS } from '../../components/tooltipStyles'
@@ -13,13 +14,11 @@ export const extensionIconButton = 'inline-flex size-8 shrink-0 items-center jus
 
 export function ExtensionDialog({ title, open, onClose, children, footer, wide = false }: { title: string; open: boolean; onClose(): void; children: ReactNode; footer?: ReactNode; wide?: boolean }) {
   return <Dialog.Root open={open} onOpenChange={next => { if (!next) onClose() }}>
-    <Dialog.Portal><Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" />
-      <Dialog.Content aria-describedby={undefined} className={`fixed left-1/2 top-1/2 z-[61] flex max-h-[90dvh] ${wide ? 'w-[min(56rem,calc(100vw-2rem))]' : 'w-[min(38rem,calc(100vw-2rem))]'} -translate-x-1/2 -translate-y-1/2 flex-col panel-surface shadow-xl`}>
-        <div className="flex items-center justify-between gap-3 border-b border-line px-5 py-3"><Dialog.Title className="text-sm font-semibold">{title}</Dialog.Title><IconAction label={`关闭${title}`} onClick={onClose}><X aria-hidden size={16} /></IconAction></div>
-        <ScrollArea label={`${title}内容`}><div className="min-w-0 space-y-4 px-5 py-4">{children}</div></ScrollArea>
-        {footer && <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-line px-5 py-3">{footer}</div>}
-      </Dialog.Content>
-    </Dialog.Portal>
+    <DialogSurface aria-describedby={undefined} className={`flex max-h-[90dvh] ${wide ? 'w-[min(56rem,calc(100vw-2rem))]' : 'w-[min(38rem,calc(100vw-2rem))]'} flex-col shadow-xl`}>
+      <div className="flex items-center justify-between gap-3 border-b border-line px-5 py-3"><Dialog.Title className="text-sm font-semibold">{title}</Dialog.Title><IconAction label={`关闭${title}`} onClick={onClose}><X aria-hidden size={16} /></IconAction></div>
+      <ScrollArea label={`${title}内容`}><div className="min-w-0 space-y-4 px-5 py-4">{children}</div></ScrollArea>
+      {footer && <div className="flex shrink-0 flex-wrap items-center justify-end gap-2 border-t border-line px-5 py-3">{footer}</div>}
+    </DialogSurface>
   </Dialog.Root>
 }
 
