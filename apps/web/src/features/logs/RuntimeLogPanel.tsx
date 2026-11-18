@@ -33,18 +33,6 @@ export function levelTone(level: PlatformLogLevel): StatusTone {
   return 'neutral'
 }
 
-/**
- * 搜索口径：匹配 message 与 source，大小写不敏感（时间与等级在表里各有自己的列，
- * 塞进关键词匹配只会让「搜一个日期就出满屏」这种意外发生）；空关键词不过滤。
- */
-export function matchesRuntimeSearch(entry: RuntimeLogEntry, keyword: string): boolean {
-  if (!keyword) return true
-  const needle = keyword.toLowerCase()
-  return (
-    entry.message.toLowerCase().includes(needle) || entry.source.toLowerCase().includes(needle)
-  )
-}
-
 const RUNTIME_LOG_COLUMNS: readonly LogColumn<RuntimeLogEntry>[] = [
   { key: 'at', header: '日期时间', width: '176px', accessor: entry => new Date(entry.at), cell: entry => <span className="font-mono text-xs tabular-nums text-fg-muted">{formatLoginTime(entry.at)}</span> },
   { key: 'level', header: '等级', width: '96px', accessor: entry => entry.level, cell: entry => <StatusTag label={entry.level} tone={levelTone(entry.level)} /> },

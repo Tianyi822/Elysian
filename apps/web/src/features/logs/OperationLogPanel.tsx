@@ -51,20 +51,6 @@ export function operationLogContent(entry: OperationLogEntry): string {
 }
 
 /**
- * 搜索口径：匹配 action、summary 与 target，大小写不敏感；空关键词不过滤。
- * 时间与分类各自有列与筛选项，不参与关键词匹配。
- */
-export function matchesOperationSearch(entry: OperationLogEntry, keyword: string): boolean {
-  if (!keyword) return true
-  const needle = keyword.toLowerCase()
-  return (
-    entry.action.toLowerCase().includes(needle) ||
-    entry.summary.toLowerCase().includes(needle) ||
-    (entry.target?.toLowerCase().includes(needle) ?? false)
-  )
-}
-
-/**
  * 筛选后没有命中的表格内提示。数据库槽位有专门解释：契约里的分类固定渲染，
  * 没有记录时给出说明，空着是设计而非缺陷。
  */

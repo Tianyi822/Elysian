@@ -13,7 +13,7 @@ import { renderApp } from '../../test/renderApp'
 import { scrollTableBatch } from '../../test/tableRows'
 import { formatLoginTime } from '../../components/format'
 import { TIMESTAMP_CHARS } from './LogTable'
-import { levelTone, matchesRuntimeSearch } from './RuntimeLogPanel'
+import { levelTone } from './RuntimeLogPanel'
 
 /*
  * 运行日志面板：日期时间｜等级｜日志信息三列表格 + 搜索 + 日志大小 + 清空。
@@ -374,15 +374,7 @@ describe('工具栏分组', () => {
   })
 })
 
-describe('搜索口径与等级色调', () => {
-  it('匹配 message 与 source，大小写不敏感；空关键词不过滤', () => {
-    const info = SEED_RUNTIME_LOGS.find((entry) => entry.level === 'info')!
-    expect(matchesRuntimeSearch(info, '')).toBe(true)
-    expect(matchesRuntimeSearch(info, info.message.slice(0, 4))).toBe(true)
-    expect(matchesRuntimeSearch(info, info.source.toUpperCase())).toBe(true)
-    expect(matchesRuntimeSearch(info, '绝不存在的关键字')).toBe(false)
-  })
-
+describe('等级色调', () => {
   it('等级 → 语义色调：文字标签同时常驻，不只靠颜色', () => {
     expect(levelTone('error')).toBe('danger')
     expect(levelTone('warning')).toBe('warning')

@@ -1,4 +1,3 @@
-export type { ParsedImageReference, ParsedImageReferenceResult } from '@elysian/contracts'
 export { isOfficialImageRegistry, parseImageReference } from '@elysian/contracts'
 
 /*

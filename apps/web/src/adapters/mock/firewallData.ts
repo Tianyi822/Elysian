@@ -9,7 +9,7 @@ import type {
   FirewallScanProtection,
   FirewallToggles,
 } from '@elysian/contracts'
-import { DEFAULT_SCAN_CONFIG, FIREWALL_ADDRESS_FAMILIES, FIREWALL_SCAN_PORT_LIMIT, PANEL_PORT, firewallRuleScanProblem } from '@elysian/contracts'
+import { DEFAULT_SCAN_CONFIG, FIREWALL_SCAN_PORT_LIMIT, PANEL_PORT, firewallRuleScanProblem } from '@elysian/contracts'
 
 /*
  * 防火墙演示数据集。种子行手工固定（时间取自真实样例），确定性可复现；
@@ -289,6 +289,3 @@ export function unblockScanIp(ip: string): FirewallScanProtection {
   }
   return getScanProtection()
 }
-
-/** 全量地址族，供表单选择。 */
-export const FIREWALL_FAMILY_OPTIONS = FIREWALL_ADDRESS_FAMILIES
