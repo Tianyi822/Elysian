@@ -1,4 +1,5 @@
 import type { Container, ContainerAction } from '@elysian/contracts'
+import { demoNoticeSuffix, MOCK_ACTION_NOTE } from './demoNotice'
 
 /** 容器页 SSE 断线重连时的固定提示（与 brief 逐字一致）。 */
 export const CONTAINER_LIVE_RECONNECT_MESSAGE = '实时数据连接中断，正在重连…'
@@ -21,7 +22,7 @@ export function containerActionSuccessMessage(
   dockerRuntime: boolean,
 ): string {
   if (action === 'restart') {
-    return dockerRuntime ? `已请求重启 ${name}` : `已请求重启 ${name}（mock，待接入真实执行）`
+    return `已请求重启 ${name}${demoNoticeSuffix(dockerRuntime, MOCK_ACTION_NOTE)}`
   }
   if (action === 'stop') {
     return `容器 ${name} 已停止`

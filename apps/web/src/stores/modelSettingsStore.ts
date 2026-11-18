@@ -4,6 +4,7 @@ import type { AgentModelProfile, AgentModelProfileInput, AgentModelService, Agen
 import { create } from 'zustand'
 import { messageOf as errorMessageOf } from '../utils/errorMessage'
 import { isDockerRuntime } from '../utils/isDockerRuntime'
+import { demoNoticeSuffix } from '../utils/demoNotice'
 import type { ElysianGateway } from '../contracts/adapters'
 import { useMessageStore } from './messageStore'
 import { tableBatchFailure as batchFailure, type TableBatchOutcome as BatchMutationResult } from '../utils/tableBatch'
@@ -135,7 +136,7 @@ export const useModelSettingsStore = create<ModelSettingsState>((set, get) => {
           ? await gateway.modelSettings.updateModelService(editing.id, { ...input, expectedRevision: editing.revision })
           : await gateway.modelSettings.createModelService(input)
         set(state => { const services = [...state.services.filter(item => item.id !== service.id), service]; return { services, models: services.flatMap(item => item.models) } })
-        notify(`模型服务「${service.name}」已${editing ? '更新' : '创建'}${isDockerRuntime() ? '' : '（演示数据）'}`)
+        notify(`模型服务「${service.name}」已${editing ? '更新' : '创建'}${demoNoticeSuffix(isDockerRuntime())}`)
         await read(gateway, false)
         return true
       } catch (error) {
@@ -158,7 +159,7 @@ export const useModelSettingsStore = create<ModelSettingsState>((set, get) => {
           ? await gateway.modelSettings.updateModelProfile(editing.id, { ...input, expectedRevision: editing.revision })
           : await gateway.modelSettings.createModelProfile(input)
         set((state) => ({ models: [...state.models.filter((item) => item.id !== profile.id), profile] }))
-        notify(`模型配置「${profile.model}」已${editing ? '更新' : '创建'}（修订 ${profile.revision}）${isDockerRuntime() ? '' : '（演示数据）'}`)
+        notify(`模型配置「${profile.model}」已${editing ? '更新' : '创建'}（修订 ${profile.revision}）${demoNoticeSuffix(isDockerRuntime())}`)
         await read(gateway, false)
         return true
       } catch (error) {

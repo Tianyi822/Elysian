@@ -13,6 +13,7 @@ import type { ElysianGateway } from '../contracts/adapters'
 import { AgentHttpError } from '../contracts/agentHttpError'
 import { messageOf as errorMessageOf } from '../utils/errorMessage'
 import { isDockerRuntime } from '../utils/isDockerRuntime'
+import { demoNoticeSuffix } from '../utils/demoNotice'
 import { useMessageStore } from './messageStore'
 import { createRequestGuard } from './requestGuard'
 import { tableBatchFailure as batchFailure, type TableBatchOutcome as BatchMutationResult } from '../utils/tableBatch'
@@ -26,7 +27,7 @@ import { tableBatchFailure as batchFailure, type TableBatchOutcome as BatchMutat
  * 端中文提示，不自动重试或跳转治理页面。
  */
 
-const MOCK_SUFFIX = isDockerRuntime() ? '' : '（演示数据）'
+const MOCK_SUFFIX = demoNoticeSuffix(isDockerRuntime())
 
 const TERMINAL_IMPORT_STATES = new Set(['succeeded', 'failed', 'cancelled', 'interrupted'])
 const ACTIVE_IMPORT_STATES = new Set(['queued', 'running'])

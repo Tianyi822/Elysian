@@ -6,6 +6,7 @@ import { HOST_USER_LOGIN_METHOD_LABELS, HOST_USER_STATUS_LABELS } from '@elysian
 import { create } from 'zustand'
 import type { ElysianGateway } from '../contracts/adapters'
 import { isDockerRuntime } from '../utils/isDockerRuntime'
+import { demoNoticeSuffix, MOCK_ACTION_NOTE } from '../utils/demoNotice'
 import { useMessageStore } from './messageStore'
 import { messageOf } from '../utils/errorMessage'
 
@@ -46,8 +47,7 @@ function notify(message: string, tone: 'success' | 'danger' = 'success'): void {
  * 动作完成提示的演示标注：Docker 运行时动作已真实执行 useradd/usermod/userdel/gpasswd/chpasswd，
  * 不再带标注；宿主机本地开发（内存演示）保留。括号形态追加在句子末尾，只用这一个来源。
  */
-const MOCK_NOTE = isDockerRuntime() ? '' : 'mock，待接入真实执行'
-const MOCK_SUFFIX = MOCK_NOTE ? `（${MOCK_NOTE}）` : ''
+const MOCK_SUFFIX = demoNoticeSuffix(isDockerRuntime(), MOCK_ACTION_NOTE)
 
 export const useUsersStore = create<UsersState>((set, get) => {
   let deletionAuth = captureAuthGeneration()

@@ -127,6 +127,7 @@ describe('运行日志 store', () => {
     expect(notice?.tone).toBe('success')
     expect(notice?.message).toContain('运行日志已清空')
     expect(notice?.message).toContain('条记录')
+    expect(notice?.message).toMatch(/（演示数据，只清空内存中的演示日志）$/)
   })
 
   it('清空失败：通知失败并保留弹窗供重试', async () => {

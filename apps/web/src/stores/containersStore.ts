@@ -10,6 +10,7 @@ import type {
 import { hostTerminalCloseMessage } from '../terminal/terminalCloseMessage'
 import { deactivateRawTerminal, disposeRawTerminal, rawTerminalRuntime } from '../terminal/rawTerminalRuntime'
 import { isDockerRuntime } from '../utils/isDockerRuntime'
+import { demoNoticeSuffix, MOCK_ACTION_NOTE } from '../utils/demoNotice'
 import {
   containerActionSuccessMessage,
   containerRemoveBlockedReason,
@@ -341,9 +342,7 @@ export const useContainersStore = create<{
         .getState()
         .notify({
           tone: 'success',
-          message: isDockerRuntime()
-            ? `容器 ${created.name} 已创建`
-            : `容器 ${created.name} 已创建（mock，待接入真实执行）`,
+          message: `容器 ${created.name} 已创建${demoNoticeSuffix(isDockerRuntime(), MOCK_ACTION_NOTE)}`,
         })
       set((state) => ({
         // 事件回灌通常已追加过；按 id 去重，返回值只做兜底。
@@ -386,9 +385,7 @@ export const useContainersStore = create<{
       const label = image ? `${image.name}:${image.tag}` : imageId
       useMessageStore.getState().notify({
         tone: 'success',
-        message: isDockerRuntime()
-          ? `镜像 ${label} 已删除`
-          : `镜像 ${label} 已删除（mock，待接入真实执行）`,
+        message: `镜像 ${label} 已删除${demoNoticeSuffix(isDockerRuntime(), MOCK_ACTION_NOTE)}`,
       })
       return { status: 'succeeded' }
     } catch (error) {
@@ -430,9 +427,7 @@ export const useContainersStore = create<{
       imageRevision += 1
       useMessageStore.getState().notify({
         tone: 'success',
-        message: isDockerRuntime()
-          ? `镜像 ${image.name}:${image.tag} 已拉取`
-          : `镜像 ${image.name}:${image.tag} 已拉取（mock，待接入真实执行）`,
+        message: `镜像 ${image.name}:${image.tag} 已拉取${demoNoticeSuffix(isDockerRuntime(), MOCK_ACTION_NOTE)}`,
       })
       // 追加与清拉取中状态一次完成，避免界面闪现「新行 + 拉取中行并存」的中间帧。
       set((state) => ({

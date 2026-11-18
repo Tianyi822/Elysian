@@ -1,9 +1,11 @@
 import { beforeEach, describe, expect, it } from 'vitest'
 import { createMockGateway } from '../adapters/mock/gateway'
 import { resetWebsitesData } from '../adapters/mock/websitesData'
-import { useWebsitesStore, websiteNoticeSuffix } from './websitesStore'
+import { useMessageStore } from './messageStore'
+import { useWebsitesStore } from './websitesStore'
 
-beforeEach(() => {
+beforeEach(async () => {
+  await useMessageStore.getState().clear()
   resetWebsitesData()
   useWebsitesStore.setState({ status: 'idle', projects: [], createDialogOpen: false, saving: false,
     busyProjectIds: [], proxyStatus: { state: 'active', detail: null } })
@@ -17,6 +19,7 @@ describe('网站状态', () => {
     const ok = await useWebsitesStore.getState().createProject(gateway, 'html', { name: 'docs', port: 8088, access: { mode: 'direct' } })
     expect(ok).toBe(true)
     expect(useWebsitesStore.getState().projects[0]?.accessMode).toBe('direct')
+    expect(useMessageStore.getState().messages[0]?.message).toBe('项目 docs 已添加（演示数据，刷新后还原）')
   })
 
   it('保存访问配置后刷新出路由和证书事实', async () => {
@@ -27,10 +30,5 @@ describe('网站状态', () => {
     expect(saved.routeApplied).toBe(true)
     expect(saved.certificate?.applied).toBe(true)
     expect(useWebsitesStore.getState().projects[0]?.domain).toBe('example.com')
-  })
-
-  it('演示提示后缀仅在非 Docker 运行时出现', () => {
-    expect(websiteNoticeSuffix(false)).toContain('演示数据')
-    expect(websiteNoticeSuffix(true)).toBe('')
   })
 })

@@ -77,6 +77,7 @@ describe('操作日志 store', () => {
     expect(notice?.tone).toBe('success')
     expect(notice?.message).toContain('操作日志已清空')
     expect(notice?.message).toContain('条记录')
+    expect(notice?.message).toMatch(/（演示数据，只清空内存中的演示日志）$/)
   })
 
   it('load 按当前筛选传查询参数并写入 total', async () => {

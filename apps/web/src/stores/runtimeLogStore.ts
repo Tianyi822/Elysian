@@ -2,6 +2,7 @@ import type { LogListQuery, LogStorageStats, PlatformLogCategory, RuntimeLogEntr
 import { PLATFORM_LOG_CATEGORY_LABELS, formatLogBytes } from '@elysian/contracts'
 import { create } from 'zustand'
 import { isDockerRuntime } from '../utils/isDockerRuntime'
+import { demoNoticeSuffix, DEMO_LOG_CLEAR_NOTE } from '../utils/demoNotice'
 import type { ElysianGateway } from '../contracts/adapters'
 import { createLogReader } from './logReader'
 import { useMessageStore } from './messageStore'
@@ -10,7 +11,7 @@ import { messageOf } from '../utils/errorMessage'
 type RuntimeLogStatus = 'idle' | 'loading' | 'ready' | 'error'
 
 /** 清空完成提示的演示标注：容器内清的是服务器上的真实文件，不再带标注。 */
-const MOCK_SUFFIX = isDockerRuntime() ? '' : '（演示数据，只清空内存中的演示日志）'
+const MOCK_SUFFIX = demoNoticeSuffix(isDockerRuntime(), DEMO_LOG_CLEAR_NOTE)
 
 function currentQuery(search: string): LogListQuery {
   const query: LogListQuery = {}

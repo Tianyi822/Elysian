@@ -3,6 +3,7 @@ import { create } from 'zustand'
 import type { FileEntry, FileSearchResult } from '@elysian/contracts'
 import type { ElysianGateway, FilePermissionInput } from '../contracts/adapters'
 import { isDockerRuntime } from '../utils/isDockerRuntime'
+import { demoNoticeSuffix, MOCK_ACTION_NOTE } from '../utils/demoNotice'
 import { useMessageStore, type MessageTone } from './messageStore'
 import { FileTransferError, isFileUploadConflict } from '../adapters/filesTransferError'
 import { messageOf } from '../utils/errorMessage'
@@ -12,8 +13,7 @@ import { messageOf } from '../utils/errorMessage'
  * 文件系统），不再带标注；宿主机本地开发（内存演示）保留。括号形态追加在句子末尾，
  * 只用这一个来源。
  */
-const MOCK_NOTE = isDockerRuntime() ? '' : 'mock，待接入真实执行'
-const MOCK_SUFFIX = MOCK_NOTE ? `（${MOCK_NOTE}）` : ''
+const MOCK_SUFFIX = demoNoticeSuffix(isDockerRuntime(), MOCK_ACTION_NOTE)
 const SIZE_REQUEST_CONCURRENCY = 4
 
 /** 剪贴板里暂存的条目与意图：copy 粘贴出副本，move 粘贴后源条目移除。 */

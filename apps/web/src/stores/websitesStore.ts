@@ -10,20 +10,12 @@ import type {
 import { create } from 'zustand'
 import type { ElysianGateway } from '../contracts/adapters'
 import { isDockerRuntime } from '../utils/isDockerRuntime'
+import { demoNoticeSuffix } from '../utils/demoNotice'
 import { useMessageStore } from './messageStore'
 import { notifyFirewallPortSync } from './firewallPortNotice'
 import { messageOf } from '../utils/errorMessage'
 
-/**
- * 动作完成提示的运行模式标注：Docker 运行时动作已真实执行（容器、站点目录与
- * 反向代理配置），直接呈现结果；宿主机本地开发（内存演示数据集）标注演示语义，
- * 括号形态追加在句子末尾，只用这一个来源。
- */
-export function websiteNoticeSuffix(dockerRuntime: boolean): string {
-  return dockerRuntime ? '' : '（演示数据，刷新后还原）'
-}
-
-const NOTICE_SUFFIX = websiteNoticeSuffix(isDockerRuntime())
+const NOTICE_SUFFIX = demoNoticeSuffix(isDockerRuntime(), '演示数据，刷新后还原')
 
 type WebsitesStatus = 'idle' | 'loading' | 'ready' | 'error'
 

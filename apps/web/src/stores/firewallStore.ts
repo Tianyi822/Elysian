@@ -15,6 +15,7 @@ import { create } from 'zustand'
 import { hasUncertainOutcome } from '../adapters/http/requestDeadline'
 import type { ElysianGateway } from '../contracts/adapters'
 import { isDockerRuntime } from '../utils/isDockerRuntime'
+import { demoNoticeSuffix, MOCK_ACTION_NOTE } from '../utils/demoNotice'
 import { useMessageStore } from './messageStore'
 import { messageOf } from '../utils/errorMessage'
 
@@ -22,7 +23,7 @@ import { messageOf } from '../utils/errorMessage'
 export const FIREWALL_PAGE_SIZE = 20
 
 /** Docker 真实模式下动作已真实执行 ufw，完成提示不再带演示标注；宿主机本地开发（内存演示）保留标注。 */
-const REAL_ACTION_LABEL = isDockerRuntime() ? '' : '（mock，待接入真实执行）'
+const REAL_ACTION_LABEL = demoNoticeSuffix(isDockerRuntime(), MOCK_ACTION_NOTE)
 
 /** 防火墙面板的三类规则视图。 */
 export type FirewallView = 'port' | 'ip' | 'forward'

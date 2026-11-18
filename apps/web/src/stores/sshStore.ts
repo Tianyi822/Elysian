@@ -15,6 +15,7 @@ import { isValidSshPort } from '@elysian/contracts'
 import { create } from 'zustand'
 import type { ElysianGateway, SshKeyAccount } from '../contracts/adapters'
 import { isDockerRuntime } from '../utils/isDockerRuntime'
+import { demoNoticeSuffix, MOCK_ACTION_NOTE } from '../utils/demoNotice'
 import { useMessageStore } from './messageStore'
 import { messageOf } from '../utils/errorMessage'
 
@@ -28,8 +29,7 @@ export const SSH_PAGE_SIZE = 20
  * 动作完成提示的演示标注：Docker 运行时动作已真实执行 sshd/chpasswd/ssh-keygen，
  * 不再带标注；宿主机本地开发（内存演示）保留。括号形态追加在句子末尾，只用这一个来源。
  */
-const MOCK_NOTE = isDockerRuntime() ? '' : 'mock，待接入真实执行'
-const MOCK_SUFFIX = MOCK_NOTE ? `（${MOCK_NOTE}）` : ''
+const MOCK_SUFFIX = demoNoticeSuffix(isDockerRuntime(), MOCK_ACTION_NOTE)
 
 export type SshRefreshSection = 'service' | 'root' | 'keys' | 'records'
 const SSH_SECTIONS: readonly SshRefreshSection[] = ['service', 'root', 'keys', 'records']
