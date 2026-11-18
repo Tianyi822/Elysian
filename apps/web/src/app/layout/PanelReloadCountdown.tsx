@@ -5,7 +5,7 @@ import { captureAuthGeneration } from '../../utils/authGeneration'
 import { usePanelStore } from '../../stores/panelStore'
 import { useSessionStore } from '../../stores/sessionStore'
 import { PANEL_RELOAD_DELAY_MS } from '../../stores/panelReload'
-import { reloadPanelPage } from './panelNavigation'
+import { reloadPanelPage } from '../../utils/panelNavigation'
 import './panelReloadCountdown.css'
 import { Button } from '../../components/Button'
 

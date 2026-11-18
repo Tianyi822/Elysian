@@ -6,7 +6,7 @@ import {
   logRetentionText,
 } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
-import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
+import { isDockerRuntime } from '../../utils/isDockerRuntime'
 import { formatLoginTime } from '../../components/format'
 import { useRuntimeLogStore } from '../../stores/runtimeLogStore'
 import { Button } from '../../components/Button'

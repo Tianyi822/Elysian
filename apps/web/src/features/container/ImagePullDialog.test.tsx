@@ -11,11 +11,11 @@ import { ImagePullDialog } from './ImagePullDialog'
 import { readStoredImageRegistry, writeStoredImageRegistry } from '../../utils/imagePullPreferences'
 import type { ElysianGateway } from '../../contracts/adapters'
 
-vi.mock('../../app/runtime/isDockerRuntime', () => ({
+vi.mock('../../utils/isDockerRuntime', () => ({
   isDockerRuntime: vi.fn(() => false),
 }))
 
-import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
+import { isDockerRuntime } from '../../utils/isDockerRuntime'
 
 const OFFICIAL_URL = 'https://registry-1.docker.io'
 

@@ -1,7 +1,7 @@
 import { useEffect, useRef } from 'react'
 import { LOG_ENTRY_FETCH_LIMIT, LOGIN_LOG_STATUS_LABELS } from '@elysian/contracts'
 import type { LoginLogEntry } from '@elysian/contracts'
-import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
+import { isDockerRuntime } from '../../utils/isDockerRuntime'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { formatLoginTime } from '../../components/format'
 import { DataTable } from '../../components/DataTable'

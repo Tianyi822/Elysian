@@ -5,11 +5,11 @@ import { createMockGateway } from '../../adapters/mock/gateway'
 import { useContainersStore } from '../../stores/containersStore'
 import { ContainerCreateDialog } from './ContainerCreateDialog'
 
-vi.mock('../../app/runtime/isDockerRuntime', () => ({
+vi.mock('../../utils/isDockerRuntime', () => ({
   isDockerRuntime: vi.fn(() => false),
 }))
 
-import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
+import { isDockerRuntime } from '../../utils/isDockerRuntime'
 
 function renderDialog() {
   useContainersStore.setState({ createOpen: true, containers: [], images: [] })

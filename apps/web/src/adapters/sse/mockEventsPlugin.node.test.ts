@@ -2,11 +2,11 @@ import { describe, expect, it, vi } from 'vitest'
 
 /*
  * Docker 采样链路的 /proc 与 df 对接测试。vitest 不加载 bun:sqlite（见 vitest.config.ts 注释），
- * 这里 mock 掉 metricsStore；df 与 /proc 全部用注入的固定文本还原 Linux 真实格式，
+ * 这里 mock 掉 metricsRepository；df 与 /proc 全部用注入的固定文本还原 Linux 真实格式，
  * 不执行任何真实命令、不读任何真实文件。
  */
 
-vi.mock('../hostMetrics/metricsStore.ts', () => ({
+vi.mock('../hostMetrics/metricsRepository.ts', () => ({
   METRICS_SQLITE_PATH: '/tmp/elysian-test-metrics.sqlite',
   openMetricsStore: () => {
     throw new Error('测试不应打开指标库')

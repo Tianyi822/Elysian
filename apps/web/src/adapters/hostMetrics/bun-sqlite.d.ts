@@ -1,4 +1,4 @@
-/** 供 tsc 解析 metricsStore 中的 bun:sqlite；运行时由 Bun 提供。 */
+/** 供 tsc 解析 metricsRepository 中的 bun:sqlite；运行时由 Bun 提供。 */
 declare module 'bun:sqlite' {
   export class Database {
     constructor(path: string, options?: { readonly?: boolean })

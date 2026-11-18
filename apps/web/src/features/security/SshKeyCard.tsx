@@ -1,7 +1,7 @@
 import { useMemo, useState } from 'react'
 import type { SshLoginKey } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
-import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
+import { isDockerRuntime } from '../../utils/isDockerRuntime'
 import { DataTable } from '../../components/DataTable'
 import { TableBatchActions } from '../../components/TableBatchActions'
 import { TableCreateButton } from '../../components/TableCreateButton'

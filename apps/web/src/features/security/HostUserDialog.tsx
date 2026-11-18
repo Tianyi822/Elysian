@@ -12,7 +12,7 @@ import {
 } from '@elysian/contracts'
 import type { HostUserLoginMethod, HostUserStatus } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
-import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
+import { isDockerRuntime } from '../../utils/isDockerRuntime'
 import { X } from '../../components/icons'
 import { useUsersStore } from '../../stores/usersStore'
 import { PasswordVisibilityButton } from '../../components/PasswordVisibilityButton'

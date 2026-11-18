@@ -9,7 +9,7 @@ import {
 } from '@elysian/contracts'
 import type { SshLoginStats, SshRootLoginPolicy, SshOverview } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
-import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
+import { isDockerRuntime } from '../../utils/isDockerRuntime'
 import { SshRefreshButton, SshRefreshError } from './SshRefresh'
 import { IconButton } from '../../components/IconButton'
 import { DataTable } from '../../components/DataTable'

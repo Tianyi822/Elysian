@@ -10,7 +10,7 @@ import (
 	_ "modernc.org/sqlite" // 驱动注册：metrics.sqlite 两张采样表（纯 Go，无 CGO）
 )
 
-// 保留策略与时间窗常量（metricsStore.ts 等价物）：raw 存 5 秒原始点保 1 小时，
+// 保留策略与时间窗常量（metricsRepository.ts 等价物）：raw 存 5 秒原始点保 1 小时，
 // 1m 存分钟均值保 7 天；窗长 ≤1 小时的查询走 raw，其余走 1m。
 const (
 	msPerMinute         = int64(60_000)

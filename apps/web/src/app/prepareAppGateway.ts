@@ -1,7 +1,7 @@
 import { createDefaultGateway } from '../adapters/GatewayProvider'
 import { useAgentRuntimeStore } from '../stores/agentRuntimeStore'
 import { useSessionStore } from '../stores/sessionStore'
-import { isDockerRuntime } from './runtime/isDockerRuntime'
+import { isDockerRuntime } from '../utils/isDockerRuntime'
 
 export async function prepareAppGateway(docker = isDockerRuntime()) {
   const gateway = createDefaultGateway(docker, reason => useAgentRuntimeStore.getState().reportUnavailable(reason))

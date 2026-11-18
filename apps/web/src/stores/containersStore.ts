@@ -9,7 +9,7 @@ import type {
 } from '../contracts/adapters'
 import { hostTerminalCloseMessage } from '../terminal/terminalCloseMessage'
 import { deactivateRawTerminal, disposeRawTerminal, rawTerminalRuntime } from '../terminal/rawTerminalRuntime'
-import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
+import { isDockerRuntime } from '../utils/isDockerRuntime'
 import {
   containerActionSuccessMessage,
   containerRemoveBlockedReason,

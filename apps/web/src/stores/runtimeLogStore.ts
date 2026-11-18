@@ -1,7 +1,7 @@
 import type { LogListQuery, LogStorageStats, PlatformLogCategory, RuntimeLogEntry } from '@elysian/contracts'
 import { PLATFORM_LOG_CATEGORY_LABELS, formatLogBytes } from '@elysian/contracts'
 import { create } from 'zustand'
-import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
+import { isDockerRuntime } from '../utils/isDockerRuntime'
 import type { ElysianGateway } from '../contracts/adapters'
 import { createLogReader } from './logReader'
 import { useMessageStore } from './messageStore'

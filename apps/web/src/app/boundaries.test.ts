@@ -18,7 +18,7 @@ const NODE_SIDE_ALLOWLIST = [
   'adapters/sse/mockEventsPlugin.ts',
   'adapters/sse/mockEventsPlugin.node.ts',
   'adapters/sse/mockEventsPlugin.vite.ts',
-  'adapters/hostMetrics/metricsStore.ts',
+  'adapters/hostMetrics/metricsRepository.ts',
   'adapters/hostMetrics/readHostSample.ts',
   'adapters/hostMetrics/isDockerEnv.ts',
 ]

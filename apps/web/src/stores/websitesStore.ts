@@ -9,7 +9,7 @@ import type {
 } from '@elysian/contracts'
 import { create } from 'zustand'
 import type { ElysianGateway } from '../contracts/adapters'
-import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
+import { isDockerRuntime } from '../utils/isDockerRuntime'
 import { useMessageStore } from './messageStore'
 import { notifyFirewallPortSync } from './firewallPortNotice'
 

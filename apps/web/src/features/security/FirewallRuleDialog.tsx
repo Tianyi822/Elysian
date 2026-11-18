@@ -19,7 +19,7 @@ import type {
   FirewallScanConfig,
 } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
-import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
+import { isDockerRuntime } from '../../utils/isDockerRuntime'
 import { X } from '../../components/icons'
 import { useFirewallStore } from '../../stores/firewallStore'
 import { FIREWALL_INPUT_CLASS, SegmentedControl, parsePortInput, firewallRuleNoteProblem } from './firewallFormParts'

@@ -31,7 +31,7 @@ import { FirewallForwardDialog } from './FirewallForwardDialog'
 import { FirewallIpRuleDialog } from './FirewallIpRuleDialog'
 import { FirewallRuleDialog } from './FirewallRuleDialog'
 import { FirewallRuleRemoveDialog } from './FirewallRuleRemoveDialog'
-import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
+import { isDockerRuntime } from '../../utils/isDockerRuntime'
 import { Button } from '../../components/Button'
 
 /**

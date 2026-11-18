@@ -12,7 +12,7 @@ import type {
 } from '@elysian/contracts'
 import type { ElysianGateway } from '../contracts/adapters'
 import { AgentHttpError } from '../contracts/agentHttpError'
-import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
+import { isDockerRuntime } from '../utils/isDockerRuntime'
 import { useMessageStore } from './messageStore'
 import { tableBatchFailure as batchFailure, type TableBatchOutcome as BatchMutationResult } from '../utils/tableBatch'
 

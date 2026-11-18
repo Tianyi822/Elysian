@@ -1,6 +1,6 @@
 import * as Dialog from '@radix-ui/react-dialog'
 import type { SshKeyMaterial } from '@elysian/contracts'
-import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
+import { isDockerRuntime } from '../../utils/isDockerRuntime'
 import { CopyButton } from '../../components/CopyButton'
 import { X } from '../../components/icons'
 import { formatDateTime } from '../../components/format'

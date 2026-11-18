@@ -6,10 +6,10 @@ import { advanceAuthGeneration } from '../../utils/authGeneration'
 import { usePanelStore } from '../../stores/panelStore'
 import { useSessionStore } from '../../stores/sessionStore'
 import { PanelReloadCountdown } from './PanelReloadCountdown'
-import { reloadPanelPage } from './panelNavigation'
+import { reloadPanelPage } from '../../utils/panelNavigation'
 import { PANEL_RELOAD_KEY, readPanelReload, savePanelReload } from '../../stores/panelReload'
 
-vi.mock('./panelNavigation', () => ({ reloadPanelPage: vi.fn() }))
+vi.mock('../../utils/panelNavigation', () => ({ reloadPanelPage: vi.fn() }))
 const ports = { frontendPort: 48100, backendPort: 48101 }
 const task: PanelTask = { id: 'update-one', kind: 'update', state: 'succeeded', phase: 'finished', oldPorts: ports, newPorts: ports, targetCommit: 'c'.repeat(40), createdAt: '', updatedAt: '', error: '' }
 beforeEach(() => {

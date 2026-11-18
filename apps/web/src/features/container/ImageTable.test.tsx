@@ -7,11 +7,11 @@ import { createMockGateway } from '../../adapters/mock/gateway'
 import { ImageTable } from './ImageTable'
 import { useContainersStore } from '../../stores/containersStore'
 
-vi.mock('../../app/runtime/isDockerRuntime', () => ({
+vi.mock('../../utils/isDockerRuntime', () => ({
   isDockerRuntime: vi.fn(() => false),
 }))
 
-import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
+import { isDockerRuntime } from '../../utils/isDockerRuntime'
 
 const SAMPLE_IMAGE: ContainerImage = {
   id: 'img-sample',

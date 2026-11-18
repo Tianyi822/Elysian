@@ -9,7 +9,7 @@ import {
   logRetentionText,
 } from '@elysian/contracts'
 import type { OperationLogEntry, OperationLogOutcome } from '@elysian/contracts'
-import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
+import { isDockerRuntime } from '../../utils/isDockerRuntime'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { formatLoginTime } from '../../components/format'
 import { GooeySelect } from '../../components/GooeySelect'

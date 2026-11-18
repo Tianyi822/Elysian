@@ -5,7 +5,7 @@ import type { HostUser, HostUserInput } from '@elysian/contracts'
 import { HOST_USER_LOGIN_METHOD_LABELS, HOST_USER_STATUS_LABELS } from '@elysian/contracts'
 import { create } from 'zustand'
 import type { ElysianGateway } from '../contracts/adapters'
-import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
+import { isDockerRuntime } from '../utils/isDockerRuntime'
 import { useMessageStore } from './messageStore'
 
 /** 用户管理页签的状态：主机账号列表与两个弹窗。 */

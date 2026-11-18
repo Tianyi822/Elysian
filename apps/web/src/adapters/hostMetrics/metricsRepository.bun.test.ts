@@ -4,7 +4,7 @@ import {
   type ResourceSamplePoint,
 } from '../../contracts/resourceMetrics.ts'
 import { isDockerEnv } from './isDockerEnv.ts'
-import { METRICS_SQLITE_PATH, openMemoryMetricsStore, type MetricsStore } from './metricsStore.ts'
+import { METRICS_SQLITE_PATH, openMemoryMetricsStore, type MetricsStore } from './metricsRepository.ts'
 
 const MS_PER_MINUTE = 60_000
 const MS_PER_HOUR = 3_600_000

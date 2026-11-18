@@ -4,7 +4,7 @@ import { CTL_PRIMARY } from '../../components/formControl'
 import { formatEntrySize } from './filesListing'
 import { useFilesStore } from '../../stores/filesStore'
 import type { FileUploadItem } from '../../stores/filesStore'
-import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
+import { isDockerRuntime } from '../../utils/isDockerRuntime'
 import { Button } from '../../components/Button'
 
 const DIALOG_CLASS = 'fixed left-1/2 top-1/2 z-[61] w-[min(34rem,calc(100vw-2rem))] max-h-[calc(100dvh-2rem)] -translate-x-1/2 -translate-y-1/2 overflow-y-auto panel-surface p-5 shadow-xl'

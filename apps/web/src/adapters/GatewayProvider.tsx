@@ -2,7 +2,7 @@ import { createContext, useContext, useMemo } from 'react'
 import type { ReactNode } from 'react'
 import type { ElysianGateway } from '../contracts/adapters'
 import { createMockGateway } from './mock/gateway'
-import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
+import { isDockerRuntime } from '../utils/isDockerRuntime'
 
 const GatewayContext = createContext<ElysianGateway | null>(null)
 

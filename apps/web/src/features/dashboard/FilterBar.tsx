@@ -3,7 +3,7 @@ import {
   TIME_RANGES,
   type TimeRange,
 } from '../../contracts/resourceMetrics'
-import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
+import { isDockerRuntime } from '../../utils/isDockerRuntime'
 import { useNarrowViewport } from '../../app/layout/narrowViewport'
 import { PillNavigation } from '../../components/easyui/PillNavigation'
 import { RefreshButton } from '../../components/RefreshState'

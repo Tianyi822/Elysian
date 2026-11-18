@@ -6,7 +6,7 @@ import { SelectDropdown } from '../../components/SelectDropdown'
 import { ChevronDown, Plus, Trash2, X } from '../../components/icons'
 import { Button } from '../../components/Button'
 import { useGateway } from '../../adapters/GatewayProvider'
-import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
+import { isDockerRuntime } from '../../utils/isDockerRuntime'
 import { useContainersStore } from '../../stores/containersStore'
 import {
   emptyDraft,

@@ -14,7 +14,7 @@ import type {
 import { create } from 'zustand'
 import { hasUncertainOutcome } from '../adapters/http/requestDeadline'
 import type { ElysianGateway } from '../contracts/adapters'
-import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
+import { isDockerRuntime } from '../utils/isDockerRuntime'
 import { useMessageStore } from './messageStore'
 
 /** 每页行数与参照产品的默认值一致；演示数据约 27 条，正好跨两页。 */

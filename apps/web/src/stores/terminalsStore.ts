@@ -1,6 +1,6 @@
 import { create } from 'zustand'
 import { useMessageStore } from './messageStore'
-import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
+import { isDockerRuntime } from '../utils/isDockerRuntime'
 import { hostTerminalCloseMessage } from '../terminal/terminalCloseMessage'
 import { deactivateRawTerminal, disposeRawTerminal, rawTerminalRuntime } from '../terminal/rawTerminalRuntime'
 import { captureAuthGeneration } from '../utils/authGeneration'

@@ -7,7 +7,7 @@ import {
   METRICS_SQLITE_PATH,
   openMetricsStore,
   type MetricsStore,
-} from '../hostMetrics/metricsStore.ts'
+} from '../hostMetrics/metricsRepository.ts'
 import { readHostSample, type HostSamplePrev } from '../hostMetrics/readHostSample.ts'
 import { createEventsHandler, createResourceHistoryHandler } from './mockEventsPlugin.ts'
 

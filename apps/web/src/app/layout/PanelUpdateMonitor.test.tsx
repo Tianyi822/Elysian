@@ -10,9 +10,9 @@ import { renderApp } from '../../test/renderApp'
 import { PanelUpdateMonitor } from './PanelUpdateMonitor'
 import { PANEL_PENDING_KEY, savePanelPending } from '../../stores/panelPending'
 import { readPanelReload, savePanelReload } from '../../stores/panelReload'
-import { reloadPanelPage } from './panelNavigation'
+import { reloadPanelPage } from '../../utils/panelNavigation'
 
-vi.mock('./panelNavigation', () => ({ openPanelAddress: vi.fn(), reloadPanelPage: vi.fn() }))
+vi.mock('../../utils/panelNavigation', () => ({ openPanelAddress: vi.fn(), reloadPanelPage: vi.fn() }))
 const ports = { frontendPort: 48100, backendPort: 48101 }
 const info: PanelInfo = { ports, commit: 'a'.repeat(40), buildTime: '', repository: '', available: true, reason: '', activeTask: null, lastTask: null }
 const task: PanelTask = { id: 'update-global', kind: 'update', state: 'running', phase: 'checking', oldPorts: ports, newPorts: ports, targetCommit: 'b'.repeat(40), createdAt: '', updatedAt: '', error: '' }

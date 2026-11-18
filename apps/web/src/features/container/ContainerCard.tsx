@@ -8,7 +8,7 @@ import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
 import { formatUptime } from '../../components/format'
 import { CTL_CARD_ACTION, CTL_STAT, CTL_TILE } from '../../components/formControl'
-import { isDockerRuntime } from '../../app/runtime/isDockerRuntime'
+import { isDockerRuntime } from '../../utils/isDockerRuntime'
 import {
   containerRestartConfirmDescription,
   containerRemoveBlockedReason,

@@ -7,10 +7,10 @@ import { usePanelStore } from '../../stores/panelStore'
 import { useMessageStore } from '../../stores/messageStore'
 import { renderApp } from '../../test/renderApp'
 import type { PanelInfo, PanelTask, PanelUpdate, PanelUpdatePreflight } from '@elysian/contracts'
-import { openPanelAddress, reloadPanelPage } from './panelNavigation'
+import { openPanelAddress, reloadPanelPage } from '../../utils/panelNavigation'
 import { PANEL_PENDING_KEY, savePanelPending } from '../../stores/panelPending'
 import { advanceAuthGeneration } from '../../utils/authGeneration'
-vi.mock('./panelNavigation', () => ({ openPanelAddress: vi.fn(), reloadPanelPage: vi.fn() }))
+vi.mock('../../utils/panelNavigation', () => ({ openPanelAddress: vi.fn(), reloadPanelPage: vi.fn() }))
 const ports = { frontendPort: 48100, backendPort: 48101 }
 const info: PanelInfo = { ports, commit: 'a'.repeat(40), buildTime: '', repository: 'Tianyi822/Elysian', available: true, reason: '', activeTask: null, lastTask: null }
 const task: PanelTask = { id: 'b'.repeat(32), kind: 'ports', state: 'queued', phase: 'checking', createdAt: '2026-10-03T00:00:00Z', updatedAt: '2026-10-03T00:00:00Z', oldPorts: ports, newPorts: { frontendPort: 49000, backendPort: 49001 }, targetCommit: '', error: '' }
