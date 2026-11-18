@@ -56,6 +56,7 @@ type hubHandlers struct {
 // eventsHubConfig hub 依赖注入（now/schedule 可注入供测试驱动假时钟）。
 type eventsHubConfig struct {
 	transport seam.DockerTransport
+	selfID    string
 	now       func() time.Time
 	schedule  func(fn func(), ms int) (cancel func())
 	bootID    string
@@ -362,7 +363,7 @@ func (h *eventsHub) inspectContainer(id string) (contract.Container, bool) {
 	if err != nil {
 		return contract.Container{}, false
 	}
-	container, err := mapContainer(value)
+	container, err := mapContainerForWeb(value, h.cfg.selfID)
 	if err != nil {
 		return contract.Container{}, false
 	}

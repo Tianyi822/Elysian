@@ -82,7 +82,7 @@ func Assemble(deps Deps) (Stack, error) {
 	}
 
 	selfID := resolveSelfContainerIDFromEngine(transport)
-	hub := newEventsHub(eventsHubConfig{transport: transport, now: now})
+	hub := newEventsHub(eventsHubConfig{transport: transport, selfID: selfID, now: now})
 	service := newDockerService(serviceDeps{
 		transport:       transport,
 		mountRoot:       mountRoot,
