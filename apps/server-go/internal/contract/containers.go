@@ -63,6 +63,8 @@ type Container struct {
 	Env           []EnvPair         `json:"env"`
 	Volumes       []VolumeMount     `json:"volumes"`
 	RestartPolicy string            `json:"restartPolicy"`
+
+	RemoveBlockedReason string `json:"removeBlockedReason,omitempty"`
 }
 
 // ContainerImage 镜像视图（TS ContainerImage 的 Go 版）。

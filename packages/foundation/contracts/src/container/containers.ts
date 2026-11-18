@@ -69,6 +69,8 @@ export type Container = {
   env: readonly EnvPair[]
   volumes: readonly VolumeMount[]
   restartPolicy: RestartPolicy
+  /** 归属保护提示；状态限制另外由 status 表达。 */
+  removeBlockedReason?: string
 }
 
 export type ContainerImage = {
