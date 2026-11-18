@@ -1,7 +1,7 @@
 import type { DependencyProbe, DependencyProbeReport, DependencyProbeState } from '@elysian/contracts'
 import { DEPENDENCY_PROBE_STATES } from '@elysian/contracts'
 import type { DependenciesAdapter } from '../../contracts/adapters'
-import { fetchWithSession, reportUnauthorized } from './unauthorized'
+import { createDomainJsonClient } from './domainJson'
 
 /*
  * 浏览器侧宿主依赖检测（Docker 运行时，/api/platform/dependencies）。服务端每次
@@ -67,34 +67,11 @@ export function parseDependencyProbeReport(body: unknown): DependencyProbeReport
   }
 }
 
-async function requestJson(url: string): Promise<unknown> {
-  let response: Response
-  try {
-    response = await fetchWithSession(url, { cache: 'no-store' })
-  } catch {
-    throw new Error('依赖检测请求网络失败')
-  }
-  if (!response.ok) {
-    if (reportUnauthorized(response)) throw new Error('登录状态已失效，请重新登录')
-    const detail = await response
-      .json()
-      .then((body) => {
-        if (body && typeof body === 'object' && 'error' in body) {
-          const error = (body as { error: unknown }).error
-          // 只透传非空字符串并经统一清洗；非字符串（对象、数组等）不再 String() 拼接。
-          if (typeof error === 'string' && error.length > 0) return sanitizeDependencyText(error)
-        }
-        return null
-      })
-      .catch(() => null)
-    throw new Error(detail ?? `依赖检测请求失败：HTTP ${response.status}`)
-  }
-  try {
-    return await response.json()
-  } catch {
-    throw new Error('依赖检测响应不是有效 JSON')
-  }
-}
+const { requestJson } = createDomainJsonClient('依赖检测', {
+  // 保留宿主探测的原有读取策略，不套用普通 JSON 的 15 秒时限。
+  deadline: false,
+  formatError: (error) => typeof error === 'string' && error.length > 0 ? sanitizeDependencyText(error) : null,
+})
 
 /**
  * Docker 运行时的依赖检测 adapter：GET 探测。探测失败时抛中文错误，
@@ -103,7 +80,7 @@ async function requestJson(url: string): Promise<unknown> {
 export function createHttpDependenciesAdapter(baseUrl = '/api/platform/dependencies'): DependenciesAdapter {
   return {
     async probe(): Promise<DependencyProbeReport> {
-      return parseDependencyProbeReport(await requestJson(baseUrl))
+      return parseDependencyProbeReport(await requestJson(baseUrl, { cache: 'no-store' }))
     },
   }
 }

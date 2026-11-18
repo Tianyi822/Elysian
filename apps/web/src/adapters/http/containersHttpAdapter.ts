@@ -1,4 +1,4 @@
-import { withRequestDeadline } from './requestDeadline'
+import { createDomainJsonClient, readDomainErrorDetail } from './domainJson'
 import type {
   Container,
   ContainerAction,
@@ -442,17 +442,6 @@ export function parseContainerPolicyResponse(body: unknown): ContainerHostPolicy
   return { mountRoot: row.mountRoot, reservedPorts }
 }
 
-async function readErrorDetail(response: Response): Promise<string | null> {
-  return response
-    .json()
-    .then((body) =>
-      body && typeof body === 'object' && 'error' in body
-        ? String((body as { error: unknown }).error)
-        : null,
-    )
-    .catch(() => null)
-}
-
 /** 工作区与 compose 自检的响应解析：字段缺失或类型不符一律中文报错，不猜默认值。 */
 function asRecord(value: unknown, message: string): Record<string, unknown> {
   if (typeof value !== 'object' || value === null || Array.isArray(value)) throw new Error(message)
@@ -651,46 +640,7 @@ function appSub(slug: string, sub: string): string {
   return `${CONTAINER_APPS_BASE_URL}/${encodeURIComponent(slug)}${sub}`
 }
 
-function requestJson(url: string, init?: RequestInit): Promise<unknown> {
-  return withRequestDeadline(init, (bounded) => readJson(url, bounded))
-}
-
-async function readJson(url: string, init?: RequestInit): Promise<unknown> {
-  let response: Response
-  try {
-    response = await fetchWithSession(url, init)
-  } catch {
-    throw new Error('容器管理请求网络失败')
-  }
-  if (!response.ok) {
-    if (reportUnauthorized(response)) throw new Error('登录状态已失效，请重新登录')
-    const detail = await readErrorDetail(response)
-    throw new Error(detail ?? `容器管理请求失败：HTTP ${response.status}`)
-  }
-  try {
-    return await response.json()
-  } catch {
-    throw new Error('容器管理响应不是有效 JSON')
-  }
-}
-
-function requestNoContent(url: string, init?: RequestInit): Promise<void> {
-  return withRequestDeadline(init, (bounded) => readNoContent(url, bounded))
-}
-
-async function readNoContent(url: string, init?: RequestInit): Promise<void> {
-  let response: Response
-  try {
-    response = await fetchWithSession(url, init)
-  } catch {
-    throw new Error('容器管理请求网络失败')
-  }
-  if (!response.ok) {
-    if (reportUnauthorized(response)) throw new Error('登录状态已失效，请重新登录')
-    const detail = await readErrorDetail(response)
-    throw new Error(detail ?? `容器管理请求失败：HTTP ${response.status}`)
-  }
-}
+const { requestJson, requestNoContent } = createDomainJsonClient('容器管理')
 
 async function readImagePullStream(response: Response, onProgress?: (progress: ImagePullProgress) => void, signal?: AbortSignal): Promise<ContainerImage> {
   if (!response.body) throw new Error('镜像拉取未返回进度流')
@@ -894,13 +844,13 @@ export function createHttpContainersAdapter(
 
     async uploadAppFile(slug, path, file) {
       return parseContainerAppFile(
-        await withRequestDeadline(
+        await requestJson(
+          appPath(slug, '/files', path),
           {
             method: 'PUT',
             headers: { 'content-type': 'application/octet-stream' },
             body: file,
           },
-          (bounded) => readJson(appPath(slug, '/files', path), bounded),
           APP_UPLOAD_TIMEOUT,
         ),
       )
@@ -924,13 +874,13 @@ export function createHttpContainersAdapter(
 
     async writeAppContent(slug, path, content) {
       return parseContainerAppFile(
-        await withRequestDeadline(
+        await requestJson(
+          appPath(slug, '/content', path),
           {
             method: 'PUT',
             headers: { 'content-type': 'text/plain' },
             body: content,
           },
-          (bounded) => readJson(appPath(slug, '/content', path), bounded),
           APP_UPLOAD_TIMEOUT,
         ),
       )
@@ -1009,7 +959,7 @@ export function createHttpContainersAdapter(
       if (!response.ok) {
         // 401 先上报再抛中文错误，不进流读取（未登录时拉流没有意义）。
         if (reportUnauthorized(response)) throw new Error('登录状态已失效，请重新登录')
-        const detail = await readErrorDetail(response)
+        const detail = await readDomainErrorDetail(response)
         throw new Error(detail ?? `镜像拉取请求失败：HTTP ${response.status}`)
       }
       return readImagePullStream(response, onProgress, signal)

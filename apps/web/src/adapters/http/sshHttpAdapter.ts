@@ -1,4 +1,4 @@
-import { withRequestDeadline } from './requestDeadline'
+import { createDomainJsonClient } from './domainJson'
 import type {
   SshAuthMethods,
   SshAuthSettings,
@@ -20,7 +20,6 @@ import {
   SSH_SERVICE_STATUSES,
 } from '@elysian/contracts'
 import type { SshAdapter, SshKeyAccount } from '../../contracts/adapters'
-import { fetchWithSession, reportUnauthorized } from './unauthorized'
 
 /*
  * 浏览器侧同源 SSH 管理（Docker 运行时）。sshd、ssh-keygen、chpasswd 与 getent
@@ -236,31 +235,7 @@ export function parseSshLoginRecordsResponse(body: unknown): readonly SshLoginRe
   })
 }
 
-function requestJson(url: string, init?: RequestInit): Promise<unknown> {
-  return withRequestDeadline(init, (bounded) => readJson(url, bounded))
-}
-
-async function readJson(url: string, init?: RequestInit): Promise<unknown> {
-  let response: Response
-  try {
-    response = await fetchWithSession(url, init)
-  } catch {
-    throw new Error('SSH 请求网络失败')
-  }
-  if (!response.ok) {
-    if (reportUnauthorized(response)) throw new Error('登录状态已失效，请重新登录')
-    const detail = await response
-      .json()
-      .then((body) => (body && typeof body === 'object' && 'error' in body ? String((body as { error: unknown }).error) : null))
-      .catch(() => null)
-    throw new Error(detail ?? `SSH 请求失败：HTTP ${response.status}`)
-  }
-  try {
-    return await response.json()
-  } catch {
-    throw new Error('SSH 响应不是有效 JSON')
-  }
-}
+const { requestJson } = createDomainJsonClient('SSH ')
 
 /** Docker 运行时的 SSH adapter：全部动作落到 /api/security/ssh/*。 */
 export function createHttpSshAdapter(baseUrl = '/api/security/ssh'): SshAdapter {

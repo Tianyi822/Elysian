@@ -5,6 +5,8 @@ import { createHttpSshAdapter } from './sshHttpAdapter'
 import { createHttpUsersAdapter } from './usersHttpAdapter'
 import { createHttpSessionAdapter } from './sessionHttpAdapter'
 import { createHttpPlatformMemoryAdapter } from './platformMemoryAdapter'
+import { createHttpContainersAdapter } from './containersHttpAdapter'
+import { createHttpWebsitesAdapter } from './websitesHttpAdapter'
 import { setUnauthorizedListener } from './unauthorized'
 
 afterEach(() => { vi.useRealTimers(); vi.unstubAllGlobals(); setUnauthorizedListener(() => {}) })
@@ -43,6 +45,22 @@ describe('有界 JSON 请求接缝', () => {
     const result = expect(createHttpFirewallAdapter().syncFromSystem()).rejects.toThrow('操作结果尚未确认')
     await vi.advanceTimersByTimeAsync(59_999); expect(fetcher).toHaveBeenCalledTimes(1)
     await vi.advanceTimersByTimeAsync(1); await result; expect(fetcher).toHaveBeenCalledTimes(1)
+  })
+  it.each([
+    { label: '容器工作区上传', timeout: 180_000, write: () => createHttpContainersAdapter().uploadAppFile('myapp', 'app.yml', new Blob(['data'])) },
+    { label: '网站源码归档导入', timeout: 600_000, write: () => createHttpWebsitesAdapter().deployment!.archive(new File(['data'], 'source.zip'), 'source') },
+  ])('$label 保留专用写时限且不重投', async ({ timeout, write }) => {
+    vi.useFakeTimers()
+    const fetcher = vi.fn((_url: string, _init: RequestInit) => new Promise(() => {}))
+    vi.stubGlobal('fetch', fetcher)
+    const result = expect(write()).rejects.toThrow('请求超时，操作结果尚未确认，请重新读取服务端状态后再决定是否重试')
+    await vi.advanceTimersByTimeAsync(timeout - 1)
+    const signal = fetcher.mock.calls[0]?.[1].signal
+    expect(signal?.aborted).toBe(false)
+    await vi.advanceTimersByTimeAsync(1)
+    await result
+    expect(signal?.aborted).toBe(true)
+    expect(fetcher).toHaveBeenCalledTimes(1)
   })
   it('外部取消也终止响应体，不遗留时限', async () => {
     vi.useFakeTimers(); const abort = new AbortController()

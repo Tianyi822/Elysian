@@ -1,8 +1,7 @@
-import { withRequestDeadline } from './requestDeadline'
+import { createDomainJsonClient } from './domainJson'
 import type { FileEntry, FileKind, FileSearchResult } from '@elysian/contracts'
 import { FILE_KINDS } from '@elysian/contracts'
 import type { FilesAdapter } from '../../contracts/adapters'
-import { fetchWithSession, reportUnauthorized } from './unauthorized'
 import { createHttpFileTransfers } from './filesTransfersHttp'
 
 /*
@@ -93,31 +92,7 @@ export function parseFileOkResponse(body: unknown): void {
   }
 }
 
-function requestJson(url: string, init?: RequestInit): Promise<unknown> {
-  return withRequestDeadline(init, (bounded) => readJson(url, bounded))
-}
-
-async function readJson(url: string, init?: RequestInit): Promise<unknown> {
-  let response: Response
-  try {
-    response = await fetchWithSession(url, init)
-  } catch {
-    throw new Error('文件管理请求网络失败')
-  }
-  if (!response.ok) {
-    if (reportUnauthorized(response)) throw new Error('登录状态已失效，请重新登录')
-    const detail = await response
-      .json()
-      .then((body) => (body && typeof body === 'object' && 'error' in body ? String((body as { error: unknown }).error) : null))
-      .catch(() => null)
-    throw new Error(detail ?? `文件管理请求失败：HTTP ${response.status}`)
-  }
-  try {
-    return await response.json()
-  } catch {
-    throw new Error('文件管理响应不是有效 JSON')
-  }
-}
+const { requestJson } = createDomainJsonClient('文件管理')
 
 /**
  * Docker 运行时的文件管理 adapter：八个动作落到 /api/files/*。

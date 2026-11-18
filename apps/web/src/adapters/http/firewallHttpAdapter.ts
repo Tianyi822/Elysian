@@ -1,4 +1,4 @@
-import { withRequestDeadline } from './requestDeadline'
+import { createDomainJsonClient } from './domainJson'
 import type {
   FirewallForwardRule,
   FirewallIpRule,
@@ -17,7 +17,6 @@ import {
   FIREWALL_RULE_STATUSES,
 } from '@elysian/contracts'
 import type { FirewallAdapter } from '../../contracts/adapters'
-import { fetchWithSession, reportUnauthorized } from './unauthorized'
 
 /*
  * 浏览器侧同源防火墙查询（Docker 运行时）。系统采样、ufw 命令仅存在于
@@ -224,31 +223,7 @@ export function parseScanResponse(body: unknown): FirewallScanProtection {
   }
 }
 
-function requestJson(baseUrl: string, init?: RequestInit): Promise<unknown> {
-  return withRequestDeadline(init, (bounded) => readJson(baseUrl, bounded))
-}
-
-async function readJson(baseUrl: string, init?: RequestInit): Promise<unknown> {
-  let response: Response
-  try {
-    response = await fetchWithSession(baseUrl, init)
-  } catch {
-    throw new Error('防火墙请求网络失败')
-  }
-  if (!response.ok) {
-    if (reportUnauthorized(response)) throw new Error('登录状态已失效，请重新登录')
-    const detail = await response
-      .json()
-      .then((body) => (body && typeof body === 'object' && 'error' in body ? String((body as { error: unknown }).error) : null))
-      .catch(() => null)
-    throw new Error(detail ?? `防火墙请求失败：HTTP ${response.status}`)
-  }
-  try {
-    return await response.json()
-  } catch {
-    throw new Error('防火墙响应不是有效 JSON')
-  }
-}
+const { requestJson } = createDomainJsonClient('防火墙')
 
 function ruleInputBody(input: FirewallRuleInput): string {
   return JSON.stringify(input)

@@ -1,4 +1,4 @@
-import { withRequestDeadline } from './requestDeadline'
+import { createDomainJsonClient } from './domainJson'
 import type { WebsiteSource, WebsiteDeploymentTask, WebsiteDeploymentLogs } from '@elysian/contracts'
 import type {
   WebsiteCategory,
@@ -18,7 +18,6 @@ import {
   parseWebsiteRuntimeCatalogReport,
 } from '@elysian/contracts'
 import type { WebsitesAdapter, WebsiteMutateResult } from '../../contracts/adapters'
-import { fetchWithSession, reportUnauthorized } from './unauthorized'
 import { parseFirewallPortSync } from './firewallHttpAdapter'
 
 /*
@@ -177,30 +176,11 @@ export function parseWebsiteReconcileResponse(body: unknown): {
   return { proxy: parseWebsiteProxyStatus(row.proxy), applied: row.applied }
 }
 
-function requestJson(url: string, init?: RequestInit): Promise<unknown> {
-  return withRequestDeadline(init, (bounded) => readJson(url, bounded), /\/sources\/(?:archive|git)(?:\?|$)/.test(url) ? 10 * 60_000 : undefined)
-}
+const { requestJson: requestDomainJson } = createDomainJsonClient('网站管理')
 
-async function readJson(url: string, init?: RequestInit): Promise<unknown> {
-  let response: Response
-  try {
-    response = await fetchWithSession(url, { ...init, cache: 'no-store' })
-  } catch {
-    throw new Error('网站管理请求网络失败')
-  }
-  if (!response.ok) {
-    if (reportUnauthorized(response)) throw new Error('登录状态已失效，请重新登录')
-    const detail = await response
-      .json()
-      .then((body) => (body && typeof body === 'object' && 'error' in body ? String((body as { error: unknown }).error) : null))
-      .catch(() => null)
-    throw new Error(detail ?? `网站管理请求失败：HTTP ${response.status}`)
-  }
-  try {
-    return await response.json()
-  } catch {
-    throw new Error('网站管理响应不是有效 JSON')
-  }
+function requestJson(url: string, init?: RequestInit): Promise<unknown> {
+  const timeoutMs = /\/sources\/(?:archive|git)(?:\?|$)/.test(url) ? 10 * 60_000 : undefined
+  return requestDomainJson(url, { ...init, cache: 'no-store' }, timeoutMs)
 }
 
 /**

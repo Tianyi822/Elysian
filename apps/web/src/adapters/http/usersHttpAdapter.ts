@@ -1,8 +1,7 @@
-import { withRequestDeadline } from './requestDeadline'
+import { createDomainJsonClient } from './domainJson'
 import type { HostUser, HostUserLoginMethod, HostUserStatus } from '@elysian/contracts'
 import { HOST_USER_LOGIN_METHODS, HOST_USER_STATUSES } from '@elysian/contracts'
 import type { UserAdapter } from '../../contracts/adapters'
-import { fetchWithSession, reportUnauthorized } from './unauthorized'
 
 /*
  * 浏览器侧同源主机账号管理（Docker 运行时）。useradd/usermod/userdel/gpasswd/chpasswd
@@ -84,31 +83,7 @@ export function parseHostUserSyncResponse(body: unknown): { total: number } {
   return { total }
 }
 
-function requestJson(url: string, init?: RequestInit): Promise<unknown> {
-  return withRequestDeadline(init, (bounded) => readJson(url, bounded))
-}
-
-async function readJson(url: string, init?: RequestInit): Promise<unknown> {
-  let response: Response
-  try {
-    response = await fetchWithSession(url, init)
-  } catch {
-    throw new Error('主机账号请求网络失败')
-  }
-  if (!response.ok) {
-    if (reportUnauthorized(response)) throw new Error('登录状态已失效，请重新登录')
-    const detail = await response
-      .json()
-      .then((body) => (body && typeof body === 'object' && 'error' in body ? String((body as { error: unknown }).error) : null))
-      .catch(() => null)
-    throw new Error(detail ?? `主机账号请求失败：HTTP ${response.status}`)
-  }
-  try {
-    return await response.json()
-  } catch {
-    throw new Error('主机账号响应不是有效 JSON')
-  }
-}
+const { requestJson } = createDomainJsonClient('主机账号')
 
 /**
  * Docker 运行时的主机账号 adapter：全部动作落到 /api/security/users/*。
