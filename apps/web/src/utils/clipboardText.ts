@@ -1,5 +1,5 @@
-/** HTTPS/localhost 优先异步剪贴板；HTTP IP 入口通过用户点击触发的复制命令回退。 */
-export async function writeClipboardText(value: string): Promise<void> {
+/** HTTPS/localhost 优先异步剪贴板；HTTP IP 回退可把临时输入框放在当前浮层内。 */
+export async function writeClipboardText(value: string, fallbackContainer: HTMLElement = document.body): Promise<void> {
   if (navigator.clipboard?.writeText) { await navigator.clipboard.writeText(value); return }
   if (typeof document.execCommand !== 'function') throw new Error('当前浏览器不支持复制，请手动选择文字复制。')
   const focused = document.activeElement
@@ -11,7 +11,7 @@ export async function writeClipboardText(value: string): Promise<void> {
   field.tabIndex = -1
   field.setAttribute('aria-hidden', 'true')
   field.style.cssText = 'position:fixed;left:-9999px;top:0;opacity:0;pointer-events:none'
-  document.body.append(field)
+  fallbackContainer.append(field)
   try {
     field.focus({ preventScroll: true })
     field.select()

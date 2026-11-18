@@ -1,4 +1,4 @@
-import { act, fireEvent, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMockGateway } from '../../adapters/mock/gateway'
@@ -174,16 +174,162 @@ describe('LoginPage', () => {
     expect(password).toHaveAttribute('autocomplete', 'current-password')
   })
 
-  it('空提交不发起登录请求，也不显示错误', async () => {
-    const login = vi.fn(async () => {})
+  it('键盘打开忘记密码提示，Esc 归还焦点且不提交或清空表单', async () => {
+    const login = vi.fn()
+    const user = userEvent.setup()
+    const { router } = renderApp('/login', { gateway: gatewayWithSession(anonymousSession(login)) })
+
+    const username = await screen.findByLabelText('用户名')
+    const password = screen.getByLabelText('密码')
+    await user.type(username, 'admin')
+    await user.type(password, 'secret')
+    const help = screen.getByRole('button', { name: '忘记密码？' })
+    help.focus()
+    await user.keyboard('{Enter}')
+
+    const card = within(await screen.findByRole('dialog', { name: '重置密码' }))
+    expect(card.getByText('sudo ely resetpwd')).toBeVisible()
+    expect(card.getByText(/服务器终端/)).toBeVisible()
+    expect(card.getByText(/现有会话将失效/)).toBeVisible()
+    expect(help).toHaveAttribute('aria-expanded', 'true')
+    expect(login).not.toHaveBeenCalled()
+    expect(router.state.location.pathname).toBe('/login')
+
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(help).toHaveFocus())
+    expect(screen.queryByRole('dialog', { name: '重置密码' })).not.toBeInTheDocument()
+    expect(help).toHaveAttribute('aria-expanded', 'false')
+    expect(username).toHaveValue('admin')
+    expect(password).toHaveValue('secret')
+    expect(login).not.toHaveBeenCalled()
+  })
+
+  it('点击打开忘记密码提示后可点击外部关闭，登录页没有注册入口', async () => {
+    const login = vi.fn()
     const user = userEvent.setup()
     renderApp('/login', { gateway: gatewayWithSession(anonymousSession(login)) })
 
-    await user.click(await screen.findByRole('button', { name: '登录' }))
-    // 原生表单校验拦下空值：login 未被调、没有 alert。
-    await waitFor(() => expect(screen.getByRole('button', { name: '登录' })).toBeEnabled())
+    const help = await screen.findByRole('button', { name: '忘记密码？' })
+    expect(screen.queryByText(/注册|创建账号|sign up/i)).not.toBeInTheDocument()
+    await user.click(help)
+    await waitFor(() => expect(screen.getByRole('dialog', { name: '重置密码' })).toBeVisible())
+    await user.click(screen.getByLabelText('用户名'))
+    expect(help).toHaveAttribute('aria-expanded', 'false')
+    expect(screen.queryByRole('dialog', { name: '重置密码' })).not.toBeInTheDocument()
+    expect(screen.getByLabelText('用户名')).toHaveFocus()
     expect(login).not.toHaveBeenCalled()
+  })
+
+  it('用键盘复制完整重置命令，保留浮层且不发起登录', async () => {
+    const login = vi.fn()
+    const user = userEvent.setup()
+    renderApp('/login', { gateway: gatewayWithSession(anonymousSession(login)) })
+
+    await user.type(await screen.findByLabelText('用户名'), 'admin')
+    await user.type(screen.getByLabelText('密码'), 'secret')
+    await user.click(screen.getByRole('button', { name: '忘记密码？' }))
+    const dialog = await screen.findByRole('dialog', { name: '重置密码' })
+    const copy = within(dialog).getByRole('button', { name: '复制重置命令' })
+    await user.tab()
+    expect(copy).toHaveFocus()
+    await user.keyboard('{Enter}')
+
+    await expect(navigator.clipboard.readText()).resolves.toBe('sudo ely resetpwd')
+    expect(within(dialog).getByRole('status')).toHaveTextContent('已复制命令')
+    expect(dialog).toBeVisible()
+    expect(login).not.toHaveBeenCalled()
+  })
+
+  it('HTTP 回退在浮层内复制并保留焦点，受阻时显示行内提示', async () => {
+    const user = userEvent.setup()
+    renderApp('/login', { gateway: gatewayWithSession(anonymousSession()) })
+
+    await user.click(await screen.findByRole('button', { name: '忘记密码？' }))
+    const dialog = await screen.findByRole('dialog', { name: '重置密码' })
+    const copy = within(dialog).getByRole('button', { name: '复制重置命令' })
+    const clipboard = Object.getOwnPropertyDescriptor(navigator, 'clipboard')
+    const command = Object.getOwnPropertyDescriptor(document, 'execCommand')
+    const exec = vi.fn(() => true)
+    Object.defineProperty(navigator, 'clipboard', { configurable: true, value: undefined })
+    Object.defineProperty(document, 'execCommand', { configurable: true, value: exec })
+    try {
+      let copiedText: string | undefined
+      exec.mockImplementationOnce(() => {
+        copiedText = dialog.querySelector<HTMLTextAreaElement>('textarea:focus')?.value
+        return true
+      })
+      await user.click(copy)
+      expect(exec).toHaveBeenCalledWith('copy')
+      expect(copiedText).toBe('sudo ely resetpwd')
+      expect(copy).toHaveFocus()
+      expect(within(dialog).getByRole('status')).toHaveTextContent('已复制命令')
+
+      exec.mockReturnValueOnce(false)
+      await user.click(copy)
+      expect(within(dialog).getByRole('status')).toHaveTextContent('复制失败，请手动复制命令。')
+      expect(dialog).toBeVisible()
+    } finally {
+      if (clipboard) Object.defineProperty(navigator, 'clipboard', clipboard)
+      else Reflect.deleteProperty(navigator, 'clipboard')
+      if (command) Object.defineProperty(document, 'execCommand', command)
+      else Reflect.deleteProperty(document, 'execCommand')
+    }
+  })
+
+  it('空提交显示自定义字段错误，聚焦第一项且不发起登录请求', async () => {
+    const login = vi.fn()
+    const user = userEvent.setup()
+    renderApp('/login', { gateway: gatewayWithSession(anonymousSession(login)) })
+
+    const username = await screen.findByLabelText('用户名')
+    const password = screen.getByLabelText('密码')
+    const submit = screen.getByRole('button', { name: '登录' })
+    expect(username.closest('form')).toHaveAttribute('novalidate')
     expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+
+    await user.click(submit)
+    expect(username).toHaveFocus()
+    expect(username).toHaveAttribute('aria-invalid', 'true')
+    expect(username).toHaveAccessibleDescription('请输入用户名。')
+    expect(password).toHaveAttribute('aria-invalid', 'true')
+    expect(password).toHaveAccessibleDescription('请输入密码。')
+    expect(screen.getByText('请输入用户名。')).toBeVisible()
+    expect(screen.getByText('请输入密码。')).toBeVisible()
+    expect(submit).toBeEnabled()
+    expect(login).not.toHaveBeenCalled()
+
+    await user.type(username, 'admin')
+    expect(username).not.toHaveAttribute('aria-invalid')
+    expect(screen.queryByText('请输入用户名。')).not.toBeInTheDocument()
+    expect(password).toHaveAttribute('aria-invalid', 'true')
+    await user.click(submit)
+    expect(password).toHaveFocus()
+    expect(login).not.toHaveBeenCalled()
+
+    await user.type(password, ' secret ')
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    expect(password).not.toHaveAttribute('aria-invalid')
+    await user.keyboard('{Enter}')
+    expect(login).toHaveBeenCalledExactlyOnceWith('admin', ' secret ')
+  })
+
+  it('输入法确认回车不触发自定义校验，普通回车才提示缺项', async () => {
+    const login = vi.fn()
+    const user = userEvent.setup()
+    renderApp('/login', { gateway: gatewayWithSession(anonymousSession(login)) })
+
+    const username = await screen.findByLabelText('用户名')
+    await user.click(username)
+    fireEvent.compositionStart(username)
+    fireEvent.change(username, { target: { value: 'admin' } })
+    fireEvent.keyDown(username, { key: 'Enter', isComposing: true, keyCode: 229 })
+    fireEvent.submit(username.closest('form')!)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+    fireEvent.compositionEnd(username)
+
+    await user.keyboard('{Enter}')
+    expect(screen.getByRole('alert')).toHaveTextContent('请输入密码。')
+    expect(login).not.toHaveBeenCalled()
   })
 
   it('登录失败把服务端中文错误在表单内显示，表单可再次提交', async () => {

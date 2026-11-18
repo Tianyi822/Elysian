@@ -1,0 +1,25 @@
+.easyui-login-submit {
+  background-color: var(--t-login-action);
+  border-color: transparent;
+  color: var(--t-login-action-fg);
+}
+
+.easyui-login-submit:not(:disabled):hover {
+  background-color: color-mix(in srgb, var(--t-login-action), var(--t-login-action-fg) 9%);
+}
+
+.easyui-login input:focus {
+  outline: none;
+  border-color: var(--t-focus);
+}
+
+.easyui-login input[aria-invalid="true"] {
+  border-color: var(--t-danger);
+}
+
+@media (prefers-contrast: more) {
+  .easyui-login input,
+  .easyui-login-submit {
+    border-color: var(--t-control-line);
+  }
+}

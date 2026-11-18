@@ -24,7 +24,7 @@ export function LoginPasswordInput({ value, className = '', ...props }: Props) {
   // 字符簇保持组合附加符、emoji 与输入法提交的字符完整，宽度由同字体的浏览器排版测量。
   const segments = [...new Intl.Segmenter(undefined, { granularity: 'grapheme' }).segment(value)]
 
-  return <div className="relative">
+  return <div className="login-password-field relative">
     <input {...props} ref={input} type="text" value={value}
       autoCapitalize="none" autoCorrect="off" spellCheck={false}
       className={`${className} login-password-input ${visible ? '' : 'login-password-masked'}`}

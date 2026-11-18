@@ -1,14 +1,19 @@
-import { useEffect, useState } from 'react'
+import * as Popover from '@radix-ui/react-popover'
+import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { Button } from '../../components/Button'
+import { IconButton } from '../../components/IconButton'
+import { Login } from '../../components/easyui/Login'
+import { PeekCard } from '../../components/easyui/PeekCard'
 import { LoginPasswordInput } from './LoginPasswordInput'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
-import { Bot, Info, TriangleAlert } from '../../components/icons'
+import { ArrowRight, Bot, Check, Copy, Info, Lock, TriangleAlert, User } from '../../components/icons'
 import { useImeEnterGuard } from '../../components/useImeEnterGuard'
 import { useSessionStore } from '../../stores/sessionStore'
 import { useMessageStore } from '../../stores/messageStore'
+import { writeClipboardText } from '../../utils/clipboardText'
 
 /*
  * 登录页（/login，顶层平级路由，不进 AppShell、不包 RequireArea）。
@@ -24,9 +29,64 @@ import { useMessageStore } from '../../stores/messageStore'
  * 不退回表单假装面板健康——同一故障一种呈现，与 RequireSession 的既有做法一致。
  */
 
-/** 登录表单的两个文本控件同款：内凹一档表达「可写入」，与主按钮的凸起描边成对。 */
 const FIELD_CLASS =
-  'h-9 w-full rounded-lg border border-control-line bg-surface-raised px-2.5 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50'
+  'h-10 w-full rounded-[14px] border border-login-line bg-login-field text-sm/5 text-login-fg transition-colors hover:border-control-line disabled:cursor-not-allowed disabled:opacity-50'
+const FIELD_ICON_CLASS = 'pointer-events-none absolute left-3 top-1/2 z-10 -translate-y-1/2 text-login-muted'
+const PASSWORD_RESET_COMMAND = 'sudo ely resetpwd'
+
+function PasswordResetCommand() {
+  const rowRef = useRef<HTMLDivElement>(null)
+  const [status, setStatus] = useState<'idle' | 'copied' | 'failed'>('idle')
+
+  const copy = async () => {
+    try {
+      await writeClipboardText(PASSWORD_RESET_COMMAND, rowRef.current ?? undefined)
+      setStatus('copied')
+    } catch {
+      setStatus('failed')
+    }
+  }
+
+  return (
+    <div>
+      <div ref={rowRef} className="flex items-center gap-2 rounded-lg border border-login-line bg-login-field py-0.5 pr-0.5 pl-2.5">
+        <code className="min-w-0 flex-1 text-xs wrap-anywhere">{PASSWORD_RESET_COMMAND}</code>
+        <IconButton label="复制重置命令" variant="ghost" className="shrink-0" onPress={() => void copy()}>
+          {status === 'copied' ? <Check aria-hidden size={14} /> : <Copy aria-hidden size={14} />}
+        </IconButton>
+      </div>
+      <p role="status" className={status === 'failed' ? 'mt-1.5 text-xs text-danger' : 'sr-only'}>
+        {status === 'copied' ? '已复制命令' : status === 'failed' ? '复制失败，请手动复制命令。' : ''}
+      </p>
+    </div>
+  )
+}
+
+function PasswordResetHelp() {
+  const [open, setOpen] = useState(false)
+
+  return (
+    <Popover.Root open={open} onOpenChange={setOpen}>
+      <Popover.Trigger asChild>
+        <Button unstyled type="button" className="focus-ring min-h-7 cursor-pointer rounded px-1.5 text-xs text-login-muted hover:text-login-fg hover:underline">
+          忘记密码？
+        </Button>
+      </Popover.Trigger>
+      <PeekCard open={open} placement="bottom" align="end" appearance="login" ariaLabel="重置密码" onOpenAutoFocus={(event) => {
+        // 先让读屏进入提示内容；Tab 再进入复制按钮，不在打开时提前弹出 Tooltip。
+        event.preventDefault()
+        if (event.target instanceof HTMLElement) event.target.focus({ preventScroll: true })
+      }} renderContent={() => (
+        <div className="space-y-2.5">
+          <p className="text-sm font-semibold">重置密码</p>
+          <p className="text-xs/5 text-login-muted">在安装 Elysian 的服务器终端执行以下命令，按提示设置新密码。</p>
+          <PasswordResetCommand />
+          <p className="text-xs/5 text-login-muted">重置后现有会话将失效，请用原用户名和新密码登录。</p>
+        </div>
+      )} />
+    </Popover.Root>
+  )
+}
 
 /** 回跳目标校验：须为以单个 / 开头的站内路径；`//` 与 `/\` 是协议相对跳转，一律回落首页。 */function safeRedirectTarget(from: unknown): string {
   if (typeof from !== 'string') return '/'
@@ -50,19 +110,30 @@ function Notice({
   children,
 }: {
   role: 'note' | 'status' | 'alert'
-  tone: 'muted' | 'warning'
+  tone: 'muted' | 'warning' | 'danger'
   children: ReactNode
 }) {
-  const Icon = tone === 'warning' ? TriangleAlert : Info
+  const Icon = tone === 'muted' ? Info : TriangleAlert
   return (
     <p
       role={role}
       className={`mt-3 flex items-start gap-2 rounded-lg border px-3 py-2.5 text-xs leading-5 ${
-        tone === 'warning' ? 'border-warning/35 bg-warning/10 text-warning' : 'border-panel-line bg-surface/55 text-fg-muted'
+        tone === 'danger' ? 'border-danger/35 bg-danger/10 text-danger'
+          : tone === 'warning' ? 'border-warning/35 bg-warning/10 text-warning'
+            : 'border-panel-line bg-surface-raised text-fg-muted'
       }`}
     >
       <Icon aria-hidden size={14} className="mt-0.5 shrink-0" />
       <span className="min-w-0">{children}</span>
+    </p>
+  )
+}
+
+function FieldError({ id, children }: { id: string; children: string }) {
+  return (
+    <p id={id} role="alert" className="flex items-center gap-1.5 text-xs/5 text-danger">
+      <TriangleAlert aria-hidden size={13} className="shrink-0" />
+      {children}
     </p>
   )
 }
@@ -84,6 +155,16 @@ export function LoginPage() {
   const { guardProps, isImeKey } = useImeEnterGuard()
   const [submitting, setSubmitting] = useState(false)
   const [submitError, setSubmitError] = useState<string | null>(null)
+  const [validationAttempt, setValidationAttempt] = useState(0)
+  const formRef = useRef<HTMLFormElement>(null)
+  const usernameMissing = !username.trim()
+  const passwordMissing = password === ''
+  const usernameInvalid = validationAttempt > 0 && usernameMissing
+  const passwordInvalid = validationAttempt > 0 && passwordMissing
+
+  useLayoutEffect(() => {
+    if (validationAttempt > 0) formRef.current?.querySelector<HTMLInputElement>('input[aria-invalid="true"]')?.focus()
+  }, [validationAttempt])
 
   const requestedReturnTo = new URLSearchParams(location.search).get('returnTo') ?? undefined
 
@@ -153,8 +234,13 @@ export function LoginPage() {
   const onSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault()
     if (submitting || isImeKey()) return
-    setSubmitting(true)
     setSubmitError(null)
+    if (usernameMissing || passwordMissing) {
+      setValidationAttempt((attempt) => attempt + 1)
+      return
+    }
+    setValidationAttempt(0)
+    setSubmitting(true)
     try {
       await login(gateway, username, password)
       useMessageStore.getState().notify({ tone: 'success', message: '已登录 Elysian' })
@@ -171,18 +257,7 @@ export function LoginPage() {
 
   return (
     <CenteredShell>
-      <section className="w-full max-w-sm panel-surface p-6 sm:p-7">
-        <div className="flex items-center gap-3">
-          {/* 全站统一使用 Ely 图标作为品牌标识。 */}
-          <span
-            aria-hidden
-            className="grid size-10 shrink-0 place-items-center rounded-xl border border-panel-line bg-surface-raised text-base font-semibold text-fg"
-          >
-            <Bot size={24} />
-          </span>
-          <h1 className="min-w-0 text-lg font-semibold tracking-tight">登录 Elysian</h1>
-        </div>
-
+      <Login title="登录 Elysian" logo={<Bot size={24} />}>
         {devAccount ? (
           <Notice role="note" tone="warning">
             开发模式已启用固定账号：dev / dev-elysian（仅开发环境可用，生产打包不含此账号）
@@ -196,54 +271,71 @@ export function LoginPage() {
         ) : null}
 
         {notice && <Notice role="status" tone="muted">{notice}</Notice>}
-        {submitError && <Notice role="alert" tone="warning">{submitError}</Notice>}
-        <form className="mt-5 flex flex-col gap-4" onSubmit={(event) => void onSubmit(event)} {...guardProps}>
+        {submitError && <Notice role="alert" tone="danger">{submitError}</Notice>}
+        <form ref={formRef} noValidate className="mt-5 flex flex-col gap-4" onSubmit={(event) => void onSubmit(event)} {...guardProps}>
           <div className="flex flex-col gap-1.5">
-            <label htmlFor="login-username" className="text-xs font-medium text-fg-muted">
+            <label htmlFor="login-username" className="text-xs font-medium">
               用户名
             </label>
-            <input
-              id="login-username"
-              name="username"
-              type="text"
-              autoComplete="username"
-              required
-              value={username}
-              onChange={(event) => setUsername(event.target.value)}
-              disabled={submitting}
-              className={FIELD_CLASS}
-            />
+            <div className="relative">
+              <User aria-hidden size={14} className={FIELD_ICON_CLASS} />
+              <input
+                id="login-username"
+                name="username"
+                type="text"
+                autoComplete="username"
+                required
+                aria-invalid={usernameInvalid || undefined}
+                aria-describedby={usernameInvalid ? 'login-username-error' : undefined}
+                value={username}
+                onChange={(event) => setUsername(event.target.value)}
+                disabled={submitting}
+                className={`${FIELD_CLASS} pr-3.5 pl-9`}
+              />
+            </div>
+            {usernameInvalid && <FieldError id="login-username-error">请输入用户名。</FieldError>}
           </div>
 
           <div className="flex flex-col gap-1.5">
-            <label htmlFor="login-password" className="text-xs font-medium text-fg-muted">
-              密码
-            </label>
+            <div className="flex items-center justify-between gap-2">
+              <label htmlFor="login-password" className="text-xs font-medium">
+                密码
+              </label>
+              <PasswordResetHelp />
+            </div>
+            <div className="relative">
+              <Lock aria-hidden size={14} className={FIELD_ICON_CLASS} />
               <LoginPasswordInput
                 id="login-password"
                 name="password"
                 autoComplete="current-password"
                 required
+                aria-invalid={passwordInvalid || undefined}
+                aria-describedby={passwordInvalid ? 'login-password-error' : undefined}
                 value={password}
                 onChange={(event) => setPassword(event.target.value)}
                 disabled={submitting}
-                className={`${FIELD_CLASS} password-input-with-toggle pr-9`}
+                className={`${FIELD_CLASS} password-input-with-toggle`}
               />
+            </div>
+            {passwordInvalid && <FieldError id="login-password-error">请输入密码。</FieldError>}
           </div>
 
           {/* 主按钮沿用共享中性色控件，保留提交与忙碌状态。 */}
           <Button
             type="submit"
+            variant="secondary"
             disabled={submitting}
             isLoading={submitting}
             loadingText="正在登录…"
             fullWidth
-            className="h-9 text-sm"
+            rightIcon={<ArrowRight aria-hidden size={16} />}
+            className="easyui-login-submit mt-2 h-10 text-sm"
           >
-            {submitting ? '正在登录…' : '登录'}
+            登录
           </Button>
         </form>
-      </section>
+      </Login>
     </CenteredShell>
   )
 }

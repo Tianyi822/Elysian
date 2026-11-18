@@ -41,6 +41,11 @@
   --color-panel-glass-overlay: var(--t-panel-glass-overlay);
   --color-panel-line: var(--t-panel-line);
   --color-panel-sheen: var(--t-panel-sheen);
+  --color-login-card: var(--t-login-card);
+  --color-login-field: var(--t-login-field);
+  --color-login-line: var(--t-login-line);
+  --color-login-fg: var(--t-login-fg);
+  --color-login-muted: var(--t-login-muted);
 
   --color-sev1: var(--t-sev1);
   --color-sev1-fg: var(--t-sev1-fg);
@@ -89,6 +94,15 @@
   --t-danger: #f3a0b2;
   --t-info: #95bdeb;
   --t-focus: #9bb5ff;
+
+  /* EasyUI Login's neutral palette, scoped to authentication surfaces. */
+  --t-login-card: #0e0e0e;
+  --t-login-field: #141414;
+  --t-login-line: #242424;
+  --t-login-fg: #fafafa;
+  --t-login-muted: #a1a1a1;
+  --t-login-action: #0a0a0a;
+  --t-login-action-fg: #fafafa;
 
   /* EasyUI Gooey Menu: 融合表面不能描边，只靠底色从画布上抬起。 */
   --t-gooey-bg: #242427;
@@ -181,6 +195,14 @@
   --t-danger: #a7344e;
   --t-info: #405d8b;
   --t-focus: #2f55bf;
+
+  --t-login-card: #ffffff;
+  --t-login-field: #f5f5f5;
+  --t-login-line: #dedede;
+  --t-login-fg: #171717;
+  --t-login-muted: #525252;
+  --t-login-action: #171717;
+  --t-login-action-fg: #fafafa;
 
   --t-gooey-bg: #dedee3;
   --t-gooey-fg: #18181b;
@@ -607,6 +629,12 @@ textarea {
 }
 
 /* 登录密码仍由文本框原生编辑；独立显示层与其字体、字距、内边距一致。 */
+.login-password-field {
+  --login-password-padding: 2.25rem;
+}
+.login-password-input {
+  padding-inline: var(--login-password-padding);
+}
 .login-password-input,
 .login-password-mask {
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
@@ -622,7 +650,7 @@ textarea {
 }
 .login-password-mask {
   position: absolute;
-  inset: 1px 36px 1px 11px;
+  inset: 1px calc(var(--login-password-padding) + 1px);
   display: flex;
   align-items: center;
   overflow: hidden;

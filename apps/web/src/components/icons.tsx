@@ -18,6 +18,7 @@ export function CountdownRing({ progress, ...props }: SVGProps<SVGSVGElement> & 
 
 export {
   ArrowLeftRight,
+  ArrowRight,
   ArrowUp,
   ArrowUpFromLine,
   BadgeCheck,
