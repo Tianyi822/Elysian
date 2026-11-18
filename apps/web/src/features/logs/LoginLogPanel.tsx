@@ -11,6 +11,7 @@ import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
 import { StaleDataBanner } from '../../components/states/StaleDataBanner'
+import { DemoBadge } from '../../components/DemoBadge'
 import { useLoginLogStore } from '../../stores/loginLogStore'
 import type { LoginLogStatusFilter } from '../../stores/loginLogStore'
 import { useLogReportNotifications } from './useLogReportNotifications'
@@ -78,7 +79,7 @@ export function LoginLogPanel() {
   return (
     <div>
       {errorMessage ? <StaleDataBanner error={errorMessage} onRetry={() => void load(gateway)} /> : null}
-      {isDockerRuntime() ? null : <p role="status" className="mb-3 text-sm text-fg-muted">演示数据</p>}
+      {isDockerRuntime() ? null : <DemoBadge as="p" className="mb-3 text-sm text-fg-muted" />}
       {notices.length > 0 ? (
         <p role="status" className="mb-3 text-xs text-fg-muted">
           {notices.join('；')}

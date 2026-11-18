@@ -14,6 +14,7 @@ import { useEventStreamStore } from '../../stores/eventStreamStore'
 import { useMessageStore } from '../../stores/messageStore'
 import { renderApp } from '../../test/renderApp'
 import { stubNarrowViewport } from '../../test/viewport'
+import * as runtime from '../../utils/isDockerRuntime'
 import { formatResourceMetricValue } from './formatMetricDisplay'
 
 const METRIC_KEYS: ResourceMetricKey[] = ['cpu', 'memory', 'networkIo', 'diskIo']
@@ -61,6 +62,12 @@ describe('仪表盘布局', () => {
     await renderReady()
     const filterBar = screen.getByLabelText('筛选栏')
     expect(within(filterBar).getByRole('status')).toHaveTextContent('演示数据')
+  })
+
+  it('Docker 时不标记为演示数据', async () => {
+    vi.spyOn(runtime, 'isDockerRuntime').mockReturnValue(true)
+    await renderReady()
+    expect(within(screen.getByLabelText('筛选栏')).queryByText('演示数据')).not.toBeInTheDocument()
   })
 
   it('加载失败给出错误态与重试，重试成功后服务器状态出现', async () => {

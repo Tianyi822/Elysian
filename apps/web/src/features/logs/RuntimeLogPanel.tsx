@@ -10,6 +10,7 @@ import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
 import { StaleDataBanner } from '../../components/states/StaleDataBanner'
+import { DemoBadge } from '../../components/DemoBadge'
 import { RefreshButton } from '../../components/RefreshState'
 import { Trash2 } from '../../components/icons'
 import { useRuntimeLogStore } from '../../stores/runtimeLogStore'
@@ -100,11 +101,7 @@ export function RuntimeLogPanel() {
       {/* 数据来源、体积和保留口径与控件分开。 */}
       <div className="flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-fg-subtle">
         {/* 宿主机本地开发读的是内存演示种子（真实日志由服务端的日志片提供），明示出来。 */}
-        {isDockerRuntime() ? null : (
-          <span role="status" className="text-sm text-fg-muted">
-            演示数据
-          </span>
-        )}
+        {isDockerRuntime() ? null : <DemoBadge />}
         <span className="text-fg-muted">
           日志大小：<span className="tabular-nums text-fg">{formatLogBytes(storage.totalBytes)}</span>
         </span>

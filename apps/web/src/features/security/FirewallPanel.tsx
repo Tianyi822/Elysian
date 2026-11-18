@@ -22,6 +22,7 @@ import { useGateway } from '../../adapters/GatewayProvider'
 import { IconButton } from '../../components/IconButton'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
 import { StaleDataBanner } from '../../components/states/StaleDataBanner'
+import { DemoBadge } from '../../components/DemoBadge'
 import { CTL_TOOLBAR } from '../../components/formControl'
 import { ChipGroup } from '../../components/ChipGroup'
 import { StatusTag } from '../../components/StatusTag'
@@ -222,11 +223,7 @@ export function FirewallPanel() {
       {scanError ? <p role="alert" className="mb-3 text-xs text-danger">防扫描：{scanError}<Button variant="link" type="button" className="ml-2 underline" onClick={() => void useFirewallStore.getState().refreshScan(gateway)}>重新读取状态</Button></p> : null}
       <div className={`${CTL_TOOLBAR} firewall-toolbar mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 panel-surface px-4 py-1`}>
         {/* 防火墙动作只在容器内真实执行 ufw；宿主机本地开发是内存演示，明示出来。 */}
-        {!isDockerRuntime() ? (
-          <span role="status" className="text-sm text-fg-muted">
-            演示数据
-          </span>
-        ) : null}
+        {!isDockerRuntime() ? <DemoBadge /> : null}
         <ToggleRow
           label="防火墙开关"
           checked={toggles.firewallEnabled}

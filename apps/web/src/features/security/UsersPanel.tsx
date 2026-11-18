@@ -7,6 +7,7 @@ import { IconButton } from '../../components/IconButton'
 import { StatusTag } from '../../components/StatusTag'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
 import { StaleDataBanner } from '../../components/states/StaleDataBanner'
+import { DemoBadge } from '../../components/DemoBadge'
 import { RefreshButton } from '../../components/RefreshState'
 import { Pencil, Trash2 } from '../../components/icons'
 import { DataTable } from '../../components/DataTable'
@@ -68,9 +69,7 @@ export function UsersPanel() {
       {/* 用户动作只在容器内真实执行；宿主机本地开发明示演示状态。 */}
       {!isDockerRuntime() ? (
         <div className="mb-4 panel-surface px-4 py-3">
-          <span role="status" className="text-sm text-fg-muted">
-            演示数据
-          </span>
+          <DemoBadge />
         </div>
       ) : null}
       <DataTable rows={filtered} ariaLabel="主机账号表" query={search} onQueryChange={setSearch}

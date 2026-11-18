@@ -9,9 +9,8 @@ import { PillNavigation } from '../../components/easyui/PillNavigation'
 import { RefreshButton } from '../../components/RefreshState'
 import { GooeySelect } from '../../components/GooeySelect'
 import { CTL_TOOLBAR } from '../../components/formControl'
+import { DemoBadge } from '../../components/DemoBadge'
 import './dashboard.css'
-
-export const DEMO_DATA_STATUS_LABEL = '演示数据'
 
 const RANGES = TIME_RANGES
 
@@ -41,11 +40,7 @@ export function FilterBar({
     >
       <h2 className="mr-auto hidden shrink-0 text-base font-semibold md:block">资源概览</h2>
       <div className="flex min-w-0 items-center gap-3">
-        {!isDockerRuntime() ? (
-          <span role="status" className="demo-data-label shrink-0 text-xs text-fg-muted">
-            {DEMO_DATA_STATUS_LABEL}
-          </span>
-        ) : null}
+        {!isDockerRuntime() ? <DemoBadge className="demo-data-label shrink-0 text-xs text-fg-muted" /> : null}
         <span className={`shrink-0 text-sm text-fg-muted ${labelSlot}`}>时间范围</span>
         <div className={dropdownSlot}>
           <GooeySelect

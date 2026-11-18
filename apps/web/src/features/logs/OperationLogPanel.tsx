@@ -17,6 +17,7 @@ import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
 import { StaleDataBanner } from '../../components/states/StaleDataBanner'
+import { DemoBadge } from '../../components/DemoBadge'
 import { useOperationLogStore } from '../../stores/operationLogStore'
 import { useLogReportNotifications } from './useLogReportNotifications'
 import { useDebouncedSearch } from './useDebouncedSearch'
@@ -167,11 +168,7 @@ export function OperationLogPanel() {
       {/* 关于数据来源与保留口径的事实说明，与控件分行：演示态在宿主机本地开发才出现。 */}
       <div className="mb-3 flex flex-wrap items-center gap-x-4 gap-y-1 text-xs text-fg-subtle">
         {/* 容器内条目来自服务端真实采集（客户端无法投稿），宿主机本地开发是内存演示，明示出来。 */}
-        {isDockerRuntime() ? null : (
-          <span role="status" className="text-sm text-fg-muted">
-            演示数据
-          </span>
-        )}
+        {isDockerRuntime() ? null : <DemoBadge />}
         <span>
           日志大小：<span className="tabular-nums text-fg">{formatLogBytes(storage.totalBytes)}</span>
         </span>

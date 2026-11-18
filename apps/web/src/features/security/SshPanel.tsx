@@ -15,6 +15,7 @@ import { IconButton } from '../../components/IconButton'
 import { DataTable } from '../../components/DataTable'
 import { ChipGroup } from '../../components/ChipGroup'
 import { StatusTag } from '../../components/StatusTag'
+import { DemoBadge } from '../../components/DemoBadge'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
 import { formatDateTime, formatLoginIp, formatLoginTime } from '../../components/format'
 import { RefreshCw, TriangleAlert } from '../../components/icons'
@@ -129,12 +130,7 @@ export function SshPanel() {
       <div className="@container flex flex-col gap-4">
         {/* SSH 动作只在容器内真实执行；宿主机本地开发是内存演示，与防火墙面板同一标识明示出来。 */}
         {!isDockerRuntime() ? (
-          <div
-            role="status"
-            className="flex items-center panel-surface px-4 py-2.5 text-sm text-fg-muted"
-          >
-            演示数据
-          </div>
+          <DemoBadge as="div" className="flex items-center panel-surface px-4 py-2.5 text-sm text-fg-muted" />
         ) : null}
         <div className="relative grid items-start gap-4 @min-[44rem]:grid-cols-2">
           <div className="flex min-w-0 flex-col gap-4">
