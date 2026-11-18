@@ -80,8 +80,10 @@ import type {
  * 这是整个前端唯一的测试接缝：页面测试在这里注入替代实现。
  */
 
+export type ContainerLiveStatus = 'live' | 'connecting'
+
 export interface EventsAdapter {
-  subscribe(handlers: EventStreamHandlers): Unsubscribe
+  subscribe(handlers: EventStreamHandlers & { onContainerStatus?: (status: ContainerLiveStatus) => void }): Unsubscribe
 }
 
 /** 演示 REPL 的执行结果；编辑、历史与候选展示由第三方组件承担。 */
@@ -200,7 +202,7 @@ export interface ContainerAdapter {
    */
   watchLive(handlers: {
     onEvent: (event: ElysianEvent) => void
-    onStatus: (status: 'live' | 'connecting') => void
+    onStatus: (status: ContainerLiveStatus) => void
   }): Unsubscribe
 }
 

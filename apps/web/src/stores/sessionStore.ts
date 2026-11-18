@@ -186,7 +186,6 @@ export const useSessionStore = create<SessionStoreState>((set, get) => ({
 }))
 
 /*
- * 共享 401 拦截的监听在模块顶层接好：任何 http 出口上报 401 都直接落到这里，
- * adapter→store 的依赖方向在仓库有先例（mock/gateway.ts 引 useContainersStore）。
+ * 在状态层注册共享 401 拦截的监听，HTTP 出口无需依赖会话 store。
  */
 setUnauthorizedListener(() => useSessionStore.getState().expire())

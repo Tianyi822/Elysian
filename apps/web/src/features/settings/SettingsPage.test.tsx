@@ -151,7 +151,11 @@ describe('修改面板密码', () => {
   })
 
   it('成功后页面自身不导航：store 置一次性提示并落 anonymous，RequireSession 把路由带到 /login', async () => {
-    const { router } = renderApp('/settings?tab=account', { gateway: baseGateway(realSession()) })
+    let authenticated = true
+    const { router } = renderApp('/settings?tab=account', { gateway: baseGateway(realSession({
+      status: async () => ({ mode: 'real', authenticated, devAccount: false }),
+      changePassword: async () => { authenticated = false },
+    })) })
     const user = userEvent.setup()
 
     await fillPasswordForm(user, 'old-password', 'brand-new-pw')
@@ -165,7 +169,7 @@ describe('修改面板密码', () => {
       phase: 'anonymous',
       notice: PASSWORD_CHANGE_NOTICE,
     })
-    expect(screen.getByRole('heading', { level: 1, name: '登录 Elysian' })).toBeInTheDocument()
+    expect(await screen.findByRole('heading', { level: 1, name: '登录 Elysian' })).toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent(PASSWORD_CHANGE_NOTICE)
   })
 

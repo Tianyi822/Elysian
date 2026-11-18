@@ -1,11 +1,11 @@
-import type { ElysianEvent, EventStreamHandlers } from '@elysian/contracts'
-import { afterEach, describe, expect, it } from 'vitest'
+import type { ElysianEvent } from '@elysian/contracts'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { EventsAdapter } from '../contracts/adapters'
 import { MAX_RECENT_EVENTS, onStreamEvent, useEventStreamStore } from './eventStreamStore'
 
 function createStubAdapter() {
   const state = {
-    handlers: undefined as EventStreamHandlers | undefined,
+    handlers: undefined as Parameters<EventsAdapter['subscribe']>[0] | undefined,
     unsubscribeCount: 0,
   }
   const adapter: EventsAdapter = {
@@ -119,5 +119,28 @@ describe('事件流 store', () => {
 
     expect(stub.state.unsubscribeCount).toBe(1)
     expect(useEventStreamStore.getState().receivedCount).toBe(0)
+  })
+
+  it('容器状态独立转发，替换和退订前先使旧回调失效', () => {
+    const stream = useEventStreamStore.getState()
+    const oldStatus = vi.fn()
+    let late!: () => void
+    stream.connect({ subscribe(handlers) {
+      late = () => handlers.onContainerStatus?.('connecting')
+      handlers.onStatus('live')
+      handlers.onContainerStatus?.('live')
+      return late
+    } }, oldStatus)
+    expect(oldStatus).toHaveBeenCalledExactlyOnceWith('live')
+
+    const next = createStubAdapter(), nextStatus = vi.fn()
+    stream.connect(next.adapter, nextStatus)
+    late()
+    next.state.handlers?.onContainerStatus?.('connecting')
+    expect(useEventStreamStore.getState().status).toBe('live')
+    stream.disconnect()
+    next.state.handlers?.onContainerStatus?.('live')
+    expect(oldStatus).toHaveBeenCalledTimes(1)
+    expect(nextStatus).toHaveBeenCalledExactlyOnceWith('connecting')
   })
 })

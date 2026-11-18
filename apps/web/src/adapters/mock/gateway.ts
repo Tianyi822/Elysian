@@ -42,9 +42,7 @@ import { ModelSettingsMockAdapter } from './agent/modelSettingsMockAdapter'
 import { demoAgentRuntimeInfo } from './agent/agentRuntimeMock'
 import { createHttpAgentRuntimeAdapter } from '../http/agent/agentRuntimeAdapter'
 import { createHttpAgentConversationAdapter, createUnavailableAgentConversationAdapter } from '../http/agent/agentConversationHttpAdapter'
-import type { ContainerAdapter, EventsAdapter, TerminalAdapter } from '../../contracts/adapters'
-import { useContainersStore } from '../../stores/containersStore'
-import { useSessionStore } from '../../stores/sessionStore'
+import type { ContainerAdapter, ContainerLiveStatus, EventsAdapter, TerminalAdapter } from '../../contracts/adapters'
 
 /**
  * 网关工厂。事件流默认优先走同源 mock SSE 端点，连不上就降级到内存事件源，
@@ -114,9 +112,6 @@ export function createGateway(
   const dependencies =
     options.dependencies === 'http' ? createHttpDependenciesAdapter() : new MockDependenciesAdapter()
   const session = options.session === 'http' ? createHttpSessionAdapter() : new MockSessionAdapter()
-  if (options.session !== 'http') {
-    useSessionStore.setState({ phase: 'authed', mode: 'demo', devAccount: false, username: 'admin' })
-  }
   const modelSettings = options.modelSettings === 'http' ? createHttpModelSettingsAdapter() : new ModelSettingsMockAdapter()
   const agentRuntime = options.agentRuntime === 'http' ? createHttpAgentRuntimeAdapter() : { runtime: async () => demoAgentRuntimeInfo() }
 
@@ -168,7 +163,7 @@ export { createGateway as createMockGateway }
 
 /**
  * Docker 容器列表走 HTTP 时，容器事件来自 watchLive 而非 mock 采样层；
- * onStatus 只更新容器 store，不写入全局事件流状态。
+ * 容器连接状态与全局事件流状态分别回报。
  */
 function attachDockerContainerWatch(
   underlying: EventsAdapter,
@@ -178,7 +173,7 @@ function attachDockerContainerWatch(
   if (!enabled) return underlying
   type SharedEvent = { type: 'event'; value: ElysianEvent }
     | { type: 'status'; value: EventStreamStatus }
-    | { type: 'container-status'; value: Parameters<Parameters<ContainerAdapter['watchLive']>[0]['onStatus']>[0] }
+    | { type: 'container-status'; value: ContainerLiveStatus }
   return {
     subscribe(handlers) {
       return sharedSubscription<SharedEvent>('elysian.global-events.v1', emit => {
@@ -194,7 +189,7 @@ function attachDockerContainerWatch(
       }, message => {
         if (message.type === 'event') handlers.onEvent(message.value)
         else if (message.type === 'status') handlers.onStatus(message.value)
-        else useContainersStore.getState().setLiveStatus(message.value)
+        else handlers.onContainerStatus?.(message.value)
       }, message => {
         if (message.type !== 'event') return message.type
         if (message.value.name === 'resource/sample' || message.value.name === 'container/sample') {

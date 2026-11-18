@@ -3,9 +3,11 @@ import { render } from '@testing-library/react'
 import { RouterProvider } from 'react-router'
 import { GatewayProvider } from '../adapters/GatewayProvider'
 import { createMockGateway } from '../adapters/mock/gateway'
+import { MockSessionAdapter } from '../adapters/mock/mockAdapters'
 import { createAppRouter } from '../app/router'
 import { ThemeProvider } from '../app/theme/ThemeProvider'
 import type { ElysianGateway } from '../contracts/adapters'
+import { useSessionStore } from '../stores/sessionStore'
 
 /**
  * 测试统一从这里渲染整棵应用树，provider 结构与 App 一致。
@@ -18,6 +20,10 @@ import type { ElysianGateway } from '../contracts/adapters'
 export function renderApp(path = '/', options: { gateway?: ElysianGateway } = {}) {
   const router = createAppRouter([path])
   const gateway = options.gateway ?? createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
+  // 同步渲染辅助模拟应用入口已完成演示探测；显式注入的会话仍交给路由探测。
+  if (gateway.session instanceof MockSessionAdapter) {
+    useSessionStore.setState({ phase: 'authed', mode: 'demo', devAccount: false, username: 'admin' })
+  }
 
   const view = render(
     <ThemeProvider>

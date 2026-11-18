@@ -1,6 +1,6 @@
 import type { ElysianEvent, EventStreamStatus, Unsubscribe } from '@elysian/contracts'
 import { create } from 'zustand'
-import type { EventsAdapter } from '../contracts/adapters'
+import type { ContainerLiveStatus, EventsAdapter } from '../contracts/adapters'
 
 /** 只保留最近的事件，避免长时间运行时内存无限增长。 */
 export const MAX_RECENT_EVENTS = 200
@@ -9,7 +9,7 @@ type EventStreamState = {
   status: EventStreamStatus
   recent: readonly ElysianEvent[]
   receivedCount: number
-  connect: (adapter: EventsAdapter) => void
+  connect: (adapter: EventsAdapter, onContainerStatus?: (status: ContainerLiveStatus) => void) => void
   disconnect: () => void
 }
 
@@ -57,12 +57,15 @@ export const useEventStreamStore = create<EventStreamState>((set) => ({
   status: 'connecting',
   recent: [],
   receivedCount: 0,
-  connect(adapter) {
+  connect(adapter, onContainerStatus) {
+    const current = ++generation
     unsubscribe?.()
-    generation += 1
-    const current = generation
 
     unsubscribe = adapter.subscribe({
+      onContainerStatus: (status) => {
+        if (current !== generation) return
+        onContainerStatus?.(status)
+      },
       onStatus: (status) => {
         if (current !== generation) return
         set({ status })
@@ -98,8 +101,8 @@ export const useEventStreamStore = create<EventStreamState>((set) => ({
     })
   },
   disconnect() {
+    generation += 1
     unsubscribe?.()
     unsubscribe = undefined
-    generation += 1
   },
 }))

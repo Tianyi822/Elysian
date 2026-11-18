@@ -3,8 +3,6 @@ import type { ElysianEvent } from '@elysian/contracts'
 import { createMockGateway } from './gateway'
 import { MockContainerAdapter, MockFilesAdapter } from './mockAdapters'
 import { MockTerminalAdapter } from './terminalAdapter'
-import { useContainersStore } from '../../stores/containersStore'
-import { useEventStreamStore } from '../../stores/eventStreamStore'
 
 describe('createMockGateway containers 可选片分流', () => {
   it('缺省与显式 mock 时 gateway.containers 是 MockContainerAdapter', () => {
@@ -29,24 +27,26 @@ describe('createMockGateway containers 可选片分流', () => {
     vi.unstubAllGlobals()
   })
 
-  it("containers: 'http' 时断开与恢复都更新容器 store，事件进入 events.subscribe", async () => {
+  it("containers: 'http' 时独立上报容器连接状态和事件", async () => {
     let controller: ReadableStreamDefaultController<Uint8Array> | undefined
     const fetchMock = vi.fn(async () => new Response(new ReadableStream({
       start(value) { controller = value },
     }), { status: 200 }))
     vi.stubGlobal('fetch', fetchMock)
-    useContainersStore.setState({ liveStatus: 'live' })
-    useEventStreamStore.setState({ status: 'live' })
     const gateway = createMockGateway({ eventStream: 'memory', containers: 'http' })
     const events: ElysianEvent[] = []
+    const onStatus = vi.fn()
+    const onContainerStatus = vi.fn()
     const unsub = gateway.events.subscribe({
       onEvent: (event) => events.push(event),
-      onStatus: () => {},
+      onStatus,
+      onContainerStatus,
     })
 
     try {
       expect(fetchMock).toHaveBeenCalledWith('/api/docker/events', expect.objectContaining({ signal: expect.any(AbortSignal) }))
-      await vi.waitFor(() => expect(useContainersStore.getState().liveStatus).toBe('live'))
+      await vi.waitFor(() => expect(onContainerStatus).toHaveBeenLastCalledWith('live'))
+      const initialStatusCalls = onStatus.mock.calls.length
       const envelope = JSON.stringify({
         id: 'evt-docker-1',
         name: 'container/removed',
@@ -57,11 +57,11 @@ describe('createMockGateway containers 可选片分流', () => {
       await vi.waitFor(() => expect(events.some((e) => e.name === 'container/removed')).toBe(true))
 
       controller!.enqueue(new TextEncoder().encode(': status connecting\n\n'))
-      await vi.waitFor(() => expect(useContainersStore.getState().liveStatus).toBe('connecting'))
-      expect(useEventStreamStore.getState().status).toBe('live')
+      await vi.waitFor(() => expect(onContainerStatus).toHaveBeenLastCalledWith('connecting'))
       controller!.enqueue(new TextEncoder().encode(': status live\n\n'))
-      await vi.waitFor(() => expect(useContainersStore.getState().liveStatus).toBe('live'))
-      expect(useEventStreamStore.getState().status).toBe('live')
+      await vi.waitFor(() => expect(onContainerStatus).toHaveBeenLastCalledWith('live'))
+      expect(onStatus).toHaveBeenCalledTimes(initialStatusCalls)
+      expect(fetchMock).toHaveBeenCalledTimes(1)
     } finally {
       unsub()
       controller?.close()

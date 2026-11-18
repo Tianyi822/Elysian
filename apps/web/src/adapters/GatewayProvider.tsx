@@ -6,6 +6,27 @@ import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
 
 const GatewayContext = createContext<ElysianGateway | null>(null)
 
+export function createDefaultGateway(docker = isDockerRuntime()): ElysianGateway {
+  const mode = docker ? 'http' : 'mock'
+  return createMockGateway({
+    firewall: mode,
+    ssh: mode,
+    users: mode,
+    files: mode,
+    containers: mode,
+    websites: mode,
+    dependencies: mode,
+    logs: mode,
+    terminals: docker ? 'ws' : 'mock',
+    session: mode,
+    panel: mode,
+    modelSettings: mode,
+    agentRuntime: mode,
+    agentExtensions: mode,
+    agentMemory: mode,
+  })
+}
+
 /**
  * 适配层的注入点。真实接线时只需换掉传进来的 gateway，
  * 页面、store 与组件都不用改——这是整个前端唯一的测试接缝。
@@ -17,38 +38,7 @@ export function GatewayProvider({
   children: ReactNode
   gateway?: ElysianGateway
 }) {
-  const value = useMemo(
-    () =>
-      gateway ??
-      createMockGateway({
-        // 防火墙、SSH、主机账号、文件管理、容器列表、网站管理与日志端点只在容器内的
-        // dev/preview 中间件挂载；宿主机本地开发走内存演示。
-        // 数据库域固定走 HTTP adapter（/api/databases）：容器管理与 SQLite 文件都不做本地 mock 分流。
-        firewall: isDockerRuntime() ? 'http' : 'mock',
-        ssh: isDockerRuntime() ? 'http' : 'mock',
-        users: isDockerRuntime() ? 'http' : 'mock',
-        files: isDockerRuntime() ? 'http' : 'mock',
-        containers: isDockerRuntime() ? 'http' : 'mock',
-        // 网站在 Docker 运行时经 /api/websites 落真实容器、站点目录与宿主 Caddy 配置。
-        websites: isDockerRuntime() ? 'http' : 'mock',
-        // 依赖检测在 Docker 运行时接 /api/platform/dependencies 现场探测宿主
-        // Docker 与 Caddy 通道；本地开发恒双 ok，不做依赖状态展示。
-        dependencies: isDockerRuntime() ? 'http' : 'mock',
-        // 日志在 Docker 运行时三类都走 /api/logs；宿主机本地开发读内存种子。
-        logs: isDockerRuntime() ? 'http' : 'mock',
-        terminals: isDockerRuntime() ? 'ws' : 'mock',
-        // 会话在 Docker 运行时经 /api/auth 走真实登录（requireSession 读写全挡）；
-        // 本地无后端演示不强制登录。
-        session: isDockerRuntime() ? 'http' : 'mock',
-        panel: isDockerRuntime() ? 'http' : 'mock',
-        // 系统设置的模型配置与内核就绪检查。
-        modelSettings: isDockerRuntime() ? 'http' : 'mock',
-        agentRuntime: isDockerRuntime() ? 'http' : 'mock',
-        agentExtensions: isDockerRuntime() ? 'http' : 'mock',
-        agentMemory: isDockerRuntime() ? 'http' : 'mock',
-      }),
-    [gateway],
-  )
+  const value = useMemo(() => gateway ?? createDefaultGateway(), [gateway])
   return <GatewayContext.Provider value={value}>{children}</GatewayContext.Provider>
 }
 

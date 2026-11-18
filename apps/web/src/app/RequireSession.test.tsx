@@ -20,8 +20,6 @@ import { RequireArea } from './RequireArea'
 
 function gatewayWithSession(session: Partial<SessionAdapter>): ElysianGateway {
   const base = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
-  // 注入的 fake session 是事实源：底座装配会同步落位演示放行，这里重置回 unknown 再交 probe。
-  useSessionStore.setState({ phase: 'unknown', mode: undefined, devAccount: false })
   return { ...base, session: session as SessionAdapter }
 }
 

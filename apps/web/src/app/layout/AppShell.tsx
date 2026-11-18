@@ -6,6 +6,7 @@ import { subscribeWhileVisible } from '../../adapters/subscribeWhileVisible'
 import { MessageCenter } from '../../components/MessageCenter'
 import { PanelUpdateMonitor } from '../../features/settings/PanelUpdateMonitor'
 import { useEventStreamStore } from '../../stores/eventStreamStore'
+import { useContainersStore } from '../../stores/containersStore'
 import { NAV_ITEMS } from '../navigation'
 import type { RouteHandle } from '../router'
 import {
@@ -106,7 +107,7 @@ export function AppShell() {
 
   // 每个前台页面只订阅一次；后台页释放 SSE，给同源普通请求留出连接。
   useEffect(() => subscribeWhileVisible(() => {
-    connectEventStream(gateway.events)
+    connectEventStream(gateway.events, useContainersStore.getState().setLiveStatus)
     return () => {
       useEventStreamStore.getState().disconnect()
     }
