@@ -1,5 +1,5 @@
 import type { AgentMCPProbeDecision, AgentMCPProbeRequest } from '@elysian/contracts'
-import { AgentHttpError } from '../../http/agent/agentShared'
+import { AgentHttpError } from '../../../contracts/agentHttpError'
 import { agentExtensionsDemo } from './agentExtensionsData'
 
 /** 每个演示 gateway 隔离，决策只推进模拟探测，绝不执行外部操作。 */

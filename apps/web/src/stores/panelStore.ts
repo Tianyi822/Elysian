@@ -2,7 +2,7 @@ import { create } from 'zustand'
 import { panelTaskIsActive } from '@elysian/contracts'
 import type { PanelInfo, PanelTask, PanelTaskReport } from '@elysian/contracts'
 import type { ElysianGateway } from '../contracts/adapters'
-import { captureAuthGeneration } from '../adapters/http/unauthorized'
+import { captureAuthGeneration } from '../utils/authGeneration'
 import { savePanelPending, type PanelPending } from './panelPending'
 import { frontendCommit, PANEL_RELOAD_DELAY_MS, readPanelReload, savePanelReload, type PanelReload } from './panelReload'
 

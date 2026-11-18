@@ -1,7 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
+import { advanceAuthGeneration, captureAuthGeneration } from '../../utils/authGeneration'
 import {
-  advanceAuthGeneration,
-  captureAuthGeneration,
   fetchWithSession,
   reportUnauthorized,
   reportUnauthorizedStatus,

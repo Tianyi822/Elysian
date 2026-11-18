@@ -2,7 +2,8 @@ import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { createHttpFilesAdapter } from './filesHttpAdapter'
 import { FILE_DOWNLOAD_PREPARE_TIMEOUT, FILE_TRANSFER_TIMEOUT, parseFileDownload } from './filesTransfersHttp'
 import { FileTransferError } from '../filesTransferError'
-import { advanceAuthGeneration, setUnauthorizedListener } from './unauthorized'
+import { advanceAuthGeneration } from '../../utils/authGeneration'
+import { setUnauthorizedListener } from './unauthorized'
 
 const prepared = { id: 'download-1', name: '日志 + 备份.tar.gz', sizeBytes: 3 * 1024 ** 3, expiresAt: '2030-01-01T00:00:00Z' }
 const entry = { name: '备份 + %.zip', kind: 'file', mode: '644', owner: 'root', modifiedAt: '2026-10-11T00:00:00Z', sizeBytes: 3 }

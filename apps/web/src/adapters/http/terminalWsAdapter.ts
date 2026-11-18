@@ -1,6 +1,7 @@
 import type { HostTerminalHandlers, HostTerminalSessionInfo, TerminalAdapter } from '../../contracts/adapters'
 import { hostTerminalCloseMessage } from '../../terminal/terminalCloseMessage'
-import { captureAuthGeneration, fetchWithSession, reportUnauthorized } from './unauthorized'
+import { captureAuthGeneration } from '../../utils/authGeneration'
+import { fetchWithSession, reportUnauthorized } from './unauthorized'
 
 export type TerminalSocket = {
   readonly readyState: number

@@ -1,6 +1,7 @@
 import { create } from 'zustand'
 import type { ElysianGateway, SessionMode } from '../contracts/adapters'
-import { advanceAuthGeneration, setUnauthorizedListener } from '../adapters/http/unauthorized'
+import { advanceAuthGeneration } from '../utils/authGeneration'
+import { setUnauthorizedListener } from '../adapters/http/unauthorized'
 import { useAgentChatStore } from './agentChatStore'
 import { useLoginLogStore } from './loginLogStore'
 import { useOperationLogStore } from './operationLogStore'

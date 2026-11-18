@@ -1,4 +1,4 @@
-import { captureAuthGeneration } from '../adapters/http/unauthorized'
+import { captureAuthGeneration } from '../utils/authGeneration'
 import { create } from 'zustand'
 import {
   DATABASE_TAB_ENGINES,

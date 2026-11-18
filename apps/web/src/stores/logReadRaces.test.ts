@@ -1,6 +1,6 @@
 import type { LogClearReport, LogListQuery, PlatformLogCategory } from '@elysian/contracts'
 import { describe, expect, it, vi } from 'vitest'
-import { advanceAuthGeneration } from '../adapters/http/unauthorized'
+import { advanceAuthGeneration } from '../utils/authGeneration'
 import { createMockGateway } from '../adapters/mock/gateway'
 import type { ElysianGateway } from '../contracts/adapters'
 import { useLoginLogStore } from './loginLogStore'

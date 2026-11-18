@@ -1,7 +1,7 @@
 import * as Dialog from '@radix-ui/react-dialog'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import { useContext, useEffect, useRef, useState, type ReactNode } from 'react'
-import { captureAuthGeneration } from '../adapters/http/unauthorized'
+import { captureAuthGeneration } from '../utils/authGeneration'
 import { useMessageStore } from '../stores/messageStore'
 import { tableBatchFailure, type TableBatchOutcome } from '../utils/tableBatch'
 import { Button } from './Button'

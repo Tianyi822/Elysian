@@ -7,7 +7,7 @@ import { Check, ShieldAlert, Square, X } from '../../components/icons'
 import { subscribeWhileVisible } from '../../adapters/subscribeWhileVisible'
 import { useFeedbackMessage } from '../../components/useFeedbackMessage'
 import { useMessageStore } from '../../stores/messageStore'
-import { captureAuthGeneration } from '../../adapters/http/unauthorized'
+import { captureAuthGeneration } from '../../utils/authGeneration'
 import { RuntimeAccessCard } from './RuntimeAccessCard'
 import { Button } from '../../components/Button'
 

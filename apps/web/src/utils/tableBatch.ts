@@ -1,4 +1,4 @@
-import { AgentHttpError } from '../adapters/http/agent/agentShared'
+import { AgentHttpError } from '../contracts/agentHttpError'
 
 /** Web-only execution receipt; never changes a domain wire contract. */
 export type TableBatchOutcome = { status: 'succeeded' | 'failed' | 'unknown'; error?: string }

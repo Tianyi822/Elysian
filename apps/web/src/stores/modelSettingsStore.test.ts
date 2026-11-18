@@ -5,7 +5,7 @@ import type {
 } from '@elysian/contracts'
 import type { ElysianGateway } from '../contracts/adapters'
 import { ModelSettingsMockAdapter } from '../adapters/mock/agent/modelSettingsMockAdapter'
-import { AgentHttpError } from '../adapters/http/agent/agentShared'
+import { AgentHttpError } from '../contracts/agentHttpError'
 import {
   mockCreateModelProfile,
   mockUpdateModelProfile,

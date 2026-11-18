@@ -15,7 +15,7 @@ import { RequireArea } from '../../app/RequireArea'
 import { ModelSettingsSection } from './ModelSettingsSection'
 import { SETTINGS_TABS, useSettingsTab, type SettingsTab } from './settingsTabs'
 import { panelUsernameError } from '../../contracts/panelAccount'
-import { captureAuthGeneration } from '../../adapters/http/unauthorized'
+import { captureAuthGeneration } from '../../utils/authGeneration'
 import { useImeEnterGuard } from '../../components/useImeEnterGuard'
 
 /*

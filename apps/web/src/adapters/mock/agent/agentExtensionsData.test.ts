@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it } from 'vitest'
-import { AgentHttpError } from '../../http/agent/agentShared'
+import { AgentHttpError } from '../../../contracts/agentHttpError'
 import { runAgentExtensionsAdapterContract } from '../../agentExtensionsAdapterContract'
 import { resetAgentExtensionsData, agentExtensionsSnapshot } from './agentExtensionsData'
 import { AgentExtensionsMockAdapter } from './agentExtensionsMockAdapter'

@@ -1,5 +1,5 @@
 import { securityActionFailure, securitySessionChanged, type SecurityActionResult } from './securityActionResult'
-import { captureAuthGeneration } from '../adapters/http/unauthorized'
+import { captureAuthGeneration } from '../utils/authGeneration'
 import { hasUncertainOutcome } from '../adapters/http/requestDeadline'
 import type { HostUser, HostUserInput } from '@elysian/contracts'
 import { HOST_USER_LOGIN_METHOD_LABELS, HOST_USER_STATUS_LABELS } from '@elysian/contracts'

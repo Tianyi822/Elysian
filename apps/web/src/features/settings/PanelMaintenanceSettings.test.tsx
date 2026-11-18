@@ -9,7 +9,7 @@ import { renderApp } from '../../test/renderApp'
 import type { PanelInfo, PanelTask, PanelUpdate, PanelUpdatePreflight } from '@elysian/contracts'
 import { openPanelAddress, reloadPanelPage } from './panelNavigation'
 import { PANEL_PENDING_KEY, savePanelPending } from '../../stores/panelPending'
-import { advanceAuthGeneration } from '../../adapters/http/unauthorized'
+import { advanceAuthGeneration } from '../../utils/authGeneration'
 vi.mock('./panelNavigation', () => ({ openPanelAddress: vi.fn(), reloadPanelPage: vi.fn() }))
 const ports = { frontendPort: 48100, backendPort: 48101 }
 const info: PanelInfo = { ports, commit: 'a'.repeat(40), buildTime: '', repository: 'Tianyi822/Elysian', available: true, reason: '', activeTask: null, lastTask: null }

@@ -6,7 +6,7 @@ import type { ElysianGateway, SessionAdapter } from '../contracts/adapters'
 import { createAgentChatStore, useAgentChatStore } from './agentChatStore'
 import { useSessionStore } from './sessionStore'
 import { chatTestApi, chatTestModel, chatVisionTestModel } from '../test/agentChatFixtures'
-import { AgentHttpError } from '../adapters/http/agent/agentShared'
+import { AgentHttpError } from '../contracts/agentHttpError'
 import { prepareAgentImage } from '../adapters/local/agentImagePreparation'
 import { useMessageStore } from './messageStore'
 

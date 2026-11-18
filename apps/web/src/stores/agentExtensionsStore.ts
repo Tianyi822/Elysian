@@ -1,4 +1,4 @@
-import { captureAuthGeneration } from '../adapters/http/unauthorized'
+import { captureAuthGeneration } from '../utils/authGeneration'
 import { create } from 'zustand'
 import type {
   AgentMCPCatalogProjection,
@@ -11,7 +11,7 @@ import type {
   AgentUpdateMCPServerInput,
 } from '@elysian/contracts'
 import type { ElysianGateway } from '../contracts/adapters'
-import { AgentHttpError } from '../adapters/http/agent/agentShared'
+import { AgentHttpError } from '../contracts/agentHttpError'
 import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
 import { useMessageStore } from './messageStore'
 import { tableBatchFailure as batchFailure, type TableBatchOutcome as BatchMutationResult } from '../utils/tableBatch'

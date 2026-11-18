@@ -12,7 +12,7 @@ import {
   containerStopConfirmDescription,
 } from '../utils/containerCopy'
 import { useContainersStore } from './containersStore'
-import { advanceAuthGeneration } from '../adapters/http/unauthorized'
+import { advanceAuthGeneration } from '../utils/authGeneration'
 import { CONTAINERS, CONTAINER_IMAGES } from '../adapters/mock/containersData'
 
 function deferred<T>() {

@@ -1,5 +1,5 @@
 import { securityActionFailure, securitySessionChanged, type SecurityActionResult } from './securityActionResult'
-import { captureAuthGeneration } from '../adapters/http/unauthorized'
+import { captureAuthGeneration } from '../utils/authGeneration'
 import type {
   FirewallForwardInput,
   FirewallForwardRule,

@@ -4,7 +4,7 @@ import type { ElysianGateway } from '../contracts/adapters'
 import { useFirewallStore } from './firewallStore'
 import { useMessageStore } from './messageStore'
 import { RequestTimeoutError } from '../adapters/http/requestDeadline'
-import { advanceAuthGeneration } from '../adapters/http/unauthorized'
+import { advanceAuthGeneration } from '../utils/authGeneration'
 
 /*
  * 防火墙 store 的行为测试。网关用手写 stub 注入，只依赖 adapter 接口形状；

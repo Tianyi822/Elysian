@@ -1,7 +1,7 @@
 import { waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { FileEntry } from '@elysian/contracts'
-import { advanceAuthGeneration } from '../adapters/http/unauthorized'
+import { advanceAuthGeneration } from '../utils/authGeneration'
 import { createMockGateway } from '../adapters/mock/gateway'
 import { FileTransferError } from '../adapters/filesTransferError'
 import { useFilesStore } from './filesStore'

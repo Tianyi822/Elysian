@@ -1,4 +1,4 @@
-import { captureAuthGeneration } from '../adapters/http/unauthorized'
+import { captureAuthGeneration } from '../utils/authGeneration'
 import { validAgentModelDefaultReasoningLevel, validAgentModelReasoningLevels } from '@elysian/contracts'
 import type { AgentModelProfile, AgentModelProfileInput, AgentModelService, AgentModelServiceInput } from '@elysian/contracts'
 import { create } from 'zustand'

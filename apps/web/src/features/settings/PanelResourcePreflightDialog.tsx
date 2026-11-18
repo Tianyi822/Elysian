@@ -2,7 +2,7 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { useEffect, useRef, useState } from 'react'
 import type { PanelResourcePlan, PanelUpdatePreflight, PanelUpdateTarget } from '@elysian/contracts'
 import type { PanelAdapter } from '../../contracts/adapters'
-import { captureAuthGeneration } from '../../adapters/http/unauthorized'
+import { captureAuthGeneration } from '../../utils/authGeneration'
 import { Button } from '../../components/Button'
 
 const BUTTON = 'h-9 rounded-lg border border-control-line bg-surface-raised px-4 text-sm font-medium text-fg disabled:cursor-not-allowed disabled:opacity-50'

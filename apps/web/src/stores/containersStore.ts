@@ -1,5 +1,5 @@
 import { tableBatchFailure, type TableBatchOutcome } from '../utils/tableBatch'
-import { captureAuthGeneration } from '../adapters/http/unauthorized'
+import { captureAuthGeneration } from '../utils/authGeneration'
 import type { Container, ContainerAction, ContainerCreateInput, ContainerImage, ContainerSample, ContainerStatus, ImagePullProgress, Unsubscribe } from '@elysian/contracts'
 import { create } from 'zustand'
 import type {

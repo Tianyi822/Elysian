@@ -1,7 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { StoreApi } from 'zustand'
 import { createMockGateway } from '../adapters/mock/gateway'
-import { advanceAuthGeneration } from '../adapters/http/unauthorized'
+import { advanceAuthGeneration } from '../utils/authGeneration'
 import type { ElysianGateway } from '../contracts/adapters'
 import { useUsersStore } from './usersStore'
 import { useFirewallStore } from './firewallStore'

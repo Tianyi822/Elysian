@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { PanelTask, PanelTaskReport } from '@elysian/contracts'
 import { createMockGateway } from '../adapters/mock/gateway'
-import { advanceAuthGeneration } from '../adapters/http/unauthorized'
+import { advanceAuthGeneration } from '../utils/authGeneration'
 import { usePanelStore } from './panelStore'
 
 const ports = { frontendPort: 48100, backendPort: 48101 }

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { AgentHttpError, agentPathPart, createAgentHttpClient, defaultAgentHttpClient, isAgentGlobalUnavailableError, isAgentUnavailableError } from './agentShared'
+import { AgentHttpError } from '../../../contracts/agentHttpError'
+import { agentPathPart, createAgentHttpClient, defaultAgentHttpClient, isAgentGlobalUnavailableError, isAgentUnavailableError } from './agentShared'
 
 const { requestAgentJson } = defaultAgentHttpClient
 

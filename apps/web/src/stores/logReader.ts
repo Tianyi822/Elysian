@@ -1,6 +1,6 @@
 import { logNumericSortKey } from '@elysian/contracts'
 import type { LogListQuery, LogStorageStats } from '@elysian/contracts'
-import { captureAuthGeneration } from '../adapters/http/unauthorized'
+import { captureAuthGeneration } from '../utils/authGeneration'
 import type { ElysianGateway } from '../contracts/adapters'
 
 type LogPage<Entry> = {

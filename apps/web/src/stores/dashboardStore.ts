@@ -1,4 +1,4 @@
-import { captureAuthGeneration } from '../adapters/http/unauthorized'
+import { captureAuthGeneration } from '../utils/authGeneration'
 import type { Unsubscribe } from '@elysian/contracts'
 import { create } from 'zustand'
 import {

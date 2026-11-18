@@ -1,6 +1,6 @@
 import type { DependencyProbeReport } from '@elysian/contracts'
 import { create } from 'zustand'
-import { captureAuthGeneration } from '../adapters/http/unauthorized'
+import { captureAuthGeneration } from '../utils/authGeneration'
 import type { ElysianGateway } from '../contracts/adapters'
 import { useMessageStore } from './messageStore'
 

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
 import { useGateway } from '../../adapters/GatewayProvider'
-import { captureAuthGeneration } from '../../adapters/http/unauthorized'
+import { captureAuthGeneration } from '../../utils/authGeneration'
 import { CTL_SECONDARY } from '../../components/formControl'
 import { useDependencyProbeStore } from '../../stores/dependencyProbeStore'
 import { Button } from '../../components/Button'

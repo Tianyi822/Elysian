@@ -4,7 +4,7 @@ import { createMockGateway } from '../adapters/mock/gateway'
 import { resetAgentExtensionsData } from '../adapters/mock/agent/agentExtensionsMockAdapter'
 import { useMessageStore } from './messageStore'
 import { useAgentExtensionsStore, selectImportsActive } from './agentExtensionsStore'
-import { AgentHttpError } from '../adapters/http/agent/agentShared'
+import { AgentHttpError } from '../contracts/agentHttpError'
 
 /*
  * 技能与 MCP 域 store 测试：走 mock 网关（演示状态机），覆盖六态切换、
@@ -274,7 +274,7 @@ describe('MCP 服务', () => {
 
 describe('扩展配置的异步边界', () => {
   it('登出代次变化与 reset 都阻止迟到的列表和探测回灌', async () => {
-    const { advanceAuthGeneration } = await import('../adapters/http/unauthorized')
+    const { advanceAuthGeneration } = await import('../utils/authGeneration')
     const servers = await gateway.agentExtensions.listMcpServers()
     const catalog = await gateway.agentExtensions.probeMcpServer('mcp-demo-http', 2)
     let resolveList!: (items: typeof servers) => void

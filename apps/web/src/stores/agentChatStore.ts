@@ -4,7 +4,7 @@ import { agentComposerFileKind, appendAgentTextFiles, readAgentTextFiles } from 
 import { create } from 'zustand'
 import { AGENT_ATTACHMENT_LIMITS, RUNTIME_RUN_STATUS_LABELS, type AgentAttachmentRef, type AgentChatOutput, type AgentChatTimelineSnapshot, type AgentMessage, type AgentMessageAttachment, type AgentModelProfile, type AgentSession } from '@elysian/contracts'
 import { agentChatAllAttachments, agentChatSessionKey } from '../contracts/agentChat'
-import { AgentHttpError } from '../adapters/http/agent/agentShared'
+import { AgentHttpError } from '../contracts/agentHttpError'
 import { agentChatLocalAdapter } from '../adapters/local/agentChatLocalAdapter'
 import { prepareAgentImage } from '../adapters/local/agentImagePreparation'
 import { useMessageStore, type MessageTone } from './messageStore'

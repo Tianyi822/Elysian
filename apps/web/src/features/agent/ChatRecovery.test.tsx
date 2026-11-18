@@ -4,7 +4,7 @@ import type { AgentChatTimelineSnapshot } from '@elysian/contracts'
 import { chatTestApi } from '../../test/agentChatFixtures'
 import { useAgentChatStore } from '../../stores/agentChatStore'
 import { ChatRecovery } from './ChatRecovery'
-import { advanceAuthGeneration } from '../../adapters/http/unauthorized'
+import { advanceAuthGeneration } from '../../utils/authGeneration'
 import type { AgentChatSession, AgentConversationAdapter } from '../../contracts/agentChat'
 
 const timeline: AgentChatTimelineSnapshot = { runId: 'run-1', status: 'interrupted', done: true,

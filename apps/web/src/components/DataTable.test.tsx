@@ -4,7 +4,7 @@ import { useState } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { DataTable, type Id } from './DataTable'
 import { TableBatchActions } from './TableBatchActions'
-import { advanceAuthGeneration } from '../adapters/http/unauthorized'
+import { advanceAuthGeneration } from '../utils/authGeneration'
 import { scrollTablesToEnd } from '../test/tableRows'
 
 type Row = { key: string; name: string; value: number | null }

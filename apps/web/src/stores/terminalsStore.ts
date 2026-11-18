@@ -3,7 +3,7 @@ import { useMessageStore } from './messageStore'
 import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
 import { hostTerminalCloseMessage } from '../terminal/terminalCloseMessage'
 import { deactivateRawTerminal, disposeRawTerminal, rawTerminalRuntime } from '../terminal/rawTerminalRuntime'
-import { captureAuthGeneration } from '../adapters/http/unauthorized'
+import { captureAuthGeneration } from '../utils/authGeneration'
 import type { ElysianGateway, HostTerminalCloseInfo, HostTerminalFrame, HostTerminalSessionInfo } from '../contracts/adapters'
 
 export function hostTerminalBanner(): string { return isDockerRuntime() ? '本机终端' : '演示终端 · 待接入真实执行' }

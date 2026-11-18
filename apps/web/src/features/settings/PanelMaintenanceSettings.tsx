@@ -6,7 +6,7 @@ import { PANEL_TASK_PHASE_LABELS, PANEL_TASK_STATE_LABELS, PANEL_UPDATE_SOURCE_L
 import type { PanelTask, PanelUpdate, PanelUpdateSource, PanelUpdateTarget } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { PanelHttpError } from '../../adapters/http/panelHttpAdapter'
-import { captureAuthGeneration } from '../../adapters/http/unauthorized'
+import { captureAuthGeneration } from '../../utils/authGeneration'
 import { usePanelStore } from '../../stores/panelStore'
 import { reloadPanelPage } from './panelNavigation'
 import { panelAddress } from './panelAddress'

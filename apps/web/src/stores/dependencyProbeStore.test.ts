@@ -3,7 +3,7 @@ import type { DependencyProbeReport } from '@elysian/contracts'
 import type { ElysianGateway } from '../contracts/adapters'
 import { useMessageStore } from './messageStore'
 import { accessConfigEntryVisible, useDependencyProbeStore } from './dependencyProbeStore'
-import { advanceAuthGeneration } from '../adapters/http/unauthorized'
+import { advanceAuthGeneration } from '../utils/authGeneration'
 
 /*
  * 依赖探测 store 的行为测试。网关全部用手写 stub 注入（probe 可控、可拒绝），

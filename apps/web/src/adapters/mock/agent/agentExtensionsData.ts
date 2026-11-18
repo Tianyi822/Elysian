@@ -8,7 +8,7 @@ import type {
   AgentSkillImportInput,
   AgentSkillImportTask,
 } from '@elysian/contracts'
-import { AgentHttpError } from '../../http/agent/agentShared'
+import { AgentHttpError } from '../../../contracts/agentHttpError'
 import { DATASET_BASE_TIME } from '../seed'
 
 /*

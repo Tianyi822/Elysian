@@ -1,7 +1,7 @@
 import { useEffect, useId, useRef, useState } from 'react'
 import type { AgentChatTimelineSnapshot } from '@elysian/contracts'
 import type { AgentConversationAdapter } from '../../contracts/agentChat'
-import { captureAuthGeneration } from '../../adapters/http/unauthorized'
+import { captureAuthGeneration } from '../../utils/authGeneration'
 import { useAgentChatStore } from '../../stores/agentChatStore'
 import { Button } from '../../components/Button'
 

@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { advanceAuthGeneration, setUnauthorizedListener } from './unauthorized'
+import { advanceAuthGeneration } from '../../utils/authGeneration'
+import { setUnauthorizedListener } from './unauthorized'
 import { createHttpDatabaseAdapter, sqliteDownloadName } from './databaseHttpAdapter'
 
 /*

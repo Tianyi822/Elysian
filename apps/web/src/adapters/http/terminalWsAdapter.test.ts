@@ -1,7 +1,7 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createTerminalWsAdapter } from './terminalWsAdapter'
 import { TestTerminalSocket } from './terminalTestSocket'
-import { captureAuthGeneration, advanceAuthGeneration } from './unauthorized'
+import { captureAuthGeneration, advanceAuthGeneration } from '../../utils/authGeneration'
 
 let sockets: TestTerminalSocket[]
 const make = () => createTerminalWsAdapter(url => { const socket = new TestTerminalSocket(url); sockets.push(socket); return socket })

@@ -1,7 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 import * as Dialog from '@radix-ui/react-dialog'
 import { useGateway } from '../../adapters/GatewayProvider'
-import { captureAuthGeneration } from '../../adapters/http/unauthorized'
+import { captureAuthGeneration } from '../../utils/authGeneration'
 import { useAgentChatStore } from '../../stores/agentChatStore'
 import { useImeEnterGuard } from '../../components/useImeEnterGuard'
 import { Button } from '../../components/Button'

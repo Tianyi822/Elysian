@@ -1,6 +1,6 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMockGateway } from '../adapters/mock/gateway'
-import { advanceAuthGeneration } from '../adapters/http/unauthorized'
+import { advanceAuthGeneration } from '../utils/authGeneration'
 import { RequestTimeoutError } from '../adapters/http/requestDeadline'
 import { resetSshPanel, sshSessions, userSessions } from '../test/sshPanel'
 import { useFirewallStore } from './firewallStore'

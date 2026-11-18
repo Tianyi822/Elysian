@@ -1,7 +1,8 @@
 import { withRequestDeadline } from './requestDeadline'
 import type { DatabaseContainerInstance, DatabaseInstance } from '@elysian/contracts'
 import type { DatabaseAdapter, DatabaseCreateInput, DatabaseCreateResult } from '../../contracts/adapters'
-import { captureAuthGeneration, fetchWithSession, reportUnauthorized, reportUnauthorizedStatus } from './unauthorized'
+import { captureAuthGeneration } from '../../utils/authGeneration'
+import { fetchWithSession, reportUnauthorized, reportUnauthorizedStatus } from './unauthorized'
 import { parseFirewallPortSync } from './firewallHttpAdapter'
 
 const BASE = '/api/databases'

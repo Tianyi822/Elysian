@@ -2,7 +2,8 @@ import type { FileEntry } from '@elysian/contracts'
 import type { FileDownload, FilesAdapter, FileUploadCheck } from '../../contracts/adapters'
 import { FileTransferError } from '../filesTransferError'
 import { RequestTimeoutError, withRequestDeadline } from './requestDeadline'
-import { captureAuthGeneration, fetchWithSession, reportUnauthorized, reportUnauthorizedStatus } from './unauthorized'
+import { captureAuthGeneration } from '../../utils/authGeneration'
+import { fetchWithSession, reportUnauthorized, reportUnauthorizedStatus } from './unauthorized'
 
 export const FILE_DOWNLOAD_PREPARE_TIMEOUT = 30 * 60_000
 export const FILE_TRANSFER_TIMEOUT = 2 * 60 * 60_000
