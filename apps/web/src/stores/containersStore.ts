@@ -219,6 +219,11 @@ function replayLatestSample(): void {
 /** 拉取的模拟传输耗时；测试用假计时器推进。 */
 const PULL_DELAY_MS = 1500
 
+type ImagePullInput = { name: string; tag: string; registry?: string }
+type ImagePullResult = { status: 'succeeded' | 'interrupted' } | { status: 'failed'; error: string }
+/** 调用方核验最新清单并负责呈现回执。省略时使用镜像表的回执和通知。 */
+type ImagePullOptions = { confirmInventory: () => Promise<void> }
+
 export const useContainersStore = create<{
   status: 'idle' | 'loading' | 'ready' | 'error'
   liveStatus: 'live' | 'connecting'
@@ -238,8 +243,8 @@ export const useContainersStore = create<{
   creating: boolean
   createError?: string
   removingImageIds: readonly string[]
-  pullingImage?: { name: string; tag: string; registry?: string; progress?: ImagePullProgress; cancelling?: boolean }
-  imagePullError?: { name: string; tag: string; registry?: string; message: string }
+  pullingImage?: ImagePullInput & { progress?: ImagePullProgress; cancelling?: boolean }
+  imagePullError?: ImagePullInput & { message: string }
   load: (gateway: ElysianGateway) => Promise<void>
   refreshImages: (gateway: ElysianGateway, options?: { notify?: boolean }) => Promise<void>
   setLiveStatus: (status: 'live' | 'connecting') => void
@@ -251,7 +256,8 @@ export const useContainersStore = create<{
   createContainer: (gateway: ElysianGateway, input: ContainerCreateInput) => Promise<void>
   removeContainer: (gateway: ElysianGateway, containerId: string) => Promise<void>
   removeImage: (gateway: ElysianGateway, imageId: string) => Promise<TableBatchOutcome>
-  pullImage: (gateway: ElysianGateway, input: { name: string; tag: string; registry?: string }) => Promise<void>
+  pullImage: (gateway: ElysianGateway, input: ImagePullInput, options?: ImagePullOptions) => Promise<ImagePullResult>
+  clearImagePullDisplay: () => void
   cancelImagePull: () => void
   dismissImagePullError: () => void
   openDetail: (containerId: string) => void
@@ -427,27 +433,35 @@ export const useContainersStore = create<{
     }
   },
 
-  async pullImage(gateway, input) {
-    if (get().pullingImage) return
+  async pullImage(gateway, input, options) {
+    if (get().pullingImage) return { status: 'interrupted' }
     const pullSequence = ++imagePullSequence
+    const auth = captureAuthGeneration()
+    const current = () => imagePullSequence === pullSequence && auth === captureAuthGeneration()
     const controller = new AbortController()
     imagePullController = controller
     imageRevision += 1
-    set({ pullingImage: { name: input.name, tag: input.tag, registry: input.registry }, imagePullError: undefined })
+    set({ pullingImage: input, ...(options ? {} : { imagePullError: undefined }) })
     try {
-      if (!isDockerRuntime()) {
-        // 模拟传输耗时后再落数据集；测试用假计时器推进这一段。
+      if (!options && !isDockerRuntime()) {
+        // 镜像表在本地演示中模拟传输耗时后再落数据集；测试用假计时器推进这一段。
         await abortableDelay(PULL_DELAY_MS, controller.signal)
       }
       throwIfAborted(controller.signal)
       const image = await awaitAbortable(gateway.containers.pullImage(input, (progress) => {
-        set((state) => state.pullingImage && imagePullSequence === pullSequence && !controller.signal.aborted
+        set((state) => state.pullingImage && current() && !controller.signal.aborted
           ? { pullingImage: { ...state.pullingImage, progress } }
           : state)
       }, controller.signal), controller.signal)
-      if (imagePullSequence !== pullSequence) return
+      if (!current()) return { status: 'interrupted' }
       throwIfAborted(controller.signal)
       imageRevision += 1
+      if (options) {
+        await awaitAbortable(options.confirmInventory(), controller.signal)
+        if (!current()) return { status: 'interrupted' }
+        set({ pullingImage: undefined })
+        return { status: 'succeeded' }
+      }
       useMessageStore.getState().notify({
         tone: 'success',
         message: `镜像 ${image.name}:${image.tag} 已拉取${demoNoticeSuffix(isDockerRuntime(), MOCK_ACTION_NOTE)}`,
@@ -461,25 +475,39 @@ export const useContainersStore = create<{
           : [...state.images, image],
         pullingImage: undefined,
       }))
+      return { status: 'succeeded' }
     } catch (error) {
-      if (imagePullSequence !== pullSequence) return
-      const detail = messageOf(error)
-      useMessageStore.getState().notify(controller.signal.aborted
+      if (!current()) return { status: 'interrupted' }
+      const aborted = controller.signal.aborted
+      const detail = options ? messageOf(error, '镜像拉取失败') : messageOf(error)
+      if (options) {
+        set({ pullingImage: undefined })
+        return aborted ? { status: 'interrupted' } : { status: 'failed', error: detail }
+      }
+      useMessageStore.getState().notify(aborted
         ? { tone: 'info', message: `已取消镜像 ${input.name}:${input.tag} 的拉取请求` }
         : { tone: 'danger', message: `拉取镜像失败：${detail}` })
       imageRevision += 1
       // 失败留在镜像列表中，避免短暂通知消失后只剩「进度突然没了」。
-      set({ pullingImage: undefined, imagePullError: controller.signal.aborted ? undefined : { ...input, message: detail } })
+      set({ pullingImage: undefined, imagePullError: aborted ? undefined : { ...input, message: detail } })
       try {
         const revision = imageRevision
         const images = await gateway.containers.listImages()
-        if (revision === imageRevision) { imageRevision += 1; set({ images }) }
+        if (current() && revision === imageRevision) { imageRevision += 1; set({ images }) }
       } catch {
         // 刷新失败时保留当前列表。
       }
+      return aborted ? { status: 'interrupted' } : { status: 'failed', error: detail }
     } finally {
       if (imagePullController === controller) imagePullController = undefined
     }
+  },
+
+  clearImagePullDisplay() {
+    imagePullSequence += 1
+    imagePullController?.abort()
+    imagePullController = undefined
+    set({ pullingImage: undefined, imagePullError: undefined })
   },
 
   cancelImagePull() {

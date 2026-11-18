@@ -14,7 +14,6 @@ import { DEFAULT_IMAGE_REGISTRY, registryHost, validateRegistryUrl } from '../..
 import { useFeedbackMessage } from '../../components/useFeedbackMessage'
 import { Button } from '../../components/Button'
 import type { ImageRegistryPreset } from '../../contracts/adapters'
-import { messageOf } from '../../utils/errorMessage'
 import { captureAuthGeneration } from '../../utils/authGeneration'
 
 /**
@@ -62,6 +61,8 @@ export function RealDatabaseCreateDialog({ engine }: { engine: DatabaseContainer
   const creating = useDatabaseStore((state) => state.creating)
   const createError = useDatabaseStore((state) => state.createError)
   const images = useContainersStore((state) => state.images)
+  const activePull = useContainersStore((state) => state.pullingImage)
+  const pullImage = useContainersStore((state) => state.pullImage)
 
   const [presets, setPresets] = useState<readonly ImageRegistryPreset[]>([])
   const [presetsLoading, setPresetsLoading] = useState(true)
@@ -72,8 +73,6 @@ export function RealDatabaseCreateDialog({ engine }: { engine: DatabaseContainer
   const [versionTag, setVersionTag] = useState('')
   const [tags, setTags] = useState<readonly string[]>([])
   const [tagStatus, setTagStatus] = useState<'idle' | 'loading' | 'unavailable'>('idle')
-  const [pulling, setPulling] = useState(false)
-  const [progress, setProgress] = useState<ImagePullProgress>()
   const [pullError, setPullError] = useState('')
   const [pullComplete, setPullComplete] = useState(false)
   const [containerName, setContainerName] = useState('elysian-' + engine.toLowerCase())
@@ -89,6 +88,9 @@ export function RealDatabaseCreateDialog({ engine }: { engine: DatabaseContainer
   const registryError = registryAddress.trim() ? validateRegistryUrl(registryAddress) : undefined
   const registry = registryAddress.trim() || DEFAULT_IMAGE_REGISTRY
   const presetId = forceCustom ? CUSTOM_REGISTRY_ID : matchRegistryPreset(presets, registryAddress)?.id ?? CUSTOM_REGISTRY_ID
+  const pullRegistry = registryAddress.trim() || undefined
+  const pulling = activePull?.name === repo && activePull.tag === versionTag && activePull.registry === pullRegistry
+  const progress = pulling ? activePull.progress : undefined
   const busy = pulling || creating
 
   // 镜像源预设目录与镜像页共用同一出口；读取失败时仍可手填地址。
@@ -122,25 +124,16 @@ export function RealDatabaseCreateDialog({ engine }: { engine: DatabaseContainer
   }, [gateway, repo, registryAddress, registryError])
 
   const pull = async () => {
-    if (pulling || !validVersion || registryError || image) return
+    if (activePull || !validVersion || registryError || image) return
     const auth = captureAuthGeneration()
-    setPulling(true)
-    setProgress(undefined)
     setPullError('')
     setPullComplete(false)
-    try {
-      await gateway.containers.pullImage({ name: repo, tag: versionTag, ...(registryAddress.trim() ? { registry: registryAddress.trim() } : {}) }, progress => {
-        if (auth === captureAuthGeneration()) setProgress(progress)
-      })
-      if (auth !== captureAuthGeneration()) return
-      // 拉取是真实变更：核对共享数据集，让「本地镜像已就绪」以最新镜像清单为准。
-      await refreshAfterMutation(gateway, 'container')
-      if (auth === captureAuthGeneration()) setPullComplete(true)
-    } catch (error) {
-      if (auth === captureAuthGeneration()) setPullError(messageOf(error, '镜像拉取失败'))
-    } finally {
-      if (auth === captureAuthGeneration()) setPulling(false)
-    }
+    const result = await pullImage(gateway, { name: repo, tag: versionTag, registry: pullRegistry }, {
+      confirmInventory: () => refreshAfterMutation(gateway, 'container'),
+    })
+    if (auth !== captureAuthGeneration()) return
+    if (result.status === 'succeeded') setPullComplete(true)
+    if (result.status === 'failed') setPullError(result.error)
   }
 
   const validContainerName = /^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$/.test(containerName)
@@ -220,7 +213,7 @@ export function RealDatabaseCreateDialog({ engine }: { engine: DatabaseContainer
             {validVersion && !registryError ? image ? <p role="status" className="mt-2 text-xs text-success">本地镜像已就绪：{repo}:{versionTag}</p> : <div className="mt-2 rounded-lg border border-line bg-surface p-3">
               <div className="flex flex-wrap items-center justify-between gap-2">
                 <p className="text-xs text-fg-muted">本地尚无 {repo}:{versionTag} 镜像</p>
-                <Button variant="outline" type="button" disabled={busy || Boolean(registryError)} onClick={() => void pull()} className={DIALOG_FORM_ACTION_CLASS}>{pulling ? '拉取中…' : '拉取镜像'}</Button>
+                <Button variant="outline" type="button" disabled={busy || Boolean(activePull) || Boolean(registryError)} onClick={() => void pull()} className={DIALOG_FORM_ACTION_CLASS}>{pulling ? '拉取中…' : '拉取镜像'}</Button>
               </div>
               {pulling ? <div className="mt-3" role="status" aria-live="polite">
                 <div className="flex flex-wrap justify-between gap-1 text-xs text-fg-muted">

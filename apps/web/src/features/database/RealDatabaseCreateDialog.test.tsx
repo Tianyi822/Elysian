@@ -106,9 +106,12 @@ it('latest 被拒；拉取镜像带进度与源地址，完成后提示本地镜
   expect(within(dialog).getByText('registry-1.docker.io/mysql:8.4')).toBeInTheDocument()
 
   await user.click(within(dialog).getByRole('button', { name: '拉取镜像' }))
-  expect(pullImage).toHaveBeenCalledWith({ name: 'mysql', tag: '8.4', registry: 'https://registry-1.docker.io' }, expect.any(Function))
+  expect(pullImage).toHaveBeenCalledWith({ name: 'mysql', tag: '8.4', registry: 'https://registry-1.docker.io' }, expect.any(Function), expect.any(AbortSignal))
   expect(await within(dialog).findByRole('progressbar', { name: '当前窗口镜像拉取进度' })).toHaveAttribute('aria-valuenow', '50')
   expect(within(dialog).getByText('50 B / 100 B · 50%')).toBeInTheDocument()
+  expect(useContainersStore.getState().pullingImage).toMatchObject({ name: 'mysql', tag: '8.4', progress: { currentBytes: 50 } })
+  await useContainersStore.getState().pullImage(gateway, { name: 'mysql', tag: '8.4' })
+  expect(pullImage).toHaveBeenCalledOnce()
   // 拉取期间关闭与提交都锁住。
   expect(within(dialog).getByRole('button', { name: '关闭弹窗' })).toBeDisabled()
 
@@ -125,7 +128,7 @@ it('会话失效后的镜像拉取回执不刷新清单', async () => {
   const user = userEvent.setup()
   let finish!: (image: ContainerImage) => void
   const result = new Promise<ContainerImage>(resolve => { finish = resolve })
-  const pullImage = vi.fn(() => result)
+  const pullImage = vi.fn((_input: unknown, _onProgress: unknown, _signal: AbortSignal) => result)
   const gateway = dialogGateway({ pullImage })
   render(<GatewayProvider gateway={gateway}><RealDatabaseCreateDialog engine="MySQL" /></GatewayProvider>)
   const dialog = screen.getByRole('dialog', { name: '添加 MySQL 数据库' })
@@ -138,6 +141,8 @@ it('会话失效后的镜像拉取回执不刷新清单', async () => {
     finish(image)
   })
 
+  expect(pullImage.mock.calls[0]?.[2].aborted).toBe(true)
+  expect(useContainersStore.getState().pullingImage).toBeUndefined()
   expect(gateway.containers.listImages).not.toHaveBeenCalled()
   expect(gateway.databases.list).not.toHaveBeenCalled()
 })
