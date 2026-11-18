@@ -1,7 +1,7 @@
 import { parseStorageHealth } from './agentRecoveryParse'
 import type { AgentRuntimeInfo, RuntimeCapability, RuntimeJSONValue, RuntimeLimits, RuntimeToolSchema } from '@elysian/contracts'
 import { RUNTIME_TOOL_NAMES } from '@elysian/contracts'
-import { requestAgentJson } from './agentShared'
+import { defaultAgentHttpClient } from './agentShared'
 
 /*
  * GET /api/agent/runtime 的真实 HTTP 适配与响应解析。这是唯一挂在 503 组之外的
@@ -99,6 +99,6 @@ export function parseAgentRuntimeInfo(value: unknown): AgentRuntimeInfo {
 }
 
 /** 读取运行时能力报告；401 由共享出口上报，其余错误透传中文 reason。 */
-export async function fetchAgentRuntime(baseUrl = '/api/agent', signal?: AbortSignal): Promise<AgentRuntimeInfo> {
+export async function fetchAgentRuntime(baseUrl = '/api/agent', signal?: AbortSignal, { requestAgentJson } = defaultAgentHttpClient): Promise<AgentRuntimeInfo> {
   return parseAgentRuntimeInfo(await requestAgentJson(`${baseUrl}/runtime`, { signal }))
 }

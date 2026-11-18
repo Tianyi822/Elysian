@@ -1,6 +1,7 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { AgentHttpError, agentPathPart, isAgentGlobalUnavailableError, isAgentUnavailableError, requestAgentJson } from './agentShared'
-import { useAgentRuntimeStore } from '../../../stores/agentRuntimeStore'
+import { AgentHttpError, agentPathPart, createAgentHttpClient, defaultAgentHttpClient, isAgentGlobalUnavailableError, isAgentUnavailableError } from './agentShared'
+
+const { requestAgentJson } = defaultAgentHttpClient
 
 afterEach(() => vi.unstubAllGlobals())
 
@@ -43,23 +44,24 @@ describe('requestAgentJson', () => {
     expect(isAgentUnavailableError(new Error('unavailable'))).toBe(false)
   })
 
-  it('503 服务端中文 reason 进入全局禁写状态，分项 503 不污染它', async () => {
-    useAgentRuntimeStore.getState().reset()
+  it('内核级 503 上报服务端原因，独立客户端和分项 503 不上报', async () => {
+    const report = vi.fn()
+    const client = createAgentHttpClient(report)
     vi.stubGlobal('fetch', vi.fn(async (_input: unknown) => new Response(
       JSON.stringify({ error: '记录副本尚未恢复', code: 'record-storage-unavailable' }),
       { status: 503 },
     )))
-    await expect(requestAgentJson('/api/agent/model-services')).rejects.toMatchObject({
+    await expect(client.requestAgentJson('/api/agent/model-services')).rejects.toMatchObject({
       status: 503, code: 'record-storage-unavailable', message: '记录副本尚未恢复',
     })
-    expect(useAgentRuntimeStore.getState().unavailableReason).toBe('记录副本尚未恢复')
-    useAgentRuntimeStore.getState().reset()
+    expect(report).toHaveBeenCalledExactlyOnceWith('记录副本尚未恢复')
+    await expect(requestAgentJson('/api/agent/model-services')).rejects.toMatchObject({ status: 503 })
     vi.stubGlobal('fetch', vi.fn(async () => new Response(
       JSON.stringify({ error: 'MCP 通道不可用', code: 'mcp-unavailable' }),
       { status: 503 },
     )))
-    await expect(requestAgentJson('/api/agent/mcp-servers')).rejects.toMatchObject({ status: 503 })
-    expect(useAgentRuntimeStore.getState().unavailableReason).toBeUndefined()
+    await expect(client.requestAgentJson('/api/agent/mcp-servers')).rejects.toMatchObject({ status: 503 })
+    expect(report).toHaveBeenCalledTimes(1)
   })
 
   it('无 error 体的失败回 HTTP 状态码；成功体原样返回', async () => {

@@ -6,7 +6,7 @@ import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
 
 const GatewayContext = createContext<ElysianGateway | null>(null)
 
-export function createDefaultGateway(docker = isDockerRuntime()): ElysianGateway {
+export function createDefaultGateway(docker = isDockerRuntime(), onGlobalUnavailable?: (reason: string) => void): ElysianGateway {
   const mode = docker ? 'http' : 'mock'
   return createMockGateway({
     firewall: mode,
@@ -24,6 +24,7 @@ export function createDefaultGateway(docker = isDockerRuntime()): ElysianGateway
     agentRuntime: mode,
     agentExtensions: mode,
     agentMemory: mode,
+    onGlobalUnavailable,
   })
 }
 

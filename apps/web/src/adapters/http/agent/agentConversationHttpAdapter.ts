@@ -3,7 +3,7 @@ import type { AgentChatRun, AgentChatTask, AgentChatPageResult, AgentChatUploade
 import { parseRunPlan } from './agentPlanParse'
 import { parseBudgetFields } from './agentBudgetParse'
 import { parseUserInput } from './agentUserInputParse'
-import { agentPathPart, readAgentResponse, requestAgentJson, requestAgentNoContent } from './agentShared'
+import { agentPathPart, defaultAgentHttpClient } from './agentShared'
 import { SseFrameParser } from '../../sse/parse'
 import { fetchWithSession } from '../unauthorized'
 import { withRequestDeadline } from '../requestDeadline'
@@ -112,7 +112,8 @@ function parseUploaded(value: unknown): AgentChatUploadedAttachment {
   return { ...row, ...(createdAt !== undefined ? { createdAt } : {}) }
 }
 
-export function createHttpAgentConversationAdapter(): AgentConversationAdapter {
+export function createHttpAgentConversationAdapter(client = defaultAgentHttpClient): AgentConversationAdapter {
+  const { readAgentResponse, requestAgentJson, requestAgentNoContent } = client
   const path = (id: string) => agentPathPart(id)
   const write = (url: string, body: unknown, method = 'POST') => requestAgentJson(`/api/agent${url}`, { method, body: JSON.stringify(body) })
   return {
@@ -124,7 +125,7 @@ export function createHttpAgentConversationAdapter(): AgentConversationAdapter {
       if (userInput.id !== inputId || run.id !== runId || userInput.answerRequestId !== input.requestId) throw invalid()
       return { userInput, run }
     },
-    governance: createAgentChatGovernance(),
+    governance: createAgentChatGovernance(client),
     async listSessions(after = '', signal) {
       const query = new URLSearchParams({ sort: 'activity', limit: '50' })
       if (after) query.set('cursor', after)

@@ -25,9 +25,9 @@ import {
   agentPathPart,
   agentQueryString,
   assertRequestId,
+  defaultAgentHttpClient,
   parseAgentPage,
-  readAgentResponse,
-  requestAgentJson,
+  type AgentHttpClient,
 } from './agentShared'
 import { fetchWithSession } from '../unauthorized'
 import { withRequestDeadline } from '../requestDeadline'
@@ -328,7 +328,8 @@ async function requestAgentContentType(
   url: string,
   init: RequestInit,
   contentType: string,
-  timeoutMs?: number,
+  timeoutMs: number,
+  readAgentResponse: AgentHttpClient['readAgentResponse'],
 ): Promise<unknown> {
   return withRequestDeadline(init, async (bounded) => {
     const headers = new Headers(init.headers)
@@ -393,7 +394,8 @@ function mcpServerRequestBody(input: AgentMCPServerInput | AgentUpdateMCPServerI
   return body
 }
 
-export function createHttpAgentExtensionsAdapter(baseUrl = '/api/agent'): AgentExtensionsAdapter {
+export function createHttpAgentExtensionsAdapter(baseUrl = '/api/agent', client = defaultAgentHttpClient): AgentExtensionsAdapter {
+  const { readAgentResponse, requestAgentJson } = client
   const skillsUrl = (id: string) => `${baseUrl}/skills/${agentPathPart(id, '技能标识')}`
   const importsUrl = (id: string) => `${baseUrl}/skills/imports/${agentPathPart(id, '导入任务标识')}`
   const mcpUrl = (id: string) => `${baseUrl}/mcp-servers/${agentPathPart(id, 'MCP 服务标识')}`
@@ -447,7 +449,7 @@ export function createHttpAgentExtensionsAdapter(baseUrl = '/api/agent'): AgentE
       return parseSkillImportTask(await requestAgentContentType(`${baseUrl}/skills/imports`, {
         method: 'POST',
         body: body as unknown as BodyInit,
-      }, contentType, IMPORT_UPLOAD_TIMEOUT_MS))
+      }, contentType, IMPORT_UPLOAD_TIMEOUT_MS, readAgentResponse))
     },
     async getSkillImport(importId, signal) {
       return parseSkillImportTask(await requestAgentJson(importsUrl(importId), { signal }))

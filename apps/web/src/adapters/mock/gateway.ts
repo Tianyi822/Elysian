@@ -42,6 +42,7 @@ import { ModelSettingsMockAdapter } from './agent/modelSettingsMockAdapter'
 import { demoAgentRuntimeInfo } from './agent/agentRuntimeMock'
 import { createHttpAgentRuntimeAdapter } from '../http/agent/agentRuntimeAdapter'
 import { createHttpAgentConversationAdapter, createUnavailableAgentConversationAdapter } from '../http/agent/agentConversationHttpAdapter'
+import { createAgentHttpClient } from '../http/agent/agentShared'
 import type { ContainerAdapter, ContainerLiveStatus, EventsAdapter, TerminalAdapter } from '../../contracts/adapters'
 
 /**
@@ -76,6 +77,7 @@ export function createGateway(
     agentRuntime?: 'mock' | 'http'
     agentExtensions?: 'mock' | 'http'
     agentMemory?: 'mock' | 'http'
+    onGlobalUnavailable?: (reason: string) => void
   } = {},
 ): ElysianGateway {
   let datasetCache: ReturnType<typeof createMockDataset> | undefined
@@ -112,12 +114,13 @@ export function createGateway(
   const dependencies =
     options.dependencies === 'http' ? createHttpDependenciesAdapter() : new MockDependenciesAdapter()
   const session = options.session === 'http' ? createHttpSessionAdapter() : new MockSessionAdapter()
-  const modelSettings = options.modelSettings === 'http' ? createHttpModelSettingsAdapter() : new ModelSettingsMockAdapter()
-  const agentRuntime = options.agentRuntime === 'http' ? createHttpAgentRuntimeAdapter() : { runtime: async () => demoAgentRuntimeInfo() }
+  const agentHttp = createAgentHttpClient(options.onGlobalUnavailable)
+  const modelSettings = options.modelSettings === 'http' ? createHttpModelSettingsAdapter(undefined, agentHttp) : new ModelSettingsMockAdapter()
+  const agentRuntime = options.agentRuntime === 'http' ? createHttpAgentRuntimeAdapter(agentHttp) : { runtime: async () => demoAgentRuntimeInfo() }
 
   return {
-    agentMemory: options.agentMemory === 'http' ? createHttpAgentMemoryAdapter() : new AgentMemoryMockAdapter(),
-    agentConversation: options.modelSettings === 'http' ? createHttpAgentConversationAdapter() : createUnavailableAgentConversationAdapter(),
+    agentMemory: options.agentMemory === 'http' ? createHttpAgentMemoryAdapter(undefined, agentHttp) : new AgentMemoryMockAdapter(),
+    agentConversation: options.modelSettings === 'http' ? createHttpAgentConversationAdapter(agentHttp) : createUnavailableAgentConversationAdapter(),
     panel: options.panel === 'http' ? createHttpPanelAdapter() : mockPanelAdapter,
     session,
     containers,
@@ -135,7 +138,7 @@ export function createGateway(
     dependencies,
     modelSettings,
     agentRuntime,
-    agentExtensions: options.agentExtensions === 'http' ? createHttpAgentExtensionsAdapter() : new AgentExtensionsMockAdapter(),
+    agentExtensions: options.agentExtensions === 'http' ? createHttpAgentExtensionsAdapter(undefined, agentHttp) : new AgentExtensionsMockAdapter(),
     events: attachDockerContainerWatch(
       useHttpContainers
         ? options.eventStream === 'memory'

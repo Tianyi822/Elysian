@@ -1,6 +1,6 @@
 import type { AgentDiscoveredModel } from '@elysian/contracts'
 import type { ModelSettingsAdapter } from '../../../contracts/adapters'
-import { agentPathPart, requestAgentJson } from './agentShared'
+import { agentPathPart, defaultAgentHttpClient } from './agentShared'
 import { parseAgentModelProfile, parseAgentModelService } from './agentCatalogParse'
 
 /** 系统设置中的模型服务与模型目录；端点仍由 Agent 后端提供。 */
@@ -30,7 +30,7 @@ function parseDiscoveredModels(value: unknown): readonly AgentDiscoveredModel[] 
   })
 }
 
-export function createHttpModelSettingsAdapter(baseUrl = '/api/agent'): ModelSettingsAdapter {
+export function createHttpModelSettingsAdapter(baseUrl = '/api/agent', { requestAgentJson } = defaultAgentHttpClient): ModelSettingsAdapter {
   const serviceBase = `${baseUrl}/model-services`
   const modelBase = `${baseUrl}/model-profiles`
   return {

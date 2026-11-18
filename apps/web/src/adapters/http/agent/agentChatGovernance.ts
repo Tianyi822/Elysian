@@ -1,7 +1,7 @@
 import { parseGrant, parseProfile } from './executionParse'
 import type { AgentApproval, AgentCapability, AgentRuntimeAccess } from '@elysian/contracts'
 import type { AgentChatGovernance } from '../../../contracts/agentChat'
-import { agentPathPart, requestAgentJson } from './agentShared'
+import { agentPathPart, defaultAgentHttpClient } from './agentShared'
 
 type Row = Record<string, unknown>
 const invalid = () => new Error('Agent 权限响应格式无效')
@@ -61,7 +61,7 @@ export function parseApproval(value: unknown): AgentApproval {
   return { ...r, id: text(r.id), runId: text(r.runId), operationId: text(r.operationId), createdAt: text(r.createdAt), expiresAt: text(r.expiresAt), operation, ...(r.access === undefined ? {} : { access: parseRuntimeAccess(r.access) }) } as AgentApproval
 }
 
-export function createAgentChatGovernance(): AgentChatGovernance {
+export function createAgentChatGovernance({ requestAgentJson } = defaultAgentHttpClient): AgentChatGovernance {
   const path = agentPathPart
   return {
     async decideAccess(id, input) { const item = parseApproval(await requestAgentJson(`/api/agent/approvals/${path(id)}/access-decision`, { method: 'POST', body: JSON.stringify(input) })); if (item.id !== id) throw invalid(); return item },

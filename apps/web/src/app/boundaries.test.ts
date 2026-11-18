@@ -1,5 +1,5 @@
 import { readFileSync, readdirSync } from 'node:fs'
-import { join, relative } from 'node:path'
+import { dirname, join, relative } from 'node:path'
 import { describe, expect, it } from 'vitest'
 
 /**
@@ -24,7 +24,7 @@ const NODE_SIDE_ALLOWLIST = [
 
 function listSourceFiles(dir: string): string[] {
   return readdirSync(dir, { recursive: true, withFileTypes: true })
-    .filter((entry) => entry.isFile() && /\.tsx?$/.test(entry.name))
+    .filter((entry) => entry.isFile() && /\.tsx?$/.test(entry.name) && !/\.test\.tsx?$/.test(entry.name))
     .map((entry) => relative(WEB_SRC, join(entry.parentPath, entry.name)))
 }
 
@@ -32,8 +32,6 @@ function listSourceFiles(dir: string): string[] {
 function listRuntimeFiles(): string[] {
   return listSourceFiles(WEB_SRC).filter(
     (file) =>
-      !file.endsWith('.test.ts') &&
-      !file.endsWith('.test.tsx') &&
       !file.startsWith('test/') &&
       !NODE_SIDE_ALLOWLIST.includes(file),
   )
@@ -61,5 +59,16 @@ describe('浏览器侧边界', () => {
   it('系统负载徽标只接收展示数据，不引入适配器实现', () => {
     const source = readFileSync(join(WEB_SRC, 'components/SystemLoadBadge.tsx'), 'utf8')
     expect(source).not.toMatch(/['"]\.\.\/adapters\//)
+  })
+
+  it('适配器源码不导入 store', () => {
+    for (const file of listSourceFiles(join(WEB_SRC, 'adapters'))) {
+      const source = readFileSync(join(WEB_SRC, file), 'utf8')
+      // 同时检查导入、重导出、动态导入和副作用导入，按文件位置解析相对路径。
+      for (const [, specifier] of source.matchAll(/\b(?:from\s*|import\s*(?:\(\s*)?|require\s*\(\s*)['"`]([^'"`]+)['"`]/g)) {
+        if (!specifier?.startsWith('.')) continue
+        expect(join(dirname(file), specifier), `${file} 不应导入 ${specifier}`).not.toMatch(/^stores(?:\/|$)/)
+      }
+    }
   })
 })

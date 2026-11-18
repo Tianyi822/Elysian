@@ -1,7 +1,7 @@
 import { AGENT_MEMORY_PAGE_KINDS } from '@elysian/contracts'
 import type { AgentMemoryPage, AgentMemorySpace, AgentWikiRef } from '@elysian/contracts'
 import type { AgentMemoryAdapter } from '../../../contracts/agentMemory'
-import { agentPathPart, requestAgentJson } from './agentShared'
+import { agentPathPart, defaultAgentHttpClient } from './agentShared'
 
 function object(value: unknown): Record<string, unknown> {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Wiki 响应无效')
@@ -29,7 +29,7 @@ export function parseMemoryPage(value: unknown): AgentMemoryPage {
     sources: array(row.sources ?? [], parseWikiRef), links: strings(row.links ?? []), ...(row.tags === undefined ? {} : { tags: strings(row.tags) }), ...(row.aliases === undefined ? {} : { aliases: strings(row.aliases) }),
   }
 }
-export function createHttpAgentMemoryAdapter(baseUrl = '/api/agent'): AgentMemoryAdapter {
+export function createHttpAgentMemoryAdapter(baseUrl = '/api/agent', { requestAgentJson } = defaultAgentHttpClient): AgentMemoryAdapter {
   const space = (id: string) => `${baseUrl}/memory-spaces/${agentPathPart(id)}`
   const page = (spaceId: string, id: string) => `${space(spaceId)}/pages/${agentPathPart(id)}`
   const json = (url: string, method: string, body: unknown) => requestAgentJson(url, { method, body: JSON.stringify(body) })
