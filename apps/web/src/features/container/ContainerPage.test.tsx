@@ -478,6 +478,14 @@ describe('拉取镜像', () => {
     expect(screen.getByText(/下载镜像层 abcdef123456/)).toBeInTheDocument()
     expect(screen.getByText('5.0 MB / 10.0 MB')).toBeInTheDocument()
     expect(screen.getByText('50%')).toBeInTheDocument()
+    await act(async () => {
+      useContainersStore.setState({ pullingImage: {
+        name: 'redis', tag: 'latest', progress: {
+          phase: 'downloading', layerId: 'new-layer', currentBytes: 50, totalBytes: 1025,
+        },
+      } })
+    })
+    expect(screen.getByText('0 KB / 1 KB')).toBeInTheDocument()
   })
 
   it('点击停止拉取取消在途请求并回读列表，不把停止显示为失败', async () => {

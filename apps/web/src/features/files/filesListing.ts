@@ -1,4 +1,5 @@
 import type { FileEntry } from '@elysian/contracts'
+import { formatBytes } from '../../utils/formatBytes'
 
 /*
  * 文件列表的视图纯函数：排序与大小格式化。顺序是界面的决定——
@@ -15,10 +16,5 @@ export function orderFileEntries(entries: readonly FileEntry[]): FileEntry[] {
 
 /** 大小按 1024 进位，KB 起保留一位小数；目录没有大小，由调用位显示「—」。 */
 export function formatEntrySize(sizeBytes: number): string {
-  if (sizeBytes < 1024) return `${sizeBytes} B`
-  const kb = sizeBytes / 1024
-  if (kb < 1024) return `${kb.toFixed(1)} KB`
-  const mb = kb / 1024
-  if (mb < 1024) return `${mb.toFixed(1)} MB`
-  return `${(mb / 1024).toFixed(1)} GB`
+  return formatBytes(sizeBytes, { unit: 'legacy' })
 }

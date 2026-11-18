@@ -1,6 +1,7 @@
 import { File, FileArchive, FileJson, FileText, Image, Music2, Video, X } from '../../components/icons'
 import { IconButton } from '../../components/IconButton'
 import type { AgentChatAttachment } from '../../contracts/agentChat'
+import { formatBytes } from '../../utils/formatBytes'
 
 function fileIcon(attachment: AgentChatAttachment) {
   if (attachment.type.startsWith('image/')) return Image
@@ -10,12 +11,6 @@ function fileIcon(attachment: AgentChatAttachment) {
   if (/\.(json|yaml|yml|toml|js|ts|tsx|py|go|sh|html|css)$/i.test(attachment.name)) return FileJson
   if (/\.(pdf|txt|md|log|docx?|xlsx?|csv|pptx?)$/i.test(attachment.name)) return FileText
   return File
-}
-
-function fileSize(bytes: number) {
-  if (bytes < 1024) return `${bytes} B`
-  if (bytes < 1024 * 1024) return `${Math.ceil(bytes / 1024)} KiB`
-  return `${(bytes / 1024 / 1024).toFixed(1)} MiB`
 }
 
 export function ChatAttachment({ attachment, onRemove }: { attachment: AgentChatAttachment; onRemove?: () => void }) {
@@ -30,7 +25,7 @@ export function ChatAttachment({ attachment, onRemove }: { attachment: AgentChat
     <span className="min-w-0 flex-1">
       <span className="block truncate text-xs font-medium" title={attachment.name}>{attachment.name}</span>
       <span className={`mt-1 block text-[11px] ${state === 'ready' || state === 'missing' ? (attachment.available ? 'text-fg-muted' : 'text-warning') : 'text-warning'}`}>
-        {state === 'legacy' ? '未上传，不能随消息发送' : attachment.available ? fileSize(attachment.size) : '文件不可用，请重新添加'}
+        {state === 'legacy' ? '未上传，不能随消息发送' : attachment.available ? formatBytes(attachment.size, { digits: { kilo: 'ceil' }, maxUnit: 'mega' }) : '文件不可用，请重新添加'}
       </span>
     </span>
     {onRemove && <IconButton label={`移除附件 ${attachment.name}`} variant="ghost" onPress={onRemove} className="shrink-0"><X size={13} aria-hidden /></IconButton>}

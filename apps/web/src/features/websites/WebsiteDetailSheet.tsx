@@ -17,6 +17,7 @@ import { formatDate } from '../../components/format'
 import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
 import { useWebsitesStore } from '../../stores/websitesStore'
+import { formatFromMiB } from '../../utils/formatBytes'
 
 /* 与容器卡片同一套状态配色：状态一律「文字 + 颜色」表达。 */
 const RUN_STATE_TONE: Record<WebsiteProject['runState'], StatusTone> = {
@@ -32,7 +33,7 @@ function routeStatusLabel(project: WebsiteProject): string {
 
 /** 今日流量：满 1 GB 换算成 GB 保留一位小数，否则按 MB 展示。 */
 function formatTodayTraffic(mb: number): string {
-  return mb >= 1024 ? `${(mb / 1024).toFixed(1)} GB` : `${mb} MB`
+  return formatFromMiB(mb, { unit: 'legacy', digits: { mega: 'raw' } })
 }
 
 /** 分节卡片：圆角玻璃底色与亮边；action 放节标题右侧的次要控件。 */

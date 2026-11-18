@@ -6,13 +6,14 @@ import type { ReactNode } from 'react'
 import type { PlatformMemorySample } from '@elysian/contracts'
 import type { SystemLoad } from '../contracts/adapters'
 import type { PlatformMemoryView } from '../stores/systemLoadStore'
+import { formatFromMiB } from '../utils/formatBytes'
 import { formatDateTime } from './format'
 import { ChevronRight, CircleHelp, Gauge } from './icons'
 import { Button } from './Button'
 import { PeekCard } from './easyui/PeekCard'
 
 function formatMiB(valueMb: number): string {
-  return `${valueMb.toFixed(1)} MiB`
+  return formatFromMiB(valueMb, { maxUnit: 'mega' })
 }
 
 function formatResident(sample: PlatformMemorySample): string {
@@ -22,7 +23,7 @@ function formatResident(sample: PlatformMemorySample): string {
 
 function formatTotalMemory(valueMb: number | null): string {
   if (valueMb === null) return '—'
-  return valueMb >= 1024 ? `${(valueMb / 1024).toFixed(2)} GiB` : formatMiB(valueMb)
+  return formatFromMiB(valueMb, { digits: { giga: 2 } })
 }
 
 function memoryPercent(value: number | null, total: number | null): number | null {

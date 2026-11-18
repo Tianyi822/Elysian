@@ -6,6 +6,7 @@ import { FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { Loader2, X } from '../../components/icons'
 import { useDatabaseStore } from '../../stores/databaseStore'
+import { formatBytes } from '../../utils/formatBytes'
 import { readStoredImageRegistry, writeStoredImageRegistry } from '../../utils/imagePullPreferences'
 import { CUSTOM_REGISTRY_ID, matchRegistryPreset } from '../../utils/imageRegistryPresets'
 import { DEFAULT_IMAGE_REGISTRY, registryHost, validateRegistryUrl } from '../../utils/imageReference'
@@ -40,8 +41,7 @@ function imageHasTag(image: ContainerImage, repo: string, tag: string): boolean 
 }
 
 function pullBytes(bytes: number): string {
-  if (bytes < 1024) return Math.round(bytes) + ' B'
-  return bytes >= 1024 * 1024 ? (bytes / 1024 / 1024).toFixed(1) + ' MB' : Math.round(bytes / 1024) + ' KB'
+  return formatBytes(bytes, { unit: 'legacy', digits: { byte: 'round', kilo: 'round' }, maxUnit: 'mega' })
 }
 
 function pullPhase(progress?: ImagePullProgress): string {

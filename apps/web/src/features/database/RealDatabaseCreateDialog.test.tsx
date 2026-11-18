@@ -105,6 +105,7 @@ it('latest 被拒；拉取镜像带进度与源地址，完成后提示本地镜
   await user.click(within(dialog).getByRole('button', { name: '拉取镜像' }))
   expect(pullImage).toHaveBeenCalledWith({ name: 'mysql', tag: '8.4', registry: 'https://registry-1.docker.io' }, expect.any(Function))
   expect(await within(dialog).findByRole('progressbar', { name: '当前窗口镜像拉取进度' })).toHaveAttribute('aria-valuenow', '50')
+  expect(within(dialog).getByText('50 B / 100 B · 50%')).toBeInTheDocument()
   // 拉取期间关闭与提交都锁住。
   expect(within(dialog).getByRole('button', { name: '关闭弹窗' })).toBeDisabled()
 

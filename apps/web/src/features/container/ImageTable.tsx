@@ -5,6 +5,7 @@ import type { Container, ContainerImage } from '@elysian/contracts'
 import { imageUsageCount } from '../../contracts/containerViews'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../utils/isDockerRuntime'
+import { formatBytes } from '../../utils/formatBytes'
 import { useContainersStore } from '../../stores/containersStore'
 import { ImageReferenceLabel } from './ImageReferenceLabel'
 import { DataTable, type Id } from '../../components/DataTable'
@@ -19,8 +20,7 @@ const PULL_PHASE_TEXT = {
 }
 
 function formatPullBytes(bytes: number): string {
-  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(1)} MB`
-  return `${Math.round(bytes / 1024)} KB`
+  return formatBytes(bytes, { unit: 'legacy', digits: { kilo: 'round' }, minUnit: 'kilo', maxUnit: 'mega' })
 }
 
 /**
