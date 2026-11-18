@@ -13,7 +13,7 @@ import {
   containerRestartConfirmDescription,
   containerRemoveBlockedReason,
   containerStopConfirmDescription,
-} from './containerCopy'
+} from '../../utils/containerCopy'
 import { useContainersStore } from '../../stores/containersStore'
 import { Button } from '../../components/Button'
 

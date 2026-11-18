@@ -8,7 +8,7 @@ import { useMessageStore } from '../../stores/messageStore'
 import { renderApp } from '../../test/renderApp'
 import type { PanelInfo, PanelTask, PanelUpdate, PanelUpdatePreflight } from '@elysian/contracts'
 import { openPanelAddress, reloadPanelPage } from './panelNavigation'
-import { PANEL_PENDING_KEY, savePanelPending } from './panelPending'
+import { PANEL_PENDING_KEY, savePanelPending } from '../../stores/panelPending'
 import { advanceAuthGeneration } from '../../adapters/http/unauthorized'
 vi.mock('./panelNavigation', () => ({ openPanelAddress: vi.fn(), reloadPanelPage: vi.fn() }))
 const ports = { frontendPort: 48100, backendPort: 48101 }

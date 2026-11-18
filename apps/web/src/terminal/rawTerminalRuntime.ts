@@ -1,8 +1,8 @@
 import type { Terminal } from '@xterm/xterm'
 import type { FitAddon } from '@xterm/addon-fit'
-import { observeElementSize } from '../../utils/observeElementSize'
-import { writeClipboardText } from '../../utils/clipboardText'
-import { useMessageStore } from '../../stores/messageStore'
+import { observeElementSize } from '../utils/observeElementSize'
+import { writeClipboardText } from '../utils/clipboardText'
+import { useMessageStore } from '../stores/messageStore'
 import { TERMINAL_FONT_SIZE_DEFAULT } from './terminalFontSize'
 import './rawTerminal.css'
 

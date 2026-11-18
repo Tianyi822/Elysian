@@ -7,14 +7,14 @@ import type {
   HostTerminalCloseInfo,
   HostTerminalFrame,
 } from '../contracts/adapters'
-import { hostTerminalCloseMessage } from '../components/terminal/terminalCloseMessage'
-import { deactivateRawTerminal, disposeRawTerminal, rawTerminalRuntime } from '../components/terminal/rawTerminalRuntime'
+import { hostTerminalCloseMessage } from '../terminal/terminalCloseMessage'
+import { deactivateRawTerminal, disposeRawTerminal, rawTerminalRuntime } from '../terminal/rawTerminalRuntime'
 import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
 import {
   containerActionSuccessMessage,
   containerRemoveBlockedReason,
   CONTAINER_TERMINAL_CLOSE_FALLBACK,
-} from '../features/container/containerCopy'
+} from '../utils/containerCopy'
 import { getLastContainerSample, onStreamEvent } from './eventStreamStore'
 import { useMessageStore } from './messageStore'
 import { abortableDelay, awaitAbortable, throwIfAborted } from '../utils/abortable'

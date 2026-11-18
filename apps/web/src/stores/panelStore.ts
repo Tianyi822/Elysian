@@ -3,8 +3,8 @@ import { panelTaskIsActive } from '@elysian/contracts'
 import type { PanelInfo, PanelTask, PanelTaskReport } from '@elysian/contracts'
 import type { ElysianGateway } from '../contracts/adapters'
 import { captureAuthGeneration } from '../adapters/http/unauthorized'
-import { savePanelPending, type PanelPending } from '../features/settings/panelPending'
-import { frontendCommit, PANEL_RELOAD_DELAY_MS, readPanelReload, savePanelReload, type PanelReload } from '../features/settings/panelReload'
+import { savePanelPending, type PanelPending } from './panelPending'
+import { frontendCommit, PANEL_RELOAD_DELAY_MS, readPanelReload, savePanelReload, type PanelReload } from './panelReload'
 
 type PanelState = {
   info: PanelInfo | null; task: PanelTask | null; logs: string; offset: number; hasMore: boolean; error: string | null

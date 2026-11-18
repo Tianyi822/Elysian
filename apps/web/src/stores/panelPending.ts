@@ -1,6 +1,6 @@
 import { validatePanelPorts } from '@elysian/contracts'
 import type { PanelPorts, PanelUpdateTarget } from '@elysian/contracts'
-import type { PanelAdapter } from '../../contracts/adapters'
+import type { PanelAdapter } from '../contracts/adapters'
 
 export const PANEL_PENDING_KEY = 'elysian.panel-maintenance.pending.v1'
 export type PanelPending = { version: 1; requestId: string } & (

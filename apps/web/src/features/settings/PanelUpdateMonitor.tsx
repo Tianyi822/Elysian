@@ -8,8 +8,8 @@ import { useSessionStore } from '../../stores/sessionStore'
 import { useMessageStore } from '../../stores/messageStore'
 import { panelAddress } from './panelAddress'
 import { openPanelAddress } from './panelNavigation'
-import { readPanelPending } from './panelPending'
-import { frontendCommit, readPanelReload } from './panelReload'
+import { readPanelPending } from '../../stores/panelPending'
+import { frontendCommit, readPanelReload } from '../../stores/panelReload'
 import { PanelReloadCountdown } from './PanelReloadCountdown'
 
 const DISCONNECT_BUDGET_MS = 120_000

@@ -4,7 +4,7 @@ import { ConfirmCloseDialog } from '../../components/terminal/TerminalShell'
 import {
   clampTerminalFontSize,
   TERMINAL_FONT_SIZE_DEFAULT,
-} from '../../components/terminal/terminalFontSize'
+} from '../../terminal/terminalFontSize'
 import { RawTerminalViewport } from '../../components/terminal/RawTerminalViewport'
 import { CommandTerminal } from '../../components/terminal/CommandTerminal'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'

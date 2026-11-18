@@ -1,8 +1,8 @@
 import { create } from 'zustand'
 import { useMessageStore } from './messageStore'
 import { isDockerRuntime } from '../app/runtime/isDockerRuntime'
-import { hostTerminalCloseMessage } from '../components/terminal/terminalCloseMessage'
-import { deactivateRawTerminal, disposeRawTerminal, rawTerminalRuntime } from '../components/terminal/rawTerminalRuntime'
+import { hostTerminalCloseMessage } from '../terminal/terminalCloseMessage'
+import { deactivateRawTerminal, disposeRawTerminal, rawTerminalRuntime } from '../terminal/rawTerminalRuntime'
 import { captureAuthGeneration } from '../adapters/http/unauthorized'
 import type { ElysianGateway, HostTerminalCloseInfo, HostTerminalFrame, HostTerminalSessionInfo } from '../contracts/adapters'
 

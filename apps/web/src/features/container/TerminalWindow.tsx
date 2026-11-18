@@ -3,7 +3,7 @@ import { useGateway } from '../../adapters/GatewayProvider'
 import { TerminalShell } from '../../components/terminal/TerminalShell'
 import { CommandTerminal } from '../../components/terminal/CommandTerminal'
 import { RawTerminalViewport } from '../../components/terminal/RawTerminalViewport'
-import { clampTerminalFontSize, TERMINAL_FONT_SIZE_DEFAULT } from '../../components/terminal/terminalFontSize'
+import { clampTerminalFontSize, TERMINAL_FONT_SIZE_DEFAULT } from '../../terminal/terminalFontSize'
 import { useContainersStore } from '../../stores/containersStore'
 
 export function TerminalWindow() {

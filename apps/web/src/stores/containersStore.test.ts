@@ -1,5 +1,5 @@
 import { vi as terminalVi } from 'vitest'
-terminalVi.mock('../components/terminal/rawTerminalRuntime', () => ({ rawTerminalRuntime: () => ({ configure() {}, write() {}, setInteractive() {} }), disposeRawTerminal() {}, deactivateRawTerminal() {} }))
+terminalVi.mock('../terminal/rawTerminalRuntime', () => ({ rawTerminalRuntime: () => ({ configure() {}, write() {}, setInteractive() {} }), disposeRawTerminal() {}, deactivateRawTerminal() {} }))
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import type { ElysianEvent } from '@elysian/contracts'
 import type { Container, ContainerImage } from '@elysian/contracts'
@@ -10,7 +10,7 @@ import {
   containerActionSuccessMessage,
   containerRestartConfirmDescription,
   containerStopConfirmDescription,
-} from '../features/container/containerCopy'
+} from '../utils/containerCopy'
 import { useContainersStore } from './containersStore'
 import { advanceAuthGeneration } from '../adapters/http/unauthorized'
 import { CONTAINERS, CONTAINER_IMAGES } from '../adapters/mock/containersData'

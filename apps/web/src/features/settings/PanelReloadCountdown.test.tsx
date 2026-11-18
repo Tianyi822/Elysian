@@ -7,7 +7,7 @@ import { usePanelStore } from '../../stores/panelStore'
 import { useSessionStore } from '../../stores/sessionStore'
 import { PanelReloadCountdown } from './PanelReloadCountdown'
 import { reloadPanelPage } from './panelNavigation'
-import { PANEL_RELOAD_KEY, readPanelReload, savePanelReload } from './panelReload'
+import { PANEL_RELOAD_KEY, readPanelReload, savePanelReload } from '../../stores/panelReload'
 
 vi.mock('./panelNavigation', () => ({ reloadPanelPage: vi.fn() }))
 const ports = { frontendPort: 48100, backendPort: 48101 }

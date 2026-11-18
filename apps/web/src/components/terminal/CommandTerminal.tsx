@@ -1,6 +1,6 @@
 import { useEffect, useRef, useState, type CSSProperties } from 'react'
 import { loadCommandTerminalLibrary, type CommandTerminalInstance } from './commandTerminalLibrary'
-import { TERMINAL_FONT_SIZE_DEFAULT, TERMINAL_FONT_SIZE_WHEEL_STEP } from './terminalFontSize'
+import { TERMINAL_FONT_SIZE_DEFAULT, TERMINAL_FONT_SIZE_WHEEL_STEP } from '../../terminal/terminalFontSize'
 import { writeClipboardText } from '../../utils/clipboardText'
 import { useMessageStore } from '../../stores/messageStore'
 import './commandTerminal.css'

@@ -10,7 +10,7 @@ import {
   TERMINAL_FONT_SIZE_MAX,
   TERMINAL_FONT_SIZE_MIN,
   TERMINAL_FONT_SIZE_STEP,
-} from '../../components/terminal/terminalFontSize'
+} from '../../terminal/terminalFontSize'
 import { hostTerminalBanner, tabLabel, type HostTerminalSession } from '../../stores/terminalsStore'
 import { Button } from '../../components/Button'
 

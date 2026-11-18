@@ -8,8 +8,8 @@ import { usePanelStore } from '../../stores/panelStore'
 import { useSessionStore } from '../../stores/sessionStore'
 import { renderApp } from '../../test/renderApp'
 import { PanelUpdateMonitor } from './PanelUpdateMonitor'
-import { PANEL_PENDING_KEY, savePanelPending } from './panelPending'
-import { readPanelReload, savePanelReload } from './panelReload'
+import { PANEL_PENDING_KEY, savePanelPending } from '../../stores/panelPending'
+import { readPanelReload, savePanelReload } from '../../stores/panelReload'
 import { reloadPanelPage } from './panelNavigation'
 
 vi.mock('./panelNavigation', () => ({ openPanelAddress: vi.fn(), reloadPanelPage: vi.fn() }))

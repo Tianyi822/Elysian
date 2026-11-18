@@ -1,5 +1,6 @@
 import { readFileSync, readdirSync } from 'node:fs'
 import { dirname, join, relative } from 'node:path'
+import { parseSync, Visitor } from 'vite'
 import { describe, expect, it } from 'vitest'
 
 /**
@@ -69,6 +70,29 @@ describe('浏览器侧边界', () => {
         if (!specifier?.startsWith('.')) continue
         expect(join(dirname(file), specifier), `${file} 不应导入 ${specifier}`).not.toMatch(/^stores(?:\/|$)/)
       }
+    }
+  })
+
+  it('store 不从 features 或 components 导入运行时代码', () => {
+    for (const file of listSourceFiles(join(WEB_SRC, 'stores'))) {
+      const source = readFileSync(join(WEB_SRC, file), 'utf8')
+      const parsed = parseSync(file, source)
+      expect(parsed.errors, file).toEqual([])
+      const check = (specifier: string) => {
+        if (!specifier.startsWith('.')) return
+        expect(join(dirname(file), specifier), `${file} 不应引入 ${specifier}`).not.toMatch(/^(features|components)(\/|$)/)
+      }
+      for (const { moduleRequest, entries } of parsed.module.staticImports) {
+        if (entries.length === 0 || entries.some(entry => !entry.isType)) check(moduleRequest.value)
+      }
+      for (const { entries } of parsed.module.staticExports) {
+        for (const entry of entries) if (!entry.isType && entry.moduleRequest) check(entry.moduleRequest.value)
+      }
+      new Visitor({
+        ImportExpression({ source }) {
+          if (source.type === 'Literal' && typeof source.value === 'string') check(source.value)
+        },
+      }).visit(parsed.program)
     }
   })
 })

@@ -1,6 +1,6 @@
 import { useEffect, useRef } from 'react'
-import { rawTerminalRuntime } from './rawTerminalRuntime'
-import { TERMINAL_FONT_SIZE_DEFAULT, TERMINAL_FONT_SIZE_WHEEL_STEP } from './terminalFontSize'
+import { rawTerminalRuntime } from '../../terminal/rawTerminalRuntime'
+import { TERMINAL_FONT_SIZE_DEFAULT, TERMINAL_FONT_SIZE_WHEEL_STEP } from '../../terminal/terminalFontSize'
 
 export function RawTerminalViewport({ sessionKey, interactive = true, fontSize = TERMINAL_FONT_SIZE_DEFAULT, onFontZoom, inputLabel = '命令输入', className = '' }: {
   sessionKey: string

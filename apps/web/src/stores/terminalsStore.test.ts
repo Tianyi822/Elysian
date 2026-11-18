@@ -4,7 +4,7 @@ import { createMockGateway } from '../adapters/mock/gateway'
 import { useTerminalsStore, tabLabel } from './terminalsStore'
 import { useSessionStore } from './sessionStore'
 const runtime = vi.hoisted(() => ({ configure: vi.fn(), write: vi.fn(), setInteractive: vi.fn() }))
-vi.mock('../components/terminal/rawTerminalRuntime', () => ({ rawTerminalRuntime: vi.fn(() => runtime), disposeRawTerminal: vi.fn(), deactivateRawTerminal: vi.fn() }))
+vi.mock('../terminal/rawTerminalRuntime', () => ({ rawTerminalRuntime: vi.fn(() => runtime), disposeRawTerminal: vi.fn(), deactivateRawTerminal: vi.fn() }))
 beforeEach(() => { useTerminalsStore.getState().resetLocal(); vi.clearAllMocks() })
 describe('终端会话元数据', () => {
   it('打开、选择和确认关闭独立会话，最后关闭后保持空态', async () => {
