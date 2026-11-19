@@ -18,7 +18,7 @@ type DeploymentState = {
   status: 'idle' | 'loading' | 'ready' | 'error'
   errorMessage?: string
   clearDisplay(): void
-  refresh(gateway: ElysianGateway): Promise<void>
+  load(gateway: ElysianGateway): Promise<void>
   put(task: WebsiteDeploymentTask): void
 }
 
@@ -35,7 +35,7 @@ export const useWebsiteDeploymentsStore = create<DeploymentState>((set, get) => 
     notifyTransition(get().tasks.find((row) => row.id === task.id), task)
     set((s) => ({ tasks: [task, ...s.tasks.filter((row) => row.id !== task.id)] }))
   },
-  async refresh(gateway) {
+  async load(gateway) {
     const api = gateway.websites.deployment
     if (get().status === 'loading' || !api) return
     const current = reads.capture()

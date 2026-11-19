@@ -37,11 +37,11 @@ describe('部署任务登录会话边界', () => {
     const store = useWebsiteDeploymentsStore.getState()
     const session = useSessionStore.getState()
     store.put(task)
-    const first = store.refresh(gateway)
+    const first = store.load(gateway)
     session.expire()
     const cleared = useWebsiteDeploymentsStore.getState()
     await session.login(gateway, 'admin', 'password')
-    const second = store.refresh(gateway)
+    const second = store.load(gateway)
     if (outcome === '成功') old.resolve([task])
     else old.reject(new Error('旧清单读取失败'))
     await first
@@ -66,7 +66,7 @@ describe('部署任务登录会话边界', () => {
     const readTask = vi.spyOn(api, 'task').mockReturnValueOnce(detail.promise)
     const store = useWebsiteDeploymentsStore.getState()
     store.put(task)
-    const pending = store.refresh(gateway)
+    const pending = store.load(gateway)
     await vi.waitFor(() => expect(readTask).toHaveBeenCalledExactlyOnceWith(task.id))
     await useSessionStore.getState().logout(gateway)
     detail.resolve({ ...task, state: 'failed', error: '旧部署失败' })
@@ -87,12 +87,12 @@ it('部署任务刷新失败保留快照，重试时合并在途刷新并清除�
     .mockReturnValueOnce(retry.promise)
   const store = useWebsiteDeploymentsStore.getState()
 
-  await store.refresh(gateway)
-  await store.refresh(gateway)
+  await store.load(gateway)
+  await store.load(gateway)
   expect(useWebsiteDeploymentsStore.getState()).toMatchObject({ tasks: [completed], status: 'error', errorMessage: '部署任务暂时不可用' })
 
-  const pending = store.refresh(gateway)
-  await store.refresh(gateway)
+  const pending = store.load(gateway)
+  await store.load(gateway)
   expect(list).toHaveBeenCalledTimes(3)
   expect(useWebsiteDeploymentsStore.getState()).toMatchObject({ tasks: [completed], status: 'loading', errorMessage: '部署任务暂时不可用' })
   retry.resolve([])
@@ -107,7 +107,7 @@ describe('网站部署通知', () => {
     vi.spyOn(gateway.websites.deployment!, 'list').mockResolvedValue([failed])
     useWebsiteDeploymentsStore.getState().put(task)
     useWebsiteDeploymentsStore.getState().put(failed)
-    await useWebsiteDeploymentsStore.getState().refresh(gateway)
+    await useWebsiteDeploymentsStore.getState().load(gateway)
     useWebsiteDeploymentsStore.getState().put(failed)
     expect(useMessageStore.getState().messages).toEqual([
       expect.objectContaining({ tone: 'danger', message: '项目 演示站点：部署失败，构建脚本退出 1' }),
@@ -117,7 +117,7 @@ describe('网站部署通知', () => {
   it('初次读取历史任务不弹通知，运行任务等待配置时通知警告', async () => {
     const gateway = createMockGateway({ eventStream: 'memory' })
     vi.spyOn(gateway.websites.deployment!, 'list').mockResolvedValue([{ ...task, state: 'succeeded' }])
-    await useWebsiteDeploymentsStore.getState().refresh(gateway)
+    await useWebsiteDeploymentsStore.getState().load(gateway)
     expect(useMessageStore.getState().messages).toHaveLength(0)
     useWebsiteDeploymentsStore.getState().put(task)
     useWebsiteDeploymentsStore.getState().put({ ...task, state: 'awaiting-config', error: '请选择构建产物' })

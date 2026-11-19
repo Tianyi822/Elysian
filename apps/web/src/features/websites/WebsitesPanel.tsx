@@ -96,9 +96,9 @@ export function WebsitesPanel() {
   useFeedbackMessage(taskError)
   const [rollbackIds, setRollbackIds] = useState<readonly string[]>([])
   const hasActiveTask = tasks.some((task) => websiteDeploymentIsActive(task.state))
-  useEffect(() => { void useWebsiteDeploymentsStore.getState().refresh(gateway) }, [gateway])
+  useEffect(() => { void useWebsiteDeploymentsStore.getState().load(gateway) }, [gateway])
   const taskListScope = useMemo(() => [gateway, taskListOpen, hasActiveTask], [gateway, taskListOpen, hasActiveTask])
-  useSilentPolling(() => useWebsiteDeploymentsStore.getState().refresh(gateway), {
+  useSilentPolling(() => useWebsiteDeploymentsStore.getState().load(gateway), {
     intervalMs: 2000, enabled: taskListOpen || hasActiveTask, pauseOnHidden: false, scope: taskListScope,
   })
   const refreshError = useWebsitesStore(s => s.errorMessage)
