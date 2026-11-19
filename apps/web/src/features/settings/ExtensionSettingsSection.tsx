@@ -5,7 +5,7 @@ import { ErrorState, LoadingState } from '../../components/states/StateViews'
 import { useFeedbackMessage } from '../../components/useFeedbackMessage'
 import { useSessionStore } from '../../stores/sessionStore'
 import { AgentUnavailableState } from './AgentUnavailableState'
-import { useSilentPolling } from './useSilentPolling'
+import { useSilentPolling } from '../../components/useSilentPolling'
 import { McpSection } from './McpSection'
 import { SkillsSection } from './SkillsSection'
 

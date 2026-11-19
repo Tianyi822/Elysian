@@ -1,7 +1,7 @@
 import { useEffect } from 'react'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { AgentUnavailableState } from './AgentUnavailableState'
-import { useSilentPolling } from './useSilentPolling'
+import { useSilentPolling } from '../../components/useSilentPolling'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
 import { useAgentRuntimeStore } from '../../stores/agentRuntimeStore'
 import { useModelSettingsStore } from '../../stores/modelSettingsStore'

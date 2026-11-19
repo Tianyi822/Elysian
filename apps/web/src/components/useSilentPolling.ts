@@ -1,14 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 
 /*
- * 静默轮询 hook（Agent 域无 SSE，增量全靠 JSON 分页轮询）。约定：
+ * 页面静默回读，不驱动手动刷新按钮。
  * - setTimeout 链而非 setInterval：下一次在上一次完成后才排，绝不重叠；
- * - document.hidden 暂停（不排定时器），恢复可见时立即补跑一轮；
+ * - 默认后台暂停，恢复可见时立即补跑一轮；
  * - 连续失败退避 ×2 至上限（默认 60 秒），成功即复位回正常节奏；
- * - degraded 暴露给页面标「连接中断，正在重试」（role=status）；
- * - 静默轮询不驱动 RefreshButton（口径同 WebsitesPanel 先例）；
+ * - degraded 供调用方展示连接中断状态；
  * - 卸载清定时器并 abort 当轮请求；task 抛错即记一次失败，不向上冒泡。
- * 节奏基准：非终态活动实体 3 秒；挂载中的审批/列表 10–15 秒。
  */
 
 export type UseSilentPollingOptions = {
@@ -16,10 +14,12 @@ export type UseSilentPollingOptions = {
   intervalMs: number
   /** 退避上限（毫秒），默认 60000。 */
   maxBackoffMs?: number
-  /** false 时暂停轮询（如页面无活跃实体）；不卸载监听。 */
+  /** false 时停止轮询（如页面无活跃实体）。 */
   enabled?: boolean
   /** true 时挂载即先跑一轮（默认先等一个节奏，首轮加载由页面自己的 load 承担）。 */
   immediate?: boolean
+  /** 默认在后台暂停；需要保持原后台节奏的调用方可设为 false。 */
+  pauseOnHidden?: boolean
 }
 
 export function useSilentPolling(
@@ -35,6 +35,7 @@ export function useSilentPolling(
   const maxBackoffMs = options.maxBackoffMs ?? 60_000
   const enabled = options.enabled !== false
   const immediate = options.immediate === true
+  const pauseOnHidden = options.pauseOnHidden !== false
 
   useEffect(() => {
     if (!enabled) return
@@ -43,15 +44,16 @@ export function useSilentPolling(
     let cancelled = false
     let failures = 0
     let inFlight = false
+    const isHidden = () => pauseOnHidden && document.hidden
 
     const run = async () => {
-      if (cancelled || document.hidden || inFlight) return
+      if (cancelled || isHidden() || inFlight) return
       inFlight = true
       let delay = intervalMs
       let pending: Promise<void> | undefined
       try {
         if (activeTaskRef.current) await activeTaskRef.current.catch(() => {})
-        if (cancelled || document.hidden) return
+        if (cancelled || isHidden()) return
         controller = new AbortController()
         pending = Promise.resolve().then(() => taskRef.current(controller!.signal))
         activeTaskRef.current = pending
@@ -67,12 +69,12 @@ export function useSilentPolling(
       } finally {
         if (pending && activeTaskRef.current === pending) activeTaskRef.current = undefined
         inFlight = false
-        if (!cancelled && !document.hidden) schedule(delay)
+        schedule(delay)
       }
     }
 
     const schedule = (delay: number) => {
-      if (cancelled || document.hidden || timer !== undefined) return
+      if (cancelled || isHidden() || timer !== undefined) return
       timer = setTimeout(() => {
         timer = undefined
         void run()
@@ -85,17 +87,17 @@ export function useSilentPolling(
         timer = undefined
       } else if (!cancelled && !inFlight && timer === undefined) schedule(0)
     }
-    document.addEventListener('visibilitychange', onVisibility)
+    if (pauseOnHidden) document.addEventListener('visibilitychange', onVisibility)
 
     schedule(immediate ? 0 : intervalMs)
     return () => {
       cancelled = true
       if (timer !== undefined) clearTimeout(timer)
       controller?.abort()
-      document.removeEventListener('visibilitychange', onVisibility)
+      if (pauseOnHidden) document.removeEventListener('visibilitychange', onVisibility)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [intervalMs, maxBackoffMs, enabled, immediate])
+  }, [intervalMs, maxBackoffMs, enabled, immediate, pauseOnHidden])
 
   return { degraded }
 }

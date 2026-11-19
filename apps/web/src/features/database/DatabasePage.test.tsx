@@ -8,6 +8,7 @@ import { useContainersStore } from '../../stores/containersStore'
 import { useDatabaseStore } from '../../stores/databaseStore'
 import { useMessageStore } from '../../stores/messageStore'
 import { useSessionStore } from '../../stores/sessionStore'
+import { advancePoll } from '../../test/agentTestUtils'
 import { renderApp } from '../../test/renderApp'
 
 /**
@@ -234,6 +235,59 @@ function pageGateway(overrides: Partial<ElysianGateway['databases']> = {}): {
 }
 
 describe('数据库页面', () => {
+  it('前台每 15 秒静默刷新，后台暂停，恢复可见立即补读', async () => {
+    const { gateway } = pageGateway()
+    const list = vi.spyOn(gateway.databases, 'list')
+    const listSqlite = vi.spyOn(gateway.databases, 'listSqlite')
+    const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(false)
+    vi.useFakeTimers()
+    const view = renderApp('/databases', { gateway })
+    const advance = (ms: number) => act(() => advancePoll(ms))
+    const setHidden = (value: boolean) => {
+      hidden.mockReturnValue(value)
+      document.dispatchEvent(new Event('visibilitychange'))
+    }
+    try {
+      await advance(0)
+      const card = screen.getByRole('article', { name: 'MariaDB 数据库容器 mariadb-primary' })
+      const refresh = screen.getByRole('button', { name: '刷新' })
+      expect(list).toHaveBeenCalledTimes(1)
+      expect(listSqlite).toHaveBeenCalledTimes(1)
+      await advance(14_999)
+      expect(list).toHaveBeenCalledTimes(1)
+
+      const rows = await list.mock.results[0]!.value
+      let finish!: (value: typeof rows) => void
+      list.mockReturnValueOnce(new Promise(resolve => { finish = resolve }))
+      await advance(1)
+      expect(list).toHaveBeenCalledTimes(2)
+      expect(refresh).toBeEnabled()
+      expect(card).toBeInTheDocument()
+      await act(async () => { finish(rows) })
+
+      setHidden(true)
+      await advance(30_000)
+      expect(list).toHaveBeenCalledTimes(2)
+      expect(listSqlite).toHaveBeenCalledTimes(2)
+      setHidden(false)
+      await advance(0)
+      expect(list).toHaveBeenCalledTimes(3)
+      expect(listSqlite).toHaveBeenCalledTimes(3)
+
+      list.mockReturnValueOnce(new Promise(resolve => { finish = resolve }))
+      fireEvent.click(refresh)
+      expect(list).toHaveBeenCalledTimes(4)
+      expect(refresh).toBeDisabled()
+      await act(async () => { finish(rows) })
+      expect(refresh).toBeEnabled()
+      expect(card).toBeInTheDocument()
+    } finally {
+      view.unmount()
+      hidden.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
   it('容器卡渲染连接信息：地址、端口、网络、卷、凭据状态与容器内存都来自 Docker 事实', async () => {
     renderApp('/databases', { gateway: pageGateway().gateway })
 

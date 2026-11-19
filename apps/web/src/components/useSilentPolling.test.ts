@@ -1,7 +1,7 @@
 import { act, renderHook } from '@testing-library/react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { useSilentPolling } from './useSilentPolling'
-import { advancePoll } from '../../test/agentTestUtils'
+import { advancePoll } from '../test/agentTestUtils'
 
 let sequence = 0
 const nextTask = vi.fn()
@@ -117,6 +117,21 @@ describe('useSilentPolling', () => {
     expect(task).toHaveBeenCalledTimes(1)
     await act(async () => { calls[0]!.resolve() })
     await advancePoll(3000)
+    expect(task).toHaveBeenCalledTimes(2)
+  })
+
+  it('明确保留后台轮询时，隐藏和恢复都不改变节奏', async () => {
+    const task = vi.fn(async () => {})
+    renderHook(() => useSilentPolling(task, { intervalMs: 3000, pauseOnHidden: false }))
+    Object.defineProperty(document, 'hidden', { value: true, configurable: true })
+    document.dispatchEvent(new Event('visibilitychange'))
+    await advancePoll(3000)
+    expect(task).toHaveBeenCalledTimes(1)
+    Object.defineProperty(document, 'hidden', { value: false, configurable: true })
+    document.dispatchEvent(new Event('visibilitychange'))
+    await advancePoll(2999)
+    expect(task).toHaveBeenCalledTimes(1)
+    await advancePoll(1)
     expect(task).toHaveBeenCalledTimes(2)
   })
 

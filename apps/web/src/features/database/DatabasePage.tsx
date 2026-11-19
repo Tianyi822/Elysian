@@ -22,6 +22,7 @@ import { CTL_PRIMARY, CTL_TOOLBAR } from '../../components/formControl'
 import { ErrorState, EmptyState, LoadingState } from '../../components/states/StateViews'
 import { StaleDataBanner } from '../../components/states/StaleDataBanner'
 import { RefreshButton } from '../../components/RefreshState'
+import { useSilentPolling } from '../../components/useSilentPolling'
 import { StatusTag } from '../../components/StatusTag'
 import type { StatusTone } from '../../components/StatusTag'
 import { useGateway } from '../../adapters/GatewayProvider'
@@ -84,11 +85,7 @@ export function DatabasePage() {
     // 依赖检测幂等：切页重挂不重探，报告由探测层消费。
     void check(gateway)
   }, [gateway, load, check])
-  // 15 秒静默轮询：ADR-0058 局部刷新，只更新列表区域，不叠加遮罩。
-  useEffect(() => {
-    const timer = window.setInterval(() => { void refresh(gateway) }, 15_000)
-    return () => window.clearInterval(timer)
-  }, [gateway, refresh])
+  useSilentPolling(() => refresh(gateway), { intervalMs: 15_000 })
 
   const containerById = useMemo(
     () => new Map(containers.map((container) => [container.id, container])),
