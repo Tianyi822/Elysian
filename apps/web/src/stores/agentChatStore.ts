@@ -11,6 +11,7 @@ import { useMessageStore, type MessageTone } from './messageStore'
 import type { AgentChatAdapter, AgentChatAttachment, AgentChatPermissionMode, AgentChatSession, AgentChatRun, AgentConversationAdapter } from '../contracts/agentChat'
 import type { AgentUserInputAnswer, AgentUserInputRequest } from '@elysian/contracts'
 import { messageOf } from '../utils/errorMessage'
+import { applySubmissionReceipt, isConfirmedRejection } from './agentChatSubmission'
 
 type AgentChatState = {
   setUserInputAnswer(request: AgentUserInputRequest, questionId: string, answer: AgentUserInputAnswer): void
@@ -79,17 +80,6 @@ export const chatRunFailure = (run: AgentChatRun | null) => run && !isChatRunAct
   ? `${RUNTIME_RUN_STATUS_LABELS[run.status]}${run.error ? `：${run.error.message}` : ''}`
   : null
 const failureMessage = (error: unknown) => messageOf(error, '会话请求失败')
-// 这些业务拒绝发生在 submitAgent 核对 requestId 之后，可确认该请求未被接受。
-// 前置来源/请求体守卫、未知 4xx 与请求标识冲突都不能证明先前的未确认请求未执行。
-const confirmedRejections: Readonly<Record<string, number>> = {
-  'invalid-task': 400, 'model-capability': 400, 'unsupported-reasoning-level': 400,
-  'session-not-found': 404, 'task-not-found': 404, 'profile-not-found': 404, 'profile-revision-not-found': 404,
-  'session-busy': 409, 'model-changed': 409, 'profile-inactive': 409, 'queue-full': 429,
-  'invalid-replacement': 400, 'message-changed': 409, 'continuation-changed': 409, 'continuation-blocked': 409,
-  'image-unsupported': 400, 'attachment-invalid': 400, 'attachment-too-many': 400, 'attachment-too-large': 400, 'attachment-message-too-large': 400,
-}
-const isConfirmedRejection = (error: unknown) => error instanceof AgentHttpError &&
-  !!error.code && Object.hasOwn(confirmedRejections, error.code) && confirmedRejections[error.code] === error.status
 
 export function createAgentChatStore(adapter: AgentChatAdapter, now: () => string = () => new Date().toISOString(), id: () => string = () => randomId()) {
   return create<AgentChatState>((set, get) => {
@@ -276,32 +266,20 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
     }
     const acceptRun = (run: AgentChatRun, owner = current(), display = true) => {
       const session = get().session?.id === owner.id ? current() : adapter.read(agentChatSessionKey(owner)) ?? owner
-      const pending = session.pending
-      if (pending && pending.input.requestId === run.requestId && pending.input.replaceMessageId) discardPrepared(session)
-      const next = { ...session, remote: { sessionId: run.sessionId ?? session.remote!.sessionId, taskId: run.taskId, runId: run.id },
-        ...(pending && pending.input.requestId === run.requestId ? { pending: undefined,
-          ...(pending.input.replaceMessageId ? { editing: undefined } : pending.input.continueFromRunId ? {} : { draft: session.draft.trim() === pending.input.content ? '' : session.draft }) } : {}) }
-      // 确认接受后只清本次发送引用的草稿附件并释放其本地字节：pending 未确认窗口内
-      // 新增的草稿附件（如跨标签写入）不属于本次发送集合，保留给用户后续处置。
-      if (pending && pending.input.requestId === run.requestId && !pending.input.replaceMessageId && pending.input.attachments?.length && session.attachments.length) {
-        const sent = new Set(pending.input.attachments.map(ref => ref.id))
-        const consumed = session.attachments.filter(attachment => attachment.serverId && sent.has(attachment.serverId))
-        if (consumed.length) {
-          next.attachments = session.attachments.filter(attachment => !attachment.serverId || !sent.has(attachment.serverId))
-          void adapter.discard(consumed.map(attachment => attachment.id))
-        }
-      }
+      const { next, acceptedInput, consumedAttachmentIds } = applySubmissionReceipt(session, run)
+      if (acceptedInput?.replaceMessageId) discardPrepared(session)
+      if (consumedAttachmentIds.length) void adapter.discard(consumedAttachmentIds)
       if (!display || get().session?.id !== owner.id) { adapter.write(next, false); if (get().session) set({ localSessions: adapter.list() }); return }
-      if (pending && pending.input.requestId === run.requestId && !pending.input.replaceMessageId) {
+      if (acceptedInput && !acceptedInput.replaceMessageId) {
         set({ outgoingMessage: get().messages.some(message => message.role === 'user' && message.runId === run.id)
-          ? null : { ...outgoingMessageFor(session, pending.input.content, pending.input.attachments ?? []), runId: run.id } })
+          ? null : { ...outgoingMessageFor(session, acceptedInput.content, acceptedInput.attachments ?? []), runId: run.id } })
       }
       persist(next)
-      if (pending && pending.input.requestId === run.requestId && pending.input.replaceMessageId) {
-        const replaced = get().messages.find(message => message.id === pending.input.replaceMessageId)
+      if (acceptedInput?.replaceMessageId) {
+        const replaced = get().messages.find(message => message.id === acceptedInput.replaceMessageId)
         if (replaced) setMessages(get().messages
           .filter(message => message.runId !== replaced.runId || message.id === replaced.id)
-          .map(message => message.id === replaced.id ? { ...message, content: pending.input.content, runId: run.id, runStatus: run.status,
+          .map(message => message.id === replaced.id ? { ...message, content: acceptedInput.content, runId: run.id, runStatus: run.status,
             attachments: message.attachments?.map(attachment => {
               const prepared = session.editing?.preparedAttachments?.find(item => item.sourceId === attachment.id)?.attachment
               return prepared?.serverId ? { id: prepared.serverId, name: prepared.name, mimeType: prepared.type as 'image/jpeg' | 'image/png', bytes: prepared.size, width: prepared.width!, height: prepared.height! } : attachment
