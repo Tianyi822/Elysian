@@ -1,4 +1,4 @@
-import { act, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMockGateway } from '../../adapters/mock/gateway'
@@ -124,5 +124,61 @@ describe('三步构建与部署', () => {
     const dialog = await screen.findByRole('dialog')
     await user.tab(); expect(dialog).toContainElement(document.activeElement as HTMLElement)
     expect(await screen.findByRole('log', { name: '部署日志' })).toHaveTextContent('演示环境')
+  })
+
+  it('后台每两秒继续回读部署日志，读完终态尾部才停止', async () => {
+    const user = userEvent.setup()
+    const gateway = await open()
+    await prepare('html', user)
+    const logs = vi.spyOn(gateway.websites.deployment!, 'logs')
+      .mockResolvedValueOnce({ lines: ['已开始部署\n'], next: 1, total: 2 })
+      .mockRejectedValueOnce(new Error('暂时无法读取部署日志'))
+      .mockResolvedValue({ lines: ['部署日志结束\n'], next: 2, total: 2 })
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+    vi.useFakeTimers()
+    const advance = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms))
+    try {
+      fireEvent.click(screen.getByRole('button', { name: '构建并部署' }))
+      await advance(0)
+      const log = screen.getByRole('log', { name: '部署日志' })
+      expect(screen.getByText(/演示部署完成/)).toBeInTheDocument()
+      expect(log).toHaveTextContent('已开始部署')
+      const id = logs.mock.calls[0]![0]
+      expect(logs).toHaveBeenCalledExactlyOnceWith(id, 0)
+      await advance(1999)
+      expect(logs).toHaveBeenCalledTimes(1)
+      await advance(1)
+      expect(screen.getByRole('alert')).toHaveTextContent('暂时无法读取部署日志')
+      await advance(2000)
+      expect(logs.mock.calls).toEqual([[id, 0], [id, 1], [id, 1]])
+      expect(log).toHaveTextContent('部署日志结束')
+      await advance(6000)
+      expect(logs).toHaveBeenCalledTimes(3)
+    } finally {
+      visibility.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
+  it('任务列表展开时在后台每两秒回读，收起且无活动任务时停止', async () => {
+    const gateway = await open()
+    const list = vi.spyOn(gateway.websites.deployment!, 'list')
+    const button = screen.getByRole('button', { name: '部署任务' })
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+    vi.useFakeTimers()
+    const advance = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms))
+    try {
+      fireEvent.click(button)
+      await advance(1999)
+      expect(list).not.toHaveBeenCalled()
+      await advance(1)
+      expect(list).toHaveBeenCalledTimes(1)
+      fireEvent.click(button)
+      await advance(6000)
+      expect(list).toHaveBeenCalledTimes(1)
+    } finally {
+      visibility.mockRestore()
+      vi.useRealTimers()
+    }
   })
 })

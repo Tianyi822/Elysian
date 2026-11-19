@@ -2,7 +2,7 @@ import { randomId } from '../../utils/randomId'
 import { deploymentTaskSummary } from './deploymentTaskSummary'
 import * as Dialog from '@radix-ui/react-dialog'
 import { ChipGroup } from '../../components/ChipGroup'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { WEBSITE_PROJECT_KIND_LABELS, isValidWebsiteProjectName, isValidWebsitePort, isValidWebsiteDomain, parseProjectNameFromGitUrl, websiteDeploymentIsActive } from '@elysian/contracts'
 import type { WebsiteSource, WebsiteBuildConfig, WebsiteDeploymentTask, WebsiteProject, WebsiteRuntimeCatalogReport } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
@@ -13,6 +13,7 @@ import { IconButton } from '../../components/IconButton'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import { X } from '../../components/icons'
 import { FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
+import { useSilentPolling } from '../../components/useSilentPolling'
 import { useMessageStore } from '../../stores/messageStore'
 import { Button } from '../../components/Button'
 import { messageOf } from '../../utils/errorMessage'
@@ -87,24 +88,20 @@ export function WebsitesCreateDialog({ project, existingTask, onClose }: { proje
     if (!candidate) return
     setConfig((previous) => ({ ...previous, buildVersion: previous.buildVersion || entries[0]?.version, runtimeVersion: previous.runtimeVersion || project?.runtimeVersion || entries[0]?.version }))
   }, [candidate?.id, catalog, project?.runtimeVersion]) // 版本目录回填，不回填启动命令
-  useEffect(() => {
-    if (step !== 3 || !task?.id || !api) return
-    let stopped = false; let inFlight = false; let timer: number | undefined
-    const poll = async () => {
-      if (inFlight) return
-      inFlight = true
-      try {
-        const [latest, batch] = await Promise.all([api.task(task.id), api.logs(task.id, offset.current)])
-        if (stopped) return
-        setTask(latest); useWebsiteDeploymentsStore.getState().put(latest)
-        if (batch.next > offset.current) { setLogs((text) => (text + batch.lines.join('')).slice(-128_000)); offset.current = batch.next }
-        if (!websiteDeploymentIsActive(latest.state) && latest.state !== 'awaiting-config' && batch.next >= batch.total && timer !== undefined) window.clearInterval(timer)
-        if (!websiteDeploymentIsActive(latest.state) && latest.state !== 'awaiting-config' && !completed.current) { completed.current = true; void useWebsitesStore.getState().refresh(gateway) }
-      } catch (e) { if (!stopped) setError(errorOf(e)) } finally { inFlight = false }
-    }
-    void poll(); timer = window.setInterval(() => void poll(), 2000)
-    return () => { stopped = true; window.clearInterval(timer) }
-  }, [step, task?.id, api, gateway])
+  const taskId = task?.id
+  const taskReadScope = useMemo(() => [gateway, api, taskId], [gateway, api, taskId])
+  useSilentPolling(async signal => {
+    if (!taskId || !api) return false
+    try {
+      const [latest, batch] = await Promise.all([api.task(taskId), api.logs(taskId, offset.current)])
+      if (signal.aborted) return
+      setTask(latest); useWebsiteDeploymentsStore.getState().put(latest)
+      if (batch.next > offset.current) { setLogs((text) => (text + batch.lines.join('')).slice(-128_000)); offset.current = batch.next }
+      const finished = !websiteDeploymentIsActive(latest.state) && latest.state !== 'awaiting-config'
+      if (finished && !completed.current) { completed.current = true; void useWebsitesStore.getState().refresh(gateway) }
+      return !finished || batch.next < batch.total
+    } catch (e) { if (!signal.aborted) setError(errorOf(e)) }
+  }, { intervalMs: 2000, enabled: step === 3 && !!taskId && !!api, immediate: true, pauseOnHidden: false, scope: taskReadScope })
 
   const patch = (values: Partial<WebsiteBuildConfig>) => setConfig((old) => ({ ...old, ...values }))
   const chooseCandidate = (id: string, prepared = source) => {

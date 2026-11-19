@@ -1,5 +1,5 @@
 import * as Dialog from '@radix-ui/react-dialog'
-import { useEffect } from 'react'
+import { useEffect, useMemo } from 'react'
 import { Loader2, ScrollText, TriangleAlert, X } from '../../components/icons'
 import { CONTAINER_BUILD_STATE_LABELS, isContainerBuildActive } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
@@ -7,6 +7,7 @@ import { IconButton } from '../../components/IconButton'
 import { CTL_SECONDARY } from '../../components/formControl'
 import { useContainerAppsStore } from '../../stores/containerAppsStore'
 import { useFeedbackMessage } from '../../components/useFeedbackMessage'
+import { useSilentPolling } from '../../components/useSilentPolling'
 import { Button } from '../../components/Button'
 
 /**
@@ -35,11 +36,10 @@ export function ContainerBuildLogsSheet({
   }, [gateway, slug, taskId, openBuildLogs])
 
   const active = task !== undefined && isContainerBuildActive(task.state)
-  useEffect(() => {
-    if (!active) return
-    const timer = window.setInterval(() => void loadBuildLogs(gateway, slug, taskId), 2000)
-    return () => window.clearInterval(timer)
-  }, [gateway, slug, taskId, active, loadBuildLogs])
+  const logsScope = useMemo(() => [gateway, slug, taskId], [gateway, slug, taskId])
+  useSilentPolling(() => loadBuildLogs(gateway, slug, taskId), {
+    intervalMs: 2000, enabled: active, pauseOnHidden: false, scope: logsScope,
+  })
 
   const requestClose = () => {
     closeBuildLogs(taskId)

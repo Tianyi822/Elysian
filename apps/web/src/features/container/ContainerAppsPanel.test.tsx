@@ -487,7 +487,8 @@ describe('工作区构建任务区', () => {
     expect((await within(card).findAllByText('构建成功')).length).toBeGreaterThan(0)
   })
 
-  it('日志抽屉打开拉全量，活跃任务每 2 秒按已读字节增量', async () => {
+  it('日志抽屉打开拉全量，活跃任务在后台也每 2 秒按已读字节增量', async () => {
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
     vi.useFakeTimers({ shouldAdvanceTime: true })
     try {
       const active = { ...succeededBuildTask, state: 'building' as const, stage: '构建镜像 elysian/demo-app/app', results: [] }
@@ -504,7 +505,9 @@ describe('工作区构建任务区', () => {
       expect(await within(sheet).findByText('打包构建上下文（1 个文件，20 字节）')).toBeTruthy()
       expect(within(sheet).getByText(/已读取 45 \/ 90 字节/)).toBeTruthy()
 
-      await vi.advanceTimersByTimeAsync(2_100)
+      visibility.mockReturnValue('hidden')
+      document.dispatchEvent(new Event('visibilitychange'))
+      await act(() => vi.advanceTimersByTimeAsync(2_100))
       await within(sheet).findByText('构建镜像 elysian/demo-app/app')
       expect(logs).toHaveBeenNthCalledWith(1, 'demo-app', active.id, 0)
       expect(logs).toHaveBeenNthCalledWith(2, 'demo-app', active.id, 45)
@@ -512,11 +515,13 @@ describe('工作区构建任务区', () => {
       await user.click(within(sheet).getByRole('button', { name: '关闭构建日志' }))
       await waitFor(() => expect(screen.queryByRole('dialog', { name: /构建日志 ·/ })).toBeNull())
     } finally {
+      visibility.mockRestore()
       vi.useRealTimers()
     }
   })
 
-  it('任务区展开或存在活跃任务时每 2 秒静默刷新，收起且无活跃后停止', async () => {
+  it('任务区展开或有活跃任务时在后台每 2 秒静默刷新，收起且无活跃后停止', async () => {
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
     vi.useFakeTimers({ shouldAdvanceTime: true })
     try {
       const active = { ...succeededBuildTask, state: 'queued' as const, stage: '等待构建资源', results: [] }
@@ -526,6 +531,8 @@ describe('工作区构建任务区', () => {
 
       // 活跃任务在跑：即使把任务区收起，轮询也继续（对齐 WebsitesPanel 先例）。
       await user.click(within(card).getByRole('button', { name: /^构建任务（1）/ }))
+      visibility.mockReturnValue('hidden')
+      document.dispatchEvent(new Event('visibilitychange'))
       const whileActive = listAppBuilds.mock.calls.length
       await vi.advanceTimersByTimeAsync(2_100)
       expect(listAppBuilds.mock.calls.length).toBeGreaterThan(whileActive)
@@ -538,6 +545,7 @@ describe('工作区构建任务区', () => {
       await vi.advanceTimersByTimeAsync(5_000)
       expect(listAppBuilds.mock.calls.length).toBe(settled)
     } finally {
+      visibility.mockRestore()
       vi.useRealTimers()
     }
   })

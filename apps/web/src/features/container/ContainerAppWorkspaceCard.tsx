@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ChangeEvent } from 'react'
 import { ConfirmDialog } from '../../components/ConfirmDialog'
 import {
@@ -41,6 +41,7 @@ import { ContainerBuildDialog } from './ContainerBuildDialog'
 import { ContainerBuildLogsSheet } from './ContainerBuildLogsSheet'
 import { formatWorkspaceSize } from './formatWorkspaceSize'
 import { useFeedbackMessage } from '../../components/useFeedbackMessage'
+import { useSilentPolling } from '../../components/useSilentPolling'
 import { Button } from '../../components/Button'
 
 /** 待确认的删除目标：工作区连目录一起删，单文件只删自己。 */
@@ -168,13 +169,10 @@ export function ContainerAppWorkspaceCard({
   }, [buildsOpen, gateway, app.slug, ensureBuilds])
 
   const hasActiveBuild = builds.some((task) => isContainerBuildActive(task.state))
-  // 静默轮询（对齐 WebsitesPanel 先例）：任一活跃任务、任务区展开或日志抽屉打开时 2s 一拍；
-  // 轮询不驱动 RefreshButton，手动刷新才转图标。
-  useEffect(() => {
-    if (!buildsOpen && !hasActiveBuild && logsTaskId === null) return
-    const timer = window.setInterval(() => void refreshBuilds(gateway, app.slug, { silent: true }), 2000)
-    return () => window.clearInterval(timer)
-  }, [gateway, app.slug, buildsOpen, hasActiveBuild, logsTaskId, refreshBuilds])
+  const buildListScope = useMemo(() => [gateway, app.slug, buildsOpen, hasActiveBuild, logsTaskId], [gateway, app.slug, buildsOpen, hasActiveBuild, logsTaskId])
+  useSilentPolling(() => refreshBuilds(gateway, app.slug, { silent: true }), {
+    intervalMs: 2000, enabled: buildsOpen || hasActiveBuild || logsTaskId !== null, pauseOnHidden: false, scope: buildListScope,
+  })
 
   const batchBusy = writing === appWritingKey(app.slug, WORKSPACE_WRITING_PATH)
   const checkHere = check?.slug === app.slug ? check : null

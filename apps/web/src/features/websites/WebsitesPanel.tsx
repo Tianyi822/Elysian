@@ -2,7 +2,7 @@ import { deploymentTaskSummary } from './deploymentTaskSummary'
 import { formatDateTime } from '../../components/format'
 import { useWebsiteDeploymentsStore } from '../../stores/websiteDeploymentsStore'
 import type { WebsiteCategory, WebsiteProject, WebsiteDeploymentTask } from '@elysian/contracts'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import { WEBSITE_CATEGORIES, WEBSITE_CATEGORY_LABELS, websiteDeploymentIsActive } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { RefreshCw } from '../../components/icons'
@@ -22,6 +22,7 @@ import { WebsitesSettingsDialog } from './WebsitesSettingsDialog'
 import { CaddyConfigDialog } from './CaddyConfigDialog'
 import { filterWebsiteProjects } from './websitesListing'
 import { useFeedbackMessage } from '../../components/useFeedbackMessage'
+import { useSilentPolling } from '../../components/useSilentPolling'
 import { useMessageStore } from '../../stores/messageStore'
 import { Button } from '../../components/Button'
 import { messageOf } from '../../utils/errorMessage'
@@ -95,11 +96,10 @@ export function WebsitesPanel() {
   const [rollbackIds, setRollbackIds] = useState<readonly string[]>([])
   const hasActiveTask = tasks.some((task) => websiteDeploymentIsActive(task.state))
   useEffect(() => { void useWebsiteDeploymentsStore.getState().refresh(gateway) }, [gateway])
-  useEffect(() => {
-    if (!taskListOpen && !hasActiveTask) return
-    const timer = window.setInterval(() => void useWebsiteDeploymentsStore.getState().refresh(gateway), 2000)
-    return () => window.clearInterval(timer)
-  }, [gateway, taskListOpen, hasActiveTask])
+  const taskListScope = useMemo(() => [gateway, taskListOpen, hasActiveTask], [gateway, taskListOpen, hasActiveTask])
+  useSilentPolling(() => useWebsiteDeploymentsStore.getState().refresh(gateway), {
+    intervalMs: 2000, enabled: taskListOpen || hasActiveTask, pauseOnHidden: false, scope: taskListScope,
+  })
   const refreshError = useWebsitesStore(s => s.errorMessage)
   const projects = useWebsitesStore((s) => s.projects)
   const proxyStatus = useWebsitesStore((s) => s.proxyStatus)
