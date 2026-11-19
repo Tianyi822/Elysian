@@ -1,22 +1,13 @@
 import * as Dialog from '@radix-ui/react-dialog'
-import { ChipGroup } from '../../components/ChipGroup'
-import { useState } from 'react'
-import { Hammer, Loader2, TriangleAlert, X } from '../../components/icons'
 import type { ContainerApp, ContainerBuildSubmitInput } from '@elysian/contracts'
-import { useGateway } from '../../adapters/GatewayProvider'
-import { isDockerRuntime } from '../../utils/isDockerRuntime'
-import { CTL_FIELD, CTL_PRIMARY, CTL_SECONDARY } from '../../components/formControl'
-import { ConfirmDialog } from '../../components/ConfirmDialog'
-import { SelectDropdown } from '../../components/SelectDropdown'
-import { SuggestionInput } from '../../components/SuggestionInput'
-import { newBuildRequestId, useContainerAppsStore } from '../../stores/containerAppsStore'
-import { isComposeFile } from '../../stores/containerAppsStore'
-import { formatWorkspaceSize } from './formatWorkspaceSize'
-import { useFeedbackMessage } from '../../components/useFeedbackMessage'
 import { Button } from '../../components/Button'
-
-/** 上下文超限的判定句：与契约警告逐字同源，前端据此在确认前禁用开始按钮。 */
-const CONTEXT_LIMIT_WARNING = '构建上下文超过上限'
+import { ConfirmDialog } from '../../components/ConfirmDialog'
+import { CTL_PRIMARY, CTL_SECONDARY } from '../../components/formControl'
+import { Hammer, Loader2, TriangleAlert, X } from '../../components/icons'
+import { isDockerRuntime } from '../../utils/isDockerRuntime'
+import { ContainerBuildFields } from './ContainerBuildFields'
+import { formatWorkspaceSize } from './formatWorkspaceSize'
+import { useContainerBuildForm } from './useContainerBuildForm'
 
 /** 确认弹窗里的固定提示句：逐字来自 ADR-0021 的爆炸半径声明。 */
 const ENGINE_RUN_NOTICE =
@@ -31,100 +22,11 @@ const CONTEXT_SNAPSHOT_NOTICE =
  * 预览把上下文统计、目标仓库与警告摆在明处；超限上下文在确认前即被禁用。
  */
 export function ContainerBuildDialog({ app, onClose }: { app: ContainerApp; onClose: () => void }) {
-  const gateway = useGateway()
   const docker = isDockerRuntime()
-  const preview = useContainerAppsStore((s) => s.buildPreview)
-  const previewBuild = useContainerAppsStore((s) => s.previewBuild)
-  const submitBuild = useContainerAppsStore((s) => s.submitBuild)
-  const clearBuildPreview = useContainerAppsStore((s) => s.clearBuildPreview)
-
-  const textPaths = app.files.filter((file) => file.text).map((file) => file.path)
-  const defaultDockerfile =
-    textPaths.find((path) => path === 'Dockerfile') ??
-    textPaths.find((path) => path.split('/').pop() === 'Dockerfile') ?? ''
-  const composeFiles = app.files.filter((file) => isComposeFile(file.path)).map((file) => file.path)
-
-  const [mode, setMode] = useState<'dockerfile' | 'compose'>(composeFiles.length > 0 && !defaultDockerfile ? 'compose' : 'dockerfile')
-  const [target, setTarget] = useState('app')
-  const [dockerfile, setDockerfile] = useState(defaultDockerfile)
-  const [context, setContext] = useState('.')
-  const [compose, setCompose] = useState(composeFiles[0] ?? '')
-  const [selectedServices, setSelectedServices] = useState<readonly string[]>([])
-  const [confirmOpen, setConfirmOpen] = useState(false)
-
-  const state = preview?.slug === app.slug ? preview : null
-  const plan = state?.plan ?? null
-  const previewing = state?.status === 'loading'
-  useFeedbackMessage(state?.submitError)
-
-  const switchMode = (next: 'dockerfile' | 'compose') => {
-    if (next === mode) return
-    setMode(next)
-    setSelectedServices([])
-    clearBuildPreview()
-  }
-
-  const runPreview = () => {
-    if (mode === 'dockerfile') {
-      const trimmedTarget = target.trim()
-      const trimmedContext = context.trim()
-      void previewBuild(gateway, app.slug, {
-        mode: 'dockerfile',
-        ...(trimmedTarget ? { target: trimmedTarget } : {}),
-        dockerfile,
-        ...(trimmedContext ? { context: trimmedContext } : {}),
-      })
-      return
-    }
-    void previewBuild(gateway, app.slug, { mode: 'compose', compose }).then((result) => {
-      if (result?.mode === 'compose') {
-        // 默认勾选全部含 build 段的服务；用户可再逐个取消。
-        setSelectedServices(result.services.filter((service) => service.hasBuild).map((service) => service.service))
-      }
-    })
-  }
-
-  // 超限上下文在确认前即禁用：打包阶段必失败，不让用户白走一遍确认。
-  const limitWarnings =
-    plan === null
-      ? []
-      : plan.mode === 'dockerfile'
-        ? plan.warnings.filter((warning) => warning.includes(CONTEXT_LIMIT_WARNING))
-        : [
-            ...plan.warnings,
-            ...plan.services.flatMap((service) => service.warnings),
-          ].filter((warning) => warning.includes(CONTEXT_LIMIT_WARNING))
-  const overLimit = limitWarnings.length > 0
-  const previewReady = plan !== null && !overLimit
-  const composeSelectionValid = mode === 'compose' && plan?.mode === 'compose'
-    ? selectedServices.some((name) => plan.services.some((service) => service.service === name && service.hasBuild))
-    : true
-  const canStart = previewReady && (mode === 'dockerfile' || composeSelectionValid)
-
-  const submitInput = (): ContainerBuildSubmitInput => {
-    const requestId = newBuildRequestId()
-    if (mode === 'dockerfile' && plan?.mode === 'dockerfile') {
-      return { mode: 'dockerfile', requestId, target: plan.target, dockerfile: plan.dockerfile, context: plan.context }
-    }
-    if (plan?.mode === 'compose') {
-      return { mode: 'compose', requestId, compose: plan.compose, services: selectedServices }
-    }
-    // 没有预览结果就点不到确认：这里只为类型收窄，不会发生。
-    return { mode: 'dockerfile', requestId, dockerfile, context }
-  }
-
-  const confirmSubmit = () => {
-    void submitBuild(gateway, app.slug, submitInput()).then((ok) => {
-      // 确认弹窗只承担「确认」这一步：成功关整个弹窗，失败退回主表单看错误原文。
-      setConfirmOpen(false)
-      if (ok) onClose()
-    })
-  }
-
-  const requestClose = () => {
-    clearBuildPreview()
-    onClose()
-  }
+  const {
+    plan, selectedServices, overLimit, canStart, previewing, confirmOpen, submitting, previewDisabled,
+    openConfirmation, closeConfirmation, runPreview, submitInput, confirmSubmit, requestClose, fields,
+  } = useContainerBuildForm(app, onClose)
 
   return (
     <Dialog.Root
@@ -166,174 +68,7 @@ export function ContainerBuildDialog({ app, onClose }: { app: ContainerApp; onCl
             </p>
           ) : null}
 
-          <div className="mt-3 min-h-0 flex-1 space-y-3 overflow-y-auto pr-0.5">
-            <ChipGroup ariaLabel="构建模式" value={mode} onSelect={switchMode}
-              items={[{ value: 'dockerfile', label: 'Dockerfile 构建' }, { value: 'compose', label: 'compose 服务构建' }]} />
-
-            {mode === 'dockerfile' ? (
-              <div className="space-y-3">
-                <div>
-                  <label htmlFor={`build-target-${app.slug}`} className="mb-1 block text-xs font-medium text-fg-muted">
-                    镜像目标名（产物仓库为 <span className="font-mono">elysian/{app.slug}/&lt;目标名&gt;</span>）
-                  </label>
-                  <input
-                    id={`build-target-${app.slug}`}
-                    value={target}
-                    onChange={(event) => {
-                      setTarget(event.target.value)
-                      // 输入一变旧预览即失效：canStart 回落 false，提交值只能来自最近一次预览。
-                      clearBuildPreview()
-                    }}
-                    placeholder="app"
-                    autoComplete="off"
-                    spellCheck={false}
-                    className={`${CTL_FIELD} font-mono`}
-                  />
-                </div>
-                <div>
-                  <label htmlFor={`build-dockerfile-${app.slug}`} className="mb-1 block text-xs font-medium text-fg-muted">
-                    Dockerfile 路径（相对工作区根）
-                  </label>
-                  <SuggestionInput
-                    id={`build-dockerfile-${app.slug}`}
-                    ariaLabel="Dockerfile 路径（相对工作区根）"
-                    items={textPaths.map(path => ({ value: path, label: path }))}
-                    value={dockerfile}
-                    onValueChange={(value) => {
-                      setDockerfile(value)
-                      clearBuildPreview()
-                    }}
-                    placeholder="Dockerfile"
-                    autoComplete="off"
-                    spellCheck={false}
-                    className="font-mono"
-                  />
-                </div>
-                <div>
-                  <label htmlFor={`build-context-${app.slug}`} className="mb-1 block text-xs font-medium text-fg-muted">
-                    构建上下文（相对工作区根，默认 <span className="font-mono">.</span>）
-                  </label>
-                  <input
-                    id={`build-context-${app.slug}`}
-                    value={context}
-                    onChange={(event) => {
-                      setContext(event.target.value)
-                      clearBuildPreview()
-                    }}
-                    placeholder="."
-                    autoComplete="off"
-                    spellCheck={false}
-                    className={`${CTL_FIELD} font-mono`}
-                  />
-                </div>
-              </div>
-            ) : (
-              <div className="space-y-3">
-                <div>
-                  <label htmlFor={`build-compose-${app.slug}`} className="mb-1 block text-xs font-medium text-fg-muted">
-                    compose 文件（相对工作区根）
-                  </label>
-                  <SelectDropdown
-                    id={`build-compose-${app.slug}`}
-                    ariaLabel="compose 文件（相对工作区根）"
-                    value={compose}
-                    onSelect={(value) => {
-                      setCompose(value)
-                      setSelectedServices([])
-                      clearBuildPreview()
-                    }}
-                    fullWidth
-                    mono
-                    items={composeFiles.map((path) => ({ value: path, label: path }))}
-                    fallbackLabel="工作区内没有 compose 文件"
-                    emptyLabel="工作区内没有 compose 文件"
-                    disabled={composeFiles.length === 0}
-                  />
-                </div>
-                {plan?.mode === 'compose' ? (
-                  <fieldset className="space-y-1.5">
-                    <legend className="text-xs font-medium text-fg-muted">选择要构建的服务</legend>
-                    {plan.services.map((service) => (
-                      <label
-                        key={service.service}
-                        className={`flex items-start gap-2 rounded-lg border border-line bg-surface px-2.5 py-1.5 text-xs ${service.hasBuild ? 'cursor-pointer' : 'cursor-not-allowed opacity-70'}`}
-                      >
-                        <input
-                          type="checkbox"
-                          checked={selectedServices.includes(service.service)}
-                          disabled={!service.hasBuild}
-                          onChange={(event) => {
-                            setSelectedServices((current) =>
-                              event.target.checked
-                                ? [...current, service.service]
-                                : current.filter((name) => name !== service.service),
-                            )
-                          }}
-                          className="mt-0.5"
-                        />
-                        <span className="min-w-0 flex-1">
-                          <span className="font-mono">{service.service}</span>
-                          {service.hasBuild ? (
-                            <span className="mt-0.5 block break-all font-mono text-fg-subtle">
-                              {service.imageRepository} · 上下文 {service.context}（{service.contextFiles} 个文件、{formatWorkspaceSize(service.contextBytes)}）
-                            </span>
-                          ) : (
-                            <span className="mt-0.5 block font-mono text-fg-subtle">
-                              无 build 段{service.imageNameInCompose ? `，镜像 ${service.imageNameInCompose}` : ''}
-                            </span>
-                          )}
-                          {service.warnings.map((warning) => (
-                            <span key={warning} className="mt-0.5 block text-warning">
-                              {warning}
-                            </span>
-                          ))}
-                        </span>
-                      </label>
-                    ))}
-                  </fieldset>
-                ) : null}
-              </div>
-            )}
-
-            {state?.errorMessage ? (
-              <p role="alert" className="rounded-lg border border-danger/40 bg-danger/10 px-2.5 py-1.5 text-xs text-danger">
-                {state.errorMessage}
-              </p>
-            ) : null}
-            {state?.submitError ? (
-              <p role="alert" className="rounded-lg border border-danger/40 bg-danger/10 px-2.5 py-1.5 text-xs text-danger">
-                {state.submitError}
-              </p>
-            ) : null}
-
-            {plan?.mode === 'dockerfile' ? (
-              <div className="space-y-1.5 rounded-lg border border-line bg-surface px-2.5 py-2 text-xs">
-                <p>
-                  上下文 <span className="font-mono">{plan.context}</span>：{plan.contextFiles} 个文件、{formatWorkspaceSize(plan.contextBytes)}
-                </p>
-                <p className="break-all">
-                  目标镜像仓库 <span className="font-mono">{plan.imageRepository}</span>
-                </p>
-                {plan.repositoryOccupied ? (
-                  <p className="text-danger">镜像 {plan.imageRepository} 已被非面板构建的镜像占用,构建将被拒绝。</p>
-                ) : null}
-                {plan.warnings.map((warning) => (
-                  <p key={warning} className={warning.includes(CONTEXT_LIMIT_WARNING) ? 'text-danger' : 'text-warning'}>
-                    {warning}
-                  </p>
-                ))}
-              </div>
-            ) : null}
-            {plan?.mode === 'compose' ? (
-              <div className="space-y-1.5 rounded-lg border border-line bg-surface px-2.5 py-2 text-xs">
-                {plan.warnings.map((warning) => (
-                  <p key={warning} className="text-warning">
-                    {warning}
-                  </p>
-                ))}
-              </div>
-            ) : null}
-          </div>
+          <ContainerBuildFields slug={app.slug} {...fields} />
 
           <div className="mt-4 flex items-center justify-between gap-3 border-t border-line pt-3">
             <p className="min-w-0 flex-1 text-xs text-fg-subtle">
@@ -346,7 +81,7 @@ export function ContainerBuildDialog({ app, onClose }: { app: ContainerApp; onCl
               <Button variant="primary"
                 type="button"
                 onClick={runPreview}
-                disabled={previewing || (mode === 'dockerfile' ? dockerfile.trim() === '' : compose === '')}
+                disabled={previewDisabled}
                 className={`${CTL_PRIMARY} gap-1.5 px-3`}
               >
                 {previewing ? <Loader2 aria-hidden size={13} className="animate-spin" /> : null}
@@ -354,8 +89,8 @@ export function ContainerBuildDialog({ app, onClose }: { app: ContainerApp; onCl
               </Button>
               <Button variant="primary"
                 type="button"
-                onClick={() => setConfirmOpen(true)}
-                disabled={!canStart || state?.submitting === true}
+                onClick={openConfirmation}
+                disabled={!canStart || submitting}
                 className={`${CTL_PRIMARY} px-3`}
               >
                 开始构建
@@ -369,8 +104,8 @@ export function ContainerBuildDialog({ app, onClose }: { app: ContainerApp; onCl
             app={app}
             input={submitInput()}
             notice={ENGINE_RUN_NOTICE}
-            submitting={state?.submitting === true}
-            onCancel={() => setConfirmOpen(false)}
+            submitting={submitting}
+            onCancel={closeConfirmation}
             onConfirm={confirmSubmit}
             contextLines={
               plan.mode === 'dockerfile'
