@@ -11,14 +11,14 @@ import { messageOf } from '../utils/errorMessage'
  * 转就绪通知（Docker 就绪是 Caddy 维度出现的前提）。
  */
 
-type DependencyProbeStatus = 'idle' | 'checking' | 'checked' | 'error'
+type DependencyProbeStatus = 'idle' | 'loading' | 'ready' | 'error'
 
 type DependencyProbeStoreState = {
   report: DependencyProbeReport | undefined
   status: DependencyProbeStatus
   /** 「重新检测」按钮的忙碌态：动作进行中禁用并换文案。 */
   rechecking: boolean
-  /** 页面挂载触发；checking / checked 时跳过（幂等），导航切页不重探。 */
+  /** 页面挂载触发；复用在途探测或已有报告，导航切页不重探。 */
   check: (gateway: ElysianGateway) => Promise<void>
   /** 返回本次报告；请求失败或所属网关、登录代次已失效时返回 null。 */
   recheck: (gateway: ElysianGateway) => Promise<DependencyProbeReport | null>
@@ -35,7 +35,7 @@ function notify(message: string, tone: 'success' | 'danger' = 'success'): void {
  * 这两条不依赖 Caddy 的路径——它们要等 Caddy 装好才可达。
  */
 export function accessConfigEntryVisible(report: DependencyProbeReport | undefined, status: DependencyProbeStatus): boolean {
-  return status === 'checked' && report !== undefined && report.docker.state === 'ok' && report.caddy.state === 'ok'
+  return status === 'ready' && report !== undefined && report.docker.state === 'ok' && report.caddy.state === 'ok'
 }
 
 const initial = {
@@ -65,16 +65,16 @@ export const useDependencyProbeStore = create<DependencyProbeStoreState>((set, g
       }
       return pending.promise
     }
-    if (!manual && get().status === 'checked') return Promise.resolve(get().report ?? null)
+    if (!manual && get().status === 'ready') return Promise.resolve(get().report ?? null)
     const previous = get().report
     const request = ++sequence
     const isCurrent = () => request === sequence && owner?.gateway === gateway && owner.auth === auth && auth === captureAuthGeneration()
     const operation = { manual, promise: Promise.resolve<DependencyProbeReport | null>(null) }
     pending = operation
-    set({ status: 'checking', rechecking: manual })
+    set({ status: 'loading', rechecking: manual })
     operation.promise = Promise.resolve().then(() => gateway.dependencies.probe()).then((report) => {
       if (!isCurrent()) return null
-      set({ report, status: 'checked', rechecking: false })
+      set({ report, status: 'ready', rechecking: false })
       if (operation.manual && previous !== undefined) {
         if (previous.docker.state !== 'ok' && report.docker.state === 'ok') notify('Docker 已就绪')
         if (previous.caddy.state !== 'ok' && report.caddy.state === 'ok') notify('Caddy 管理通道已就绪')

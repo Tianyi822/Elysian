@@ -39,15 +39,15 @@ beforeEach(async () => {
 })
 
 describe('check', () => {
-  it('成功后落报告并置 checked', async () => {
+  it('成功后落报告并置 ready', async () => {
     const gateway = gatewayWith(async () => DOCKER_MISSING)
     await useDependencyProbeStore.getState().check(gateway)
     const state = useDependencyProbeStore.getState()
-    expect(state.status).toBe('checked')
+    expect(state.status).toBe('ready')
     expect(state.report).toEqual(DOCKER_MISSING)
   })
 
-  it('幂等：checked 后再 check 不再发请求', async () => {
+  it('幂等：报告就绪后再 check 不再发请求', async () => {
     const probe = vi.fn(async () => ALL_OK)
     const gateway = gatewayWith(probe)
     await useDependencyProbeStore.getState().check(gateway)
@@ -55,7 +55,7 @@ describe('check', () => {
     expect(probe).toHaveBeenCalledTimes(1)
   })
 
-  it('checking 进行中时并发 check 不重复发请求', async () => {
+  it('探测在途时并发 check 不重复发请求', async () => {
     let release: (() => void) | undefined
     const probe = vi.fn(
       () =>
@@ -83,7 +83,7 @@ describe('check', () => {
 })
 
 describe('recheck', () => {
-  it('checked 后仍强制重发并更新报告', async () => {
+  it('报告就绪后仍强制重发并更新报告', async () => {
     let report = DOCKER_MISSING
     const probe = vi.fn(async () => report)
     const gateway = gatewayWith(probe)
@@ -203,11 +203,11 @@ describe('recheck', () => {
     if (outcome === 'success') resolveOld?.(ALL_OK)
     else rejectOld?.(new Error('旧请求失败'))
     expect(await old).toBeNull()
-    expect(useDependencyProbeStore.getState()).toMatchObject({ report: undefined, status: 'checking', rechecking: true })
+    expect(useDependencyProbeStore.getState()).toMatchObject({ report: undefined, status: 'loading', rechecking: true })
     expect(useMessageStore.getState().messages).toHaveLength(0)
     resolveNew?.(CADDY_MISSING)
     expect(await next).toEqual(CADDY_MISSING)
-    expect(useDependencyProbeStore.getState()).toMatchObject({ report: CADDY_MISSING, status: 'checked', rechecking: false })
+    expect(useDependencyProbeStore.getState()).toMatchObject({ report: CADDY_MISSING, status: 'ready', rechecking: false })
   })
 
   it.each(['auth', 'reset'] as const)('%s 使旧响应失效，同一网关可以发起新探测', async (invalidation) => {
@@ -226,7 +226,7 @@ describe('recheck', () => {
     expect(useMessageStore.getState().messages).toHaveLength(0)
   })
 
-  it('登录代次变化后不复用已经完成的 checked 报告', async () => {
+  it('登录代次变化后不复用已经就绪的报告', async () => {
     const probe = vi.fn().mockResolvedValueOnce(ALL_OK).mockResolvedValueOnce(CADDY_MISSING)
     const gateway = gatewayWith(probe)
     await useDependencyProbeStore.getState().check(gateway)
@@ -239,16 +239,16 @@ describe('recheck', () => {
 
 describe('网站页访问配置入口可见性', () => {
   it('docker 与 caddy 都就绪才可见，任一缺失、故障或报告缺失时不可见', () => {
-    expect(accessConfigEntryVisible(ALL_OK, 'checked')).toBe(true)
-    expect(accessConfigEntryVisible(undefined, 'checked')).toBe(false)
-    expect(accessConfigEntryVisible(DOCKER_MISSING, 'checked')).toBe(false)
-    expect(accessConfigEntryVisible(CADDY_MISSING, 'checked')).toBe(false)
+    expect(accessConfigEntryVisible(ALL_OK, 'ready')).toBe(true)
+    expect(accessConfigEntryVisible(undefined, 'ready')).toBe(false)
+    expect(accessConfigEntryVisible(DOCKER_MISSING, 'ready')).toBe(false)
+    expect(accessConfigEntryVisible(CADDY_MISSING, 'ready')).toBe(false)
     expect(accessConfigEntryVisible(ALL_OK, 'error')).toBe(false)
-    expect(accessConfigEntryVisible(ALL_OK, 'checking')).toBe(false)
+    expect(accessConfigEntryVisible(ALL_OK, 'loading')).toBe(false)
     const caddyError: DependencyProbeReport = {
       docker: { state: 'ok', detail: null },
       caddy: { state: 'error', detail: 'Caddy 引擎故障' },
     }
-    expect(accessConfigEntryVisible(caddyError, 'checked')).toBe(false)
+    expect(accessConfigEntryVisible(caddyError, 'ready')).toBe(false)
   })
 })

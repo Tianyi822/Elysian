@@ -125,7 +125,7 @@ describe('容器页骨架', () => {
     fail = false
     await userEvent.click(retry)
     await waitFor(() => expect(useDependencyProbeStore.getState().report).toBeDefined())
-    expect(useDependencyProbeStore.getState().status).toBe('checked')
+    expect(useDependencyProbeStore.getState().status).toBe('ready')
     // 已取得报告但 Docker 仍缺失时，保留重检入口。
     expect(screen.getByRole('button', { name: '重新检测 Docker' })).toBeInTheDocument()
   })
