@@ -27,8 +27,8 @@ const VIEW_TABS: readonly HeaderTabItem<'grid' | 'images' | 'apps'>[] = [
  */
 export function ContainerViewSwitch() {
   const gateway = useGateway()
-  const view = useContainersStore((s) => s.view)
-  const setView = useContainersStore((s) => s.setView)
+  const view = useContainersStore((s) => s.tab)
+  const setTab = useContainersStore((s) => s.setTab)
   const refreshImages = useContainersStore((s) => s.refreshImages)
   const probeRef = useRef<HTMLDivElement>(null)
   const availableWidth = useHeaderAccessoryWidth()
@@ -39,7 +39,7 @@ export function ContainerViewSwitch() {
   const expanded = !narrow && flatWidth <= availableWidth
 
   const select = (next: (typeof VIEW_TABS)[number]['value']) => {
-    setView(next)
+    setTab(next)
     // 页签切换的自动刷新是静默的：成功不打扰，失败仍走危险通知；显式「刷新镜像」按钮才报成功。
     if (next === 'images' && useContainersStore.getState().status === 'ready') void refreshImages(gateway, { notify: false })
   }

@@ -42,7 +42,7 @@ function gooeyControl(): HTMLElement {
 }
 
 beforeEach(() => {
-  useDatabaseStore.setState({ engine: 'MariaDB' })
+  useDatabaseStore.setState({ tab: useDatabaseStore.getInitialState().tab })
 })
 
 afterEach(() => {
@@ -77,7 +77,7 @@ describe('数据库类型切换', () => {
       'aria-pressed',
       'false',
     )
-    expect(useDatabaseStore.getState().engine).toBe('Redis')
+    expect(useDatabaseStore.getState().tab).toBe('Redis')
   })
 
   it('页面未关闭时往返其他页面仍停在上次引擎，重新打开面板回到第一个', async () => {
@@ -93,10 +93,10 @@ describe('数据库类型切换', () => {
       'aria-pressed',
       'true',
     )
-    expect(useDatabaseStore.getState().engine).toBe('MySQL')
+    expect(useDatabaseStore.getState().tab).toBe('MySQL')
 
     // 关闭页面后重新打开等于新的页面会话：内存回到初始值，引擎回到第一个。
-    act(() => { useDatabaseStore.setState({ engine: 'MariaDB' }) })
+    act(() => { useDatabaseStore.setState({ tab: useDatabaseStore.getInitialState().tab }) })
     expect(within(segmentGroup()).getByRole('button', { name: 'MariaDB' })).toHaveAttribute(
       'aria-pressed',
       'true',
@@ -172,7 +172,7 @@ describe('数据库类型切换', () => {
     await user.click(trigger())
     await user.click(await screen.findByRole('option', { name: 'Redis' }))
 
-    expect(useDatabaseStore.getState().engine).toBe('Redis')
+    expect(useDatabaseStore.getState().tab).toBe('Redis')
     expect(gooeyControl()).toHaveTextContent('Redis')
   })
 })

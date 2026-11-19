@@ -29,7 +29,7 @@ const created: DatabaseContainerInstance = {
 
 beforeEach(() => {
   useDatabaseStore.setState({
-    status: 'ready', engine: 'MySQL',
+    status: 'ready', tab: 'MySQL',
     createOpen: true, createKind: 'container', creating: false, createError: undefined,
     databases: [], sqliteFiles: [],
   })

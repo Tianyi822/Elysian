@@ -79,7 +79,7 @@ beforeEach(async () => {
   useDependencyProbeStore.getState().reset()
   useContainersStore.setState({
     status: 'idle', errorMessage: undefined, containers: [], images: [], imageRefreshStatus: 'idle', samples: {},
-    view: 'grid', statusFilter: 'all', search: '', detailContainerId: undefined,
+    tab: useContainersStore.getInitialState().tab, statusFilter: 'all', search: '', detailContainerId: undefined,
     terminal: undefined, busyActions: [], createOpen: false, creating: false, removingImageIds: [],
     pullingImage: undefined, imagePullError: undefined,
   })
@@ -315,7 +315,7 @@ describe('镜像视图', () => {
     await user.click(trigger)
     await user.click(await screen.findByRole('option', { name: '镜像' }))
 
-    expect(useContainersStore.getState().view).toBe('images')
+    expect(useContainersStore.getState().tab).toBe('images')
     expect(await screen.findByRole('table', { name: '镜像列表' })).toBeInTheDocument()
     expect(trigger.closest('.easyui-gooey-menu')).toHaveTextContent('镜像')
   })
@@ -360,7 +360,7 @@ describe('镜像视图', () => {
     ).toHaveAttribute('aria-pressed', 'true')
 
     // 关闭页面后重新打开等于新的页面会话：内存回到初始值，视图回到第一个。
-    act(() => { useContainersStore.setState({ view: 'grid' }) })
+    act(() => { useContainersStore.setState({ tab: useContainersStore.getInitialState().tab }) })
     expect(
       within(screen.getByRole('main')).getByRole('button', { name: '容器' }),
     ).toHaveAttribute('aria-pressed', 'true')

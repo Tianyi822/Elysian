@@ -120,7 +120,7 @@ const SQLITE_FIXTURES = [NOTES_FILE, PENDING_FILE]
 
 beforeEach(() => {
   useDatabaseStore.setState({
-    engine: 'MariaDB',
+    tab: 'MariaDB',
     status: 'idle',
     sqliteStatus: 'idle',
     databases: [],

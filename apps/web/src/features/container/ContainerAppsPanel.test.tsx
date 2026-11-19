@@ -60,7 +60,7 @@ const composeYaml = [
 
 beforeEach(async () => {
   await useMessageStore.getState().clear()
-  useContainersStore.setState({ view: 'grid' })
+  useContainersStore.setState({ tab: 'grid' })
   useContainerAppsStore.setState({
     status: 'idle',
     apps: [],

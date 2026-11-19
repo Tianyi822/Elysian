@@ -46,6 +46,21 @@ beforeEach(async () => {
   useMessageStore.setState({ messages: [] })
 })
 
+it('规则视图切换与搜索、页码复位在同一次更新完成', () => {
+  useFirewallStore.setState({ search: '22', page: 2 })
+  const updates = vi.fn()
+  const unsubscribe = useFirewallStore.subscribe(updates)
+  try {
+    useFirewallStore.getState().setTab('ip')
+  } finally {
+    unsubscribe()
+  }
+  expect(updates).toHaveBeenCalledExactlyOnceWith(
+    expect.objectContaining({ tab: 'ip', search: '', page: 1 }),
+    expect.objectContaining({ tab: 'port', search: '22', page: 2 }),
+  )
+})
+
 describe('逐端口防扫描', () => {
   it('旧会话的迟到写回执不覆盖新会话端口状态', async () => {
     const initial = useFirewallStore.getInitialState().scanProtection

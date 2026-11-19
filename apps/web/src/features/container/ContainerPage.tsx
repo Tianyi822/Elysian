@@ -52,7 +52,7 @@ export function ContainerPage() {
   const containers = useContainersStore((s) => s.containers)
   const statusFilter = useContainersStore((s) => s.statusFilter)
   const search = useContainersStore((s) => s.search)
-  const view = useContainersStore((s) => s.view)
+  const view = useContainersStore((s) => s.tab)
   const liveStatus = useContainersStore((s) => s.liveStatus)
   const images = useContainersStore((s) => s.images)
   const imageRefreshStatus = useContainersStore((s) => s.imageRefreshStatus)

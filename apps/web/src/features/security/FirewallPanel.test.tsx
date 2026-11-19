@@ -64,7 +64,7 @@ beforeEach(() => {
     rules: [],
     ipRules: [],
     forwards: [],
-    view: 'port',
+    tab: 'port',
     toggles: { firewallEnabled: true, pingBlocked: true, defaultIncoming: 'deny', defaultOutgoing: 'allow' },
     search: '',
     page: 1,

@@ -27,8 +27,8 @@ const ENGINE_TABS: readonly HeaderTabItem<DatabaseContainerEngine>[] = DATABASE_
  * 收起后的菜单复用 EasyUI GooeySelect，不用原生 select。
  */
 export function DatabaseEngineSwitch() {
-  const engine = useDatabaseStore((s) => s.engine)
-  const setEngine = useDatabaseStore((s) => s.setEngine)
+  const engine = useDatabaseStore((s) => s.tab)
+  const setTab = useDatabaseStore((s) => s.setTab)
   const probeRef = useRef<HTMLDivElement>(null)
   const availableWidth = useHeaderAccessoryWidth()
   const flatWidth = useIntrinsicWidth(probeRef)
@@ -45,19 +45,19 @@ export function DatabaseEngineSwitch() {
         className="pointer-events-none invisible absolute top-0 left-0 overflow-hidden"
       >
         <div ref={probeRef} className="flex w-max">
-          <HeaderTabs items={ENGINE_TABS} value={engine} onSelect={setEngine} groupLabel="数据库类型" />
+          <HeaderTabs items={ENGINE_TABS} value={engine} onSelect={setTab} groupLabel="数据库类型" />
         </div>
       </div>
 
       <div className={expanded ? 'flex' : 'hidden'}>
-        <HeaderTabs items={ENGINE_TABS} value={engine} onSelect={setEngine} groupLabel="数据库类型" />
+        <HeaderTabs items={ENGINE_TABS} value={engine} onSelect={setTab} groupLabel="数据库类型" />
       </div>
 
       <GooeySelect
         ariaLabel="数据库类型"
         items={ENGINE_TABS}
         value={engine}
-        onSelect={setEngine}
+        onSelect={setTab}
         active={!expanded}
         className={expanded ? 'hidden' : 'inline-flex'}
       />

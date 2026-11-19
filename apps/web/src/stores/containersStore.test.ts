@@ -62,7 +62,7 @@ let emitToStore: ((event: ElysianEvent) => void) | undefined
 beforeEach(async () => {
   useContainersStore.setState({
     status: 'idle', liveStatus: 'live', errorMessage: undefined, containers: [], images: [], imageRefreshStatus: 'idle', samples: {},
-    view: 'grid', statusFilter: 'all', search: '', detailContainerId: undefined,
+    tab: 'grid', statusFilter: 'all', search: '', detailContainerId: undefined,
     terminal: undefined, busyActions: [], createOpen: false, creating: false, removingImageIds: [],
     pullingImage: undefined, imagePullError: undefined,
   })

@@ -20,6 +20,7 @@ import { getLastContainerSample, onStreamEvent } from './eventStreamStore'
 import { useMessageStore } from './messageStore'
 import { abortableDelay, awaitAbortable, throwIfAborted } from '../utils/abortable'
 import { messageOf } from '../utils/errorMessage'
+import { createTabMemorySlice, type TabMemoryState } from './tabMemoryStore'
 
 type ContainerTerminalStatus = 'connecting' | 'connected' | 'error'
 
@@ -223,8 +224,9 @@ type ImagePullInput = { name: string; tag: string; registry?: string }
 type ImagePullResult = { status: 'succeeded' | 'interrupted' } | { status: 'failed'; error: string }
 /** 调用方核验最新清单并负责呈现回执。省略时使用镜像表的回执和通知。 */
 type ImagePullOptions = { confirmInventory: () => Promise<void> }
+type ContainerView = 'grid' | 'images' | 'apps'
 
-export const useContainersStore = create<{
+export const useContainersStore = create<TabMemoryState<ContainerView> & {
   status: 'idle' | 'loading' | 'ready' | 'error'
   liveStatus: 'live' | 'connecting'
   errorMessage?: string
@@ -233,7 +235,6 @@ export const useContainersStore = create<{
   /** 镜像手动刷新的忙碌标记（loading 期间锁按钮）；结果经全局通知组件反馈，页面不另写反馈条。 */
   imageRefreshStatus: 'idle' | 'loading'
   samples: Readonly<Record<string, { cpuPercent: number; memMb: number }>>
-  view: 'grid' | 'images' | 'apps'
   statusFilter: ContainerStatus | 'all'
   search: string
   detailContainerId?: string
@@ -248,7 +249,6 @@ export const useContainersStore = create<{
   load: (gateway: ElysianGateway) => Promise<void>
   refreshImages: (gateway: ElysianGateway, options?: { notify?: boolean }) => Promise<void>
   setLiveStatus: (status: 'live' | 'connecting') => void
-  setView: (view: 'grid' | 'images' | 'apps') => void
   setStatusFilter: (filter: ContainerStatus | 'all') => void
   setSearch: (value: string) => void
   openCreate: () => void
@@ -275,7 +275,7 @@ export const useContainersStore = create<{
   images: [],
   imageRefreshStatus: 'idle',
   samples: {},
-  view: 'grid',
+  ...createTabMemorySlice<ContainerView>('grid', set),
   statusFilter: 'all',
   search: '',
   busyActions: [],
@@ -347,9 +347,6 @@ export const useContainersStore = create<{
     return operation.promise
   },
 
-  setView(view) {
-    set({ view })
-  },
   setStatusFilter(statusFilter) {
     set({ statusFilter })
   },

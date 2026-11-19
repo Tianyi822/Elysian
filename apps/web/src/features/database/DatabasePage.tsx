@@ -64,7 +64,7 @@ const FILE_STATUS_TONE: Record<DatabaseStatus, StatusTone> = {
 export function DatabasePage() {
   const gateway = useGateway()
   const status = useDatabaseStore((state) => state.status)
-  const engine = useDatabaseStore((state) => state.engine)
+  const engine = useDatabaseStore((state) => state.tab)
   const databases = useDatabaseStore((state) => state.databases)
   const sqliteFiles = useDatabaseStore((state) => state.sqliteFiles)
   const containers = useContainersStore((state) => state.containers)

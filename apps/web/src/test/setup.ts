@@ -87,10 +87,10 @@ afterEach(async () => {
   await useMessageStore.getState().clear()
   // 界面偏好（主题、导航顺序）与页签的会话内单例状态：用例之间都复位到默认，避免选中态串到下一条。
   localStorage.removeItem(UI_PREFERENCES_KEY)
-  useSecurityStore.setState({ tab: 'firewall' })
-  useLogsStore.setState({ tab: 'runtime' })
+  useSecurityStore.setState({ tab: useSecurityStore.getInitialState().tab })
+  useLogsStore.setState({ tab: useLogsStore.getInitialState().tab })
   // 数据库 store 的会话内单例状态：引擎页签回到第一个，创建目标与文件行一并复位。
-  useDatabaseStore.setState({ engine: 'MariaDB', createKind: 'file', sqliteFiles: [], sqliteStatus: 'idle', sqliteErrorMessage: undefined })
-  useContainersStore.setState({ view: 'grid' })
-  useSettingsTabStore.setState({ tab: 'maintenance' })
+  useDatabaseStore.setState({ tab: useDatabaseStore.getInitialState().tab, createKind: 'file', sqliteFiles: [], sqliteStatus: 'idle', sqliteErrorMessage: undefined })
+  useContainersStore.setState({ tab: useContainersStore.getInitialState().tab })
+  useSettingsTabStore.setState({ tab: useSettingsTabStore.getInitialState().tab })
 })

@@ -74,7 +74,7 @@ function SqliteFileField({
 
 export function DatabaseCreateDialog() {
   const gateway = useGateway()
-  const engine = useDatabaseStore((state) => state.engine)
+  const engine = useDatabaseStore((state) => state.tab)
   const open = useDatabaseStore((state) => state.createOpen)
   const createKind = useDatabaseStore((state) => state.createKind)
   const creating = useDatabaseStore((state) => state.creating)

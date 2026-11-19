@@ -18,6 +18,7 @@ import { isDockerRuntime } from '../utils/isDockerRuntime'
 import { demoNoticeSuffix, MOCK_ACTION_NOTE } from '../utils/demoNotice'
 import { useMessageStore } from './messageStore'
 import { messageOf } from '../utils/errorMessage'
+import { createTabMemorySlice, type TabMemoryState } from './tabMemoryStore'
 
 /** 每页行数与参照产品的默认值一致；演示数据约 27 条，正好跨两页。 */
 export const FIREWALL_PAGE_SIZE = 20
@@ -30,14 +31,13 @@ export type FirewallView = 'port' | 'ip' | 'forward'
 
 type FirewallStatus = 'idle' | 'loading' | 'ready' | 'error'
 
-type FirewallState = {
+type FirewallState = TabMemoryState<FirewallView> & {
   status: FirewallStatus
   errorMessage: string | undefined
   operationError: string | undefined
   rules: readonly FirewallRule[]
   ipRules: readonly FirewallIpRule[]
   forwards: readonly FirewallForwardRule[]
-  view: FirewallView
   toggles: FirewallToggles
   /** 搜索按当前视图的端口/IP/目标与备注匹配；变化时回到第一页。 */
   search: string
@@ -65,7 +65,6 @@ type FirewallState = {
   load: (gateway: ElysianGateway) => Promise<void>
   /** 变更成功后的静默重拉：不动 status，面板不闪加载态。 */
   refreshLists: (gateway: ElysianGateway) => Promise<void>
-  setView: (view: FirewallView) => void
   setSearch: (search: string) => void
   setPage: (page: number) => void
   toggle: (gateway: ElysianGateway, next: FirewallToggles) => Promise<void>
@@ -124,7 +123,8 @@ export const useFirewallStore = create<FirewallState>((set, get) => {
   rules: [],
   ipRules: [],
   forwards: [],
-  view: 'port',
+  // 三类规则不共用搜索词和页码，与页签在同一次更新中复位。
+  ...createTabMemorySlice<FirewallView>('port', (selection) => set({ ...selection, search: '', page: 1 })),
   toggles: { firewallEnabled: true, pingBlocked: true, defaultIncoming: 'deny', defaultOutgoing: 'allow' },
   search: '',
   page: 1,
@@ -164,11 +164,6 @@ export const useFirewallStore = create<FirewallState>((set, get) => {
       } finally { if (pendingLoad === operation) pendingLoad = undefined }
     })()
     return operation.promise
-  },
-
-  setView(view) {
-    // 切换视图清空搜索与页码：三类列表的搜索词不通用。
-    set({ view, search: '', page: 1 })
   },
 
   // ufw 一条端口规则在系统里是 v4/v6 两行，而 create/update 的响应只带回首行；

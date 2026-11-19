@@ -1,4 +1,4 @@
-import { create } from 'zustand'
+import { createTabMemoryStore } from './tabMemoryStore'
 
 /** 安全区页签取值。 */
 export type SecurityTab = 'firewall' | 'ssh' | 'users'
@@ -10,11 +10,4 @@ export const SECURITY_TABS: readonly { value: SecurityTab; label: string }[] = [
   { value: 'users', label: '用户管理' },
 ]
 
-/** 安全区页签状态：视图状态不进 URL、不写界面偏好——store 是模块单例，页面未关闭时记住上次页签，重新打开面板回到第一个。 */
-export const useSecurityStore = create<{
-  tab: SecurityTab
-  setTab: (tab: SecurityTab) => void
-}>((set) => ({
-  tab: 'firewall',
-  setTab: (tab) => set({ tab }),
-}))
+export const useSecurityStore = createTabMemoryStore<SecurityTab>('firewall')

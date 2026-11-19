@@ -13,13 +13,12 @@ import { messageOf } from '../utils/errorMessage'
 import { withBusyId, withoutBusyId } from './busyIds'
 import { readContainerInventory } from './containersStore'
 import { createRequestGuard } from './requestGuard'
+import { createTabMemorySlice, type TabMemoryState } from './tabMemoryStore'
 
 type DatabaseKind = 'container' | 'file'
 type LoadStatus = 'idle' | 'loading' | 'ready' | 'error'
 
-export type DatabaseState = {
-  /** 容器分区页签：只在三引擎词表内取值，SQLite 文件以固定分区呈现、不占页签。 */
-  engine: DatabaseContainerEngine
+export type DatabaseState = TabMemoryState<DatabaseContainerEngine> & {
   status: LoadStatus
   sqliteStatus: LoadStatus
   /** 数据库容器行（GET /api/databases）。 */
@@ -41,7 +40,6 @@ export type DatabaseState = {
   /** 正在删除的 SQLite 文件行 id。 */
   removingSqliteIds: readonly string[]
   clearDisplay(): void
-  setEngine(engine: DatabaseContainerEngine): void
   load(gateway: ElysianGateway, options?: { silent?: boolean }): Promise<void>
   refreshAfterMutation(gateway: ElysianGateway, kind: DatabaseKind): Promise<void>
   openCreate(kind: 'container' | 'file'): void
@@ -128,18 +126,14 @@ function loadDataset(gateway: ElysianGateway, kind: DatabaseKind, { silent, afte
   return operation.promise
 }
 
-/** 数据库区的界面状态：引擎页签不进 URL、不写界面偏好——store 是模块单例，页面未关闭时记住上次引擎，重新打开面板回到第一个。 */
 export const useDatabaseStore = create<DatabaseState>((set, get) => ({
-  engine: DATABASE_TAB_ENGINES[0],
+  ...createTabMemorySlice<DatabaseContainerEngine>(DATABASE_TAB_ENGINES[0], set),
   ...initialDisplay,
   clearDisplay() {
     delete pendingLoads.container
     delete pendingLoads.file
     mutations.invalidate()
     set(initialDisplay)
-  },
-  setEngine: (engine) => {
-    set({ engine })
   },
   async load(gateway, { silent = false } = {}) {
     await Promise.all([loadDataset(gateway, 'container', { silent }), loadDataset(gateway, 'file', { silent })])

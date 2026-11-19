@@ -71,12 +71,12 @@ describe('数据库会话边界', () => {
   beforeEach(() => useSessionStore.setState({ phase: 'authed', mode: 'real', username: 'admin' }))
 
   it('会话失效立即清空数据库快照和弹窗，保留选中的引擎', () => {
-    useDatabaseStore.setState({ engine: 'MySQL', databases: [container], sqliteFiles: [file], createOpen: true, createError: '上传失败' })
+    useDatabaseStore.setState({ tab: 'MySQL', databases: [container], sqliteFiles: [file], createOpen: true, createError: '上传失败' })
 
     useSessionStore.getState().expire()
 
     expect(useDatabaseStore.getState()).toMatchObject({
-      engine: 'MySQL', databases: [], sqliteFiles: [], status: 'idle', sqliteStatus: 'idle', createOpen: false, createError: undefined,
+      tab: 'MySQL', databases: [], sqliteFiles: [], status: 'idle', sqliteStatus: 'idle', createOpen: false, createError: undefined,
     })
   })
 

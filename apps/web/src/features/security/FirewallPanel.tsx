@@ -145,7 +145,7 @@ export function FirewallPanel() {
   const rules = useFirewallStore((s) => s.rules)
   const ipRules = useFirewallStore((s) => s.ipRules)
   const forwards = useFirewallStore((s) => s.forwards)
-  const view = useFirewallStore((s) => s.view)
+  const view = useFirewallStore((s) => s.tab)
   const toggles = useFirewallStore((s) => s.toggles)
   const search = useFirewallStore((s) => s.search)
   const dialogRule = useFirewallStore((s) => s.dialogRule)
@@ -155,7 +155,7 @@ export function FirewallPanel() {
   const syncing = useFirewallStore((s) => s.syncing)
   const toggling = useFirewallStore((s) => s.toggling)
   const load = useFirewallStore((s) => s.load)
-  const setView = useFirewallStore((s) => s.setView)
+  const setTab = useFirewallStore((s) => s.setTab)
   const setSearch = useFirewallStore((s) => s.setSearch)
   const toggle = useFirewallStore((s) => s.toggle)
   const openCreate = useFirewallStore((s) => s.openCreate)
@@ -194,7 +194,7 @@ export function FirewallPanel() {
 
   const toolbar = VIEW_TOOLBAR[view]
   const tableNavigation = <div className={`${CTL_TOOLBAR} firewall-toolbar flex max-w-full`}>
-    <ViewSwitch view={view} onChange={setView} />
+    <ViewSwitch view={view} onChange={setTab} />
   </div>
   const tableToolbar = (
     <div role="group" aria-label="规则操作" className={`${CTL_TOOLBAR} firewall-toolbar flex max-w-full items-center gap-2`}>
