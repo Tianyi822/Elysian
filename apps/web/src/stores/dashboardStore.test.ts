@@ -121,7 +121,7 @@ describe('仪表盘 store 的事件回灌', () => {
     list
       .mockReturnValueOnce(new Promise((yes, no) => { resolve = yes; reject = no }))
       .mockResolvedValueOnce(next)
-    const oldRefresh = dashboard.refresh(gateway)
+    const oldRefresh = dashboard.load(gateway)
     const session = useSessionStore.getState()
     session.expire()
     const cleared = useDashboardStore.getState()
@@ -145,18 +145,24 @@ describe('仪表盘 store 的事件回灌', () => {
     }
   })
 
-  it('历史刷新回执合并请求期间的 SSE，不覆盖较新的实时采样', async () => {
+  it('手动历史刷新复用静默读取，回执合并在途 SSE', async () => {
     const gateway = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
     await useDashboardStore.getState().load(gateway)
     const loaded = useDashboardStore.getState().resources!
     let release!: (points: typeof loaded) => void
-    vi.spyOn(gateway.resources, 'list').mockReturnValueOnce(new Promise(resolve => { release = resolve }))
-    const refresh = useDashboardStore.getState().refresh(gateway)
+    const list = vi.spyOn(gateway.resources, 'list').mockReturnValueOnce(new Promise(resolve => { release = resolve }))
+    const state = useDashboardStore.getState
+    const silent = state().load(gateway, { silent: true })
+    expect(state().refreshing).toBe(false)
+    const refresh = state().load(gateway)
+    expect(state().refreshing).toBe(true)
+    expect(list).toHaveBeenCalledOnce()
     const ts = loaded.at(-1)!.ts + 5000
     emit({ id: 'during-history', name: 'resource/sample', at: new Date(ts).toISOString(), payload: samplePayload })
     release(loaded)
-    await refresh
-    expect(useDashboardStore.getState().resources!.at(-1)).toMatchObject({ ts, memory: 77 })
+    await Promise.all([silent, refresh])
+    expect(state().refreshing).toBe(false)
+    expect(state().resources!.at(-1)).toMatchObject({ ts, memory: 77 })
   })
 
   it('分钟历史落后于刷新前已显示的实时点时不倒退', async () => {
@@ -166,7 +172,7 @@ describe('仪表盘 store 的事件回灌', () => {
     const ts = loaded.at(-1)!.ts + 5000
     emit({ id: 'before-history', name: 'resource/sample', at: new Date(ts).toISOString(), payload: samplePayload })
     vi.spyOn(gateway.resources, 'list').mockResolvedValueOnce(loaded)
-    await useDashboardStore.getState().refresh(gateway)
+    await useDashboardStore.getState().load(gateway)
     expect(useDashboardStore.getState().resources!.at(-1)).toMatchObject({ ts, memory: 77 })
   })
 

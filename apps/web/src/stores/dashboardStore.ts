@@ -40,8 +40,7 @@ export type DashboardState = {
   range: TimeRange
   errorMessage?: string
   clearDisplay: () => void
-  load: (gateway: ElysianGateway) => Promise<void>
-  refresh: (gateway: ElysianGateway) => Promise<void>
+  load: (gateway: ElysianGateway, options?: { silent?: boolean }) => Promise<void>
   setRange: (range: TimeRange) => void
 }
 
@@ -136,14 +135,10 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
     boundGateway = undefined
     set({ status: 'idle', refreshing: false, resources: undefined, resourcesRange: undefined, errorMessage: undefined })
   },
-  load(gateway) {
+  load(gateway, { silent } = {}) {
     attachLiveEvents()
     boundGateway = gateway
-    return reloadResources(gateway, get().range)
-  },
-  refresh(gateway) {
-    boundGateway = gateway
-    return reloadResources(gateway, get().range, true)
+    return reloadResources(gateway, get().range, !silent)
   },
   setRange(range) {
     set({ range })

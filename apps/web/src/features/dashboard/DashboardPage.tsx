@@ -15,13 +15,12 @@ export function DashboardPage() {
   const refreshing = useDashboardStore((state) => state.refreshing)
   const errorMessage = useDashboardStore((state) => state.errorMessage)
   const load = useDashboardStore((state) => state.load)
-  const refresh = useDashboardStore((state) => state.refresh)
   const setRange = useDashboardStore((state) => state.setRange)
 
   useFeedbackMessage(resources ? errorMessage : undefined)
 
   useEffect(() => {
-    void load(gateway)
+    void load(gateway, { silent: true })
   }, [gateway, load])
 
   return (
@@ -29,7 +28,7 @@ export function DashboardPage() {
       <FilterBar
         range={range}
         onRangeChange={setRange}
-        onRefresh={() => void refresh(gateway)}
+        onRefresh={() => void load(gateway)}
         refreshing={refreshing}
       />
       <div className="min-h-0 flex-1 overflow-y-auto px-4 pb-4 md:px-6 md:pb-6">
@@ -38,7 +37,7 @@ export function DashboardPage() {
         ) : (
           <EmptyState title="暂无资源数据" description="当前时间范围没有可展示的采样。可以切换时间范围或刷新重试。" />
         ) : status === 'error' ? (
-          <ErrorState title="仪表盘加载失败" description={errorMessage} onRetry={() => void load(gateway)} />
+          <ErrorState title="仪表盘加载失败" description={errorMessage} onRetry={() => void load(gateway, { silent: true })} />
         ) : <LoadingState label="正在加载仪表盘…" />}
       </div>
     </div>
