@@ -1,11 +1,13 @@
 import { waitFor } from '@testing-library/react'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { FileEntry } from '@elysian/contracts'
+import type { FileEntry, FileSearchResult } from '@elysian/contracts'
+import type { FileDownload } from '../contracts/adapters'
 import { advanceAuthGeneration } from '../utils/authGeneration'
 import { createMockGateway } from '../adapters/mock/gateway'
 import { FileTransferError } from '../adapters/filesTransferError'
 import { useFilesStore } from './filesStore'
 import { useMessageStore } from './messageStore'
+import { useSessionStore } from './sessionStore'
 
 const entry = (name: string): FileEntry => ({ name, kind: 'file', sizeBytes: 3, mode: '644', owner: 'root', modifiedAt: '2026-10-11T00:00:00Z' })
 
@@ -13,7 +15,105 @@ beforeEach(async () => {
   useFilesStore.getState().cancelDownload()
   useFilesStore.getState().cancelUpload()
   await useMessageStore.getState().clear()
-  useFilesStore.setState({ status: 'ready', path: '/tmp', entries: [], sizes: { '/tmp': 0 }, sizeErrors: {}, computingPaths: [], searchKeyword: '', searchResults: [], searching: false, download: undefined, upload: undefined })
+  useFilesStore.setState({ status: 'ready', path: '/tmp', entries: [], sizes: { '/tmp': 0 }, sizeErrors: {}, computingPaths: [], searchKeyword: '', searchResults: [], searching: false, clipboard: undefined, download: undefined, upload: undefined })
+})
+
+async function loginFiles() {
+  const gateway = createMockGateway({ eventStream: 'memory' })
+  vi.spyOn(gateway.session, 'login').mockResolvedValue()
+  vi.spyOn(gateway.session, 'logout').mockResolvedValue()
+  const session = useSessionStore.getState()
+  const login = () => session.login(gateway, 'admin', 'fixture-password')
+  await login()
+  return { gateway, login, logout: () => session.logout(gateway) }
+}
+
+describe('文件管理的会话隔离', () => {
+  it('登出立即清空目录、剪贴板、搜索和大小缓存，迟到的搜索不能回填', async () => {
+    const { gateway, login, logout } = await loginFiles()
+    const list = vi.spyOn(gateway.files, 'list').mockResolvedValueOnce([entry('old.txt')]).mockResolvedValue([entry('new.txt')])
+    let finishSearch!: (rows: FileSearchResult[]) => void
+    vi.spyOn(gateway.files, 'search').mockImplementation(() => new Promise(resolve => { finishSearch = resolve }))
+    vi.spyOn(gateway.files, 'size').mockResolvedValue(17)
+    await useFilesStore.getState().load(gateway, '/shared')
+    await useFilesStore.getState().computeSizes(gateway, ['/shared'])
+    useFilesStore.getState().copyToClipboard('/shared/old.txt')
+    const oldSearch = useFilesStore.getState().search(gateway, 'old')
+
+    const signingOut = logout()
+    expect(useFilesStore.getState()).toMatchObject({ status: 'idle', entries: [], sizes: {}, clipboard: undefined, searchKeyword: '', searchResults: [], searching: false })
+    await signingOut
+    await login()
+    await useFilesStore.getState().load(gateway, '/shared')
+    finishSearch([{ ...entry('old.txt'), path: '/shared/old.txt' }])
+    await oldSearch
+    expect(useFilesStore.getState()).toMatchObject({ entries: [entry('new.txt')], searchKeyword: '', searchResults: [] })
+    expect(list).toHaveBeenCalledTimes(2)
+  })
+
+  it('旧粘贴回执不能清掉新会话的剪贴板、刷新目录或发送新通知', async () => {
+    const { gateway, login, logout } = await loginFiles()
+    let finishPaste!: (value: FileEntry) => void
+    vi.spyOn(gateway.files, 'copyEntry').mockImplementation(() => new Promise(resolve => { finishPaste = resolve }))
+    const list = vi.spyOn(gateway.files, 'list').mockResolvedValue([])
+    useFilesStore.getState().copyToClipboard('/old.txt')
+    const oldPaste = useFilesStore.getState().paste(gateway, '/tmp')
+    await logout()
+    await login()
+    useFilesStore.getState().moveToClipboard('/new.txt')
+    await useMessageStore.getState().clear()
+
+    finishPaste(entry('old.txt'))
+    await oldPaste
+    expect(useFilesStore.getState().clipboard).toEqual({ intent: 'move', path: '/new.txt' })
+    expect(list).not.toHaveBeenCalled()
+    expect(useMessageStore.getState().messages).toEqual([])
+  })
+
+  it('登出取消下载准备，迟到的归档不能交给浏览器', async () => {
+    const { gateway, login, logout } = await loginFiles()
+    let finishDownload!: (value: FileDownload) => void
+    const prepare = vi.spyOn(gateway.files, 'prepareDownload').mockImplementation(() => new Promise(resolve => { finishDownload = resolve }))
+    const start = vi.spyOn(gateway.files, 'startDownload')
+    const oldDownload = useFilesStore.getState().downloadEntry(gateway, '/tmp/old.txt', entry('old.txt'))
+    await logout()
+    expect(prepare.mock.calls[0]?.[1]?.aborted).toBe(true)
+    await login()
+    finishDownload({ id: 'd1', name: 'old.txt', sizeBytes: 3, expiresAt: '2026-10-11T01:00:00Z' })
+    await oldDownload
+    expect(start).not.toHaveBeenCalled()
+    expect(useFilesStore.getState().download).toBeUndefined()
+  })
+
+  it('登出取消旧上传，新上传不接受旧进度、回执或回读', async () => {
+    const { gateway, login, logout } = await loginFiles()
+    const check = vi.spyOn(gateway.files, 'checkUpload').mockResolvedValue({ state: 'create', token: 'new' })
+    let finishOld!: (value: FileEntry) => void
+    let finishNew!: (value: FileEntry) => void
+    const upload = vi.spyOn(gateway.files, 'uploadFile')
+      .mockImplementationOnce(() => new Promise(resolve => { finishOld = resolve }))
+      .mockImplementationOnce(() => new Promise(resolve => { finishNew = resolve }))
+    const list = vi.spyOn(gateway.files, 'list').mockResolvedValue([])
+    const oldWork = useFilesStore.getState().uploadFiles(gateway, '/old', [new File(['old'], 'old.txt'), new File(['next'], 'next.txt')])
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(1))
+    const oldTransfer = upload.mock.calls[0]![4]!
+    await logout()
+    expect(oldTransfer.signal?.aborted).toBe(true)
+    expect(useFilesStore.getState().upload).toBeUndefined()
+    await login()
+    const newWork = useFilesStore.getState().uploadFiles(gateway, '/new', [new File(['new'], 'new.txt')])
+    await waitFor(() => expect(upload).toHaveBeenCalledTimes(2))
+    oldTransfer.onProgress?.(71)
+    finishOld(entry('old.txt'))
+    await oldWork
+    expect(useFilesStore.getState().upload).toMatchObject({ busy: true, targetPath: '/new', items: [{ name: 'new.txt', progress: 0, status: 'uploading' }] })
+    expect(check).toHaveBeenCalledTimes(2)
+    expect(list).not.toHaveBeenCalled()
+    finishNew(entry('new.txt'))
+    await newWork
+    expect(useFilesStore.getState().upload?.items[0]?.status).toBe('complete')
+    expect(list).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe('目录大小统计', () => {

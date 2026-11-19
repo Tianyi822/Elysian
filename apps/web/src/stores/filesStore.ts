@@ -7,6 +7,7 @@ import { demoNoticeSuffix, MOCK_ACTION_NOTE } from '../utils/demoNotice'
 import { useMessageStore, type MessageTone } from './messageStore'
 import { FileTransferError, isFileUploadConflict } from '../adapters/filesTransferError'
 import { messageOf } from '../utils/errorMessage'
+import { createRequestGuard } from './requestGuard'
 
 /**
  * 动作完成提示的演示标注：Docker 运行时动作已真实执行（cp/mv/tar/chmod 落到容器内
@@ -65,6 +66,7 @@ export type FilesState = {
   searching: boolean
   /** 同一目录的重新列举在途：旧列表留在屏上，只由它驱动刷新按钮。 */
   reloading: boolean
+  clearDisplay(): void
   load(gateway: ElysianGateway, path: string, options?: { silent?: boolean }): Promise<void>
   computeSizes(gateway: ElysianGateway, paths: readonly string[]): Promise<string[]>
   copyToClipboard(path: string): void
@@ -96,7 +98,8 @@ export type FilesState = {
  * 这里只保存「这个目录的列举结果」；连续双击产生的并发加载按次序号丢弃过期结果。
  * 目录大小不在列举里给出，按需经 computeSizes 求和，结果按路径缓存。
  */
-export const useFilesStore = create<FilesState>((set, get) => {
+export const useFilesStore = create<FilesState>((set, get, store) => {
+  const requests = createRequestGuard()
   let loadSequence = 0
   let pendingLoad: { gateway: ElysianGateway; path: string; auth: number; promise: Promise<void> } | undefined
   let searchSequence = 0
@@ -140,6 +143,20 @@ export const useFilesStore = create<FilesState>((set, get) => {
     reloading: false,
     download: undefined,
     upload: undefined,
+    clearDisplay() {
+      requests.invalidate()
+      ++loadSequence
+      pendingLoad = undefined
+      ++sizeGeneration
+      sizeAuth = captureAuthGeneration()
+      downloadController?.abort()
+      downloadController = undefined
+      uploadController?.abort()
+      uploadController = undefined
+      resolveConflict?.('cancel')
+      resolveConflict = undefined
+      set(store.getInitialState())
+    },
     load(gateway, path, options) {
       const auth = captureAuthGeneration()
       syncSizeAuth(auth)
@@ -217,59 +234,64 @@ export const useFilesStore = create<FilesState>((set, get) => {
     async paste(gateway, destDirPath) {
       const { clipboard } = get()
       if (!clipboard) return
+      const current = requests.capture()
       const verb = clipboard.intent === 'copy' ? '复制' : '移动'
       try {
-        if (clipboard.intent === 'copy') {
-          const created = await gateway.files.copyEntry(clipboard.path, destDirPath)
-          notify(`已复制为 ${created.name}${MOCK_SUFFIX}`)
-        } else {
-          const moved = await gateway.files.moveEntry(clipboard.path, destDirPath)
-          notify(`已移动为 ${moved.name}${MOCK_SUFFIX}`)
-        }
+        const entry = clipboard.intent === 'copy'
+          ? await gateway.files.copyEntry(clipboard.path, destDirPath)
+          : await gateway.files.moveEntry(clipboard.path, destDirPath)
+        if (!current()) return
+        notify(`已${verb}为 ${entry.name}${MOCK_SUFFIX}`)
         set({ clipboard: undefined })
       } catch (error) {
-        notify(`${verb}失败：${messageOf(error)}`, 'danger')
+        if (current()) notify(`${verb}失败：${messageOf(error)}`, 'danger')
       } finally {
-        await reload(gateway)
+        if (current()) await reload(gateway)
       }
     },
     async rename(gateway, path, newName) {
+      const current = requests.capture()
       const renamed = await gateway.files.renameEntry(path, newName)
+      if (!current()) return
       await reload(gateway)
-      notify(`已重命名为 ${renamed.name}${MOCK_SUFFIX}`)
+      if (current()) notify(`已重命名为 ${renamed.name}${MOCK_SUFFIX}`)
     },
     async compress(gateway, path) {
+      const current = requests.capture()
       try {
         const archive = await gateway.files.compressEntry(path)
-        notify(`已压缩为 ${archive.name}${MOCK_SUFFIX}`)
+        if (current()) notify(`已压缩为 ${archive.name}${MOCK_SUFFIX}`)
       } catch (error) {
-        notify(`压缩失败：${messageOf(error)}`, 'danger')
+        if (current()) notify(`压缩失败：${messageOf(error)}`, 'danger')
       } finally {
-        await reload(gateway)
+        if (current()) await reload(gateway)
       }
     },
     async applyPermission(gateway, path, input) {
+      const current = requests.capture()
       await gateway.files.chmod(path, input)
+      if (!current()) return
       await reload(gateway)
-      notify(
+      if (current()) notify(
         `已把权限改为 ${input.mode}、所有者改为 ${input.owner}${input.recursive ? '（含子目录）' : ''}${MOCK_SUFFIX}`,
       )
     },
     async search(gateway, keyword) {
+      const current = requests.capture()
       const sequence = ++searchSequence
       set({ searchKeyword: keyword })
       if (!keyword.trim()) {
-        if (sequence !== searchSequence) return
+        if (!current() || sequence !== searchSequence) return
         set({ searchResults: [], searching: false })
         return
       }
       set({ searching: true })
       try {
         const results = await gateway.files.search(keyword)
-        if (sequence !== searchSequence) return
+        if (!current() || sequence !== searchSequence) return
         set({ searchResults: results, searching: false })
       } catch (error) {
-        if (sequence !== searchSequence) return
+        if (!current() || sequence !== searchSequence) return
         set({ searchResults: [], searching: false })
         notify(`搜索失败：${messageOf(error)}`, 'danger')
       }
@@ -279,22 +301,24 @@ export const useFilesStore = create<FilesState>((set, get) => {
     },
     async downloadEntry(gateway, path, entry) {
       downloadController?.abort()
+      const current = requests.capture()
       const sequence = ++downloadSequence
       const controller = new AbortController()
       downloadController = controller
       set({ download: { path, name: entry.name, directory: entry.kind === 'directory', status: 'preparing' } })
       const fail = (error: Error) => {
-        if (sequence !== downloadSequence || controller.signal.aborted) return
+        if (!current() || sequence !== downloadSequence || controller.signal.aborted) return
         if (get().download?.status === 'error' && get().download?.errorMessage === error.message) return
         set((state) => ({ download: state.download && { ...state.download, status: 'error', errorMessage: error.message } }))
         notify(`下载失败：${error.message}`, 'danger')
       }
       try {
         const download = await gateway.files.prepareDownload(path, controller.signal)
-        if (controller.signal.aborted || sequence !== downloadSequence) return
+        if (!current() || controller.signal.aborted || sequence !== downloadSequence) return
         set((state) => ({ download: state.download && { ...state.download, name: download.name, status: 'started' } }))
         notify(`已开始下载 ${download.name}，请在浏览器中查看下载进度。`, 'info')
         gateway.files.startDownload(download, (error) => {
+          if (!current()) return
           if (sequence === downloadSequence && get().download) fail(error)
           else notify(`下载失败：${error.message}`, 'danger')
         })
@@ -315,7 +339,9 @@ export const useFilesStore = create<FilesState>((set, get) => {
     },
     async uploadFiles(gateway, targetPath, files) {
       if (get().upload?.busy || files.length === 0) return
+      const current = requests.capture()
       const controller = new AbortController()
+      const active = () => current() && !controller.signal.aborted
       uploadController = controller
       set({ upload: { targetPath, busy: true, items: files.map((file) => ({ name: file.name, sizeBytes: file.size, progress: 0, status: 'queued' })) } })
       const updateItem = (index: number, patch: Partial<FileUploadItem>) => {
@@ -325,13 +351,13 @@ export const useFilesStore = create<FilesState>((set, get) => {
       let sessionExpired = false
       try {
         for (const [index, file] of files.entries()) {
-          if (controller.signal.aborted) break
+          if (!active()) break
           let changed = false
           try {
-            while (!controller.signal.aborted) {
+            while (active()) {
               updateItem(index, { status: 'checking', progress: 0, errorMessage: undefined })
               const check = await gateway.files.checkUpload(targetPath, file.name, file.size, controller.signal)
-              if (controller.signal.aborted) break
+              if (!active()) break
               if (check.state === 'replace' || changed) {
                 if (changed) notify('上传目标已发生变化，请重新确认。', 'warning')
                 updateItem(index, { status: 'conflict', replacing: check.state === 'replace', errorMessage: changed ? '目标已发生变化，请重新确认。' : undefined })
@@ -339,6 +365,7 @@ export const useFilesStore = create<FilesState>((set, get) => {
                   resolveConflict = resolve
                   set((state) => ({ upload: state.upload && { ...state.upload, conflictIndex: index } }))
                 })
+                if (!current()) break
                 resolveConflict = undefined
                 set((state) => ({ upload: state.upload && { ...state.upload, conflictIndex: undefined } }))
                 if (decision === 'cancel' || controller.signal.aborted) break
@@ -353,13 +380,13 @@ export const useFilesStore = create<FilesState>((set, get) => {
                 await gateway.files.uploadFile(targetPath, file, check, check.state === 'replace', {
                   signal: controller.signal,
                   onProgress: (progress) => {
-                    if (!controller.signal.aborted) updateItem(index, { progress })
+                    if (active()) updateItem(index, { progress })
                   },
                 })
-                updateItem(index, { status: 'complete', progress: 100 })
+                if (current()) updateItem(index, { status: 'complete', progress: 100 })
                 break
               } catch (error) {
-                if (!controller.signal.aborted && isFileUploadConflict(error)) {
+                if (active() && isFileUploadConflict(error)) {
                   changed = true
                   continue
                 }
@@ -367,7 +394,7 @@ export const useFilesStore = create<FilesState>((set, get) => {
               }
             }
           } catch (error) {
-            if (!controller.signal.aborted) updateItem(index, { status: 'error', errorMessage: messageOf(error, '上传失败') })
+            if (active()) updateItem(index, { status: 'error', errorMessage: messageOf(error, '上传失败') })
             if (error instanceof FileTransferError && error.status === 401) {
               sessionExpired = true
               break
@@ -375,27 +402,29 @@ export const useFilesStore = create<FilesState>((set, get) => {
           }
         }
       } finally {
-        resolveConflict = undefined
-        uploadController = undefined
-        set((state) => ({ upload: state.upload && {
-          ...state.upload,
-          busy: false,
-          conflictIndex: undefined,
-          items: state.upload.items.map((item) => ['queued', 'checking', 'conflict', 'uploading'].includes(item.status)
-            ? { ...item, status: 'cancelled', errorMessage: item.status === 'uploading' ? '传输已取消，请刷新确认目标文件状态。' : undefined }
-            : item),
-        } }))
-        const items = get().upload?.items ?? []
-        const failures = items.filter((item) => item.status === 'error')
-        const complete = items.filter((item) => item.status === 'complete').length
-        if (failures.length) notify(`上传完成 ${complete} / ${items.length} 个文件；${failures.map((item) => `${item.name}：${item.errorMessage ?? '上传失败'}`).join('；')}`, 'danger')
-        else notify(controller.signal.aborted ? `上传已取消，已上传 ${complete} / ${items.length} 个文件，请刷新确认文件状态。` : `已上传 ${complete} / ${items.length} 个文件`, controller.signal.aborted ? 'info' : 'success')
-        // 即使最后一项失败或取消，先前成功及结果不确定的项仍需要回读。
-        if (attemptedUpload) {
-          invalidateSizes()
-          if (!sessionExpired) {
-            const keyword = get().searchKeyword
-            await Promise.all([reload(gateway), keyword.trim() ? get().search(gateway, keyword) : Promise.resolve()])
+        if (current()) {
+          resolveConflict = undefined
+          uploadController = undefined
+          set((state) => ({ upload: state.upload && {
+            ...state.upload,
+            busy: false,
+            conflictIndex: undefined,
+            items: state.upload.items.map((item) => ['queued', 'checking', 'conflict', 'uploading'].includes(item.status)
+              ? { ...item, status: 'cancelled', errorMessage: item.status === 'uploading' ? '传输已取消，请刷新确认目标文件状态。' : undefined }
+              : item),
+          } }))
+          const items = get().upload?.items ?? []
+          const failures = items.filter((item) => item.status === 'error')
+          const complete = items.filter((item) => item.status === 'complete').length
+          if (failures.length) notify(`上传完成 ${complete} / ${items.length} 个文件；${failures.map((item) => `${item.name}：${item.errorMessage ?? '上传失败'}`).join('；')}`, 'danger')
+          else notify(controller.signal.aborted ? `上传已取消，已上传 ${complete} / ${items.length} 个文件，请刷新确认文件状态。` : `已上传 ${complete} / ${items.length} 个文件`, controller.signal.aborted ? 'info' : 'success')
+          // 即使最后一项失败或取消，先前成功及结果不确定的项仍需要回读。
+          if (attemptedUpload) {
+            invalidateSizes()
+            if (!sessionExpired) {
+              const keyword = get().searchKeyword
+              await Promise.all([reload(gateway), keyword.trim() ? get().search(gateway, keyword) : Promise.resolve()])
+            }
           }
         }
       }
