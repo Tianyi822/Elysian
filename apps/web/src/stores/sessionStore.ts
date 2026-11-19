@@ -18,6 +18,7 @@ import { useUsersStore } from './usersStore'
 import { useFilesStore } from './filesStore'
 import { useWebsitesStore } from './websitesStore'
 import { useWebsiteDeploymentsStore } from './websiteDeploymentsStore'
+import { useFirewallStore } from './firewallStore'
 
 function clearPrivateDisplays() {
   useAgentChatStore.getState().clearDisplay()
@@ -35,6 +36,7 @@ function clearPrivateDisplays() {
   useFilesStore.getState().clearDisplay()
   useWebsitesStore.getState().clearDisplay()
   useWebsiteDeploymentsStore.getState().clearDisplay()
+  useFirewallStore.getState().clearDisplay()
 }
 
 function resetLogSession(mode: SessionMode | undefined) {

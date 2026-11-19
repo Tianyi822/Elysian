@@ -5,6 +5,7 @@ import { useFirewallStore } from './firewallStore'
 import { useMessageStore } from './messageStore'
 import { RequestTimeoutError } from '../adapters/http/requestDeadline'
 import { advanceAuthGeneration } from '../utils/authGeneration'
+import { useSessionStore } from './sessionStore'
 
 /*
  * 防火墙 store 的行为测试。网关用手写 stub 注入，只依赖 adapter 接口形状；
@@ -21,14 +22,17 @@ const TOGGLES: FirewallToggles = {
 
 function deferred<T>() {
   let resolve!: (value: T) => void
-  const promise = new Promise<T>((done) => {
+  let reject!: (error: Error) => void
+  const promise = new Promise<T>((done, fail) => {
     resolve = done
+    reject = fail
   })
-  return { promise, resolve }
+  return { promise, resolve, reject }
 }
 
 function gatewayWith(overrides: Partial<ElysianGateway['firewall']> = {}): ElysianGateway {
   return {
+    session: { login: async () => {}, logout: async () => {} },
     firewall: {
       toggles: async () => ({ ...TOGGLES }),
       list: async () => [],
@@ -277,6 +281,98 @@ const RULE_V4 = {
 
 /* 同一条 ufw 规则在系统里是 v4/v6 两行：create 的响应只带回首行，重拉才能看到双生行。 */
 const RULE_V6 = { ...RULE_V4, id: 'ufw-allow-in-tcp-22-any.ipv6', family: 'ipv6' } as const
+
+describe('防火墙登录会话隔离', () => {
+  it('登出时清除旧规则、开关和弹窗；新会话读取失败也不显示旧快照', async () => {
+    const scan = useFirewallStore.getInitialState().scanProtection
+    const gateway = gatewayWith({
+      list: async () => [RULE_V4],
+      toggles: async () => ({ ...TOGGLES, firewallEnabled: false }),
+      scanProtection: async () => ({ ...scan, enabled: true, config: { ...scan.config, ports: [22] } }),
+    })
+    const session = useSessionStore.getState()
+    const firewall = useFirewallStore.getState()
+    await session.login(gateway, 'admin', 'password')
+    await firewall.load(gateway)
+    firewall.openEdit(RULE_V4)
+    expect(useFirewallStore.getState()).toMatchObject({ status: 'ready', rules: [RULE_V4], dialogRule: RULE_V4, scanStatus: 'ready' })
+    await session.logout(gateway)
+    expect(useFirewallStore.getState()).toMatchObject({ status: 'idle', rules: [], toggles: TOGGLES, dialogRule: undefined, scanStatus: 'idle', scanProtection: scan })
+    await session.login(gateway, 'admin', 'password')
+    await firewall.load(gatewayWith({ list: async () => { throw new Error('新会话读取失败') } }))
+    expect(useFirewallStore.getState()).toMatchObject({ status: 'error', rules: [], errorMessage: '新会话读取失败' })
+  })
+
+  it.each(['成功', '超时'] as const)('旧开关操作%s不覆盖新开关、不释放忙碌标记、不回读', async (outcome) => {
+    const old = deferred<FirewallToggles>()
+    const next = deferred<FirewallToggles>()
+    const readBack = vi.fn(async () => TOGGLES)
+    const oldValue = { ...TOGGLES, firewallEnabled: false }
+    const newValue = { ...TOGGLES, pingBlocked: false }
+    const gateway = gatewayWith({ toggles: readBack, setToggles: vi.fn().mockReturnValueOnce(old.promise).mockReturnValueOnce(next.promise) })
+    const session = useSessionStore.getState()
+    const { toggle } = useFirewallStore.getState()
+    await session.login(gateway, 'admin', 'password')
+    const previous = toggle(gateway, oldValue)
+    session.expire()
+    await session.login(gateway, 'admin', 'password')
+    const current = toggle(gateway, newValue)
+    if (outcome === '成功') old.resolve(oldValue)
+    else old.reject(new RequestTimeoutError(true))
+    await previous
+    expect(useFirewallStore.getState()).toMatchObject({ toggles: newValue, toggling: true, operationError: undefined })
+    expect(readBack).not.toHaveBeenCalled()
+    expect(useMessageStore.getState().messages).toEqual([])
+    next.resolve(newValue)
+    await current
+    expect(useFirewallStore.getState().toggling).toBe(false)
+  })
+
+  it('旧 IP 规则成功和旧端口转发失败都不干扰新会话弹窗', async () => {
+    const rule = { id: 'ip-rule', source: '203.0.113.9', policy: 'deny', family: 'ipv4', note: null, updatedAt: null } as const
+    const forward = { protocol: 'tcp', port: 8080, targetHost: '192.0.2.1', targetPort: 80, note: null } as const
+    const oldRule = deferred<typeof rule>()
+    const oldForward = deferred<never>()
+    const list = vi.fn(async () => [])
+    const gateway = gatewayWith({ list, createIpRule: () => oldRule.promise, createForward: () => oldForward.promise })
+    const session = useSessionStore.getState()
+    const firewall = useFirewallStore.getState()
+    await session.login(gateway, 'admin', 'password')
+    firewall.openCreateIp()
+    const savingRule = firewall.saveIpRule(gateway, rule)
+    session.expire()
+    await session.login(gateway, 'admin', 'password')
+    firewall.openCreateForward()
+    const savingForward = firewall.saveForward(gateway, forward)
+    oldRule.resolve(rule)
+    expect(await savingRule).toBe(false)
+    expect(useFirewallStore.getState()).toMatchObject({ dialogForward: 'new', saving: true })
+    session.expire()
+    await session.login(gateway, 'admin', 'password')
+    firewall.openCreateForward()
+    oldForward.reject(new Error('旧提交失败'))
+    expect(await savingForward).toBe(false)
+    expect(useFirewallStore.getState()).toMatchObject({ dialogForward: 'new', operationError: undefined })
+    expect(list).not.toHaveBeenCalled()
+    expect(useMessageStore.getState().messages).toEqual([])
+  })
+
+  it('旧系统同步结束后不发起新会话下的列表回读', async () => {
+    const sync = deferred<{ total: number }>()
+    const list = vi.fn(async () => [])
+    const gateway = gatewayWith({ syncFromSystem: () => sync.promise, list })
+    const session = useSessionStore.getState()
+    await session.login(gateway, 'admin', 'password')
+    const pending = useFirewallStore.getState().syncFromSystem(gateway)
+    expect(useFirewallStore.getState().syncing).toBe(true)
+    session.expire()
+    await session.login(gateway, 'admin', 'password')
+    sync.resolve({ total: 1 })
+    await pending
+    expect(list).not.toHaveBeenCalled()
+    expect(useFirewallStore.getState().syncing).toBe(false)
+  })
+})
 
 describe('变更后与系统重拉同步', () => {
   it('保存端口规则后重拉列表：v4/v6 双生行都出现，而不是只追加响应里的首行', async () => {

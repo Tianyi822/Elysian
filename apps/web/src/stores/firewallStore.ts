@@ -62,6 +62,7 @@ type FirewallState = TabMemoryState<FirewallView> & {
   toggling: boolean
   unblockingIps: readonly string[]
   removingRuleIds: readonly string[]
+  clearDisplay: () => void
   load: (gateway: ElysianGateway) => Promise<void>
   /** 变更成功后的静默重拉：不动 status，面板不闪加载态。 */
   refreshLists: (gateway: ElysianGateway) => Promise<void>
@@ -98,13 +99,12 @@ async function readFirewall(gateway: ElysianGateway) {
   return { toggles, rules, ipRules, forwards }
 }
 
-let pendingLoad: { gateway: ElysianGateway; auth: number; snapshot: Pick<FirewallState, 'rules' | 'ipRules' | 'forwards' | 'toggles'>; promise: Promise<void> } | undefined
-
 function sameReadSnapshot(snapshot: Pick<FirewallState, 'rules' | 'ipRules' | 'forwards' | 'toggles'>, state: FirewallState): boolean {
   return snapshot.rules === state.rules && snapshot.ipRules === state.ipRules && snapshot.forwards === state.forwards && snapshot.toggles === state.toggles
 }
 
-export const useFirewallStore = create<FirewallState>((set, get) => {
+export const useFirewallStore = create<FirewallState>((set, get, store) => {
+  let pendingLoad: { gateway: ElysianGateway; auth: number; snapshot: Pick<FirewallState, 'rules' | 'ipRules' | 'forwards' | 'toggles'>; promise: Promise<void> } | undefined
   let actionAuth = captureAuthGeneration()
   let scanRevision = 0
   let pendingScan: { auth: number; gateway: ElysianGateway; promise: Promise<void> } | undefined
@@ -146,6 +146,14 @@ export const useFirewallStore = create<FirewallState>((set, get) => {
   toggling: false,
   unblockingIps: [],
   removingRuleIds: [],
+
+  clearDisplay() {
+    actionAuth = captureAuthGeneration()
+    pendingLoad = undefined
+    pendingScan = undefined
+    scanRevision += 1
+    set({ ...store.getInitialState(), tab: get().tab })
+  },
 
   load(gateway) {
     const auth = syncActionGeneration()
@@ -193,11 +201,13 @@ export const useFirewallStore = create<FirewallState>((set, get) => {
 
   // 乐观更新：开关先翻再等 adapter 确认，失败回滚并报危险通知；忙碌中忽略后续切换。
   async toggle(gateway, next) {
+    const auth = syncActionGeneration()
     const previous = get().toggles
     if (get().toggling) return
     set({ toggling: true, toggles: next, operationError: undefined })
     try {
       const confirmed = await gateway.firewall.setToggles(next)
+      if (auth !== captureAuthGeneration()) return
       set({ toggles: confirmed, toggling: false })
       notify(
         next.firewallEnabled !== previous.firewallEnabled
@@ -205,14 +215,18 @@ export const useFirewallStore = create<FirewallState>((set, get) => {
           : `禁 ping 已${next.pingBlocked ? '开启' : '关闭'}${REAL_ACTION_LABEL}`,
       )
     } catch (error) {
+      if (auth !== captureAuthGeneration()) return
       const message = error instanceof Error ? `切换失败：${error.message}` : '切换失败'
       set({ toggles: previous, operationError: message })
       notify(message, 'danger')
       if (hasUncertainOutcome(error)) {
-        try { set(await readFirewall(gateway)) } catch { /* 保留未确认提示，由用户重试读取。 */ }
+        try {
+          const data = await readFirewall(gateway)
+          if (auth === captureAuthGeneration()) set(data)
+        } catch { /* 保留未确认提示，由用户重试读取。 */ }
       }
     } finally {
-      set({ toggling: false })
+      if (auth === captureAuthGeneration()) set({ toggling: false })
     }
   },
 
@@ -281,7 +295,7 @@ export const useFirewallStore = create<FirewallState>((set, get) => {
       set({ dialogRule: undefined })
       notify(`端口规则 ${saved.protocol} ${saved.port}${saved.portTo ? `:${saved.portTo}` : ''} 已${editing === 'new' ? '添加' : '修改'}${REAL_ACTION_LABEL}`)
       await get().refreshLists(gateway)
-      return true
+      return auth === captureAuthGeneration()
     } catch (error) {
       if (auth !== captureAuthGeneration()) return false
       const message = error instanceof Error ? `保存失败：${error.message}` : '保存失败'
@@ -296,22 +310,19 @@ export const useFirewallStore = create<FirewallState>((set, get) => {
   },
 
   async saveIpRule(gateway, input) {
+    const auth = syncActionGeneration()
     const editing = get().dialogIpRule
     if (editing === undefined || get().saving) return false
     set({ saving: true, operationError: undefined })
     try {
-      if (editing === 'new') {
-        const created = await gateway.firewall.createIpRule(input)
-        set({ dialogIpRule: undefined, saving: false })
-        notify(`IP 规则 ${created.source} 已添加${REAL_ACTION_LABEL}`)
-      } else {
-        const updated = await gateway.firewall.updateIpRule(editing.id, input)
-        set({ dialogIpRule: undefined, saving: false })
-        notify(`IP 规则 ${updated.source} 已修改${REAL_ACTION_LABEL}`)
-      }
+      const saved = editing === 'new' ? await gateway.firewall.createIpRule(input) : await gateway.firewall.updateIpRule(editing.id, input)
+      if (auth !== captureAuthGeneration()) return false
+      set({ dialogIpRule: undefined, saving: false })
+      notify(`IP 规则 ${saved.source} 已${editing === 'new' ? '添加' : '修改'}${REAL_ACTION_LABEL}`)
       await get().refreshLists(gateway)
-      return true
+      return auth === captureAuthGeneration()
     } catch (error) {
+      if (auth !== captureAuthGeneration()) return false
       const message = error instanceof Error ? `保存失败：${error.message}` : '保存失败'
       set({ saving: false, operationError: message })
       notify(message, 'danger')
@@ -320,22 +331,19 @@ export const useFirewallStore = create<FirewallState>((set, get) => {
   },
 
   async saveForward(gateway, input) {
+    const auth = syncActionGeneration()
     const editing = get().dialogForward
     if (editing === undefined || get().saving) return false
     set({ saving: true, operationError: undefined })
     try {
-      if (editing === 'new') {
-        const created = await gateway.firewall.createForward(input)
-        set({ dialogForward: undefined, saving: false })
-        notify(`端口转发 ${created.protocol} ${created.port} → ${created.targetHost}:${created.targetPort} 已添加${REAL_ACTION_LABEL}`)
-      } else {
-        const updated = await gateway.firewall.updateForward(editing.id, input)
-        set({ dialogForward: undefined, saving: false })
-        notify(`端口转发 ${updated.protocol} ${updated.port} → ${updated.targetHost}:${updated.targetPort} 已修改${REAL_ACTION_LABEL}`)
-      }
+      const saved = editing === 'new' ? await gateway.firewall.createForward(input) : await gateway.firewall.updateForward(editing.id, input)
+      if (auth !== captureAuthGeneration()) return false
+      set({ dialogForward: undefined, saving: false })
+      notify(`端口转发 ${saved.protocol} ${saved.port} → ${saved.targetHost}:${saved.targetPort} 已${editing === 'new' ? '添加' : '修改'}${REAL_ACTION_LABEL}`)
       await get().refreshLists(gateway)
-      return true
+      return auth === captureAuthGeneration()
     } catch (error) {
+      if (auth !== captureAuthGeneration()) return false
       const message = error instanceof Error ? `保存失败：${error.message}` : '保存失败'
       set({ saving: false, operationError: message })
       notify(message, 'danger')
@@ -470,6 +478,7 @@ export const useFirewallStore = create<FirewallState>((set, get) => {
     set({ syncing: true })
     try {
       await gateway.firewall.syncFromSystem()
+      if (auth !== captureAuthGeneration()) return
       // 同步后重拉三类列表，让系统侧（含命令行手敲）的规则进面板。
       const [data] = await Promise.all([readFirewall(gateway), get().refreshScan(gateway)])
       if (auth !== captureAuthGeneration()) return
