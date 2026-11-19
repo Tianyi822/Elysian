@@ -1,5 +1,5 @@
 import { captureAuthGeneration } from '../utils/authGeneration'
-import type { Container, ContainerAction, ContainerCreateInput, ContainerSample, ContainerStatus, Unsubscribe } from '@elysian/contracts'
+import type { Container, ContainerAction, ContainerCreateInput, ContainerStatus } from '@elysian/contracts'
 import { create } from 'zustand'
 import type {
   ElysianGateway,
@@ -15,10 +15,10 @@ import {
   containerRemoveBlockedReason,
   CONTAINER_TERMINAL_CLOSE_FALLBACK,
 } from '../utils/containerCopy'
-import { getLastContainerSample, onStreamEvent } from './eventStreamStore'
 import { useMessageStore } from './messageStore'
 import { messageOf } from '../utils/errorMessage'
 import { createContainerImages, type ContainerImagesState } from './containerImages'
+import { createContainerEvents } from './containerEvents'
 import { createContainerInventory } from './containerInventory'
 import { createTabMemorySlice, type TabMemoryState } from './tabMemoryStore'
 
@@ -61,20 +61,6 @@ function releaseTerminalSession(gateway: ElysianGateway | undefined, session: Te
   }
 }
 
-/** 采样表以最近一拍为准：载荷未覆盖的容器显示 —。 */
-function applySamples(samples: readonly ContainerSample[]): void {
-  useContainersStore.setState({
-    samples: Object.fromEntries(
-      samples.map((sample) => [sample.containerId, { cpuPercent: sample.cpuPercent, memMb: sample.memMb }]),
-    ),
-  })
-}
-
-/*
- * 事件回灌：container/sample 更新采样表（以最近一拍为准，载荷未覆盖的容器显示 —），
- * container/updated 更新状态列；HTTP 动作的忙碌标记只在请求结清时释放。
- */
-let detachLive: Unsubscribe | undefined
 let activeGateway: ElysianGateway | undefined
 let containerActionScope: { gateway: ElysianGateway; auth: number } | undefined
 let pendingLoad: { read: Promise<void>; promise: Promise<void> } | undefined
@@ -83,6 +69,15 @@ const imageActions = createContainerImages(
   () => useContainersStore.getState(),
   (update) => useContainersStore.setState(update),
 )
+const events = createContainerEvents({
+  get: () => useContainersStore.getState(),
+  set: (update) => {
+    useContainersStore.setState(update as never)
+  },
+  getGateway: () => activeGateway,
+  onResync: () => { void refreshAfterResync() },
+  releaseTerminal: (gateway, session) => releaseTerminalSession(gateway, session as TerminalSession),
+})
 const inventory = createContainerInventory(
   () => useContainersStore.getState(),
   (update) => useContainersStore.setState(update),
@@ -92,7 +87,7 @@ const inventory = createContainerInventory(
 /** 容器页和数据库页共用 Docker 清单，数据库登记及其读取状态由数据库域维护。 */
 export function readContainerInventory(gateway: ElysianGateway, options?: { fresh?: boolean }): Promise<void> {
   activeGateway = gateway
-  attachLiveEvents()
+  events.attach()
   return inventory.read(gateway, options)
 }
 
@@ -103,21 +98,6 @@ async function refreshAfterResync(): Promise<void> {
   } catch {
     // 重同步失败时保留当前列表，等待下一拍 resync 或用户手动刷新。
   }
-}
-
-function applyContainerRemoval(containerId: string, gateway?: ElysianGateway): void {
-  const { terminal } = useContainersStore.getState()
-  const closesTerminal = terminal?.containerId === containerId
-  useContainersStore.setState((state) => {
-    const { [containerId]: _sample, ...samples } = state.samples
-    return {
-      containers: state.containers.filter((container) => container.id !== containerId),
-      samples,
-      detailContainerId: state.detailContainerId === containerId ? undefined : state.detailContainerId,
-      terminal: closesTerminal ? undefined : state.terminal,
-    }
-  })
-  if (closesTerminal) releaseTerminalSession(gateway, terminal)
 }
 
 function containerMutationCurrent(gateway: ElysianGateway): () => boolean {
@@ -132,59 +112,6 @@ function containerMutationCurrent(gateway: ElysianGateway): () => boolean {
 
 function containerBusy(keys: readonly string[], id: string): boolean {
   return keys.some((key) => key.startsWith(`${id}:`))
-}
-
-function attachLiveEvents(): void {
-  if (detachLive) return
-  detachLive = onStreamEvent((event) => {
-    if (event.name === 'container/sample') {
-      applySamples(event.payload.samples)
-      return
-    }
-    if (event.name === 'container/created') {
-      const container = event.payload.container
-      useContainersStore.setState((state) => ({
-        containers: state.containers.some((c) => c.id === container.id)
-          ? state.containers
-          : [...state.containers, container],
-      }))
-      return
-    }
-    if (event.name === 'container/updated') {
-      const { containerId, status, startedAt } = event.payload
-      useContainersStore.setState((state) => ({
-        containers: state.containers.map((container) => {
-          if (container.id !== containerId) return container
-          if (startedAt === null) {
-            const { startedAt: _removed, ...rest } = container
-            return { ...rest, status }
-          }
-          if (typeof startedAt === 'string') {
-            return { ...container, status, startedAt }
-          }
-          return { ...container, status }
-        }),
-      }))
-      return
-    }
-    if (event.name === 'container/removed') {
-      applyContainerRemoval(event.payload.containerId, activeGateway)
-      return
-    }
-    if (event.name === 'container/resync') {
-      void refreshAfterResync()
-    }
-  })
-}
-
-/*
- * 首屏不空等：页面挂载晚于事件流连接，事件源订阅即补发的那拍采样
- * 发生在监听器注册之前，从事件流 store 的采样缓存回放最新一拍 container/sample
- * （缓存不随重连清空，回放宁可旧一拍也不空屏）。
- */
-function replayLatestSample(): void {
-  const latest = getLastContainerSample()
-  if (latest?.name === 'container/sample') applySamples(latest.payload.samples)
 }
 
 type ContainerView = 'grid' | 'images' | 'apps'
@@ -235,8 +162,7 @@ export const useContainersStore = create<TabMemoryState<ContainerView> & Contain
     const { terminal, tab } = get()
     const gateway = activeGateway
     activeGateway = undefined
-    detachLive?.()
-    detachLive = undefined
+    events.detach()
     containerActionScope = undefined
     pendingLoad = undefined
     inventory.reset()
@@ -269,7 +195,7 @@ export const useContainersStore = create<TabMemoryState<ContainerView> & Contain
         await read
         if (!current()) return
         set({ status: 'ready' })
-        replayLatestSample()
+        events.replayLatestSample()
       } catch (error) {
         if (current()) set({ status: hadData ? 'ready' : 'error', errorMessage: messageOf(error, '读取容器数据失败') })
       } finally { if (pendingLoad === operation) pendingLoad = undefined }
@@ -424,7 +350,7 @@ export const useContainersStore = create<TabMemoryState<ContainerView> & Contain
     try {
       await gateway.containers.removeContainer(containerId)
       if (!current()) return
-      applyContainerRemoval(containerId, gateway)
+      events.removeContainer(containerId)
       useMessageStore.getState().notify({ tone: 'success', message: `容器 ${container.name} 已删除${isDockerRuntime() ? '' : '（演示）'}` })
     } catch (error) {
       if (!current()) return
@@ -438,7 +364,7 @@ export const useContainersStore = create<TabMemoryState<ContainerView> & Contain
         if (actual) {
           set({ containers: snapshot.map((candidate) => candidate.id === containerId ? actual : candidate) })
         } else {
-          applyContainerRemoval(containerId, gateway)
+          events.removeContainer(containerId)
         }
       } catch {
         // 回读失败保留上次事实，不自动重投删除。
