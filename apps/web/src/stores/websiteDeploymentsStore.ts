@@ -4,6 +4,7 @@ import type { WebsiteDeploymentTask } from '@elysian/contracts'
 import type { ElysianGateway } from '../contracts/adapters'
 import { useMessageStore } from './messageStore'
 import { messageOf } from '../utils/errorMessage'
+import { createRequestGuard } from './requestGuard'
 
 function notifyTransition(previous: WebsiteDeploymentTask | undefined, task: WebsiteDeploymentTask) {
   if (!previous || (!websiteDeploymentIsActive(previous.state) && previous.state !== 'awaiting-config') || previous.state === task.state || websiteDeploymentIsActive(task.state)) return
@@ -14,26 +15,41 @@ function notifyTransition(previous: WebsiteDeploymentTask | undefined, task: Web
 
 type DeploymentState = {
   tasks: readonly WebsiteDeploymentTask[]; loading: boolean; error?: string
+  clearDisplay(): void
   refresh(gateway: ElysianGateway): Promise<void>
   put(task: WebsiteDeploymentTask): void
 }
+
+const initialDisplay = { tasks: [], loading: false, error: undefined } as const
+const reads = createRequestGuard()
+
 export const useWebsiteDeploymentsStore = create<DeploymentState>((set, get) => ({
-  tasks: [], loading: false,
+  ...initialDisplay,
+  clearDisplay() {
+    reads.invalidate()
+    set(initialDisplay)
+  },
   put(task) {
     notifyTransition(get().tasks.find((row) => row.id === task.id), task)
     set((s) => ({ tasks: [task, ...s.tasks.filter((row) => row.id !== task.id)] }))
   },
   async refresh(gateway) {
-    if (get().loading || !gateway.websites.deployment) return
+    const api = gateway.websites.deployment
+    if (get().loading || !api) return
+    const current = reads.capture()
     set({ loading: true })
     try {
-      const rows = await gateway.websites.deployment.list()
+      const rows = await api.list()
+      if (!current()) return
       const active = rows.filter((row) => websiteDeploymentIsActive(row.state))
-      const updates = await Promise.all(active.map((row) => gateway.websites.deployment!.task(row.id)))
+      const updates = await Promise.all(active.map((row) => api.task(row.id)))
+      if (!current()) return
       const byId = new Map(updates.map((row) => [row.id, row]))
       const tasks = rows.map((row) => byId.get(row.id) ?? row).sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       for (const task of tasks) notifyTransition(get().tasks.find((row) => row.id === task.id), task)
       set({ tasks, loading: false, error: undefined })
-    } catch (error) { set({ loading: false, error: messageOf(error, '部署任务加载失败') }) }
+    } catch (error) {
+      if (current()) set({ loading: false, error: messageOf(error, '部署任务加载失败') })
+    }
   },
 }))

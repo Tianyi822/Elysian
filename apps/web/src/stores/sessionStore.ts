@@ -17,6 +17,7 @@ import { useAgentRuntimeStore } from './agentRuntimeStore'
 import { useUsersStore } from './usersStore'
 import { useFilesStore } from './filesStore'
 import { useWebsitesStore } from './websitesStore'
+import { useWebsiteDeploymentsStore } from './websiteDeploymentsStore'
 
 function clearPrivateDisplays() {
   useAgentChatStore.getState().clearDisplay()
@@ -33,6 +34,7 @@ function clearPrivateDisplays() {
   useUsersStore.getState().clearDisplay()
   useFilesStore.getState().clearDisplay()
   useWebsitesStore.getState().clearDisplay()
+  useWebsiteDeploymentsStore.getState().clearDisplay()
 }
 
 function resetLogSession(mode: SessionMode | undefined) {

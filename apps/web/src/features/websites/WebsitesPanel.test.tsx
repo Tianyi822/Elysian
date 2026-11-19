@@ -6,9 +6,11 @@ import { resetWebsitesData } from '../../adapters/mock/websitesData'
 import { useDependencyProbeStore } from '../../stores/dependencyProbeStore'
 import { useWebsitesStore } from '../../stores/websitesStore'
 import { useWebsiteDeploymentsStore } from '../../stores/websiteDeploymentsStore'
+import { useMessageStore } from '../../stores/messageStore'
+import { useSessionStore } from '../../stores/sessionStore'
 import { renderApp } from '../../test/renderApp'
 import { MOCK_WEBSITE_RUNTIME_REPORT } from '../../adapters/mock/websiteRuntimeCatalog'
-import type { WebsiteProjectKind } from '@elysian/contracts'
+import type { WebsiteDeploymentTask, WebsiteProjectKind } from '@elysian/contracts'
 
 beforeEach(() => {
   resetWebsitesData()
@@ -124,6 +126,30 @@ describe('三步构建与部署', () => {
     const dialog = await screen.findByRole('dialog')
     await user.tab(); expect(dialog).toContainElement(document.activeElement as HTMLElement)
     expect(await screen.findByRole('log', { name: '部署日志' })).toHaveTextContent('演示环境')
+  })
+
+  it.each(['成功', '失败'] as const)('失效后部署提交的迟到%s不写入共享列表或发通知', async (outcome) => {
+    const user = userEvent.setup()
+    const gateway = await open()
+    const api = gateway.websites.deployment!
+    let finish!: (task: WebsiteDeploymentTask) => void
+    let fail!: (error: Error) => void
+    const pending = new Promise<WebsiteDeploymentTask>((resolve, reject) => { finish = resolve; fail = reject })
+    const submit = vi.spyOn(api, 'submit').mockReturnValueOnce(pending)
+    await prepare('html', user)
+    await user.click(screen.getByRole('button', { name: '构建并部署' }))
+    expect(submit).toHaveBeenCalledTimes(1)
+    const input = submit.mock.calls[0]![0]
+    await act(async () => { useSessionStore.getState().expire() })
+    expect(screen.queryByRole('dialog', { name: '添加项目' })).not.toBeInTheDocument()
+    await act(async () => {
+      if (outcome === '失败') fail(new Error('旧部署提交失败'))
+      else finish({ id: 'old-deploy', sourceId: input.sourceId, name: input.name, config: input.config,
+        state: 'building', stage: '构建中', testResult: 'pending', createdAt: '2026-10-04T07:30:00Z', updatedAt: '2026-10-04T07:30:00Z' })
+    })
+
+    expect(useWebsiteDeploymentsStore.getState().tasks).toEqual([])
+    expect(useMessageStore.getState().messages).toEqual([])
   })
 
   it('后台每两秒继续回读部署日志，读完终态尾部才停止', async () => {

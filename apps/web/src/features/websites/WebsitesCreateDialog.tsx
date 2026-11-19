@@ -17,6 +17,7 @@ import { useSilentPolling } from '../../components/useSilentPolling'
 import { useMessageStore } from '../../stores/messageStore'
 import { Button } from '../../components/Button'
 import { messageOf } from '../../utils/errorMessage'
+import { captureAuthGeneration } from '../../utils/authGeneration'
 
 const INPUT = `${FORM_CONTROL_HEIGHT_CLASS} w-full rounded-lg border border-control-line bg-surface-raised px-2.5 text-sm text-fg placeholder:text-fg-subtle disabled:opacity-60`
 const BUTTON = 'rounded-lg border border-control-line bg-surface-raised px-3 py-2 text-xs font-medium text-fg hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50'
@@ -36,6 +37,8 @@ export function WebsitesCreateDialog({ project, existingTask, onClose }: { proje
   const api = gateway.websites.deployment
   const caddyReady = useDependencyProbeStore((s) => accessConfigEntryVisible(s.report, s.status))
   const close = onClose ?? useWebsitesStore.getState().closeCreate
+  const [auth] = useState(captureAuthGeneration)
+  const currentSession = () => auth === captureAuthGeneration()
   const [step, setStep] = useState(1)
   const [sourceType, setSourceType] = useState<'archive' | 'git'>('archive')
   const [mode, setMode] = useState<'source' | 'artifact'>('source')
@@ -80,10 +83,12 @@ export function WebsitesCreateDialog({ project, existingTask, onClose }: { proje
     return () => controller.abort()
   }, [gateway, catalogAttempt])
   useEffect(() => {
-    if (!existingTask || !api) return
+    if (!existingTask || !api || auth !== captureAuthGeneration()) return
     setTask(existingTask); setStep(3); setName(existingTask.name)
-    void api.source(existingTask.sourceId).then(setSource).catch(() => {})
-  }, [existingTask, api])
+    void api.source(existingTask.sourceId).then((prepared) => {
+      if (auth === captureAuthGeneration()) setSource(prepared)
+    }).catch(() => {})
+  }, [existingTask, api, auth])
   useEffect(() => {
     if (!candidate) return
     setConfig((previous) => ({ ...previous, buildVersion: previous.buildVersion || entries[0]?.version, runtimeVersion: previous.runtimeVersion || project?.runtimeVersion || entries[0]?.version }))
@@ -91,16 +96,19 @@ export function WebsitesCreateDialog({ project, existingTask, onClose }: { proje
   const taskId = task?.id
   const taskReadScope = useMemo(() => [gateway, api, taskId], [gateway, api, taskId])
   useSilentPolling(async signal => {
-    if (!taskId || !api) return false
+    if (!taskId || !api || !currentSession()) return false
     try {
       const [latest, batch] = await Promise.all([api.task(taskId), api.logs(taskId, offset.current)])
-      if (signal.aborted) return
+      if (signal.aborted || !currentSession()) return false
       setTask(latest); useWebsiteDeploymentsStore.getState().put(latest)
       if (batch.next > offset.current) { setLogs((text) => (text + batch.lines.join('')).slice(-128_000)); offset.current = batch.next }
       const finished = !websiteDeploymentIsActive(latest.state) && latest.state !== 'awaiting-config'
       if (finished && !completed.current) { completed.current = true; void useWebsitesStore.getState().refresh(gateway) }
       return !finished || batch.next < batch.total
-    } catch (e) { if (!signal.aborted) setError(errorOf(e)) }
+    } catch (e) {
+      if (!currentSession()) return false
+      if (!signal.aborted) setError(errorOf(e))
+    }
   }, { intervalMs: 2000, enabled: step === 3 && !!taskId && !!api, immediate: true, pauseOnHidden: false, scope: taskReadScope })
 
   const patch = (values: Partial<WebsiteBuildConfig>) => setConfig((old) => ({ ...old, ...values }))
@@ -115,21 +123,31 @@ export function WebsitesCreateDialog({ project, existingTask, onClose }: { proje
     if (prepared.report.candidates.length === 1) chooseCandidate(prepared.report.candidates[0]!.id, prepared)
   }
   const prepare = async () => {
+    if (!currentSession()) return
     if (!api) { setError('部署接口尚未接入'); return }
     if (sourceType === 'archive' && !file) { setError('请选择 ZIP 或 tar.gz 压缩包'); return }
     if (file && file.size > 512 * 1024 * 1024) { setError('压缩包不能超过 512 MiB'); return }
     const controller = new AbortController(); abort.current = controller; setBusy(true); setError(undefined)
+    const current = () => !controller.signal.aborted && currentSession()
     try {
       let prepared = sourceType === 'archive' ? await api.archive(file!, mode, controller.signal) : await api.git({ url: url.trim(), ref: gitRef.trim() || undefined, token: token || undefined, mode }, controller.signal)
+      if (!current()) return
       setToken(''); setSource(prepared)
-      while (prepared.state === 'preparing' && !controller.signal.aborted) {
+      while (prepared.state === 'preparing') {
         await new Promise<void>((resolve, reject) => { const cancelled = () => { clearTimeout(timer); reject(new Error('来源准备已取消')) }; const timer = window.setTimeout(() => { controller.signal.removeEventListener('abort', cancelled); resolve() }, 2000); controller.signal.addEventListener('abort', cancelled, { once: true }) })
-        prepared = await api.source(prepared.id, controller.signal); setSource(prepared)
+        if (!current()) return
+        prepared = await api.source(prepared.id, controller.signal)
+        if (!current()) return
+        setSource(prepared)
       }
-      if (!controller.signal.aborted) acceptSource(prepared)
-    } catch (e) { if (!controller.signal.aborted) setError(errorOf(e)) } finally { setBusy(false); abort.current = null }
+      acceptSource(prepared)
+    } catch (e) { if (current()) setError(errorOf(e)) } finally {
+      if (currentSession()) setBusy(false)
+      abort.current = null
+    }
   }
   const deploy = async (resume = false) => {
+    if (!currentSession()) return
     if (!api || !source || !candidate) { setError('请选择识别出的项目目录'); return }
     if (!isValidWebsiteProjectName(name.trim())) { setError('项目名称需为 1-64 个字符，不能包含路径字符'); return }
     if (!isValidWebsitePort(port)) { setError('端口需为 1-65535 的整数'); return }
@@ -140,12 +158,20 @@ export function WebsitesCreateDialog({ project, existingTask, onClose }: { proje
     setBusy(true); setError(undefined)
     try {
       const started = resume && task ? await api.resume(task.id, chosen) : await api.submit({ sourceId: source.id, projectId: project?.id, requestId, name: name.trim(), port, note: note.trim() || undefined, access: finalAccessMode === 'direct' ? { mode: 'direct' } : { mode: 'domain', domain: domain.trim(), certificatePem: certificate, privateKeyPem: privateKey }, config: chosen })
+      if (!currentSession()) return
       setTask(started); useWebsiteDeploymentsStore.getState().put(started); setStep(3); completed.current = false
       useMessageStore.getState().notify({ tone: 'info', message: resume ? '部署任务已继续' : `已提交项目 ${started.name} 的部署任务` })
-    } catch (e) { setError(errorOf(e)); useMessageStore.getState().notify({ tone: 'danger', message: errorOf(e) }) } finally { setBusy(false) }
+    } catch (e) {
+      if (!currentSession()) return
+      setError(errorOf(e)); useMessageStore.getState().notify({ tone: 'danger', message: errorOf(e) })
+    } finally { if (currentSession()) setBusy(false) }
   }
   const readCertificate = async (file: File | undefined, key: boolean) => { if (!file) return; if (file.size > 256 * 1024) { setError('证书文件不能超过 256 KiB'); return }; try { const text = await file.text(); if (key) setPrivateKey(text); else setCertificate(text) } catch (e) { setError(errorOf(e)) } }
-  const closeDialog = () => { abort.current?.abort(); if (source?.state === 'preparing') void api?.discardSource(source.id).catch(() => {}); close() }
+  const closeDialog = () => { abort.current?.abort(); if (currentSession() && source?.state === 'preparing') void api?.discardSource(source.id).catch(() => {}); close() }
+  const cancelTask = () => {
+    if (!task || !currentSession()) return
+    void api?.cancel(task.id).catch((e: unknown) => { if (currentSession()) setError(errorOf(e)) })
+  }
   const waiting = task?.state === 'awaiting-config'
   const configuration = step === 2 || (step === 3 && waiting)
   const label = (id: string, text: string, children: React.ReactNode) => <div className="space-y-1"><label htmlFor={id} className="block text-xs font-medium text-fg-muted">{text}</label>{children}</div>
@@ -219,7 +245,7 @@ export function WebsitesCreateDialog({ project, existingTask, onClose }: { proje
         {step === 1 && <Button variant="outline" type="button" className={BUTTON} disabled={busy || !api} onClick={() => void prepare()}>{busy ? '准备中…' : '获取并识别'}</Button>}
         {step === 2 && <><Button variant="outline" type="button" className={BUTTON} disabled={busy} onClick={() => setStep(1)}>返回来源</Button><Button variant="outline" type="button" className={BUTTON} disabled={busy || !candidate || (runtimeKind !== undefined && !(source?.mode === 'artifact' && config.target === 'static') && !catalog)} onClick={() => void deploy()}>{busy ? '正在提交…' : source?.mode === 'artifact' ? '部署并启动' : '构建并部署'}</Button></>}
         {step === 3 && waiting && <Button variant="primary" type="button" className={BUTTON} disabled={busy} onClick={() => void deploy(true)}>确认并继续部署</Button>}
-        {step === 3 && task && (websiteDeploymentIsActive(task.state) || waiting) && <Button variant="outline" type="button" className={BUTTON} onClick={() => void api?.cancel(task.id).catch((e: unknown) => setError(errorOf(e)))}>取消任务</Button>}
+        {step === 3 && task && (websiteDeploymentIsActive(task.state) || waiting) && <Button variant="outline" type="button" className={BUTTON} onClick={cancelTask}>取消任务</Button>}
         {step === 3 && task && ['failed', 'cancelled', 'interrupted'].includes(task.state) && source?.state === 'ready' && <Button variant="outline" type="button" className={BUTTON} onClick={() => { setStep(2); setRequestId(randomId()); setConfig(task.config); setTask(undefined); setLogs(''); offset.current = 0 }}>重新配置并部署</Button>}
       </div>
     </Dialog.Content>
