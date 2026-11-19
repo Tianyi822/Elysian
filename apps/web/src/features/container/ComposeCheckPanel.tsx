@@ -76,7 +76,7 @@ export function ComposeCheckPanel({
   onClose: () => void
 }) {
   const missing = check.result?.references.filter((ref) => !ref.exists) ?? []
-  useFeedbackMessage(check.error ? `自检失败：${check.error}` : null)
+  useFeedbackMessage(check.errorMessage ? `自检失败：${check.errorMessage}` : null)
   useFeedbackMessage(check.result ? missing.length > 0 ? `${check.path}：${missing.length} 条路径引用在工作区内找不到对应文件。` : check.result.undetermined.length > 0 ? `${check.path}：${check.result.undetermined.length} 项引用需要人工核对。` : `${check.path}：路径自检已完成。` : null, missing.length > 0 || (check.result?.undetermined.length ?? 0) > 0 ? 'warning' : 'success')
 
   return (
@@ -91,21 +91,21 @@ export function ComposeCheckPanel({
         <RefreshButton
           label="重新自检"
           onPress={onRerun}
-          busy={check.loading}
+          busy={check.status === 'loading'}
         />
         <IconButton label="收起自检结果" variant="ghost" tone="neutral" onPress={onClose}>
           <X aria-hidden size={14} />
         </IconButton>
       </div>
 
-      {check.loading ? (
+      {check.status === 'loading' ? (
         <p role="status" className="mt-2 flex items-center gap-1.5 text-xs text-fg-muted">
           <Loader2 aria-hidden size={13} className="animate-spin" />
           正在扫描引用路径…
         </p>
-      ) : check.error ? (
+      ) : check.errorMessage ? (
         <p role="alert" className="mt-2 text-xs text-danger">
-          自检失败：{check.error}
+          自检失败：{check.errorMessage}
         </p>
       ) : check.result ? (
         <>

@@ -141,13 +141,12 @@ export function ContainerAppWorkspaceCard({
   const removeFile = useContainerAppsStore((s) => s.removeFile)
   const runCheck = useContainerAppsStore((s) => s.runCheck)
   const clearCheck = useContainerAppsStore((s) => s.clearCheck)
-  const builds = useContainerAppsStore((s) => s.buildsBySlug[app.slug]) ?? []
-  const buildsLoading = useContainerAppsStore((s) => s.buildsLoading[app.slug]) === true
-  const buildsRefreshing = useContainerAppsStore((s) => s.buildsRefreshing[app.slug]) === true
-  const buildsError = useContainerAppsStore((s) => s.buildsError[app.slug]) ?? null
-  useFeedbackMessage(buildsError)
-  const ensureBuilds = useContainerAppsStore((s) => s.ensureBuilds)
-  const refreshBuilds = useContainerAppsStore((s) => s.refreshBuilds)
+  const buildList = useContainerAppsStore((s) => s.buildsBySlug[app.slug])
+  const builds = buildList?.tasks ?? []
+  const buildsRefreshing = buildList?.refreshing ?? false
+  const buildsErrorMessage = buildList?.errorMessage
+  useFeedbackMessage(buildsErrorMessage)
+  const loadBuilds = useContainerAppsStore((s) => s.loadBuilds)
   const submitBuild = useContainerAppsStore((s) => s.submitBuild)
   const cancelBuild = useContainerAppsStore((s) => s.cancelBuild)
 
@@ -165,12 +164,12 @@ export function ContainerAppWorkspaceCard({
 
   // 任务区首次展开才加载；之后收起再展开静默更新，不闪加载态。
   useEffect(() => {
-    if (buildsOpen) void ensureBuilds(gateway, app.slug)
-  }, [buildsOpen, gateway, app.slug, ensureBuilds])
+    if (buildsOpen) void loadBuilds(gateway, app.slug, { silent: true })
+  }, [buildsOpen, gateway, app.slug, loadBuilds])
 
   const hasActiveBuild = builds.some((task) => isContainerBuildActive(task.state))
   const buildListScope = useMemo(() => [gateway, app.slug, buildsOpen, hasActiveBuild, logsTaskId], [gateway, app.slug, buildsOpen, hasActiveBuild, logsTaskId])
-  useSilentPolling(() => refreshBuilds(gateway, app.slug, { silent: true }), {
+  useSilentPolling(() => loadBuilds(gateway, app.slug, { silent: true }), {
     intervalMs: 2000, enabled: buildsOpen || hasActiveBuild || logsTaskId !== null, pauseOnHidden: false, scope: buildListScope,
   })
 
@@ -259,7 +258,7 @@ export function ContainerAppWorkspaceCard({
               {app.files.map((file: ContainerAppFile) => {
                 const absolute = containerAppFilePath(app, file)
                 const rowBusy = writing === appWritingKey(app.slug, file.path)
-                const checkingHere = Boolean(checkHere && checkHere.path === file.path && checkHere.loading)
+                const checkingHere = checkHere?.path === file.path && checkHere.status === 'loading'
                 return (
                   <li
                     key={file.path}
@@ -338,7 +337,7 @@ export function ContainerAppWorkspaceCard({
               </Button>
               {buildsOpen ? (
                 <RefreshButton
-                  onPress={() => void refreshBuilds(gateway, app.slug)}
+                  onPress={() => void loadBuilds(gateway, app.slug)}
                   busy={buildsRefreshing}
                   label="刷新构建任务"
                 />
@@ -346,19 +345,19 @@ export function ContainerAppWorkspaceCard({
             </div>
             {buildsOpen ? (
               <div className="relative rounded-xl mt-2 border-t border-line pt-2" aria-busy={buildsRefreshing}>
-                {buildsError ? (
+                {buildsErrorMessage ? (
                   <div role="alert" className="flex flex-wrap items-center gap-2 py-2 text-xs text-danger">
                     <TriangleAlert aria-hidden size={13} className="shrink-0" />
-                    <span className="min-w-0 flex-1">{buildsError}</span>
+                    <span className="min-w-0 flex-1">{buildsErrorMessage}</span>
                     <Button variant="outline"
                       type="button"
-                      onClick={() => void refreshBuilds(gateway, app.slug)}
+                      onClick={() => void loadBuilds(gateway, app.slug)}
                       className={`${CTL_SECONDARY} px-2`}
                     >
                       重试
                     </Button>
                   </div>
-                ) : buildsLoading && builds.length === 0 ? (
+                ) : buildList?.status === 'loading' ? (
                   <p role="status" className="flex items-center justify-center gap-2 py-4 text-xs text-fg-muted">
                     <Loader2 aria-hidden size={13} className="animate-spin" />
                     正在读取构建任务…

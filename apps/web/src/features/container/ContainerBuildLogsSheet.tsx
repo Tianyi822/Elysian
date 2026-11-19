@@ -28,8 +28,8 @@ export function ContainerBuildLogsSheet({
   const loadBuildLogs = useContainerAppsStore((s) => s.loadBuildLogs)
   const closeBuildLogs = useContainerAppsStore((s) => s.closeBuildLogs)
   const logs = useContainerAppsStore((s) => s.buildLogs[taskId])
-  const task = useContainerAppsStore((s) => s.buildsBySlug[slug]?.find((row) => row.id === taskId))
-  useFeedbackMessage(logs?.error)
+  const task = useContainerAppsStore((s) => s.buildsBySlug[slug]?.tasks?.find((row) => row.id === taskId))
+  useFeedbackMessage(logs?.errorMessage)
 
   useEffect(() => {
     void openBuildLogs(gateway, slug, taskId)
@@ -83,10 +83,10 @@ export function ContainerBuildLogsSheet({
                 <Loader2 aria-hidden size={15} className="animate-spin" />
                 正在读取构建日志…
               </p>
-            ) : logs.error ? (
+            ) : logs.errorMessage ? (
               <div role="alert" className="flex flex-col items-center gap-2 py-10 text-center">
                 <TriangleAlert aria-hidden size={18} className="text-danger" />
-                <p className="text-sm text-fg">{logs.error}</p>
+                <p className="text-sm text-fg">{logs.errorMessage}</p>
                 <Button variant="outline"
                   type="button"
                   onClick={() => void openBuildLogs(gateway, slug, taskId)}

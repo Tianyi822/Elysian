@@ -54,6 +54,7 @@ export function ContainerBuildDialog({ app, onClose }: { app: ContainerApp; onCl
 
   const state = preview?.slug === app.slug ? preview : null
   const plan = state?.plan ?? null
+  const previewing = state?.status === 'loading'
   useFeedbackMessage(state?.submitError)
 
   const switchMode = (next: 'dockerfile' | 'compose') => {
@@ -294,9 +295,9 @@ export function ContainerBuildDialog({ app, onClose }: { app: ContainerApp; onCl
               </div>
             )}
 
-            {state?.error ? (
+            {state?.errorMessage ? (
               <p role="alert" className="rounded-lg border border-danger/40 bg-danger/10 px-2.5 py-1.5 text-xs text-danger">
-                {state.error}
+                {state.errorMessage}
               </p>
             ) : null}
             {state?.submitError ? (
@@ -345,11 +346,11 @@ export function ContainerBuildDialog({ app, onClose }: { app: ContainerApp; onCl
               <Button variant="primary"
                 type="button"
                 onClick={runPreview}
-                disabled={state?.loading === true || (mode === 'dockerfile' ? dockerfile.trim() === '' : compose === '')}
+                disabled={previewing || (mode === 'dockerfile' ? dockerfile.trim() === '' : compose === '')}
                 className={`${CTL_PRIMARY} gap-1.5 px-3`}
               >
-                {state?.loading ? <Loader2 aria-hidden size={13} className="animate-spin" /> : null}
-                {state?.loading ? '预览中…' : '预览构建'}
+                {previewing ? <Loader2 aria-hidden size={13} className="animate-spin" /> : null}
+                {previewing ? '预览中…' : '预览构建'}
               </Button>
               <Button variant="primary"
                 type="button"

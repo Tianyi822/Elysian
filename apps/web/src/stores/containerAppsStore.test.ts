@@ -99,7 +99,7 @@ describe('工作区登录会话边界', () => {
     await seedWorkspace(gateway)
     const task = await gateway.containers.submitAppBuild('demo-app', buildInput)
     const store = useContainerAppsStore.getState()
-    await store.refreshBuilds(gateway, 'demo-app')
+    await store.loadBuilds(gateway, 'demo-app')
     await store.previewBuild(gateway, 'demo-app', buildInput)
     const oldBuild = deferred<ContainerBuildTask>()
     const oldLogs = deferred<Awaited<ReturnType<typeof gateway.containers.getAppBuildLogs>>>()
@@ -181,7 +181,7 @@ describe('工作区构建状态', () => {
       dockerfile: 'Dockerfile',
     })
     expect(ok).toBe(true)
-    const builds = useContainerAppsStore.getState().buildsBySlug['demo-app']
+    const builds = useContainerAppsStore.getState().buildsBySlug['demo-app']?.tasks
     expect(builds).toHaveLength(1)
     expect(builds![0]!.state).toBe('queued')
     expect(useMessageStore.getState().messages[0]?.message).toBe('已提交构建任务')
@@ -250,11 +250,11 @@ describe('工作区构建状态', () => {
       }),
     }
     await useContainerAppsStore.getState().cancelBuild(patched, 'demo-app', '1001b1d5-build-1')
-    const builds = useContainerAppsStore.getState().buildsBySlug['demo-app']
+    const builds = useContainerAppsStore.getState().buildsBySlug['demo-app']?.tasks
     expect(builds).toHaveLength(1)
     expect(builds![0]!.state).toBe('cancelled')
     // 静默回读不驱动手动刷新按钮。
-    expect(useContainerAppsStore.getState().buildsRefreshing['demo-app']).toBeFalsy()
+    expect(useContainerAppsStore.getState().buildsBySlug['demo-app']?.refreshing).toBe(false)
     expect(listAppBuilds).toHaveBeenCalledWith('demo-app')
     expect(useMessageStore.getState().messages[0]?.message).toBe('已提交取消构建请求')
   })
@@ -290,29 +290,68 @@ describe('工作区构建状态', () => {
     expect(first).not.toBe(second)
   })
 
-  it('refreshBuilds 轮询失败保留旧清单并记录中文错误，恢复后清除', async () => {
+  it('轮询失败保留旧任务清单并记录中文错误，恢复后清除', async () => {
     const gateway = createMockGateway({ eventStream: 'memory', eventIntervalMs: 60_000 })
-    useContainerAppsStore.setState({
-      buildsBySlug: { 'demo-app': [{ id: 't1', slug: 'demo-app', mode: 'dockerfile', requestId: 'r', state: 'succeeded', stage: '构建成功', createdAt: '2026-10-04T07:30:00Z', updatedAt: '2026-10-04T07:31:00Z', input: { mode: 'dockerfile', requestId: 'r', dockerfile: 'Dockerfile' }, results: [], error: '' }] },
+    await seedWorkspace(gateway)
+    const task = await gateway.containers.submitAppBuild('demo-app', {
+      mode: 'dockerfile', requestId: '0f1e2d3c-4b5a-4978-8a9b-0c1d2e3f4a5b', dockerfile: 'Dockerfile',
     })
-    const failing: ElysianGateway = {
-      ...gateway,
-      containers: Object.assign(Object.create(gateway.containers), {
-        listAppBuilds: async () => {
-          throw new Error('构建任务读取失败')
-        },
-      }),
-    }
-    await useContainerAppsStore.getState().refreshBuilds(failing, 'demo-app', { silent: true })
-    expect(useContainerAppsStore.getState().buildsBySlug['demo-app']).toHaveLength(1)
-    expect(useContainerAppsStore.getState().buildsError['demo-app']).toBe('构建任务读取失败')
+    const list = vi.spyOn(gateway.containers, 'listAppBuilds')
+      .mockResolvedValueOnce([task])
+      .mockRejectedValueOnce(new Error('构建任务读取失败'))
+      .mockRejectedValueOnce(new Error('构建任务读取失败'))
+      .mockResolvedValueOnce([])
+    const { loadBuilds } = useContainerAppsStore.getState()
+    const builds = () => useContainerAppsStore.getState().buildsBySlug['demo-app']
+    await loadBuilds(gateway, 'demo-app', { silent: true })
+    await loadBuilds(gateway, 'demo-app', { silent: true })
+    expect(builds()).toMatchObject({ status: 'error', tasks: [task], refreshing: false, errorMessage: '构建任务读取失败' })
+    await loadBuilds(gateway, 'demo-app')
+    expect(builds()).toMatchObject({ status: 'error', tasks: [task], refreshing: false, errorMessage: '构建任务读取失败' })
+    await loadBuilds(gateway, 'demo-app', { silent: true })
+    expect(builds()).toMatchObject({ status: 'ready', tasks: [], refreshing: false })
+    expect(builds()?.errorMessage).toBeUndefined()
+    expect(list).toHaveBeenCalledTimes(4)
+  })
 
-    await useContainerAppsStore.getState().refreshBuilds(failing, 'demo-app')
-    expect(useContainerAppsStore.getState().buildsError['demo-app']).toBe('构建任务读取失败')
-    expect(useContainerAppsStore.getState().buildsBySlug['demo-app']).toHaveLength(1)
-    vi.spyOn(gateway.containers, 'listAppBuilds').mockResolvedValue([])
-    await useContainerAppsStore.getState().refreshBuilds(gateway, 'demo-app', { silent: true })
-    expect(useContainerAppsStore.getState().buildsError['demo-app']).toBeNull()
+  it('成功空任务清单不退回首载，手动刷新加入在途轮询', async () => {
+    const gateway = createMockGateway({ eventStream: 'memory' })
+    const first = deferred<ContainerBuildTask[]>()
+    const next = deferred<ContainerBuildTask[]>()
+    const list = vi.spyOn(gateway.containers, 'listAppBuilds').mockReturnValueOnce(first.promise).mockReturnValueOnce(next.promise)
+    const { loadBuilds } = useContainerAppsStore.getState()
+    const builds = () => useContainerAppsStore.getState().buildsBySlug['demo-app']
+
+    const initial = loadBuilds(gateway, 'demo-app', { silent: true })
+    expect(builds()).toMatchObject({ status: 'loading', refreshing: false })
+    expect(builds()?.tasks).toBeUndefined()
+    first.resolve([])
+    await initial
+
+    const refresh = loadBuilds(gateway, 'demo-app', { silent: true })
+    expect(builds()).toMatchObject({ status: 'ready', tasks: [], refreshing: false })
+    const manual = loadBuilds(gateway, 'demo-app')
+    expect(builds()).toMatchObject({ status: 'ready', tasks: [], refreshing: true })
+    expect(list).toHaveBeenCalledTimes(2)
+    next.resolve([])
+    await Promise.all([refresh, manual])
+    expect(builds()).toMatchObject({ status: 'ready', tasks: [], refreshing: false })
+  })
+
+  it('已提交的任务不被在途首读清单覆盖', async () => {
+    const gateway = createMockGateway({ eventStream: 'memory' })
+    await seedWorkspace(gateway)
+    const old = deferred<ContainerBuildTask[]>()
+    vi.spyOn(gateway.containers, 'listAppBuilds').mockReturnValueOnce(old.promise)
+    const store = useContainerAppsStore.getState()
+    const load = store.loadBuilds(gateway, 'demo-app')
+    const requestId = newBuildRequestId()
+    expect(await store.submitBuild(gateway, 'demo-app', { mode: 'dockerfile', requestId, dockerfile: 'Dockerfile' })).toBe(true)
+    old.resolve([])
+    await load
+    expect(useContainerAppsStore.getState().buildsBySlug['demo-app']).toMatchObject({
+      status: 'ready', tasks: [expect.objectContaining({ requestId })], refreshing: false,
+    })
   })
 
   it('运行中的构建失败只通知一次，再次轮询和历史初次载入不重复通知', async () => {
@@ -322,16 +361,19 @@ describe('工作区构建状态', () => {
       input: { mode: 'dockerfile', requestId: 'request-1', dockerfile: 'Dockerfile' }, results: [], error: '',
     }
     const gateway = createMockGateway({ eventStream: 'memory', eventIntervalMs: 60_000 })
-    vi.spyOn(gateway.containers, 'listAppBuilds').mockResolvedValue([{ ...task, state: 'failed', error: '镜像下载失败' }])
-    useContainerAppsStore.setState({ buildsBySlug: { 'demo-app': [task] } })
-    await useContainerAppsStore.getState().refreshBuilds(gateway, 'demo-app', { silent: true })
-    await useContainerAppsStore.getState().refreshBuilds(gateway, 'demo-app', { silent: true })
+    vi.spyOn(gateway.containers, 'listAppBuilds')
+      .mockResolvedValueOnce([task])
+      .mockResolvedValue([{ ...task, state: 'failed', error: '镜像下载失败' }])
+    const { loadBuilds } = useContainerAppsStore.getState()
+    await loadBuilds(gateway, 'demo-app', { silent: true })
+    await loadBuilds(gateway, 'demo-app', { silent: true })
+    await loadBuilds(gateway, 'demo-app', { silent: true })
     expect(useMessageStore.getState().messages).toEqual([
       expect.objectContaining({ tone: 'danger', message: 'demo-app：镜像构建失败，镜像下载失败' }),
     ])
     await useMessageStore.getState().clear()
-    useContainerAppsStore.setState({ buildsBySlug: {} })
-    await useContainerAppsStore.getState().ensureBuilds(gateway, 'demo-app')
+    resetStore()
+    await loadBuilds(gateway, 'demo-app', { silent: true })
     expect(useMessageStore.getState().messages).toHaveLength(0)
   })
 })

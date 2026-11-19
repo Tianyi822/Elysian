@@ -71,9 +71,6 @@ beforeEach(async () => {
     writing: null,
     check: null,
     buildsBySlug: {},
-    buildsLoading: {},
-    buildsRefreshing: {},
-    buildsError: {},
     buildPreview: null,
     buildLogs: {},
   })

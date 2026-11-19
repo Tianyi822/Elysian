@@ -25,30 +25,39 @@ import { createRequestGuard } from './requestGuard'
 export type ComposeCheckState = {
   slug: string
   path: string
+  status: 'loading' | 'ready' | 'error'
   result: ComposeCheckResult | null
-  loading: boolean
-  error: string | null
+  errorMessage?: string
 }
 
 /** 构建预览状态：构建弹窗专用，含预览与提交两条动作的在途与错误。 */
-export type ContainerBuildPreviewState = {
+type ContainerBuildPreviewState = {
   slug: string
-  loading: boolean
-  error: string | null
+  status: 'loading' | 'ready' | 'error'
+  errorMessage?: string
   plan: ContainerBuildPlan | null
   submitting: boolean
   submitError: string | null
 }
 
 /** 构建日志的增量读取状态：next 是已读字节，轮询按它续读。 */
-export type ContainerBuildLogsState = {
+type ContainerBuildLogsState = {
   slug: string
   taskId: string
+  status: 'loading' | 'ready' | 'error'
   lines: readonly string[]
   next: number
   total: number
-  loading: boolean
-  error: string | null
+  errorMessage?: string
+}
+
+type ContainerBuildListState = {
+  status: 'loading' | 'ready' | 'error'
+  /** 未读到任务清单与读到空清单是两个状态。 */
+  tasks?: readonly ContainerBuildTask[]
+  errorMessage?: string
+  /** 只驱动手动刷新按钮，静默读取不置位。 */
+  refreshing: boolean
 }
 
 export type ContainerAppsState = {
@@ -63,12 +72,7 @@ export type ContainerAppsState = {
   writing: string | null
   check: ComposeCheckState | null
   /** 每个工作区一份构建任务清单，按创建时间倒序。 */
-  buildsBySlug: Record<string, readonly ContainerBuildTask[]>
-  /** 任务区首次加载才显示加载态，已有清单始终保留。 */
-  buildsLoading: Record<string, boolean>
-  /** 任务区手动刷新在途：只驱动自己的刷新按钮，静默轮询不置位。 */
-  buildsRefreshing: Record<string, boolean>
-  buildsError: Record<string, string | null>
+  buildsBySlug: Partial<Record<string, ContainerBuildListState>>
   buildPreview: ContainerBuildPreviewState | null
   buildLogs: Record<string, ContainerBuildLogsState>
   clearDisplay(): void
@@ -80,10 +84,8 @@ export type ContainerAppsState = {
   removeFile(gateway: ElysianGateway, slug: string, path: string): Promise<void>
   runCheck(gateway: ElysianGateway, slug: string, path: string): Promise<void>
   clearCheck(): void
-  /** 任务区首次打开时加载；已有清单时等价于手动刷新。 */
-  ensureBuilds(gateway: ElysianGateway, slug: string): Promise<void>
-  /** 刷新任务清单；silent 供 2s 轮询用，不驱动刷新按钮，读取失败仍进入统一反馈。 */
-  refreshBuilds(gateway: ElysianGateway, slug: string, options?: { silent?: boolean }): Promise<void>
+  /** 首载和刷新共用入口；打开面板、轮询和操作后回读保持静默。 */
+  loadBuilds(gateway: ElysianGateway, slug: string, options?: { silent?: boolean }): Promise<void>
   previewBuild(gateway: ElysianGateway, slug: string, input: ContainerBuildPreviewInput): Promise<ContainerBuildPlan | null>
   /** 提交构建：成功通知「已提交构建任务」并入列；notifyOnError 供弹窗外的「重新构建」走通知。 */
   submitBuild(gateway: ElysianGateway, slug: string, input: ContainerBuildSubmitInput, options?: { notifyOnError?: boolean }): Promise<boolean>
@@ -128,9 +130,6 @@ const initialDisplay = {
   writing: null,
   check: null,
   buildsBySlug: {},
-  buildsLoading: {},
-  buildsRefreshing: {},
-  buildsError: {},
   buildPreview: null,
   buildLogs: {},
 } as const
@@ -196,23 +195,14 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
     try {
       await gateway.containers.removeApp(slug)
       if (!current()) return
+      pendingBuilds.delete(slug)
       set((state) => {
-        // 工作区没了，它的任务清单、预览与日志状态一并让位，不留悬挂键。
         const buildsBySlug = { ...state.buildsBySlug }
-        const buildsLoading = { ...state.buildsLoading }
-        const buildsRefreshing = { ...state.buildsRefreshing }
-        const buildsError = { ...state.buildsError }
         delete buildsBySlug[slug]
-        delete buildsLoading[slug]
-        delete buildsRefreshing[slug]
-        delete buildsError[slug]
         return {
           apps: state.apps.filter((app) => app.slug !== slug),
           check: state.check?.slug === slug ? null : state.check,
           buildsBySlug,
-          buildsLoading,
-          buildsRefreshing,
-          buildsError,
           buildPreview: state.buildPreview?.slug === slug ? null : state.buildPreview,
         }
       })
@@ -306,12 +296,12 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
 
   async runCheck(gateway, slug, path) {
     const current = workspaceRequests.capture()
-    set({ check: { slug, path, result: null, loading: true, error: null } })
+    set({ check: { slug, path, result: null, status: 'loading' } })
     try {
       const result = await gateway.containers.checkCompose(slug, path)
-      if (current()) set({ check: { slug, path, result, loading: false, error: null } })
+      if (current()) set({ check: { slug, path, result, status: 'ready' } })
     } catch (cause) {
-      if (current()) set({ check: { slug, path, result: null, loading: false, error: detail(cause) } })
+      if (current()) set({ check: { slug, path, result: null, status: 'error', errorMessage: detail(cause) } })
     }
   },
 
@@ -319,32 +309,39 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
     set({ check: null })
   },
 
-  ensureBuilds(gateway, slug) { return get().refreshBuilds(gateway, slug, { silent: true }) },
-
-  refreshBuilds(gateway, slug, options) {
+  loadBuilds(gateway, slug, options) {
     const auth = captureAuthGeneration()
+    const snapshot = get().buildsBySlug[slug]?.tasks
+    const update = (patch: Partial<ContainerBuildListState>) => set(state => {
+      const entry = state.buildsBySlug[slug]
+      return entry ? { buildsBySlug: { ...state.buildsBySlug, [slug]: { ...entry, ...patch } } } : state
+    })
     const previous = pendingBuilds.get(slug)
-    if (previous?.gateway === gateway && previous.auth === auth && previous.snapshot === get().buildsBySlug[slug]) {
-      if (!options?.silent) set(state => ({ buildsRefreshing: { ...state.buildsRefreshing, [slug]: true } }))
+    if (previous?.gateway === gateway && previous.auth === auth && previous.snapshot === snapshot) {
+      if (!options?.silent) update({ refreshing: true })
       return previous.promise
     }
-    const snapshot = get().buildsBySlug[slug]
     const operation = { gateway, auth, snapshot, promise: Promise.resolve() }
     pendingBuilds.set(slug, operation)
     const current = () => pendingBuilds.get(slug) === operation && auth === captureAuthGeneration()
-    set(state => ({ buildsLoading: { ...state.buildsLoading, [slug]: snapshot === undefined }, buildsRefreshing: { ...state.buildsRefreshing, [slug]: !options?.silent }, buildsError: { ...state.buildsError, [slug]: null } }))
+    set(state => ({
+      buildsBySlug: {
+        ...state.buildsBySlug,
+        [slug]: { status: snapshot === undefined ? 'loading' : 'ready', tasks: snapshot, refreshing: !options?.silent },
+      },
+    }))
     operation.promise = (async () => {
       try {
         const builds = await gateway.containers.listAppBuilds(slug)
-        if (!current() || snapshot !== get().buildsBySlug[slug]) return
+        if (!current() || snapshot !== get().buildsBySlug[slug]?.tasks) return
         notifyBuildTransitions(snapshot ?? [], builds, slug)
-        set(state => ({ buildsBySlug: { ...state.buildsBySlug, [slug]: builds } }))
+        update({ tasks: builds, status: 'ready' })
       } catch (cause) {
-        if (current()) set(state => ({ buildsError: { ...state.buildsError, [slug]: detail(cause) } }))
+        if (current()) update({ status: 'error', errorMessage: detail(cause) })
       } finally {
         if (pendingBuilds.get(slug) === operation) {
           pendingBuilds.delete(slug)
-          if (auth === captureAuthGeneration()) set(state => ({ buildsLoading: { ...state.buildsLoading, [slug]: false }, buildsRefreshing: { ...state.buildsRefreshing, [slug]: false } }))
+          if (auth === captureAuthGeneration()) update({ refreshing: false })
         }
       }
     })()
@@ -353,14 +350,14 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
 
   async previewBuild(gateway, slug, input) {
     const current = workspaceRequests.capture()
-    set({ buildPreview: { slug, loading: true, error: null, plan: null, submitting: false, submitError: null } })
+    set({ buildPreview: { slug, status: 'loading', plan: null, submitting: false, submitError: null } })
     try {
       const plan = await gateway.containers.previewAppBuild(slug, input)
       if (!current()) return null
-      set({ buildPreview: { slug, loading: false, error: null, plan, submitting: false, submitError: null } })
+      set({ buildPreview: { slug, status: 'ready', plan, submitting: false, submitError: null } })
       return plan
     } catch (cause) {
-      if (current()) set({ buildPreview: { slug, loading: false, error: detail(cause), plan: null, submitting: false, submitError: null } })
+      if (current()) set({ buildPreview: { slug, status: 'error', errorMessage: detail(cause), plan: null, submitting: false, submitError: null } })
       return null
     }
   },
@@ -375,12 +372,23 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
     try {
       const task = await gateway.containers.submitAppBuild(slug, input)
       if (!current()) return false
-      set((state) => ({
-        buildsBySlug: { ...state.buildsBySlug, [slug]: [task, ...(state.buildsBySlug[slug] ?? [])] },
-        buildPreview: state.buildPreview?.slug === slug
-          ? { ...state.buildPreview, submitting: false }
-          : state.buildPreview,
-      }))
+      set((state) => {
+        const entry = state.buildsBySlug[slug]
+        return {
+          buildsBySlug: {
+            ...state.buildsBySlug,
+            [slug]: {
+              ...entry,
+              status: entry?.status === 'error' ? 'error' : 'ready',
+              tasks: [task, ...(entry?.tasks ?? [])],
+              refreshing: entry?.refreshing ?? false,
+            },
+          },
+          buildPreview: state.buildPreview?.slug === slug
+            ? { ...state.buildPreview, submitting: false }
+            : state.buildPreview,
+        }
+      })
       useMessageStore.getState().notify({ tone: 'success', message: '已提交构建任务' })
       return true
     } catch (cause) {
@@ -403,10 +411,10 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
     try {
       await gateway.containers.cancelAppBuild(slug, taskId)
       if (!current()) return
-      const previous = get().buildsBySlug[slug]?.find((task) => task.id === taskId)
-      await get().refreshBuilds(gateway, slug, { silent: true })
+      const previous = get().buildsBySlug[slug]?.tasks?.find((task) => task.id === taskId)
+      await get().loadBuilds(gateway, slug, { silent: true })
       if (!current()) return
-      const task = get().buildsBySlug[slug]?.find((task) => task.id === taskId)
+      const task = get().buildsBySlug[slug]?.tasks?.find((task) => task.id === taskId)
       if (!previous || !isContainerBuildActive(previous.state) || task?.state !== 'cancelled') {
         useMessageStore.getState().notify({ tone: 'info', message: '已提交取消构建请求' })
       }
@@ -421,7 +429,7 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
 
   async openBuildLogs(gateway, slug, taskId) {
     const auth = captureAuthGeneration()
-    const loading: ContainerBuildLogsState = { slug, taskId, lines: [], next: 0, total: 0, loading: true, error: null }
+    const loading: ContainerBuildLogsState = { slug, taskId, lines: [], next: 0, total: 0, status: 'loading' }
     const current = () => auth === captureAuthGeneration() && get().buildLogs[taskId] === loading
     set((state) => ({
       buildLogs: { ...state.buildLogs, [taskId]: loading },
@@ -430,21 +438,21 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
       const report = await gateway.containers.getAppBuildLogs(slug, taskId, 0)
       if (!current()) return
       set((state) => ({
-        buildLogs: { ...state.buildLogs, [taskId]: { slug, taskId, lines: report.lines, next: report.next, total: report.total, loading: false, error: null } },
+        buildLogs: { ...state.buildLogs, [taskId]: { slug, taskId, ...report, status: 'ready' } },
       }))
     } catch (cause) {
       if (!current()) return
       set((state) => ({
-        buildLogs: { ...state.buildLogs, [taskId]: { slug, taskId, lines: [], next: 0, total: 0, loading: false, error: detail(cause) } },
+        buildLogs: { ...state.buildLogs, [taskId]: { ...loading, status: 'error', errorMessage: detail(cause) } },
       }))
     }
   },
 
   async loadBuildLogs(gateway, slug, taskId) {
     const current = get().buildLogs[taskId]
-    if (!current || current.loading) return
+    if (!current || current.status === 'loading') return
     const auth = captureAuthGeneration()
-    const loading = { ...current, loading: true }
+    const loading: ContainerBuildLogsState = { ...current, status: 'loading' }
     const valid = () => auth === captureAuthGeneration() && get().buildLogs[taskId] === loading
     set((state) => ({ buildLogs: { ...state.buildLogs, [taskId]: loading } }))
     try {
@@ -453,18 +461,21 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
       set((state) => ({
         buildLogs: {
           ...state.buildLogs,
-          [taskId]: report.lines.length > 0
-            ? { slug, taskId, lines: [...current.lines, ...report.lines], next: report.next, total: report.total, loading: false, error: null }
-            : { ...current, next: report.next, total: report.total, loading: false, error: null },
+          [taskId]: {
+            ...current,
+            lines: report.lines.length > 0 ? [...current.lines, ...report.lines] : current.lines,
+            next: report.next,
+            total: report.total,
+            status: 'ready',
+            errorMessage: undefined,
+          },
         },
       }))
     } catch (cause) {
       if (!valid()) return
-      set((state) => {
-        const row = state.buildLogs[taskId]
-        if (!row) return {}
-        return { buildLogs: { ...state.buildLogs, [taskId]: { ...row, loading: false, error: detail(cause) } } }
-      })
+      set((state) => ({
+        buildLogs: { ...state.buildLogs, [taskId]: { ...current, status: 'error', errorMessage: detail(cause) } },
+      }))
     }
   },
 
