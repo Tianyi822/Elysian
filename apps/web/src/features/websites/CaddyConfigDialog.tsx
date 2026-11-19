@@ -82,6 +82,7 @@ export function CaddyConfigDialog({ onClose, onAddProject }: { onClose: () => vo
     setResult(null)
     try {
       const updated = await saveAccess(gateway, selected.id, access)
+      if (!updated) return
       setResult(updated)
       setMode(updated.accessMode)
       setDomain(updated.domain ?? '')

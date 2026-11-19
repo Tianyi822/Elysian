@@ -15,6 +15,7 @@ import { useMessageStore } from './messageStore'
 import { notifyFirewallPortSync } from './firewallPortNotice'
 import { messageOf } from '../utils/errorMessage'
 import { withBusyId, withoutBusyId } from './busyIds'
+import { createRequestGuard } from './requestGuard'
 
 const NOTICE_SUFFIX = demoNoticeSuffix(isDockerRuntime(), '演示数据，刷新后还原')
 
@@ -44,6 +45,7 @@ type WebsitesState = {
   detailLogsLoading: boolean
   detailLogsError?: string
   busyProjectIds: readonly string[]
+  clearDisplay: () => void
   load: (gateway: ElysianGateway) => Promise<void>
   refresh: (gateway: ElysianGateway, options?: { silent?: boolean }) => Promise<void>
   /** 域级对账：从登记全量重新下发反向代理配置，成功后刷新列表与通道状态。 */
@@ -58,7 +60,7 @@ type WebsitesState = {
     kind: WebsiteProjectKind,
     input: WebsiteProjectCreateInput,
   ) => Promise<boolean>
-  saveAccess: (gateway: ElysianGateway, projectId: string, access: WebsiteAccessInput) => Promise<WebsiteProject>
+  saveAccess: (gateway: ElysianGateway, projectId: string, access: WebsiteAccessInput) => Promise<WebsiteProject | undefined>
   settingsError?: string
   openSettings: (project: WebsiteProject) => void
   closeSettings: () => void
@@ -81,7 +83,30 @@ function notify(message: string, tone: 'success' | 'danger' = 'success'): void {
   useMessageStore.getState().notify({ message, tone })
 }
 
+const initialDisplay = {
+  status: 'idle',
+  errorMessage: undefined,
+  projects: [],
+  // 还未读取时不显示反向代理横幅。
+  proxyStatus: { state: 'active', detail: null },
+  search: '',
+  category: 'all',
+  refreshing: false,
+  reconciling: false,
+  saving: false,
+  createDialogOpen: false,
+  settingsTarget: undefined,
+  settingsError: undefined,
+  removeTarget: undefined,
+  detailTarget: undefined,
+  detailLogs: undefined,
+  detailLogsLoading: false,
+  detailLogsError: undefined,
+  busyProjectIds: [],
+} as const
+
 export const useWebsitesStore = create<WebsitesState>((set, get) => {
+  const mutations = createRequestGuard()
   let pendingLoad: { gateway: ElysianGateway; auth: number; snapshot: readonly WebsiteProject[]; proxy: WebsiteProxyStatus; promise: Promise<void> } | undefined
   let detailSequence = 0
   let pendingDetail: { projectId: string; auth: number; promise: Promise<void> } | undefined
@@ -111,23 +136,15 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
   }
 
   return {
-    status: 'idle',
-    errorMessage: undefined,
-    projects: [],
-    // 初始值等同「通道正常且无漂移」：首次 load 之前不渲染横幅。
-    proxyStatus: { state: 'active', detail: null },
-    search: '',
-    category: 'all',
-    refreshing: false,
-    reconciling: false,
-    saving: false,
-    createDialogOpen: false,
-    settingsTarget: undefined,
-    removeTarget: undefined,
-    detailTarget: undefined,
-    detailLogs: undefined,
-    detailLogsLoading: false,
-    busyProjectIds: [],
+    ...initialDisplay,
+
+    clearDisplay() {
+      mutations.invalidate()
+      pendingLoad = undefined
+      pendingDetail = undefined
+      detailSequence += 1
+      set(initialDisplay)
+    },
 
     load(gateway) { return get().refresh(gateway, { silent: true }) },
 
@@ -163,17 +180,19 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
 
     async reconcileProxy(gateway) {
       if (get().reconciling) return
+      const current = mutations.capture()
       set({ reconciling: true })
       try {
         const proxy = await gateway.websites.reconcileProxy()
+        if (!current()) return
         set({ proxyStatus: proxy })
         notify('反向代理配置已重新下发')
         // 路由事实要等下一次列表读取：成功后静默刷新一次，横幅随之下线。
         await get().refresh(gateway, { silent: true })
       } catch (error) {
-        notify(messageOf(error, '反向代理配置下发失败'), 'danger')
+        if (current()) notify(messageOf(error, '反向代理配置下发失败'), 'danger')
       } finally {
-        set({ reconciling: false })
+        if (current()) set({ reconciling: false })
       }
     },
 
@@ -195,14 +214,17 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
 
     async createProject(gateway, kind, input) {
       if (get().saving) return false
+      const current = mutations.capture()
       set({ saving: true })
       try {
         const { project: created, firewallPort } = await gateway.websites.create(kind, input)
+        if (!current()) return false
         set((state) => ({ projects: [...state.projects, created], createDialogOpen: false, saving: false }))
         notify(`项目 ${created.name} 已添加${NOTICE_SUFFIX}`)
         notifyFirewallPortSync(firewallPort)
         return true
       } catch (error) {
+        if (!current()) return false
         set({ saving: false })
         notify(messageOf(error, '添加失败'), 'danger')
         return false
@@ -212,9 +234,11 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
     async saveAccess(gateway, projectId, access) {
       const busyProjectIds = withBusyId(get().busyProjectIds, projectId)
       if (!busyProjectIds) throw new Error('项目正在执行其他操作')
+      const current = mutations.capture()
       set({ busyProjectIds })
       try {
         const { project: updated, firewallPort } = await gateway.websites.setAccess(projectId, access)
+        if (!current()) return
         set((state) => ({
           projects: state.projects.map((project) => project.id === projectId ? updated : project),
           detailTarget: state.detailTarget?.id === projectId ? updated : state.detailTarget,
@@ -222,9 +246,12 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
         notify(`项目 ${updated.name} 的访问配置已保存${NOTICE_SUFFIX}`)
         notifyFirewallPortSync(firewallPort)
         await get().refresh(gateway, { silent: true })
+        if (!current()) return
         return get().projects.find((project) => project.id === projectId) ?? updated
+      } catch (error) {
+        if (current()) throw error
       } finally {
-        set((state) => ({ busyProjectIds: withoutBusyId(state.busyProjectIds, projectId) }))
+        if (current()) set((state) => ({ busyProjectIds: withoutBusyId(state.busyProjectIds, projectId) }))
       }
     },
 
@@ -238,9 +265,11 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
 
     async saveSettings(gateway, projectId, input) {
       if (get().saving) return false
+      const current = mutations.capture()
       set({ saving: true, settingsError: undefined })
       try {
         const updated = await gateway.websites.update(projectId, input)
+        if (!current()) return false
         set((state) => ({
           projects: state.projects.map((project) => (project.id === updated.id ? updated : project)),
           settingsTarget: undefined,
@@ -249,6 +278,7 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
         notify(`项目 ${updated.name} 已修改${NOTICE_SUFFIX}`)
         return true
       } catch (error) {
+        if (!current()) return false
         set({ saving: false, settingsError: messageOf(error, '保存失败') })
         notify(messageOf(error, '保存失败'), 'danger')
         return false
@@ -266,9 +296,11 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
     async removeProject(gateway, project) {
       const busyProjectIds = withBusyId(get().busyProjectIds, project.id)
       if (!busyProjectIds) return
+      const current = mutations.capture()
       set({ busyProjectIds })
       try {
         await gateway.websites.remove(project.id)
+        if (!current()) return
         set((state) => ({
           projects: state.projects.filter((item) => item.id !== project.id),
           removeTarget: undefined,
@@ -276,6 +308,7 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
         }))
         notify(`项目 ${project.name} 已删除${NOTICE_SUFFIX}`)
       } catch (error) {
+        if (!current()) return
         set((state) => ({ busyProjectIds: withoutBusyId(state.busyProjectIds, project.id) }))
         notify(messageOf(error, '删除失败'), 'danger')
       }
@@ -285,6 +318,7 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
     async setRunning(gateway, project, running) {
       const busyProjectIds = withBusyId(get().busyProjectIds, project.id)
       if (!busyProjectIds) return
+      const current = mutations.capture()
       const previous = project
       const optimistic: WebsiteProject = {
         ...project,
@@ -297,12 +331,14 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
       }))
       try {
         const confirmed = await gateway.websites.setRunning(project.id, running)
+        if (!current()) return
         set((state) => ({
           projects: state.projects.map((item) => (item.id === confirmed.id ? confirmed : item)),
           busyProjectIds: withoutBusyId(state.busyProjectIds, project.id),
         }))
         notify(`项目 ${project.name} 已${running ? '启动' : '停止'}${NOTICE_SUFFIX}`)
       } catch (error) {
+        if (!current()) return
         set((state) => ({
           projects: state.projects.map((item) => (item.id === previous.id ? previous : item)),
           busyProjectIds: withoutBusyId(state.busyProjectIds, project.id),

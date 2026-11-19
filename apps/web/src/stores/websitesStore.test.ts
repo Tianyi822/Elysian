@@ -3,13 +3,75 @@ import type { WebsiteProject } from '@elysian/contracts'
 import { createMockGateway } from '../adapters/mock/gateway'
 import { resetWebsitesData } from '../adapters/mock/websitesData'
 import { useMessageStore } from './messageStore'
+import { useSessionStore } from './sessionStore'
 import { useWebsitesStore } from './websitesStore'
 
 beforeEach(async () => {
   await useMessageStore.getState().clear()
   resetWebsitesData()
-  useWebsitesStore.setState({ status: 'idle', projects: [], createDialogOpen: false, saving: false,
-    busyProjectIds: [], proxyStatus: { state: 'active', detail: null } })
+  useWebsitesStore.getState().clearDisplay()
+})
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (error: Error) => void
+  const promise = new Promise<T>((success, failure) => { resolve = success; reject = failure })
+  return { promise, resolve, reject }
+}
+
+describe('网站项目登录会话边界', () => {
+  beforeEach(() => useSessionStore.setState({ phase: 'authed', mode: 'real', username: 'admin' }))
+
+  it.each(['成功', '失败'] as const)('旧启停%s不覆盖新会话的同项目状态或解除忙碌', async (outcome) => {
+    const gateway = createMockGateway({ eventStream: 'memory' })
+    const { project } = await gateway.websites.create('html', { name: 'docs', port: 8088, access: { mode: 'direct' } })
+    const old = deferred<WebsiteProject>()
+    const next = deferred<WebsiteProject>()
+    vi.spyOn(gateway.websites, 'setRunning').mockReturnValueOnce(old.promise).mockReturnValueOnce(next.promise)
+    const store = useWebsitesStore.getState()
+    const session = useSessionStore.getState()
+    await store.load(gateway)
+    const beforeLogout = store.setRunning(gateway, project, true)
+    await session.logout(gateway)
+    await session.login(gateway, 'admin', 'password')
+    await store.load(gateway)
+    const afterLogin = store.setRunning(gateway, project, false)
+
+    if (outcome === '成功') old.resolve({ ...project, runState: 'running' })
+    else old.reject(new Error('旧会话启停失败'))
+    await beforeLogout
+    const snapshot = useWebsitesStore.getState()
+    const messages = useMessageStore.getState().messages.slice()
+    next.resolve({ ...project, runState: 'stopped', pid: null })
+    await afterLogin
+
+    expect(snapshot.projects[0]?.runState).toBe('stopped')
+    expect(snapshot.busyProjectIds).toEqual([project.id])
+    expect(messages).toEqual([])
+    expect(useMessageStore.getState().messages).toHaveLength(1)
+  })
+
+  it.each(['成功', '失败'] as const)('失效时清除详情与日志，访问配置迟到%s不回读或给弹窗反馈', async (outcome) => {
+    const gateway = createMockGateway({ eventStream: 'memory' })
+    const result = await gateway.websites.create('html', { name: 'docs', port: 8088, access: { mode: 'direct' } })
+    const old = deferred<typeof result>()
+    vi.spyOn(gateway.websites, 'setAccess').mockReturnValueOnce(old.promise)
+    vi.spyOn(gateway.websites, 'logs').mockResolvedValue(['旧会话日志'])
+    const list = vi.spyOn(gateway.websites, 'list')
+    const store = useWebsitesStore.getState()
+    await store.load(gateway)
+    await store.openDetail(gateway, result.project)
+    const pending = store.saveAccess(gateway, result.project.id, { mode: 'direct' })
+    useSessionStore.getState().expire()
+    list.mockClear()
+
+    if (outcome === '成功') old.resolve(result)
+    else old.reject(new Error('旧访问配置失败'))
+    await expect(pending).resolves.toBeUndefined()
+    expect(useWebsitesStore.getState()).toMatchObject({ status: 'idle', projects: [], detailTarget: undefined, detailLogs: undefined, busyProjectIds: [] })
+    expect(list).not.toHaveBeenCalled()
+    expect(useMessageStore.getState().messages).toEqual([])
+  })
 })
 
 describe('网站状态', () => {
@@ -28,8 +90,7 @@ describe('网站状态', () => {
     await useWebsitesStore.getState().createProject(gateway, 'html', { name: 'docs', port: 8088, access: { mode: 'direct' } })
     const projectId = useWebsitesStore.getState().projects[0]!.id
     const saved = await useWebsitesStore.getState().saveAccess(gateway, projectId, { mode: 'domain', domain: 'example.com', certificatePem: 'cert', privateKeyPem: 'key' })
-    expect(saved.routeApplied).toBe(true)
-    expect(saved.certificate?.applied).toBe(true)
+    expect(saved).toMatchObject({ routeApplied: true, certificate: { applied: true } })
     expect(useWebsitesStore.getState().projects[0]?.domain).toBe('example.com')
   })
 
