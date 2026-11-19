@@ -17,9 +17,8 @@ export type AgentRuntimeState = {
   errorMessage?: string
   /** 仅内核级 503；分项扩展故障留在对应页面，不遮挡其他能力。 */
   unavailableReason?: string
-  /** 就绪后的再读取：旧报告留在屏上，只标记刷新中。 */
-  reloading: boolean
-  load(gateway: ElysianGateway, options?: { silent?: boolean; signal?: AbortSignal }): Promise<void>
+  /** 轮询用 throwOnError 接收失败并退避；silent 只控制读取开始时的显示状态。 */
+  load(gateway: ElysianGateway, options?: { silent?: boolean; signal?: AbortSignal; throwOnError?: boolean }): Promise<void>
   reportUnavailable(reason: string): void
   /** 清空当前会话的报告和禁写状态。 */
   reset(): void
@@ -30,31 +29,27 @@ export const useAgentRuntimeStore = create<AgentRuntimeState>((set, get) => {
   let unavailableVersion = 0
   return {
     status: 'idle',
-    reloading: false,
     async load(gateway, options) {
       const isCurrent = loadGuard.replace()
       const observedUnavailableVersion = unavailableVersion
       const inPlace = get().status === 'ready'
       if (!options?.silent) {
-        set(inPlace
-          ? { reloading: true, errorMessage: undefined }
-          : { status: 'loading', reloading: false, errorMessage: undefined })
+        set({ status: inPlace ? 'ready' : 'loading', errorMessage: undefined })
       }
       try {
         const info = await gateway.agentRuntime.runtime(options?.signal)
         if (!isCurrent() || options?.signal?.aborted) return
         set({
-          status: 'ready', info, reloading: false, errorMessage: undefined,
+          status: 'ready', info, errorMessage: undefined,
           ...(observedUnavailableVersion === unavailableVersion ? { unavailableReason: undefined } : {}),
         })
       } catch (error) {
         if (!isCurrent() || options?.signal?.aborted) return
         set({
           status: inPlace ? 'ready' : 'error',
-          reloading: false,
           errorMessage: messageOf(error, '读取 Agent 运行时报告失败'),
         })
-        if (options?.silent) throw error
+        if (options?.throwOnError) throw error
       }
     },
     reportUnavailable(reason) {
@@ -64,7 +59,7 @@ export const useAgentRuntimeStore = create<AgentRuntimeState>((set, get) => {
     reset() {
       loadGuard.invalidate()
       unavailableVersion += 1
-      set({ status: 'idle', info: undefined, errorMessage: undefined, unavailableReason: undefined, reloading: false })
+      set({ status: 'idle', info: undefined, errorMessage: undefined, unavailableReason: undefined })
     },
   }
 })

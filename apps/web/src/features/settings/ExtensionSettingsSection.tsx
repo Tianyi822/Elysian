@@ -16,7 +16,7 @@ export function ExtensionSettingsSection({ kind, active }: { kind: 'mcp' | 'skil
   const phase = useSessionStore(state => state.phase)
   const demo = useSessionStore(state => state.mode === 'demo')
   useEffect(() => { if (runtime.status === 'idle') void runtime.load(gateway) }, [gateway, runtime.status, runtime.load])
-  const { degraded } = useSilentPolling(signal => runtime.load(gateway, { silent: true, signal }), { intervalMs: 15000, enabled: active })
+  const { degraded } = useSilentPolling(signal => runtime.load(gateway, { silent: true, signal, throwOnError: true }), { intervalMs: 15000, enabled: active })
   useFeedbackMessage(active && degraded ? '运行时连接中断，正在重试' : null, 'warning')
   if (phase !== 'authed') return null
   if (runtime.status === 'idle' || runtime.status === 'loading') return <LoadingState />

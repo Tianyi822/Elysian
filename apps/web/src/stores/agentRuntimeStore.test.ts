@@ -21,7 +21,6 @@ describe('agentRuntimeStore', () => {
     const state = useAgentRuntimeStore.getState()
     expect(state.status).toBe('ready')
     expect(state.info).toEqual(info)
-    expect(state.reloading).toBe(false)
   })
 
   it('闭包 sequence 丢弃过期响应：先发的慢请求不得覆盖后发的快请求', async () => {
@@ -59,9 +58,12 @@ describe('agentRuntimeStore', () => {
     expect(failed.status).toBe('ready')
     expect(failed.info).toEqual(info)
     expect(failed.errorMessage).toBe('Agent 请求网络失败')
-    expect(failed.reloading).toBe(false)
-    await expect(useAgentRuntimeStore.getState().load(gatewayWith(info, new Error('断网')), { silent: true }))
-      .rejects.toThrow('断网')
+    await expect(useAgentRuntimeStore.getState().load(gatewayWith(info, new Error('静默回读失败')), { silent: true }))
+      .resolves.toBeUndefined()
+    expect(useAgentRuntimeStore.getState().errorMessage).toBe('静默回读失败')
+    const pollingError = new Error('断网')
+    await expect(useAgentRuntimeStore.getState().load(gatewayWith(info, pollingError), { silent: true, throwOnError: true }))
+      .rejects.toBe(pollingError)
     expect(useAgentRuntimeStore.getState().info).toEqual(info)
     expect(useAgentRuntimeStore.getState().status).toBe('ready')
     await useAgentRuntimeStore.getState().load(gatewayWith(info), { silent: true })
@@ -111,6 +113,6 @@ describe('agentRuntimeStore', () => {
     finish(info)
     await pending
 
-    expect(useAgentRuntimeStore.getState()).toMatchObject({ status: 'idle', info: undefined, unavailableReason: undefined, reloading: false })
+    expect(useAgentRuntimeStore.getState()).toMatchObject({ status: 'idle', info: undefined, unavailableReason: undefined })
   })
 })

@@ -18,7 +18,7 @@ export function ModelSettingsSection({ active }: { active: boolean }) {
   useEffect(() => {
     if (runtime.status === 'ready' && runtime.info?.available) void settings.load(gateway, { silent: true })
   }, [gateway, runtime.status, runtime.info?.available, settings.load])
-  const { degraded } = useSilentPolling((signal) => runtime.load(gateway, { silent: true, signal }), { intervalMs: 15_000, enabled: active })
+  const { degraded } = useSilentPolling((signal) => runtime.load(gateway, { silent: true, signal, throwOnError: true }), { intervalMs: 15_000, enabled: active })
   useFeedbackMessage(degraded ? '运行时连接中断，正在重试' : null, 'warning')
   const unavailableReason = runtime.unavailableReason ?? (runtime.info && !runtime.info.available ? runtime.info.reason : undefined)
   useFeedbackMessage(unavailableReason ? `模型运行时不可用：${unavailableReason}` : null, 'warning')
