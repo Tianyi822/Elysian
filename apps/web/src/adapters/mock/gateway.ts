@@ -9,13 +9,13 @@ import { createMockDataset } from './dataset'
 import {
   MockContainerAdapter,
   MockDependenciesAdapter,
-  MockFirewallAdapter,
   MockSshAdapter,
   MockUserAdapter,
   MockWebsitesAdapter,
   createInMemoryEventsAdapter,
 } from './mockAdapters'
 import { MockFilesAdapter } from './filesMockAdapter'
+import { MockFirewallAdapter } from './firewallMockAdapter'
 import { MockLogsAdapter } from './logsMockAdapter'
 import { MockSessionAdapter } from './sessionMockAdapter'
 import { createResilientEventsAdapter } from '../sse/eventsAdapter'
