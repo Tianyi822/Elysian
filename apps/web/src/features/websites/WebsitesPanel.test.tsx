@@ -152,6 +152,30 @@ describe('三步构建与部署', () => {
     expect(useMessageStore.getState().messages).toEqual([])
   })
 
+  it('会话失效后，已提交的回滚回执不重开任务弹窗或写回共享列表', async () => {
+    const gateway = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
+    const { project } = await gateway.websites.create('html', { name: 'docs', port: 8088, access: { mode: 'direct' } })
+    const createdAt = '2026-10-04T07:30:00Z'
+    const previousRelease = { id: 'previous', sourceId: 'source', createdAt, directory: '/srv/docs', target: 'static' as const, runtimeImage: 'nginx', command: '', containerId: 'old-web', containerName: 'old-web' }
+    vi.spyOn(gateway.websites, 'list').mockResolvedValue({ projects: [{ ...project, previousRelease }], proxy: { state: 'active', detail: null } })
+    let finish!: (task: WebsiteDeploymentTask) => void
+    const pending = new Promise<WebsiteDeploymentTask>(resolve => { finish = resolve })
+    const rollback = vi.spyOn(gateway.websites.deployment!, 'rollback').mockReturnValueOnce(pending)
+    renderApp('/websites', { gateway })
+    await userEvent.click(await screen.findByRole('button', { name: /^回滚$/ }))
+    expect(rollback).toHaveBeenCalledExactlyOnceWith(project.id)
+    await act(async () => { useSessionStore.getState().expire() })
+    const messages = useMessageStore.getState().messages
+    await act(async () => {
+      finish({ id: 'old-rollback', sourceId: previousRelease.sourceId, projectId: project.id, name: project.name,
+        state: 'publishing', stage: '回滚中', testResult: 'absent', createdAt, updatedAt: createdAt,
+        config: { candidateId: 'static', target: 'static', command: '', skipTests: false } })
+    })
+    expect(useWebsiteDeploymentsStore.getState().tasks).toEqual([])
+    expect(useMessageStore.getState().messages).toEqual(messages)
+    expect(screen.queryByRole('log', { name: '部署日志' })).not.toBeInTheDocument()
+  })
+
   it('后台每两秒继续回读部署日志，读完终态尾部才停止', async () => {
     const user = userEvent.setup()
     const gateway = await open()
