@@ -11,23 +11,15 @@ import { useMessageStore, type MessageTone } from './messageStore'
 import type { AgentChatAdapter, AgentChatAttachment, AgentChatPermissionMode, AgentChatSession, AgentChatRun, AgentConversationAdapter } from '../contracts/agentChat'
 import type { AgentUserInputAnswer, AgentUserInputRequest } from '@elysian/contracts'
 import { messageOf } from '../utils/errorMessage'
+import { createAgentChatDirectory, type AgentChatDirectoryState } from './agentChatDirectory'
 import { applySubmissionReceipt, isConfirmedRejection } from './agentChatSubmission'
 
-type AgentChatState = {
+type AgentChatState = AgentChatDirectoryState & {
   setUserInputAnswer(request: AgentUserInputRequest, questionId: string, answer: AgentUserInputAnswer): void
   answerUserInput(api: AgentConversationAdapter, request: AgentUserInputRequest): Promise<void>
   session: AgentChatSession | null
-  sessions: readonly AgentSession[]
-  localSessions: readonly AgentChatSession[]
-  listStatus: 'idle' | 'loading' | 'ready' | 'error'
-  listErrorMessage?: string
-  listHasMore: boolean
-  listCursor: string
   initialize(api: AgentConversationAdapter, requestedId?: string): Promise<void>
   selectSession(api: AgentConversationAdapter, key: string): Promise<void>
-  loadSessions(api: AgentConversationAdapter, options?: { more?: boolean; silent?: boolean; userInitiated?: boolean }): Promise<void>
-  renameSession(api: AgentConversationAdapter, id: string, title: string): Promise<void>
-  deleteSession(api: AgentConversationAdapter, id: string): Promise<void>
   clearDisplay(): void
   restoringAttachments: boolean
   reportOperation(message: string, tone?: MessageTone): void
@@ -86,8 +78,6 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
     let restoring: Promise<void> | undefined
     let generation = 0
     let remoteVersion = 0
-    let listVersion = 0
-    let listInitialized = false
     let lifecycle = 0
     let navigationVersion = 0
     let attachmentUploadVersion = 0
@@ -98,7 +88,6 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
     let initialization: Promise<void> | undefined
     let persistenceFailed = false
     let attachmentPersistenceFailed = false
-    let listFeedback: string | null = null
     const observedActiveRuns = new Set<string>()
     const notifiedRunFailures = new Set<string>()
     const notifiedRunStatuses = new Map<string, string>()
@@ -135,7 +124,23 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
       if (bytes > AGENT_ATTACHMENT_LIMITS.maxMessageBytes) throw new Error(attachmentTotalNotice)
     }
     const completedReasoning = new Set<string>()
-    const deletionVersions = new Map<string, number>()
+    const directory = createAgentChatDirectory({
+      adapter, set, get, notify,
+      captureLifetime: () => {
+        const lifetime = lifecycle
+        return () => lifetime === lifecycle
+      },
+      async onSelectedSessionDeleted(api, fallback, current) {
+        attachmentPreparation?.abort()
+        generation += 1; remoteVersion += 1; submissionVersion += 1; attachmentUploadVersion += 1
+        completedReasoning.clear()
+        set({ ...remoteBlank, restoringAttachments: false })
+        const navigation = navigationVersion + 1
+        if (fallback) await get().selectSession(api, fallback.id)
+        else await get().newSession()
+        if (current() && navigation === navigationVersion) notify(fallback ? '会话已删除，已切换到其他会话。' : '会话已删除，已新建空白会话。', 'info')
+      },
+    })
     const blankSession = (): AgentChatSession => ({
       id: `draft:${id()}`, createdAt: now(), draft: '', messages: [], attachments: [],
       permissionMode: 'ask', permissionVersion: 1, modelId: null, reasoningLevel: null,
@@ -292,13 +297,13 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
       const session = current()
       const pending = session.pending!
       const remoteId = session.remote!.sessionId
-      const deletionVersion = deletionVersions.get(remoteId)
+      const deletionVersion = directory.deletionVersion(remoteId)
       const valid = () => lifecycleAtStart === lifecycle && version === submissionVersion && stillCurrent(localId)
       try {
         const run = pending.taskId
           ? await api.continueTask(pending.taskId, pending.input)
           : await api.createTask(session.remote!.sessionId, pending.input)
-        if (deletionVersions.get(remoteId) !== deletionVersion) return false
+        if (directory.deletionVersion(remoteId) !== deletionVersion) return false
         acceptRun(run, session, lifecycleAtStart === lifecycle && version === submissionVersion)
         if (!valid()) return false
         observeRun(run, true)
@@ -325,59 +330,25 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
         return false
       }
     }
-    const listStatusAfterMutation = () => get().listStatus === 'loading' ? (listInitialized ? 'ready' : 'idle') : get().listStatus
-
     return {
       ...remoteBlank,
+      ...directory.state,
       session: null,
-      sessions: [], localSessions: [], listStatus: 'idle', listErrorMessage: undefined, listHasMore: false, listCursor: '',
       reportOperation: notify,
       reportInput,
       clearDisplay() {
-        listFeedback = null
         attachmentPreparation?.abort()
-        generation += 1; remoteVersion += 1; listVersion += 1; lifecycle += 1; navigationVersion += 1
+        generation += 1; remoteVersion += 1; lifecycle += 1; navigationVersion += 1
+        const directoryDisplay = directory.resetDisplay()
         attachmentUploadVersion += 1
         initialBlank = false
-        listInitialized = false
         initialized = false; initialization = undefined; restoring = undefined
         completedReasoning.clear()
         clearRunFeedback()
         missingAttachmentSets.clear()
         persistenceFailed = false
         attachmentPersistenceFailed = false
-        set({ ...remoteBlank, session: null, sessions: [], localSessions: [], restoringAttachments: false, listStatus: 'idle', listErrorMessage: undefined, listHasMore: false, listCursor: '' })
-      },
-      async loadSessions(api, { more, silent, userInitiated } = {}) {
-        if (!api.available || (more && (!get().listHasMore || get().listStatus === 'loading'))) return
-        const version = ++listVersion
-        const cursor = more ? get().listCursor : ''
-        set({ listStatus: 'loading', listErrorMessage: undefined, localSessions: adapter.list() })
-        try {
-          const page = await api.listSessions(cursor)
-          if (version !== listVersion) return
-          if (page.hasMore && page.nextCursor === cursor) throw new Error('会话列表分页未前进，请重新读取')
-          listFeedback = null
-          if (silent && listInitialized) {
-            // 静默回读只更新列表内容，保留最后已加载页的游标和结束标记。
-            // 显式刷新才重置分页；活动时间变化带来的重复由后续加载按 ID 去重。
-            const records = new Map(page.items.map(row => [row.id, row]))
-            for (const row of get().sessions) if (!records.has(row.id)) records.set(row.id, row)
-            set({ listStatus: 'ready', sessions: [...records.values()] })
-            return
-          }
-          const records = new Map((more ? get().sessions : []).map(row => [row.id, row]))
-          for (const row of page.items) records.set(row.id, row)
-          listInitialized = true
-          set({ listStatus: 'ready', sessions: [...records.values()], listCursor: page.nextCursor, listHasMore: page.hasMore })
-        } catch (error) {
-          if (version === listVersion) {
-            const message = failureMessage(error)
-            if (userInitiated || listFeedback !== message) notify(message)
-            listFeedback = message
-            set({ listStatus: 'error', listErrorMessage: message })
-          }
-        }
+        set({ ...remoteBlank, ...directoryDisplay, session: null, restoringAttachments: false })
       },
       async initialize(api, requestedId) {
         const lifetime = lifecycle
@@ -412,60 +383,6 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
         if (lifetime !== lifecycle || navigation !== navigationVersion || get().session?.id !== session.id) return
         set({ localSessions: adapter.list() })
         if (session.remote && api.available) await get().refresh(api)
-      },
-      async renameSession(api, id, title) {
-        if (get().sending) return
-        const lifetime = lifecycle
-        let remote: AgentSession
-        try {
-          remote = await api.renameSession(id, { title: title.trim() })
-        } catch (error) {
-          if (lifetime !== lifecycle) return
-          if (error instanceof AgentHttpError && error.status === 404) {
-            // 会话已被别处删除：按会话消失处理，过滤行并说明，弹窗正常关闭。
-            listVersion += 1
-            set({ sessions: get().sessions.filter(row => row.id !== id), listStatus: listStatusAfterMutation() })
-            notify('原会话已不存在，列表已更新。', 'info')
-            return
-          }
-          throw error
-        }
-        if (lifetime !== lifecycle) return
-        // 服务端回执为权威：列表行与聊天页头标题都展示落库值（TrimSpace 后）。
-        // 作废在途的列表读取，避免静默回读用旧标题覆盖刚确认的回执。
-        listVersion += 1
-        set({
-          listStatus: listStatusAfterMutation(),
-          sessions: get().sessions.map(row => row.id === id ? remote : row),
-          ...(get().remoteSession?.id === id ? { remoteSession: { ...get().remoteSession!, title: remote.title } } : {}),
-        })
-        notify('会话已重命名。', 'success')
-      },
-      async deleteSession(api, id) {
-        const lifetime = lifecycle
-        try {
-          await api.deleteSession(id)
-        } catch (error) {
-          // 404 视为已删；存储等真实失败保留本地记录并交给弹窗反馈。
-          if (!(error instanceof AgentHttpError && error.status === 404)) throw error
-        }
-        deletionVersions.set(id, (deletionVersions.get(id) ?? 0) + 1)
-        adapter.remove(id)
-        if (lifetime !== lifecycle) return
-        listVersion += 1
-        const fallback = get().sessions.find(row => row.id !== id)
-        set({ sessions: get().sessions.filter(row => row.id !== id), listStatus: listStatusAfterMutation() })
-        set({ localSessions: adapter.list() })
-        if (get().session && agentChatSessionKey(get().session!) === id) {
-          attachmentPreparation?.abort()
-          generation += 1; remoteVersion += 1; submissionVersion += 1; attachmentUploadVersion += 1
-          completedReasoning.clear()
-          set({ ...remoteBlank, restoringAttachments: false })
-          const navigation = navigationVersion + 1
-          if (fallback) await get().selectSession(api, fallback.id)
-          else await get().newSession()
-          if (lifetime === lifecycle && navigation === navigationVersion) notify(fallback ? '会话已删除，已切换到其他会话。' : '会话已删除，已新建空白会话。', 'info')
-        } else notify('会话已删除。', 'success')
       },
       restoringAttachments: false,
       async ensureSession() {

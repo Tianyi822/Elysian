@@ -1959,6 +1959,24 @@ describe('会话重命名与删除', () => {
     expect(local.files.size).toBe(0)
   })
 
+  it.each(['成功', '失败'])('删除后忽略旧分页的%s回执', async outcome => {
+    const { store, backend, a, b } = await preparedStore()
+    const page = deferred<Awaited<ReturnType<typeof backend.api.listSessions>>>()
+    backend.api.listSessions.mockReturnValueOnce(page.promise)
+    const pending = store.getState().loadSessions(backend.api, { more: true })
+    expect(backend.api.listSessions).toHaveBeenLastCalledWith('cursor-1')
+    expect(store.getState().listStatus).toBe('loading')
+
+    await store.getState().deleteSession(backend.api, b.id)
+    if (outcome === '成功') page.resolve({ items: [b], nextCursor: '', hasMore: false })
+    else page.reject(new Error('旧分页读取失败'))
+    await pending
+
+    expect(store.getState()).toMatchObject({ sessions: [a], listStatus: 'ready', listCursor: 'cursor-1', listHasMore: true })
+    expect(store.getState().listErrorMessage).toBeUndefined()
+    expect(useMessageStore.getState().messages.map(message => message.message)).toEqual(['会话已删除。'])
+  })
+
   it('删除当前选中会话回落到剩余第一个会话并以消息说明去向', async () => {
     const { store, backend } = await preparedStore()
     expect(store.getState().remoteSession?.id).toBe('session-a')
