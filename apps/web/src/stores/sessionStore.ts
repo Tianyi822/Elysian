@@ -20,6 +20,7 @@ import { useWebsitesStore } from './websitesStore'
 import { useWebsiteDeploymentsStore } from './websiteDeploymentsStore'
 import { useFirewallStore } from './firewallStore'
 import { useDashboardStore } from './dashboardStore'
+import { useDependencyProbeStore } from './dependencyProbeStore'
 
 function clearPrivateDisplays() {
   useAgentChatStore.getState().clearDisplay()
@@ -37,6 +38,7 @@ function clearPrivateDisplays() {
   useWebsiteDeploymentsStore.getState().clearDisplay()
   useFirewallStore.getState().clearDisplay()
   useDashboardStore.getState().clearDisplay()
+  useDependencyProbeStore.getState().reset()
 }
 
 function resetLogSession(mode: SessionMode | undefined) {

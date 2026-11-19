@@ -1,7 +1,10 @@
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import type { DependencyProbeReport } from '@elysian/contracts'
 import type { ElysianGateway, SessionAdapter, SessionStatus } from '../contracts/adapters'
 import { useSessionStore } from './sessionStore'
 import { useAgentChatStore } from './agentChatStore'
+import { useDependencyProbeStore } from './dependencyProbeStore'
+import { useMessageStore } from './messageStore'
 import { fetchWithSession, reportUnauthorized } from '../adapters/http/unauthorized'
 
 /*
@@ -470,6 +473,44 @@ describe('sessionStore.expire', () => {
       mode: 'real',
       devAccount: true,
     })
+  })
+})
+
+describe('依赖探测的会话边界', () => {
+  it.each(['登出', '会话失效'])('%s立即清空已读报告，在途重检不能恢复其状态', async (exit) => {
+    useSessionStore.setState({ phase: 'authed', mode: 'real' })
+    const accepted = deferred<void>()
+    const old = deferred<DependencyProbeReport>()
+    const ready = { docker: { state: 'ok', detail: null }, caddy: { state: 'ok', detail: null } } as const
+    const probe = vi.fn<ElysianGateway['dependencies']['probe']>()
+      .mockResolvedValueOnce({ ...ready, caddy: { state: 'missing', detail: 'Caddy 未就绪' } })
+      .mockReturnValueOnce(old.promise)
+      .mockResolvedValueOnce(ready)
+    const gateway = { ...gatewayWithSession({ logout: () => accepted.promise, login: async () => {} }), dependencies: { probe } }
+    const dependencies = useDependencyProbeStore.getState
+    const session = useSessionStore.getState()
+    await dependencies().check(gateway)
+    expect(dependencies().report?.caddy.state).toBe('missing')
+    const rechecking = dependencies().recheck(gateway)
+    await Promise.resolve()
+    expect(dependencies().rechecking).toBe(true)
+    expect(probe).toHaveBeenCalledTimes(2)
+    const messages = useMessageStore.getState().messages
+
+    const leaving = exit === '登出' ? session.logout(gateway) : session.expire()
+    const cleared = dependencies()
+    old.resolve(ready)
+    expect(await rechecking).toBeNull()
+    expect(dependencies()).toBe(cleared)
+    accepted.resolve()
+    await leaving
+
+    expect(cleared).toMatchObject({ status: 'idle', report: undefined, rechecking: false })
+    expect(useMessageStore.getState().messages).toBe(messages)
+    await session.login(gateway, 'admin', 'example')
+    await dependencies().check(gateway)
+    expect(dependencies()).toMatchObject({ status: 'ready', report: ready })
+    expect(probe).toHaveBeenCalledTimes(3)
   })
 })
 
