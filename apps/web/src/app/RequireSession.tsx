@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { Navigate, useLocation } from 'react-router'
 import { useGateway } from '../adapters/GatewayProvider'
 import { ErrorState, LoadingState } from '../components/states/StateViews'
+import { useSilentPolling } from '../components/useSilentPolling'
 import { useSessionStore } from '../stores/sessionStore'
 import { preloadDashboard } from './preloadRoutes'
 
@@ -23,26 +24,11 @@ export function RequireSession({ children }: { children: ReactNode }) {
     void probe(gateway)
   }, [probe, gateway])
 
-  useEffect(() => {
-    if (phase !== 'authed' || mode !== 'real') return
-    let pending = false
-    const check = () => {
-      if (document.visibilityState === 'hidden' || pending) return
-      pending = true
-      void revalidate(gateway).finally(() => { pending = false })
-    }
-    // 静止页面也能感知新登录；切回后台标签页或恢复网络时立即确认。
-    const timer = window.setInterval(check, 15_000)
-    window.addEventListener('focus', check)
-    window.addEventListener('online', check)
-    document.addEventListener('visibilitychange', check)
-    return () => {
-      window.clearInterval(timer)
-      window.removeEventListener('focus', check)
-      window.removeEventListener('online', check)
-      document.removeEventListener('visibilitychange', check)
-    }
-  }, [phase, mode, revalidate, gateway])
+  const check = () => revalidate(gateway)
+  useSilentPolling(check, {
+    intervalMs: 15_000, enabled: phase === 'authed' && mode === 'real', scope: gateway,
+    onFocus: check, refreshOnOnline: true,
+  })
 
   const prefetched = useRef(false)
   useEffect(() => {

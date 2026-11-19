@@ -26,6 +26,8 @@ export type UseSilentPollingOptions = {
   pauseOnHidden?: boolean
   /** 可选的回读动作，在窗口聚焦或页面恢复可见时替代定时任务。 */
   onFocus?: PollTask
+  /** 网络恢复时立即运行一次定时任务。 */
+  refreshOnOnline?: boolean
   /** 仅在后台暂停模式下，隐藏页面时也取消在途读取。 */
   abortOnHidden?: boolean
   /** 读取目标变化时结束旧周期，按初始策略启动新周期。 */
@@ -47,6 +49,7 @@ export function useSilentPolling(
   const immediate = options.immediate === true
   const pauseOnHidden = options.pauseOnHidden !== false
   const refreshOnFocus = options.onFocus !== undefined
+  const refreshOnOnline = options.refreshOnOnline === true
   const abortOnHidden = options.abortOnHidden === true
   const scope = options.scope
 
@@ -103,6 +106,7 @@ export function useSilentPolling(
     }
 
     const onFocus = () => { void run(true) }
+    const onOnline = () => { void run() }
     const start = () => {
       visible = true
       repeat = true
@@ -120,15 +124,17 @@ export function useSilentPolling(
     const stop = pauseOnHidden ? subscribeWhileVisible(start) : start()
     initial = false
     if (refreshOnFocus) window.addEventListener('focus', onFocus)
+    if (refreshOnOnline) window.addEventListener('online', onOnline)
 
     return () => {
       cancelled = true
       stop()
       controller?.abort()
       if (refreshOnFocus) window.removeEventListener('focus', onFocus)
+      if (refreshOnOnline) window.removeEventListener('online', onOnline)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [intervalMs, maxBackoffMs, enabled, immediate, pauseOnHidden, refreshOnFocus, abortOnHidden, scope])
+  }, [intervalMs, maxBackoffMs, enabled, immediate, pauseOnHidden, refreshOnFocus, refreshOnOnline, abortOnHidden, scope])
 
   return { degraded }
 }
