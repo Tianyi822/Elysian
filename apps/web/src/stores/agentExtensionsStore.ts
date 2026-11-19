@@ -54,7 +54,7 @@ function mergeImportPage(existing: readonly AgentSkillImportTask[], page: readon
 export type SkillDetailState = {
   skillId: string
   revision?: number
-  loading: boolean
+  status: 'loading' | 'ready' | 'error'
   item?: AgentSkill
   errorMessage?: string
   file: { path: string; status: 'loading' | 'ready' | 'error'; preview?: AgentSkillFilePreview; errorMessage?: string } | null
@@ -241,15 +241,15 @@ export const useAgentExtensionsStore = create<AgentExtensionsState>((set, get) =
     async loadSkillDetail(gateway, skillId, revision) {
       const isCurrent = skillDetailRequest.replace()
       skillFileRequest.invalidate()
-      set({ skillDetail: { skillId, revision, loading: true, file: null } })
+      set({ skillDetail: { skillId, revision, status: 'loading', file: null } })
       try {
         const item = await gateway.agentExtensions.getSkill(skillId, revision)
         if (!isCurrent()) return
-        set({ skillDetail: { skillId, revision: item.revision, loading: false, item, file: null } })
+        set({ skillDetail: { skillId, revision: item.revision, status: 'ready', item, file: null } })
         if (item.files.some(file => file.path === 'SKILL.md')) void get().loadSkillFile(gateway, skillId, item.revision, 'SKILL.md')
       } catch (error) {
         if (!isCurrent()) return
-        set({ skillDetail: { skillId, revision, loading: false, errorMessage: messageOf(error), file: null } })
+        set({ skillDetail: { skillId, revision, status: 'error', errorMessage: messageOf(error), file: null } })
       }
     },
     async loadSkillFile(gateway, skillId, revision, path) {

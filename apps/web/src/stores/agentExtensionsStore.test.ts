@@ -29,9 +29,17 @@ describe('技能目录', () => {
     expect(useAgentExtensionsStore.getState().skillsStatus).toBe('ready')
     expect(useAgentExtensionsStore.getState().skills.length).toBeGreaterThan(0)
 
-    // 详情读取失败（技能不存在）记录中文错误，不吞旧状态。
-    await useAgentExtensionsStore.getState().loadSkillDetail(gateway, 'skill-not-exist')
-    expect(useAgentExtensionsStore.getState().skillDetail?.errorMessage).toBe('技能不存在')
+    // 详情错误不影响目录快照。
+    const skills = useAgentExtensionsStore.getState().skills
+    const detail = store.loadSkillDetail(gateway, 'skill-not-exist')
+    expect(useAgentExtensionsStore.getState().skillDetail).toMatchObject({ status: 'loading' })
+    await detail
+    expect(useAgentExtensionsStore.getState().skillDetail).toMatchObject({ status: 'error', errorMessage: '技能不存在' })
+    expect(useAgentExtensionsStore.getState().skills).toBe(skills)
+    await store.loadSkillDetail(gateway, skills[0]!.id)
+    expect(useAgentExtensionsStore.getState().skillDetail).toMatchObject({ status: 'ready', item: { id: skills[0]!.id } })
+    store.closeSkillDetail()
+    expect(useAgentExtensionsStore.getState().skillDetail).toBeNull()
   })
 
   it('启停按修订 CAS 回读新修订；失败给通知且不吞数据', async () => {
