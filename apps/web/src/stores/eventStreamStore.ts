@@ -46,11 +46,11 @@ export function getLastContainerSample(): ElysianEvent | undefined {
   return lastContainerSample?.auth === captureAuthGeneration() ? lastContainerSample.event : undefined
 }
 
-/** 最近一拍单机资源采样的模块级缓存，供挂载晚于事件流连接的顶栏系统负载指示器回放。 */
-let lastResourceSample: ElysianEvent | undefined
+/** 最近一拍主机资源采样，供同一登录会话内晚挂载的侧栏负载指示器回放。 */
+let lastResourceSample: { event: ElysianEvent; auth: number } | undefined
 
 export function getLastResourceSample(): ElysianEvent | undefined {
-  return lastResourceSample
+  return lastResourceSample?.auth === captureAuthGeneration() ? lastResourceSample.event : undefined
 }
 
 export const useEventStreamStore = create<EventStreamState>((set) => ({
@@ -73,7 +73,7 @@ export const useEventStreamStore = create<EventStreamState>((set) => ({
       },
       onEvent: (event) => {
         if (current !== generation) return
-        if (event.name.startsWith('container/') && auth !== captureAuthGeneration()) return
+        if ((event.name === 'resource/sample' || event.name.startsWith('container/')) && auth !== captureAuthGeneration()) return
         // 资源采样与容器事件（container/sample 每拍一条、container/updated 随状态变化）
         // 同为页面的数据心跳与状态流，不是可读的活动记录，进最近活动只会把列表刷成噪音；
         // 监听器（仪表盘、容器页）仍然照常收到；container/sample 另记一拍进模块缓存，
@@ -84,7 +84,7 @@ export const useEventStreamStore = create<EventStreamState>((set) => ({
           event.name === 'container/updated'
         ) {
           if (event.name === 'container/sample') lastContainerSample = { event, auth }
-          if (event.name === 'resource/sample') lastResourceSample = event
+          if (event.name === 'resource/sample') lastResourceSample = { event, auth }
           for (const listener of listeners) listener(event)
           return
         }

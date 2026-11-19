@@ -6,6 +6,7 @@ import * as resourceMetrics from '../adapters/mock/resourceMetrics'
 import { resetMockHistory } from '../adapters/mock/resourceMetrics'
 import { onStreamEvent, useEventStreamStore } from './eventStreamStore'
 import { mergeResourceSampleIntoWindow, useDashboardStore } from './dashboardStore'
+import { useSessionStore } from './sessionStore'
 
 function resetStores() {
   resetMockHistory()
@@ -106,6 +107,34 @@ describe('仪表盘 store 资源窗与引用稳定', () => {
 })
 
 describe('仪表盘 store 的事件回灌', () => {
+  it.each(['成功', '失败'] as const)('换会话清空仪表盘快照，旧刷新%s不恢复旧状态', async outcome => {
+    const gateway = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
+    useSessionStore.setState({ phase: 'authed', mode: 'real', username: 'admin' })
+    const dashboard = useDashboardStore.getState()
+    const last = { ts: 1_700_000_000_000, ...samplePayload }
+    const before = [last]
+    const list = vi.spyOn(gateway.resources, 'list').mockResolvedValueOnce(before)
+    await dashboard.load(gateway)
+    const next = [{ ...last, ts: last.ts - 30_000, cpu: 17 }]
+    let resolve!: (points: typeof before) => void
+    let reject!: (error: Error) => void
+    list
+      .mockReturnValueOnce(new Promise((yes, no) => { resolve = yes; reject = no }))
+      .mockResolvedValueOnce(next)
+    const oldRefresh = dashboard.refresh(gateway)
+    const session = useSessionStore.getState()
+    session.expire()
+    const cleared = useDashboardStore.getState()
+    await session.login(gateway, 'admin', 'password')
+    await dashboard.load(gateway)
+    if (outcome === '成功') resolve(before)
+    else reject(new Error('旧采样读取失败'))
+    await oldRefresh
+
+    expect(cleared).toMatchObject({ range: '5m', resources: undefined, resourcesRange: undefined, status: 'idle', refreshing: false, errorMessage: undefined })
+    expect(useDashboardStore.getState()).toMatchObject({ resources: next, status: 'ready', refreshing: false, errorMessage: undefined })
+  })
+
   it('重连补发旧事件或无效日期时不倒退和裁空当前时间窗', async () => {
     const gateway = createMockGateway({ eventIntervalMs: 60_000, eventStream: 'memory' })
     await useDashboardStore.getState().load(gateway)

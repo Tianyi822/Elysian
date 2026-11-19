@@ -1,7 +1,7 @@
 import type { ElysianEvent } from '@elysian/contracts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { EventsAdapter } from '../contracts/adapters'
-import { getLastContainerSample, MAX_RECENT_EVENTS, onStreamEvent, useEventStreamStore } from './eventStreamStore'
+import { getLastContainerSample, getLastResourceSample, MAX_RECENT_EVENTS, onStreamEvent, useEventStreamStore } from './eventStreamStore'
 import { advanceAuthGeneration } from '../utils/authGeneration'
 
 function createStubAdapter() {
@@ -167,5 +167,34 @@ describe('事件流 store', () => {
     next.state.handlers?.onContainerStatus?.('live')
     expect(oldStatus).toHaveBeenCalledTimes(1)
     expect(nextStatus).toHaveBeenCalledExactlyOnceWith('connecting')
+  })
+
+  it('主机采样同会话重连仍可回放，换会话后拒绝旧缓存和迟到采样', () => {
+    const stream = useEventStreamStore.getState()
+    const first = createStubAdapter(), next = createStubAdapter()
+    const sample = (id: string): ElysianEvent => ({
+      id, name: 'resource/sample', at: '2026-09-12T08:00:00.000Z',
+      payload: { cpu: 1, memory: 2, networkIo: 0, networkRx: 0, networkTx: 0, diskIo: 0, diskRead: 0, diskWrite: 0, load: { m1: 1, m5: 1, m15: 1 } },
+    })
+    stream.connect(first.adapter)
+    first.state.handlers?.onEvent(sample('before-logout'))
+    stream.disconnect()
+    stream.connect(first.adapter)
+    expect(getLastResourceSample()?.id).toBe('before-logout')
+
+    const onSample = vi.fn()
+    const unsubscribe = onStreamEvent(onSample)
+    advanceAuthGeneration()
+    const afterLogout = getLastResourceSample()
+    first.state.handlers?.onEvent(sample('late'))
+    const afterLateSample = getLastResourceSample()
+    stream.connect(next.adapter)
+    next.state.handlers?.onEvent(sample('after-login'))
+    unsubscribe()
+
+    expect(afterLogout).toBeUndefined()
+    expect(afterLateSample).toBeUndefined()
+    expect(onSample).toHaveBeenCalledExactlyOnceWith(sample('after-login'))
+    expect(getLastResourceSample()?.id).toBe('after-login')
   })
 })

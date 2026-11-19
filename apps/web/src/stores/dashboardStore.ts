@@ -39,6 +39,7 @@ export type DashboardState = {
   resourcesRange?: TimeRange
   range: TimeRange
   errorMessage?: string
+  clearDisplay: () => void
   load: (gateway: ElysianGateway) => Promise<void>
   refresh: (gateway: ElysianGateway) => Promise<void>
   setRange: (range: TimeRange) => void
@@ -129,6 +130,12 @@ export const useDashboardStore = create<DashboardState>((set, get) => ({
   status: 'idle',
   refreshing: false,
   range: DEFAULT_TIME_RANGE,
+  clearDisplay() {
+    readSequence += 1
+    pendingRead = undefined
+    boundGateway = undefined
+    set({ status: 'idle', refreshing: false, resources: undefined, resourcesRange: undefined, errorMessage: undefined })
+  },
   load(gateway) {
     attachLiveEvents()
     boundGateway = gateway
