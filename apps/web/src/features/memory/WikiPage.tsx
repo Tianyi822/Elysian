@@ -41,14 +41,14 @@ export function WikiPage() {
 
   useEffect(() => {
     if (!authed) { setOpenId(undefined); setSelected(undefined); setEditing(false); setDiscard(false); setFormError(undefined); return }
-    void useAgentMemoryStore.getState().initialize(gateway)
+    void useAgentMemoryStore.getState().load(gateway)
     return () => useAgentMemoryStore.getState().reset()
   }, [gateway, authed])
 
   const runRefresh = async () => {
     if (refreshing) return
     setRefreshing(true)
-    try { await useAgentMemoryStore.getState().refresh(gateway) } finally { setRefreshing(false) }
+    try { await useAgentMemoryStore.getState().load(gateway) } finally { setRefreshing(false) }
   }
   const open = (page: AgentMemoryPage) => {
     setSelected(page); setOpenId(page.id); setEditing(false); setDiscard(false); setFormError(undefined); setBaseline(undefined)
@@ -90,18 +90,19 @@ export function WikiPage() {
   }
 
   if (!authed) return null
-  const error = formError ?? state.error
+  const loading = state.status === 'loading'
+  const error = formError ?? state.errorMessage
   const over = bytes(draft.markdown) > 16384
   const spaceItems = state.spaces.map(space => ({ value: space.id, label: space.kind === 'global' ? `${space.name} · 共享` : space.name }))
   return <section aria-label="Wiki 页面浏览" className="flex flex-col gap-4">
-    {state.loading && !state.spaces.length ? <LoadingState label="正在读取知识空间…" /> : <>
+    {loading && !state.spaces.length ? <LoadingState label="正在读取知识空间…" /> : <>
       <div className={`${CTL_TOOLBAR} rect-toolbar shell-first-row flex flex-wrap items-center gap-2 panel-surface px-4 py-3`}>
-        <SelectDropdown ariaLabel="知识空间" items={spaceItems} value={state.spaceId || undefined} onSelect={id => { setFormError(undefined); void useAgentMemoryStore.getState().selectSpace(gateway, id) }} fallbackLabel="选择知识空间" emptyLabel="尚无知识空间" disabled={!state.spaces.length || state.loading} />
+        <SelectDropdown ariaLabel="知识空间" items={spaceItems} value={state.spaceId || undefined} onSelect={id => { setFormError(undefined); void useAgentMemoryStore.getState().selectSpace(gateway, id) }} fallbackLabel="选择知识空间" emptyLabel="尚无知识空间" disabled={!state.spaces.length || loading} />
         <RefreshButton onPress={() => void runRefresh()} busy={refreshing} />
       </div>
-      {state.error && openId === undefined && <div role="alert" className="memory-error">{state.error}<Button variant="outline" type="button" className={CTL_SECONDARY} onClick={() => void runRefresh()}>重试</Button></div>}
+      {state.errorMessage && openId === undefined && <div role="alert" className="memory-error">{state.errorMessage}<Button variant="outline" type="button" className={CTL_SECONDARY} onClick={() => void runRefresh()}>重试</Button></div>}
       <div className="panel-surface overflow-hidden">
-        {state.loading ? <p role="status" className="memory-empty">正在读取空间…</p>
+        {loading ? <p role="status" className="memory-empty">正在读取空间…</p>
           : !state.spaces.length ? <EmptyState title="尚无知识空间" />
           : !state.pages.length ? <EmptyState title="当前空间还没有页面" />
           : <ul aria-label="Wiki 页面列表" className="divide-y divide-line">
@@ -122,7 +123,7 @@ export function WikiPage() {
       <Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" />
       {/* 浏览页弹窗被锁定：点外部与 Escape 都不关闭，关闭只走右上角 X、取消或保存完成后的路径。 */}
       <Dialog.Content onPointerDownOutside={event => event.preventDefault()} onInteractOutside={event => event.preventDefault()} onEscapeKeyDown={event => event.preventDefault()} className="fixed left-1/2 top-1/2 z-[61] flex max-h-[90dvh] w-[min(44rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col panel-surface shadow-xl">
-        <header className="flex items-start justify-between gap-3 border-b border-line p-4"><div className="min-w-0"><Dialog.Title className="break-words text-base font-medium">{page?.title ?? selected?.title}</Dialog.Title><Dialog.Description className="mt-1 text-xs text-fg-muted">{editing ? '保存会产生新修订，并切换为人工维护。冲突时保留当前草稿。' : page ? <span className="tabular-nums">{AGENT_MEMORY_PAGE_KIND_LABELS[page.kind]} · 修订 r{page.revision} · 更新于 {formatLocalDateTime(page.updatedAt)} · {page.maintenance === 'automatic' ? '自动维护' : '人工维护'}{page.status === 'withdrawn' ? ' · 已撤回' : ''}</span> : state.error ? '页面读取失败，可在下方重试。' : '正在读取页面…'}</Dialog.Description></div><IconButton label="关闭窗口" variant="ghost" onPress={requestClose}><X size={16} aria-hidden /></IconButton></header>
+        <header className="flex items-start justify-between gap-3 border-b border-line p-4"><div className="min-w-0"><Dialog.Title className="break-words text-base font-medium">{page?.title ?? selected?.title}</Dialog.Title><Dialog.Description className="mt-1 text-xs text-fg-muted">{editing ? '保存会产生新修订，并切换为人工维护。冲突时保留当前草稿。' : page ? <span className="tabular-nums">{AGENT_MEMORY_PAGE_KIND_LABELS[page.kind]} · 修订 r{page.revision} · 更新于 {formatLocalDateTime(page.updatedAt)} · {page.maintenance === 'automatic' ? '自动维护' : '人工维护'}{page.status === 'withdrawn' ? ' · 已撤回' : ''}</span> : state.errorMessage ? '页面读取失败，可在下方重试。' : '正在读取页面…'}</Dialog.Description></div><IconButton label="关闭窗口" variant="ghost" onPress={requestClose}><X size={16} aria-hidden /></IconButton></header>
         {discard && <div role="alert" className="flex flex-wrap items-center gap-2 border-b border-line bg-warning/10 p-3 text-xs"><span className="flex-1">有未保存的内容。</span><Button variant="outline" type="button" className={CTL_SECONDARY} onClick={() => setDiscard(false)}>继续编辑</Button><Button variant="destructive" type="button" className={CTL_DANGER} onClick={close}>放弃修改</Button></div>}
         <div className="memory-dialog-body hover-scrollbar"><fieldset disabled={state.saving} className="min-w-0">
           {state.reading ? <p role="status" className="memory-empty">正在读取文档…</p>
@@ -140,7 +141,7 @@ export function WikiPage() {
               <div className="memory-markdown"><ChatMarkdown text={page.markdown} /></div>
               {page.status === 'active' && page.kind !== 'sources' && <div className="mt-6 flex justify-end gap-2 border-t border-line pt-4"><Button variant="outline" type="button" className={CTL_SECONDARY} disabled={state.saving} onClick={startEdit}>编辑</Button></div>}
             </div>
-            : state.error ? <div className="memory-empty"><p role="alert" className="text-danger">{state.error}</p><Button variant="outline" type="button" className={`${CTL_SECONDARY} mt-2`} disabled={state.saving} onClick={() => { if (selected) void useAgentMemoryStore.getState().openPage(gateway, selected.id) }}>重试</Button></div>
+            : state.errorMessage ? <div className="memory-empty"><p role="alert" className="text-danger">{state.errorMessage}</p><Button variant="outline" type="button" className={`${CTL_SECONDARY} mt-2`} disabled={state.saving} onClick={() => { if (selected) void useAgentMemoryStore.getState().openPage(gateway, selected.id) }}>重试</Button></div>
             : <p className="memory-empty">页面尚未读取，请刷新后重试。</p>}
         </fieldset></div>
       </Dialog.Content>
