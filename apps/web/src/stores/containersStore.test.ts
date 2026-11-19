@@ -175,6 +175,27 @@ describe('containersStore', () => {
     expect(useDatabaseStore.getState()).toMatchObject({ status: 'ready', refreshing: false })
   })
 
+  it('较早发出的库存读取保留更新的镜像快照，仍可提交容器列表', async () => {
+    const staleImages = deferred<readonly ContainerImage[]>()
+    const currentContainers = CONTAINERS.slice(1)
+    const currentImages = CONTAINER_IMAGES.slice(1)
+    const gateway = gatewayWith({
+      list: vi.fn().mockResolvedValueOnce(CONTAINERS).mockResolvedValueOnce(currentContainers),
+      listImages: vi.fn().mockResolvedValueOnce(CONTAINER_IMAGES).mockReturnValueOnce(staleImages.promise).mockResolvedValueOnce(currentImages),
+    })
+    const store = useContainersStore.getState()
+    await store.load(gateway)
+    const reading = store.load(gateway)
+    await store.refreshImages(gateway)
+    staleImages.resolve(CONTAINER_IMAGES)
+    await reading
+
+    const latest = useContainersStore.getState()
+    expect(latest.status).toBe('ready')
+    expect(latest.containers).toBe(currentContainers)
+    expect(latest.images).toBe(currentImages)
+  })
+
   it('container/updated 的 startedAt 字符串写回、null 清掉字段', async () => {
     await useContainersStore.getState().load(gatewayWith())
     const target = CONTAINERS.find((c) => c.id === 'ctr-nginx-proxy')!

@@ -20,6 +20,7 @@ import { getLastContainerSample, onStreamEvent } from './eventStreamStore'
 import { useMessageStore } from './messageStore'
 import { abortableDelay, awaitAbortable, throwIfAborted } from '../utils/abortable'
 import { messageOf } from '../utils/errorMessage'
+import { createContainerInventory } from './containerInventory'
 import { createTabMemorySlice, type TabMemoryState } from './tabMemoryStore'
 
 type ContainerTerminalStatus = 'connecting' | 'connected' | 'error'
@@ -78,8 +79,6 @@ let detachLive: Unsubscribe | undefined
 let activeGateway: ElysianGateway | undefined
 let containerActionScope: { gateway: ElysianGateway; auth: number } | undefined
 let pendingLoad: { read: Promise<void>; promise: Promise<void> } | undefined
-type InventoryRead = { gateway: ElysianGateway; auth: number; snapshot?: readonly Container[]; promise: Promise<void> }
-let inventoryRead: InventoryRead | undefined
 let imageRevision = 0
 let imageActionGeneration = captureAuthGeneration()
 let imageRefreshSequence = 0
@@ -87,43 +86,24 @@ let pendingImages: { gateway: ElysianGateway; auth: number; revision: number; no
 let imagePullSequence = 0
 let imagePullController: AbortController | undefined
 
+const inventory = createContainerInventory(
+  () => useContainersStore.getState(),
+  (update) => useContainersStore.setState(update),
+  () => {
+    const revision = imageRevision
+    return () => {
+      if (revision !== imageRevision) return false
+      imageRevision += 1
+      return true
+    }
+  },
+)
+
 /** 容器页和数据库页共用 Docker 清单，数据库登记及其读取状态由数据库域维护。 */
 export function readContainerInventory(gateway: ElysianGateway, options?: { fresh?: boolean }): Promise<void> {
   activeGateway = gateway
   attachLiveEvents()
-  const { getState, setState } = useContainersStore
-  const auth = captureAuthGeneration()
-  const snapshot = getState().containers
-  if (!options?.fresh && inventoryRead?.gateway === gateway && inventoryRead.auth === auth && inventoryRead.snapshot === snapshot) {
-    return inventoryRead.promise
-  }
-  const revision = imageRevision
-  const operation: InventoryRead = { gateway, auth, snapshot, promise: Promise.resolve() }
-  inventoryRead = operation
-  const current = () => inventoryRead === operation && auth === captureAuthGeneration()
-  operation.promise = (async () => {
-    try {
-      const [containers, images] = await Promise.all([
-        gateway.containers.list(),
-        gateway.containers.listImages(),
-      ])
-      if (current()) {
-        const canCommitImages = revision === imageRevision
-        if (canCommitImages) imageRevision += 1
-        setState((state) => ({
-          ...(snapshot === state.containers ? { containers } : {}),
-          ...(canCommitImages ? { images } : {}),
-        }))
-        return
-      }
-    } catch (error) {
-      if (current()) throw error
-    }
-    // 同一会话的新读接管时，原调用方也等待该次读的结果。
-    if (auth !== captureAuthGeneration()) return
-    if (inventoryRead?.gateway === gateway && inventoryRead.auth === auth) return inventoryRead.promise
-  })().finally(() => { operation.snapshot = undefined })
-  return operation.promise
+  return inventory.read(gateway, options)
 }
 
 async function refreshAfterResync(): Promise<void> {
@@ -288,7 +268,7 @@ export const useContainersStore = create<TabMemoryState<ContainerView> & {
     detachLive = undefined
     containerActionScope = undefined
     pendingLoad = undefined
-    inventoryRead = undefined
+    inventory.reset()
     pendingImages = undefined
     imageRefreshSequence += 1
     imagePullSequence += 1
