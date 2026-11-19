@@ -98,6 +98,31 @@ describe('技能目录', () => {
 })
 
 describe('导入任务', () => {
+  it('重置前发出的旧分页不写回导入列表，也不触发 Skill 回读', async () => {
+    const store = useAgentExtensionsStore.getState()
+    const active = await gateway.agentExtensions.createSkillImport({ requestId: 'stale-import-page', enabled: true, source: { kind: 'directory', path: '/opt/skills/page' } })
+    const firstPage = { items: [active], nextCursor: 'older', hasMore: true }
+    type ImportPage = Awaited<ReturnType<typeof gateway.agentExtensions.listSkillImports>>
+    let resolvePage!: (page: ImportPage) => void
+    const list = vi.spyOn(gateway.agentExtensions, 'listSkillImports')
+      .mockResolvedValueOnce(firstPage)
+      .mockImplementationOnce(() => new Promise(resolve => { resolvePage = resolve }))
+      .mockResolvedValueOnce({ ...firstPage, nextCursor: 'current' })
+    const skills = vi.spyOn(gateway.agentExtensions, 'listSkills')
+
+    await store.loadImports(gateway)
+    const older = store.loadMoreImports(gateway)
+    expect(list).toHaveBeenLastCalledWith({ cursor: 'older' })
+    store.reset()
+    await store.loadImports(gateway)
+    resolvePage({ items: [{ ...active, state: 'succeeded' }], nextCursor: '', hasMore: false })
+    await older
+
+    expect(useAgentExtensionsStore.getState()).toMatchObject({ imports: [active], importsNextCursor: 'current', importsHasMore: true, importsLoadingMore: false })
+    expect(skills).not.toHaveBeenCalled()
+    expect(useMessageStore.getState().messages).toEqual([])
+  })
+
   it('静默轮询传递 AbortSignal，失败向外抛出且保留旧列表', async () => {
     await useAgentExtensionsStore.getState().loadImports(gateway)
     const previous = useAgentExtensionsStore.getState().imports
