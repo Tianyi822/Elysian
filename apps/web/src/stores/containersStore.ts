@@ -13,7 +13,7 @@ import { messageOf } from '../utils/errorMessage'
 import { createContainerImages, type ContainerImagesState } from './containerImages'
 import { createContainerEvents } from './containerEvents'
 import { createContainerInventory } from './containerInventory'
-import { createContainerTerminal, type ContainerTerminalSession, type ContainerTerminalState } from './containerTerminal'
+import { createContainerTerminal, type ContainerTerminalState } from './containerTerminal'
 import { createTabMemorySlice, type TabMemoryState } from './tabMemoryStore'
 
 let activeGateway: ElysianGateway | undefined
@@ -26,16 +26,14 @@ const imageActions = createContainerImages(
 )
 const terminalActions = createContainerTerminal(
   () => useContainersStore.getState(),
-  (update) => useContainersStore.setState(update as never),
+  (update) => useContainersStore.setState(update),
 )
 const events = createContainerEvents({
   get: () => useContainersStore.getState(),
-  set: (update) => {
-    useContainersStore.setState(update as never)
-  },
+  set: (update) => useContainersStore.setState(update),
   getGateway: () => activeGateway,
   onResync: () => { void refreshAfterResync() },
-  releaseTerminal: (gateway, session) => terminalActions.releaseTerminal(gateway, session as ContainerTerminalSession),
+  releaseTerminal: terminalActions.releaseTerminal,
 })
 const inventory = createContainerInventory(
   () => useContainersStore.getState(),
@@ -81,7 +79,6 @@ export const useContainersStore = create<TabMemoryState<ContainerView> & Contain
   errorMessage?: string
   containers: readonly Container[]
   samples: Readonly<Record<string, { cpuPercent: number; memMb: number }>>
-  terminal?: ContainerTerminalSession
   statusFilter: ContainerStatus | 'all'
   search: string
   detailContainerId?: string
@@ -241,7 +238,7 @@ export const useContainersStore = create<TabMemoryState<ContainerView> & Contain
     try {
       await gateway.containers.removeContainer(containerId)
       if (!current()) return
-      events.removeContainer(containerId)
+      events.removeContainer(containerId, gateway)
       useMessageStore.getState().notify({ tone: 'success', message: `容器 ${container.name} 已删除${isDockerRuntime() ? '' : '（演示）'}` })
     } catch (error) {
       if (!current()) return
@@ -255,7 +252,7 @@ export const useContainersStore = create<TabMemoryState<ContainerView> & Contain
         if (actual) {
           set({ containers: snapshot.map((candidate) => candidate.id === containerId ? actual : candidate) })
         } else {
-          events.removeContainer(containerId)
+          events.removeContainer(containerId, gateway)
         }
       } catch {
         // 回读失败保留上次事实，不自动重投删除。

@@ -334,6 +334,25 @@ describe('containersStore', () => {
     expect(useContainersStore.getState().busyActions).toHaveLength(0)
   })
 
+  it.each(['删除已确认', '删除结果经回读确认'])('%s 时使用删除操作的 Gateway 释放终端', async (result) => {
+    const target = CONTAINERS.find(row => row.status === 'stopped')!
+    const inventoryDisconnect = vi.fn(async () => {})
+    const removalDisconnect = vi.fn(async () => {})
+    const removeContainer = result === '删除已确认' ? vi.fn(async () => {}) : vi.fn().mockRejectedValue(new Error('未收到删除回执'))
+    const inventoryGateway = gatewayWith({ list: async () => [target], disconnectTerminal: inventoryDisconnect })
+    const removalGateway = gatewayWith({ list: async () => [], removeContainer, disconnectTerminal: removalDisconnect })
+    const store = useContainersStore.getState()
+    await store.load(inventoryGateway)
+    await store.openTerminal(removalGateway, target.id)
+
+    await store.removeContainer(removalGateway, target.id)
+
+    expect(removeContainer).toHaveBeenCalledExactlyOnceWith(target.id)
+    expect(removalDisconnect).toHaveBeenCalledExactlyOnceWith(SESSION_INFO.id)
+    expect(inventoryDisconnect).not.toHaveBeenCalled()
+    expect(useContainersStore.getState()).toMatchObject({ containers: [], terminal: undefined })
+  })
+
   it('旧登录的删除回执不改变新登录的列表或通知', async () => {
     const target = CONTAINERS.find((row) => row.status === 'stopped')!
     const response = deferred<void>()

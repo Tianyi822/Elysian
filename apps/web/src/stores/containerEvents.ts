@@ -1,13 +1,13 @@
 import type { Container, ContainerSample, Unsubscribe } from '@elysian/contracts'
 import type { ElysianGateway } from '../contracts/adapters'
+import type { ContainerTerminalSession } from './containerTerminal'
 import { getLastContainerSample, onStreamEvent } from './eventStreamStore'
 
-type TerminalRef = { containerId: string }
 type EventState = {
   containers: readonly Container[]
   samples: Readonly<Record<string, { cpuPercent: number; memMb: number }>>
   detailContainerId?: string
-  terminal?: TerminalRef
+  terminal?: ContainerTerminalSession
 }
 
 type ContainerEventsOptions = {
@@ -15,7 +15,7 @@ type ContainerEventsOptions = {
   set: (update: Partial<EventState> | ((state: EventState) => Partial<EventState>)) => void
   getGateway: () => ElysianGateway | undefined
   onResync: () => void
-  releaseTerminal: (gateway: ElysianGateway | undefined, session: TerminalRef) => void
+  releaseTerminal: (gateway: ElysianGateway | undefined, session: ContainerTerminalSession) => void
 }
 
 export function createContainerEvents({ get, set, getGateway, onResync, releaseTerminal }: ContainerEventsOptions) {
@@ -29,7 +29,7 @@ export function createContainerEvents({ get, set, getGateway, onResync, releaseT
     })
   }
 
-  function applyContainerRemoval(containerId: string): void {
+  function applyContainerRemoval(containerId: string, gateway: ElysianGateway | undefined): void {
     const terminal = get().terminal
     const closesTerminal = terminal?.containerId === containerId
     set((state) => {
@@ -41,7 +41,7 @@ export function createContainerEvents({ get, set, getGateway, onResync, releaseT
         terminal: closesTerminal ? undefined : state.terminal,
       }
     })
-    if (closesTerminal) releaseTerminal(getGateway(), terminal)
+    if (closesTerminal) releaseTerminal(gateway, terminal)
   }
 
   function attach(): void {
@@ -76,7 +76,7 @@ export function createContainerEvents({ get, set, getGateway, onResync, releaseT
         return
       }
       if (event.name === 'container/removed') {
-        applyContainerRemoval(event.payload.containerId)
+        applyContainerRemoval(event.payload.containerId, getGateway())
         return
       }
       if (event.name === 'container/resync') onResync()
