@@ -1,6 +1,8 @@
 import { useEffect, useRef, useState } from 'react'
+import { subscribeWhileVisible } from '../adapters/subscribeWhileVisible'
 
-type PollTask = (signal: AbortSignal) => Promise<void>
+/** 返回 false 时停止定时读取，恢复可见仍会补读。 */
+type PollTask = (signal: AbortSignal) => Promise<void | boolean>
 
 /*
  * 页面静默回读，不驱动手动刷新按钮。
@@ -24,6 +26,10 @@ export type UseSilentPollingOptions = {
   pauseOnHidden?: boolean
   /** 可选的回读动作，在窗口聚焦或页面恢复可见时替代定时任务。 */
   onFocus?: PollTask
+  /** 仅在后台暂停模式下，隐藏页面时也取消在途读取。 */
+  abortOnHidden?: boolean
+  /** 读取目标变化时结束旧周期，按初始策略启动新周期。 */
+  scope?: unknown
 }
 
 export function useSilentPolling(
@@ -33,7 +39,7 @@ export function useSilentPolling(
   const [degraded, setDegraded] = useState(false)
   const tasksRef = useRef({ task, onFocus: options.onFocus })
   // Effect 换代时旧请求可能尚未响应 abort；跨代保留在途 Promise，避免新周期重叠。
-  const activeTaskRef = useRef<Promise<void> | undefined>(undefined)
+  const activeTaskRef = useRef<ReturnType<PollTask> | undefined>(undefined)
   tasksRef.current = { task, onFocus: options.onFocus }
   const intervalMs = options.intervalMs
   const maxBackoffMs = options.maxBackoffMs ?? 60_000
@@ -41,6 +47,8 @@ export function useSilentPolling(
   const immediate = options.immediate === true
   const pauseOnHidden = options.pauseOnHidden !== false
   const refreshOnFocus = options.onFocus !== undefined
+  const abortOnHidden = options.abortOnHidden === true
+  const scope = options.scope
 
   useEffect(() => {
     if (!enabled) return
@@ -49,40 +57,45 @@ export function useSilentPolling(
     let cancelled = false
     let failures = 0
     let inFlight = false
-    const isHidden = () => pauseOnHidden && document.hidden
+    let visible = false
+    let initial = true
+    let repeat = true
 
     const run = async (readOnFocus = false) => {
-      if (cancelled || isHidden() || inFlight) return
+      if (cancelled || !visible || inFlight) return
       inFlight = true
       let delay = intervalMs
-      let pending: Promise<void> | undefined
+      let pending: ReturnType<PollTask> | undefined
+      let signal: AbortSignal | undefined
       try {
         if (activeTaskRef.current) await activeTaskRef.current.catch(() => {})
-        if (cancelled || isHidden()) return
+        if (cancelled || !visible) return
         const { task, onFocus } = tasksRef.current
         const read = readOnFocus ? onFocus ?? task : task
         controller = new AbortController()
-        const signal = controller.signal
-        pending = Promise.resolve().then(() => read(signal))
+        const requestSignal = signal = controller.signal
+        pending = Promise.resolve().then(() => { if (!requestSignal.aborted) return read(requestSignal) })
         activeTaskRef.current = pending
-        await pending
-        if (cancelled) return
+        const result = await pending
+        if (cancelled || signal.aborted) return
+        repeat = result !== false
         failures = 0
         setDegraded(false)
       } catch {
-        if (cancelled) return
+        if (cancelled || signal?.aborted) return
         failures += 1
         setDegraded(true)
         delay = Math.min(intervalMs * 2 ** failures, maxBackoffMs)
       } finally {
         if (pending && activeTaskRef.current === pending) activeTaskRef.current = undefined
+        controller = undefined
         inFlight = false
-        schedule(delay)
+        schedule(signal?.aborted ? 0 : delay)
       }
     }
 
     const schedule = (delay: number) => {
-      if (cancelled || isHidden() || timer !== undefined) return
+      if (cancelled || !visible || !repeat || timer !== undefined) return
       timer = setTimeout(() => {
         timer = undefined
         void run()
@@ -90,27 +103,32 @@ export function useSilentPolling(
     }
 
     const onFocus = () => { void run(true) }
-    const onVisibility = () => {
-      if (document.hidden) {
+    const start = () => {
+      visible = true
+      repeat = true
+      if (initial && !immediate) schedule(intervalMs)
+      else if (!initial && refreshOnFocus) onFocus()
+      else if (immediate) void run()
+      else if (!inFlight) schedule(0)
+      return () => {
+        visible = false
         if (timer !== undefined) clearTimeout(timer)
         timer = undefined
-      } else if (refreshOnFocus) {
-        onFocus()
-      } else if (!cancelled && !inFlight && timer === undefined) schedule(0)
+        if (abortOnHidden) controller?.abort()
+      }
     }
-    if (pauseOnHidden) document.addEventListener('visibilitychange', onVisibility)
+    const stop = pauseOnHidden ? subscribeWhileVisible(start) : start()
+    initial = false
     if (refreshOnFocus) window.addEventListener('focus', onFocus)
 
-    schedule(immediate ? 0 : intervalMs)
     return () => {
       cancelled = true
-      if (timer !== undefined) clearTimeout(timer)
+      stop()
       controller?.abort()
-      if (pauseOnHidden) document.removeEventListener('visibilitychange', onVisibility)
       if (refreshOnFocus) window.removeEventListener('focus', onFocus)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [intervalMs, maxBackoffMs, enabled, immediate, pauseOnHidden, refreshOnFocus])
+  }, [intervalMs, maxBackoffMs, enabled, immediate, pauseOnHidden, refreshOnFocus, abortOnHidden, scope])
 
   return { degraded }
 }

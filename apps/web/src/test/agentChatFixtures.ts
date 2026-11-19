@@ -84,7 +84,7 @@ export function chatTestApi() {
     listTasks: vi.fn(async (_id: string) => ({ items: runs.size ? [{ id: 'task-1', sessionId: session.id, kind: 'agent' }] : [], nextCursor: '', hasMore: false })),
     getTask: vi.fn(async (_id: string) => ({ id: 'task-1', sessionId: session.id, kind: 'agent', latestRun: runs.size ? { ...[...runs.values()].at(-1)! } : undefined })),
     createSession: vi.fn(async (input) => { session.modelProfileId = input.modelProfileId; session.modelRevision = input.modelRevision; return { ...session } }),
-    getSession: vi.fn(async (_id: string) => ({ ...session })),
+    getSession: vi.fn<AgentConversationAdapter['getSession']>(async () => ({ ...session })),
     renameSession: vi.fn(async (_id: string, input: { title: string }) => { session.title = input.title.trim(); return { ...session } }),
     deleteSession: vi.fn(async (_id: string) => {}),
     switchModel: vi.fn(async (_id, input) => { session.modelProfileId = input.modelProfileId; session.modelRevision = input.modelRevision; return { ...session } }),

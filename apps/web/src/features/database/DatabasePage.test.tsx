@@ -239,12 +239,12 @@ describe('数据库页面', () => {
     const { gateway } = pageGateway()
     const list = vi.spyOn(gateway.databases, 'list')
     const listSqlite = vi.spyOn(gateway.databases, 'listSqlite')
-    const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(false)
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
     vi.useFakeTimers()
     const view = renderApp('/databases', { gateway })
     const advance = (ms: number) => act(() => advancePoll(ms))
     const setHidden = (value: boolean) => {
-      hidden.mockReturnValue(value)
+      visibility.mockReturnValue(value ? 'hidden' : 'visible')
       document.dispatchEvent(new Event('visibilitychange'))
     }
     try {
@@ -283,7 +283,7 @@ describe('数据库页面', () => {
       expect(card).toBeInTheDocument()
     } finally {
       view.unmount()
-      hidden.mockRestore()
+      visibility.mockRestore()
       vi.useRealTimers()
     }
   })

@@ -5,10 +5,12 @@ import { advancePoll } from '../test/agentTestUtils'
 
 let sequence = 0
 const nextTask = vi.fn()
+let visibility: DocumentVisibilityState
 
 beforeEach(() => {
   vi.useFakeTimers()
-  Object.defineProperty(document, 'hidden', { value: false, configurable: true })
+  visibility = 'visible'
+  vi.spyOn(document, 'visibilityState', 'get').mockImplementation(() => visibility)
   nextTask.mockReset()
   sequence = 0
 })
@@ -95,11 +97,11 @@ describe('useSilentPolling', () => {
     renderHook(() => useSilentPolling(task, { intervalMs: 3000 }))
     await advancePoll(3000)
     expect(task).toHaveBeenCalledTimes(1)
-    Object.defineProperty(document, 'hidden', { value: true, configurable: true })
+    visibility = 'hidden'
     document.dispatchEvent(new Event('visibilitychange'))
     await advancePoll(30_000)
     expect(task).toHaveBeenCalledTimes(1)
-    Object.defineProperty(document, 'hidden', { value: false, configurable: true })
+    visibility = 'visible'
     document.dispatchEvent(new Event('visibilitychange'))
     await advancePoll(0)
     expect(task).toHaveBeenCalledTimes(2)
@@ -109,9 +111,9 @@ describe('useSilentPolling', () => {
     const { task, calls } = deferredTask()
     renderHook(() => useSilentPolling(task, { intervalMs: 3000 }))
     await advancePoll(3000)
-    Object.defineProperty(document, 'hidden', { value: true, configurable: true })
+    visibility = 'hidden'
     document.dispatchEvent(new Event('visibilitychange'))
-    Object.defineProperty(document, 'hidden', { value: false, configurable: true })
+    visibility = 'visible'
     document.dispatchEvent(new Event('visibilitychange'))
     await advancePoll(30_000)
     expect(task).toHaveBeenCalledTimes(1)
@@ -123,11 +125,11 @@ describe('useSilentPolling', () => {
   it('明确保留后台轮询时，隐藏和恢复都不改变节奏', async () => {
     const task = vi.fn(async () => {})
     renderHook(() => useSilentPolling(task, { intervalMs: 3000, pauseOnHidden: false }))
-    Object.defineProperty(document, 'hidden', { value: true, configurable: true })
+    visibility = 'hidden'
     document.dispatchEvent(new Event('visibilitychange'))
     await advancePoll(3000)
     expect(task).toHaveBeenCalledTimes(1)
-    Object.defineProperty(document, 'hidden', { value: false, configurable: true })
+    visibility = 'visible'
     document.dispatchEvent(new Event('visibilitychange'))
     await advancePoll(2999)
     expect(task).toHaveBeenCalledTimes(1)
@@ -139,9 +141,9 @@ describe('useSilentPolling', () => {
     const task = vi.fn(async () => {})
     const { task: focus, calls } = deferredTask()
     const view = renderHook(() => useSilentPolling(task, { intervalMs: 3000, onFocus: focus }))
-    Object.defineProperty(document, 'hidden', { value: true, configurable: true })
+    visibility = 'hidden'
     document.dispatchEvent(new Event('visibilitychange'))
-    Object.defineProperty(document, 'hidden', { value: false, configurable: true })
+    visibility = 'visible'
     await act(async () => {
       document.dispatchEvent(new Event('visibilitychange'))
       window.dispatchEvent(new Event('focus'))

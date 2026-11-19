@@ -473,13 +473,11 @@ describe('SSH 管理页签', () => {
     const keys = vi.spyOn(gateway.ssh, 'listKeys')
     const root = vi.spyOn(gateway.ssh, 'rootAuth')
     const visible = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
-    const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(false)
     vi.useFakeTimers()
     const view = renderApp('/security', { gateway })
     const advance = (ms: number) => act(() => advancePoll(ms))
     const setHidden = (value: boolean) => {
       visible.mockReturnValue(value ? 'hidden' : 'visible')
-      hidden.mockReturnValue(value)
       document.dispatchEvent(new Event('visibilitychange'))
     }
     const expectReads = (automatic: number, all: number) => {
@@ -513,7 +511,6 @@ describe('SSH 管理页签', () => {
     } finally {
       view.unmount()
       visible.mockRestore()
-      hidden.mockRestore()
       vi.useRealTimers()
     }
   })

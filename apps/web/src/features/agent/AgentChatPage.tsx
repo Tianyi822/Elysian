@@ -1,4 +1,4 @@
-import { Fragment, useCallback, useEffect, useRef, useState, type ClipboardEvent, type DragEvent, type Ref } from 'react'
+import { Fragment, useCallback, useEffect, useMemo, useRef, useState, type ClipboardEvent, type DragEvent, type Ref } from 'react'
 import { Link, useLocation, useSearchParams } from 'react-router'
 import * as Dialog from '@radix-ui/react-dialog'
 import { useShallow } from 'zustand/react/shallow'
@@ -10,6 +10,7 @@ import { SelectDropdown } from '../../components/SelectDropdown'
 import { RefreshButton } from '../../components/RefreshState'
 import { useFeedbackMessage } from '../../components/useFeedbackMessage'
 import { useImeEnterGuard } from '../../components/useImeEnterGuard'
+import { useSilentPolling } from '../../components/useSilentPolling'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { subscribeWhileVisible } from '../../adapters/subscribeWhileVisible'
 import { AGENT_COMPOSER_FILE_ACCEPT } from '../../adapters/local/agentTextFiles'
@@ -200,15 +201,12 @@ export function AgentChatPage() {
   useEffect(() => {
     if (wide && shell.conversationDrawerOpen) shell.closeConversationDrawer()
   }, [wide, shell.conversationDrawerOpen, shell.closeConversationDrawer])
-  useEffect(() => {
-    if (!api.available) return
-    const timer = setInterval(() => {
-      const state = useAgentChatStore.getState()
-      if (document.visibilityState !== 'hidden' && !state.listLoading &&
-          (state.sessions.some(row => row.activeRunId || row.activeWorkflowId) || state.localSessions.some(row => row.pending))) void chat.loadSessions(api, false, true)
-    }, 5000)
-    return () => clearInterval(timer)
-  }, [api, chat.loadSessions])
+  useSilentPolling(async () => {
+    const state = useAgentChatStore.getState()
+    if (!state.listLoading && (state.sessions.some(row => row.activeRunId || row.activeWorkflowId) || state.localSessions.some(row => row.pending))) {
+      await chat.loadSessions(api, false, true)
+    }
+  }, { intervalMs: 5000, enabled: api.available, scope: api })
   useEffect(() => {
     if (!session || status !== 'ready' || model || busy || session.pending) return
     // 已绑定的会话不在目录刷新时静默更换模型。
@@ -220,22 +218,15 @@ export function AgentChatPage() {
     if ((session?.reasoningLevel ?? '') !== reasoningLevel) chat.setReasoningLevel(reasoningLevel || null)
   }, [model, reasoningLevel, session?.reasoningLevel, session?.pending, chat.loading, chat.sending, chat.setReasoningLevel])
 
-  useEffect(() => {
-    if (!session?.remote || chat.loading || chat.sending || !api.available) return
-    return subscribeWhileVisible(() => {
-      const controller = new AbortController()
-      let timer: ReturnType<typeof setTimeout> | undefined
-      const poll = async () => {
-        await chat.refresh(api, controller.signal)
-        const latest = useAgentChatStore.getState()
-        if (!controller.signal.aborted && (isChatRunActive(latest.run) || latest.remoteSession?.activeRunId || latest.remoteSession?.activeWorkflowId || latest.session?.pending)) {
-          timer = setTimeout(() => { void poll() }, 1500)
-        }
-      }
-      void poll()
-      return () => { controller.abort(); clearTimeout(timer) }
-    })
-  }, [api, session?.id, session?.remote?.sessionId, chat.loading, chat.sending, chat.refresh])
+  const localSessionId = session?.id
+  const remoteSessionId = session?.remote?.sessionId
+  const detailScope = useMemo(() => [api, localSessionId, remoteSessionId], [api, localSessionId, remoteSessionId])
+  useSilentPolling(async signal => {
+    await chat.refresh(api, signal)
+    const latest = useAgentChatStore.getState()
+    return Boolean(isChatRunActive(latest.run) || latest.remoteSession?.activeRunId || latest.remoteSession?.activeWorkflowId || latest.session?.pending)
+  }, { intervalMs: 1500, enabled: !!remoteSessionId && !chat.loading && !chat.sending && api.available,
+    immediate: true, abortOnHidden: true, scope: detailScope })
 
   const liveRunId = isChatRunActive(chat.run) ? chat.run!.id : undefined
   const streamingRunId = waitingInput || chat.run?.status === 'waiting-approval' ? undefined : liveRunId

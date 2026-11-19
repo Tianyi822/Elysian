@@ -890,7 +890,51 @@ describe('基本聊天界面', () => {
       expect(screen.getByRole('button', { name: '选择模型：test-model' })).toBeEnabled()
       expect(screen.getByRole('region', { name: '思考内容' })).toBeInTheDocument()
       expect(screen.queryByText(/Ely 正在|正在整理会话|正在发送/)).not.toBeInTheDocument()
+      backend.api.getSession.mockClear()
+      await act(async () => { await vi.advanceTimersByTimeAsync(5000) })
+      expect(backend.api.getSession).not.toHaveBeenCalled()
     } finally { vi.useRealTimers() }
+  })
+
+  it('页面离开时停止目录和详情读取、释放输出流，恢复后重新观察原运行', async () => {
+    const backend = chatTestApi()
+    backend.hold()
+    vi.useFakeTimers()
+    const view = renderChat(backend)
+    const advance = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms))
+    try {
+      await advance(0)
+      fireEvent.change(screen.getByRole('textbox'), { target: { value: '查看任务进度' } })
+      fireEvent.click(screen.getByRole('button', { name: '发送消息' }))
+      await advance(0)
+      expect(screen.getByRole('button', { name: '停止回复' })).toBeEnabled()
+      const streamSignal = backend.api.stream.mock.lastCall![2]
+      let detailSignal: AbortSignal | undefined
+      backend.api.getSession.mockImplementationOnce(async (_id, signal) => {
+        detailSignal = signal
+        return new Promise((_, reject) => signal!.addEventListener('abort', () => reject(signal!.reason), { once: true }))
+      })
+      await advance(1500)
+      expect(detailSignal?.aborted).toBe(false)
+      backend.api.listSessions.mockClear()
+      backend.api.getSession.mockClear()
+      await act(async () => { window.dispatchEvent(new Event('pagehide')) })
+      expect(detailSignal?.aborted).toBe(true)
+      expect(streamSignal.aborted).toBe(true)
+      await advance(5000)
+      expect(backend.api.listSessions).not.toHaveBeenCalled()
+      expect(backend.api.getSession).not.toHaveBeenCalled()
+
+      await act(async () => { window.dispatchEvent(new Event('pageshow')) })
+      await advance(0)
+      expect(backend.api.listSessions).toHaveBeenCalledTimes(1)
+      expect(backend.api.getSession).toHaveBeenCalledWith('server-session', expect.any(AbortSignal))
+      expect(backend.api.stream.mock.lastCall?.[0]).toBe('run-1')
+      expect(backend.api.stream.mock.lastCall?.[2]).not.toBe(streamSignal)
+    } finally {
+      view.unmount()
+      vi.useRealTimers()
+    }
   })
 
   it('模型请求失败时显示错误并保留输入，不伪造助手消息', async () => {
