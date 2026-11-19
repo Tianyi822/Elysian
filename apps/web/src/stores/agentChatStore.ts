@@ -1,27 +1,25 @@
 import { randomId } from '../utils/randomId'
 import { AGENT_CHAT_TEXT_BYTES } from '../contracts/agentChat'
-import { agentComposerFileKind, appendAgentTextFiles, readAgentTextFiles } from '../adapters/local/agentTextFiles'
 import { create } from 'zustand'
-import { AGENT_ATTACHMENT_LIMITS, RUNTIME_RUN_STATUS_LABELS, type AgentAttachmentRef, type AgentChatOutput, type AgentChatTimelineSnapshot, type AgentMessage, type AgentMessageAttachment, type AgentModelProfile, type AgentSession } from '@elysian/contracts'
-import { agentChatAllAttachments, agentChatSessionKey } from '../contracts/agentChat'
+import { RUNTIME_RUN_STATUS_LABELS, type AgentAttachmentRef, type AgentChatOutput, type AgentChatTimelineSnapshot, type AgentMessage, type AgentMessageAttachment, type AgentModelProfile, type AgentSession } from '@elysian/contracts'
+import { agentChatSessionKey } from '../contracts/agentChat'
 import { AgentHttpError } from '../contracts/agentHttpError'
 import { agentChatLocalAdapter } from '../adapters/local/agentChatLocalAdapter'
-import { prepareAgentImage } from '../adapters/local/agentImagePreparation'
 import { useMessageStore, type MessageTone } from './messageStore'
-import type { AgentChatAdapter, AgentChatAttachment, AgentChatPermissionMode, AgentChatSession, AgentChatRun, AgentConversationAdapter } from '../contracts/agentChat'
+import type { AgentChatAdapter, AgentChatPermissionMode, AgentChatSession, AgentChatRun, AgentConversationAdapter } from '../contracts/agentChat'
 import type { AgentUserInputAnswer, AgentUserInputRequest } from '@elysian/contracts'
 import { messageOf } from '../utils/errorMessage'
+import { createAgentChatAttachments, type AgentChatAttachmentState } from './agentChatAttachments'
 import { createAgentChatDirectory, type AgentChatDirectoryState } from './agentChatDirectory'
 import { applySubmissionReceipt, isConfirmedRejection } from './agentChatSubmission'
 
-type AgentChatState = AgentChatDirectoryState & {
+type AgentChatState = AgentChatDirectoryState & AgentChatAttachmentState & {
   setUserInputAnswer(request: AgentUserInputRequest, questionId: string, answer: AgentUserInputAnswer): void
   answerUserInput(api: AgentConversationAdapter, request: AgentUserInputRequest): Promise<void>
   session: AgentChatSession | null
   initialize(api: AgentConversationAdapter, requestedId?: string): Promise<void>
   selectSession(api: AgentConversationAdapter, key: string): Promise<void>
   clearDisplay(): void
-  restoringAttachments: boolean
   reportOperation(message: string, tone?: MessageTone): void
   inputError: string | null
   reportInput(message: string): void
@@ -34,7 +32,6 @@ type AgentChatState = AgentChatDirectoryState & {
   liveOutput: AgentChatOutput | null
   run: AgentChatRun | null
   sending: boolean
-  uploadingAttachments: boolean
   stopping: boolean
   refreshing: boolean
   syncErrorMessage?: string
@@ -49,17 +46,13 @@ type AgentChatState = AgentChatDirectoryState & {
   setPermissionMode(permissionMode: AgentChatPermissionMode): void
   setModel(modelId: string | null): void
   setReasoningLevel(reasoningLevel: string | null): void
-  addAttachments(api: AgentConversationAdapter, files: readonly File[], supportsImage?: boolean): Promise<void>
-  removeAttachment(id: string): void
   send(api: AgentConversationAdapter, model?: AgentModelProfile, continueFromRunId?: string): Promise<boolean>
   continueTask(api: AgentConversationAdapter, model?: AgentModelProfile): Promise<boolean>
   refresh(api: AgentConversationAdapter, signal?: AbortSignal, refreshRunIds?: readonly string[]): Promise<void>
   watchOutput(api: AgentConversationAdapter, runId: string, signal: AbortSignal): Promise<void>
 }
 
-const allAttachments = agentChatAllAttachments
 const persistenceNotice = '浏览器暂时无法保存会话，刷新后可能丢失本页内容。'
-const attachmentTotalNotice = '本条消息附件合计超过 8 MiB，请分批发送。'
 const remoteBlank = { remoteSession: null, messages: [], outgoingMessage: null, reasoning: {}, timelines: {}, liveOutput: null, run: null, sending: false, uploadingAttachments: false, stopping: false, refreshing: false, syncErrorMessage: undefined, inputError: null }
 const outgoingMessageFor = (session: AgentChatSession, content: string, refs?: readonly AgentAttachmentRef[]) => ({
   content,
@@ -80,18 +73,14 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
     let remoteVersion = 0
     let lifecycle = 0
     let navigationVersion = 0
-    let attachmentUploadVersion = 0
     let submissionVersion = 0
-    let attachmentPreparation: AbortController | undefined
     let initialBlank = false
     let initialized = false
     let initialization: Promise<void> | undefined
     let persistenceFailed = false
-    let attachmentPersistenceFailed = false
     const observedActiveRuns = new Set<string>()
     const notifiedRunFailures = new Set<string>()
     const notifiedRunStatuses = new Map<string, string>()
-    const missingAttachmentSets = new Map<string, string>()
     const notify = (message: string, tone: MessageTone = 'danger') => useMessageStore.getState().notify({ message, tone })
     const reportInput = (message: string) => set({ inputError: message })
     const clearRunFeedback = () => {
@@ -120,19 +109,16 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
       }
       if (!isChatRunActive(run)) observedActiveRuns.delete(run.id)
     }
-    const checkAttachmentTotal = (bytes: number) => {
-      if (bytes > AGENT_ATTACHMENT_LIMITS.maxMessageBytes) throw new Error(attachmentTotalNotice)
-    }
     const completedReasoning = new Set<string>()
+    const captureLifetime = () => {
+      const lifetime = lifecycle
+      return () => lifetime === lifecycle
+    }
     const directory = createAgentChatDirectory({
-      adapter, set, get, notify,
-      captureLifetime: () => {
-        const lifetime = lifecycle
-        return () => lifetime === lifecycle
-      },
+      adapter, set, get, notify, captureLifetime,
       async onSelectedSessionDeleted(api, fallback, current) {
-        attachmentPreparation?.abort()
-        generation += 1; remoteVersion += 1; submissionVersion += 1; attachmentUploadVersion += 1
+        attachmentFlow.invalidate()
+        generation += 1; remoteVersion += 1; submissionVersion += 1
         completedReasoning.clear()
         set({ ...remoteBlank, restoringAttachments: false })
         const navigation = navigationVersion + 1
@@ -153,31 +139,24 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
       persistenceFailed = !saved
       return saved
     }
-    const restore = async (session: AgentChatSession) => {
-      const currentGeneration = ++generation
-      if (get().session?.id !== session.id) { attachmentPreparation?.abort(); remoteVersion += 1; attachmentUploadVersion += 1; completedReasoning.clear(); set(remoteBlank) }
-      set({ session, restoringAttachments: true, outgoingMessage: session.pending && !session.pending.input.replaceMessageId
-        ? outgoingMessageFor(session, session.pending.input.content, session.pending.input.attachments ?? []) : null })
-      let attachments: AgentChatAttachment[]
-      try { attachments = await adapter.restore(allAttachments(session)) }
-      catch {
-        if (currentGeneration !== generation || get().session?.id !== session.id) return
-        attachments = allAttachments(session).map(attachment => ({ ...attachment, available: false, previewUrl: undefined }))
-        notify('本地附件恢复失败，草稿已保留；无法预览的文件可移除后重新添加。', 'warning')
-      }
-      if (currentGeneration !== generation || get().session?.id !== session.id) return
-      const restored = new Map(attachments.map(attachment => [attachment.id, attachment]))
-      const match = (attachment: AgentChatAttachment) => restored.get(attachment.id) ?? attachment
-      const current = get().session!
-      set({
-        session: { ...current, attachments: current.attachments.map(match), messages: current.messages.map(message => ({ ...message, attachments: message.attachments.map(match) })),
-          ...(current.editing ? { editing: { ...current.editing, preparedAttachments: current.editing.preparedAttachments?.map(item => ({ ...item, attachment: match(item.attachment) })) } } : {}) },
-        restoringAttachments: false,
-      })
-      const missing = attachments.filter(attachment => !attachment.available).map(attachment => attachment.id).sort().join(',')
-      if (missing && missingAttachmentSets.get(session.id) !== missing) notify('部分附件已无法从浏览器恢复，请重新选择需要发送的文件。', 'info')
-      missingAttachmentSets.set(session.id, missing)
-    }
+    const current = (): AgentChatSession => get().session ?? adapter.read() ?? blankSession()
+    const update = (patch: Partial<AgentChatSession>) => persist({ ...current(), ...patch })
+    const stillCurrent = (localId: string) => get().session?.id === localId
+    const attachmentFlow = createAgentChatAttachments({
+      adapter, get, set, current, persist, update, notify, reportInput, captureLifetime,
+      startRestore(session) {
+        const currentGeneration = ++generation
+        if (get().session?.id !== session.id) { attachmentFlow.invalidate(); remoteVersion += 1; completedReasoning.clear(); set(remoteBlank) }
+        set({
+          session,
+          restoringAttachments: true,
+          outgoingMessage: session.pending && !session.pending.input.replaceMessageId
+            ? outgoingMessageFor(session, session.pending.input.content, session.pending.input.attachments ?? [])
+            : null,
+        })
+        return () => currentGeneration === generation && get().session?.id === session.id
+      },
+    })
     // 跨标签只同步当前会话的数据，选中项由各标签自己的 URL 与内存决定。
     adapter.subscribe(() => {
       if (!get().session) return
@@ -185,72 +164,8 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
       const currentSession = get().session
       if (!currentSession || get().sending) return
       const session = adapter.read(agentChatSessionKey(currentSession))
-      if (session && JSON.stringify(session) !== JSON.stringify(currentSession)) void restore(session)
+      if (session && JSON.stringify(session) !== JSON.stringify(currentSession)) void attachmentFlow.restore(session)
     })
-    const current = (): AgentChatSession => get().session ?? adapter.read() ?? blankSession()
-    const update = (patch: Partial<AgentChatSession>) => persist({ ...current(), ...patch })
-    const stillCurrent = (localId: string) => get().session?.id === localId
-    const uploadAndStore = async (api: AgentConversationAdapter, files: readonly File[], valid: () => boolean, signal: AbortSignal) => {
-      const uploaded = await api.uploadAttachments(files, signal)
-      if (!valid()) return null
-      if (uploaded.items.length !== files.length) throw new Error('图片上传回执不完整，请重新添加。')
-      const result = await adapter.attach(files)
-      if (!valid()) {
-        await adapter.discard(result.attachments.map(attachment => attachment.id))
-        return null
-      }
-      const attachments = result.attachments.map((attachment, index) => {
-        const item = uploaded.items[index]!
-        return { ...attachment, serverId: item.id, width: item.width, height: item.height, type: item.mimeType, size: item.bytes }
-      })
-      if (!result.persisted && !attachmentPersistenceFailed) notify('附件仅在当前页面可用，浏览器暂时无法保存文件；刷新后请重新选择。', 'info')
-      attachmentPersistenceFailed = !result.persisted
-      return attachments
-    }
-    const discardPrepared = (session: AgentChatSession) => {
-      const ids = session.editing?.preparedAttachments?.map(item => item.attachment.id) ?? []
-      if (ids.length) void adapter.discard(ids)
-    }
-    const prepareExistingAttachments = async (api: AgentConversationAdapter, owner: AgentChatSession, valid: () => boolean, signal: AbortSignal) => {
-      const editing = owner.editing
-      const original = editing ? get().messages.find(message => message.id === editing.messageId) : undefined
-      const sources = editing
-        ? (editing.attachments ?? []).map(ref => {
-          const item = original?.attachments?.find(attachment => attachment.id === ref.id)
-          const prepared = editing.preparedAttachments?.find(item => item.sourceId === ref.id)?.attachment
-          return { sourceId: ref.id, name: item?.name, bytes: prepared?.size ?? item?.bytes, width: prepared?.width ?? item?.width, height: prepared?.height ?? item?.height, prepared: !!prepared }
-        })
-        : owner.attachments.map(item => ({ sourceId: item.serverId!, name: item.name, bytes: item.size, width: item.width, height: item.height, prepared: false }))
-      const replacements: { sourceId: string; file: File }[] = []
-      let total = 0
-      for (const source of sources) {
-        if (source.prepared || (source.bytes !== undefined && source.bytes <= AGENT_ATTACHMENT_LIMITS.maxFileBytes && Math.max(source.width ?? 0, source.height ?? 0) <= 6000)) {
-          total += source.bytes ?? 0
-          checkAttachmentTotal(total)
-          continue
-        }
-        const blob = await api.attachmentBlob(source.sourceId, signal)
-        if (!valid()) return
-        const file = new File([blob], source.name ?? (blob.type === 'image/jpeg' ? '图片.jpg' : '图片.png'), { type: blob.type })
-        const prepared = await prepareAgentImage(file, signal)
-        total += prepared.size
-        checkAttachmentTotal(total)
-        if (prepared !== file) replacements.push({ sourceId: source.sourceId, file: prepared })
-        if (!valid()) return
-      }
-      if (!replacements.length) return
-      const additions = await uploadAndStore(api, replacements.map(item => item.file), valid, signal)
-      if (!additions) return
-      const bySource = new Map(replacements.map((item, index) => [item.sourceId, additions[index]!]))
-      const session = current()
-      const saved = editing
-        ? update({ editing: { ...session.editing!, preparedAttachments: [...(session.editing?.preparedAttachments ?? []),
-          ...replacements.map((item, index) => ({ sourceId: item.sourceId, attachment: additions[index]! }))] } })
-        : update({ attachments: session.attachments.map(attachment => bySource.get(attachment.serverId!) ?? attachment) })
-      if (!editing) await adapter.discard(session.attachments.filter(attachment => bySource.has(attachment.serverId!)).map(attachment => attachment.id))
-      if (!valid()) return
-      if (!saved) throw new Error('无法保存图片处理结果，请恢复浏览器存储后再发送。')
-    }
     const removeReplacedMessage = (messages: readonly AgentMessage[], messageId: string) => {
       const replaced = messages.find(message => message.id === messageId || message.replacesMessageId === messageId)
       return replaced ? messages.filter(message => message.runId !== replaced.runId) : [...messages]
@@ -265,14 +180,14 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
         liveOutput: state.liveOutput && ids.has(state.liveOutput.runId) ? state.liveOutput : null }))
       const session = current()
       if (session.editing && !session.pending && messages.filter(message => message.role === 'user').at(-1)?.id !== session.editing.messageId) {
-        discardPrepared(session)
+        attachmentFlow.discardPrepared(session)
         update({ editing: undefined })
       }
     }
     const acceptRun = (run: AgentChatRun, owner = current(), display = true) => {
       const session = get().session?.id === owner.id ? current() : adapter.read(agentChatSessionKey(owner)) ?? owner
       const { next, acceptedInput, consumedAttachmentIds } = applySubmissionReceipt(session, run)
-      if (acceptedInput?.replaceMessageId) discardPrepared(session)
+      if (acceptedInput?.replaceMessageId) attachmentFlow.discardPrepared(session)
       if (consumedAttachmentIds.length) void adapter.discard(consumedAttachmentIds)
       if (!display || get().session?.id !== owner.id) { adapter.write(next, false); if (get().session) set({ localSessions: adapter.list() }); return }
       if (acceptedInput && !acceptedInput.replaceMessageId) {
@@ -320,7 +235,7 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
         if (rejected) {
           set({ outgoingMessage: null })
           if (error instanceof AgentHttpError && error.code === 'attachment-invalid' && current().editing?.preparedAttachments?.length) {
-            discardPrepared(current())
+            attachmentFlow.discardPrepared(current())
             update({ editing: { ...current().editing!, preparedAttachments: undefined }, pending: undefined })
           } else update({ pending: undefined })
         }
@@ -333,21 +248,20 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
     return {
       ...remoteBlank,
       ...directory.state,
+      ...attachmentFlow.actions,
       session: null,
       reportOperation: notify,
       reportInput,
       clearDisplay() {
-        attachmentPreparation?.abort()
+        attachmentFlow.invalidate()
         generation += 1; remoteVersion += 1; lifecycle += 1; navigationVersion += 1
         const directoryDisplay = directory.resetDisplay()
-        attachmentUploadVersion += 1
         initialBlank = false
         initialized = false; initialization = undefined; restoring = undefined
         completedReasoning.clear()
         clearRunFeedback()
-        missingAttachmentSets.clear()
+        attachmentFlow.clearFeedback()
         persistenceFailed = false
-        attachmentPersistenceFailed = false
         set({ ...remoteBlank, ...directoryDisplay, session: null, restoringAttachments: false })
       },
       async initialize(api, requestedId) {
@@ -379,7 +293,7 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
         const stored = adapter.read(key)
         const session = stored ?? { ...blankSession(), id: key, remote: { sessionId: key } }
         adapter.select(key)
-        await restore(session)
+        await attachmentFlow.restore(session)
         if (lifetime !== lifecycle || navigation !== navigationVersion || get().session?.id !== session.id) return
         set({ localSessions: adapter.list() })
         if (session.remote && api.available) await get().refresh(api)
@@ -390,20 +304,19 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
         if (restoring) { await restoring; return }
         const session = adapter.read()
         if (session) {
-          restoring = restore(session)
+          restoring = attachmentFlow.restore(session)
           try { await restoring } finally { restoring = undefined }
         } else { initialBlank = true; persist(blankSession()) }
       },
       async newSession() {
         if (get().sending) return
         const session = blankSession()
-        attachmentPreparation?.abort()
+        attachmentFlow.invalidate()
         navigationVersion += 1
         initialBlank = false
         initialized = true
         generation += 1
         remoteVersion += 1
-        attachmentUploadVersion += 1
         completedReasoning.clear()
         restoring = undefined
         set({ ...remoteBlank, restoringAttachments: false })
@@ -473,7 +386,7 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
           ...(last.attachments?.length ? { attachments: last.attachments.map(attachment => ({ id: attachment.id })) } : {}) } })
       },
       setEditText(text) { set({ inputError: null }); if (current().editing && !get().sending && !current().pending) update({ editing: { ...current().editing!, text } }) },
-      cancelEdit() { if (!get().sending && !current().pending) { discardPrepared(current()); update({ editing: undefined }) } },
+      cancelEdit() { if (!get().sending && !current().pending) { attachmentFlow.discardPrepared(current()); update({ editing: undefined }) } },
       async stop(api) {
         const run = get().run
         if (!run || !isChatRunActive(run) || get().stopping || run.cancelRequestedAt) return
@@ -492,72 +405,6 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
       setPermissionMode: permissionMode => { if (!get().sending && !isChatRunActive(get().run) && !get().remoteSession?.activeRunId && !get().remoteSession?.activeWorkflowId && !current().pending) update({ permissionMode, permissionVersion: 1 }) },
       setModel: modelId => { set({ inputError: null }); if (!get().sending && !get().uploadingAttachments && !isChatReplyActive(get().run) && !current().pending) update({ modelId, reasoningLevel: null }) },
       setReasoningLevel: reasoningLevel => { set({ inputError: null }); if (!get().sending && !isChatReplyActive(get().run) && !current().pending) update({ reasoningLevel }) },
-      async addAttachments(api, files, supportsImage) {
-        if (!files.length || get().uploadingAttachments) return
-        if (get().sending || get().stopping) { reportInput('消息正在发送或停止，请稍后再添加文件。'); return }
-        const lifetime = lifecycle
-        const ready = get().ensureSession()
-        const sessionId = current().id
-        const version = ++attachmentUploadVersion
-        const valid = () => version === attachmentUploadVersion && lifetime === lifecycle && stillCurrent(sessionId)
-        const controller = new AbortController()
-        let uploading = false
-        attachmentPreparation = controller
-        set({ uploadingAttachments: true, inputError: null })
-        try {
-          await ready
-          if (!valid()) return
-          if (!api.available) { reportInput('当前为本地演示，请在已连接后端的面板中添加附件。'); return }
-          // 编辑只改文本：编辑期间不允许往草稿添加附件，避免编辑重发静默捎带新图。
-          if (current().editing) { reportInput('正在编辑消息，完成后才能添加附件。'); return }
-          const existing = current().attachments
-          // 整批压缩和总量校验成功后再上传，失败保留原草稿。
-          const rejected = files.filter(file => agentComposerFileKind(file) === 'unsupported')
-          if (rejected.length) { reportInput(`不支持这些文件：${rejected.map(file => file.name).join('、')}。图片仅支持 JPEG 与 PNG；文本文件将读入草稿，PDF、Office、音频和视频暂不支持。`); return }
-          const images = files.filter(file => agentComposerFileKind(file) === 'image')
-          const texts = files.filter(file => agentComposerFileKind(file) === 'text')
-          if (images.length && supportsImage === false) { reportInput('当前模型不支持图片输入，请切换支持图片的模型后再添加。'); return }
-          const imported = await readAgentTextFiles(texts, controller.signal)
-          if (!valid()) return
-          appendAgentTextFiles(current().draft, imported)
-          const prepared: File[] = []
-          let total = existing.reduce((sum, attachment) => sum + attachment.size, 0)
-          for (const file of images) {
-            const processed = await prepareAgentImage(file, controller.signal)
-            if (!valid()) return
-            total += processed.size
-            checkAttachmentTotal(total)
-            prepared.push(processed)
-          }
-          checkAttachmentTotal(current().attachments.reduce((sum, attachment) => sum + attachment.size, 0) + prepared.reduce((sum, file) => sum + file.size, 0))
-          uploading = prepared.length > 0
-          const additions = prepared.length ? await uploadAndStore(api, prepared, valid, controller.signal) : []
-          if (!additions) return
-          const session = current()
-          if (session.attachments.reduce((sum, attachment) => sum + attachment.size, 0) + additions.reduce((sum, attachment) => sum + attachment.size, 0) > AGENT_ATTACHMENT_LIMITS.maxMessageBytes) {
-            await adapter.discard(additions.map(attachment => attachment.id))
-            throw new Error(attachmentTotalNotice)
-          }
-          let draft: string
-          try { draft = appendAgentTextFiles(session.draft, imported) }
-          catch (error) { await adapter.discard(additions.map(attachment => attachment.id)); throw error }
-          persist({ ...session, draft, attachments: [...session.attachments, ...additions] })
-          if (texts.length) reportInput(`已将 ${texts.length} 个文本文件读入草稿，可编辑后发送。`)
-          if (images.length) reportInput(`已添加 ${images.length} 张图片${draft.trim() ? '。' : '，请输入问题或说明后发送。'}`)
-        } catch (error) {
-          if (valid()) { reportInput(failureMessage(error)); if (uploading) notify(failureMessage(error)) }
-        } finally {
-          if (attachmentPreparation === controller) attachmentPreparation = undefined
-          if (version === attachmentUploadVersion) set({ uploadingAttachments: false })
-        }
-      },
-      removeAttachment(attachmentId) {
-        set({ inputError: null })
-        if (get().sending) return
-        const session = current()
-        persist({ ...session, attachments: session.attachments.filter(attachment => attachment.id !== attachmentId) })
-        void adapter.discard([attachmentId])
-      },
       async continueTask(api, model) {
         const session = current()
         if (session.pending) {
@@ -606,13 +453,12 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
         set({ sending: true, inputError: null, outgoingMessage: session.editing || session.pending?.input.replaceMessageId ? null
           : outgoingMessageFor(session, text, session.pending ? session.pending.input.attachments ?? [] : continuing ? [] : undefined) })
         remoteVersion += 1
-        const controller = new AbortController()
-        attachmentPreparation = controller
+        const controller = attachmentFlow.beginPreparation()
         try {
           if (session.pending) return await dispatchPending(api, session.id, lifetime, version)
           if (!model) return false
           const preparationValid = () => valid() && (!session.editing || (current().editing?.messageId === session.editing.messageId && current().editing?.taskId === session.editing.taskId))
-          if (!continuing) await prepareExistingAttachments(api, session, preparationValid, controller.signal)
+          if (!continuing) await attachmentFlow.prepareExistingAttachments(api, session, preparationValid, controller.signal)
           if (!valid()) return false
           if (!preparationValid()) throw new Error('原消息已变化，请重新选择需要编辑的消息。')
           let remote: AgentSession
@@ -649,7 +495,7 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
           if (valid()) { reportInput(failureMessage(error)); notify(failureMessage(error)) }
           return false
         } finally {
-          if (attachmentPreparation === controller) attachmentPreparation = undefined
+          attachmentFlow.finishPreparation(controller)
           if (valid()) set({ sending: false, ...(!current().pending && !get().outgoingMessage?.runId ? { outgoingMessage: null } : {}) })
         }
       },

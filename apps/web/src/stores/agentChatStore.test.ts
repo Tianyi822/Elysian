@@ -870,6 +870,21 @@ describe('智能体本地会话', () => {
     expect(store.getState().uploadingAttachments).toBe(false)
   })
 
+  it('上传回执缺项不保存图片，也不把同批文本写入草稿', async () => {
+    const local = localMemory()
+    const store = local.makeStore()
+    const backend = chatTestApi()
+    const attach = vi.spyOn(local.adapter, 'attach')
+    backend.api.uploadAttachments.mockResolvedValueOnce({ items: [] })
+    await store.getState().ensureSession()
+    store.getState().setDraft('原草稿')
+    await store.getState().addAttachments(backend.api, [new File(['png'], 'diagram.png', { type: 'image/png' }), new File(['说明'], 'readme.txt', { type: 'text/plain' })])
+
+    expect(backend.api.uploadAttachments).toHaveBeenCalledOnce()
+    expect(attach).not.toHaveBeenCalled()
+    expect(store.getState()).toMatchObject({ uploadingAttachments: false, inputError: '图片上传回执不完整，请重新添加。', session: { draft: '原草稿', attachments: [] } })
+  })
+
   it('本地保存失败也解除上传锁定并显示错误', async () => {
     const local = localMemory()
     const store = local.makeStore()
