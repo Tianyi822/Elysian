@@ -12,12 +12,12 @@ import {
   MockFilesAdapter,
   MockFirewallAdapter,
   MockLogsAdapter,
-  MockSessionAdapter,
   MockSshAdapter,
   MockUserAdapter,
   MockWebsitesAdapter,
   createInMemoryEventsAdapter,
 } from './mockAdapters'
+import { MockSessionAdapter } from './sessionMockAdapter'
 import { createResilientEventsAdapter } from '../sse/eventsAdapter'
 import { sharedSubscription } from '../sse/sharedSubscription'
 import type { ElysianEvent, EventStreamStatus } from '@elysian/contracts'
