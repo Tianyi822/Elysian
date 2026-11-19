@@ -8,12 +8,12 @@ import type { ElysianGateway } from '../../contracts/adapters'
 import { createMockDataset } from './dataset'
 import {
   MockContainerAdapter,
-  createInMemoryEventsAdapter,
 } from './mockAdapters'
 import { MockDependenciesAdapter } from './dependenciesMockAdapter'
 import { MockFilesAdapter } from './filesMockAdapter'
 import { MockFirewallAdapter } from './firewallMockAdapter'
 import { MockLogsAdapter } from './logsMockAdapter'
+import { createInMemoryEventsAdapter } from './memoryEventsAdapter'
 import { MockSessionAdapter } from './sessionMockAdapter'
 import { MockSshAdapter } from './sshMockAdapter'
 import { MockUserAdapter } from './usersMockAdapter'
