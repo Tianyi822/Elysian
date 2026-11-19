@@ -195,6 +195,32 @@ describe('智能体本地会话', () => {
     controller.abort()
     await watching
   })
+  it('流式中断保留已接收预览，重连正常结束后才回读', async () => {
+    const store = localMemory().makeStore()
+    const backend = chatTestApi()
+    backend.hold()
+    await store.getState().ensureSession()
+    store.getState().setDraft('查询')
+    await store.getState().send(backend.api, chatTestModel)
+    backend.api.getSession.mockClear()
+    const partial = { runId: 'run-1', responseId: 'm', reasoning: '已有思考', content: '已有预览', done: false }
+    backend.api.stream.mockImplementationOnce(async (_id, emit) => {
+      emit(partial)
+      throw new Error('连接中断')
+    }).mockResolvedValueOnce(undefined)
+    const signal = new AbortController().signal
+
+    await store.getState().watchOutput(backend.api, 'run-1', signal)
+    expect(store.getState()).toMatchObject({ liveOutput: partial, reasoning: { 'run-1': '已有思考' }, syncErrorMessage: expect.stringContaining('已接收的内容已保留') })
+    expect(backend.api.getSession).not.toHaveBeenCalled()
+
+    backend.complete('最终答复')
+    await store.getState().watchOutput(backend.api, 'run-1', signal)
+    expect(backend.api.getSession).toHaveBeenCalledOnce()
+    expect(store.getState().messages.at(-1)?.content).toBe('最终答复')
+    expect(store.getState().syncErrorMessage).toBeUndefined()
+  })
+
   it('核实后显式刷新历史终态，普通轮询继续复用其余历史缓存', async () => {
     const store = localMemory().makeStore()
     const backend = chatTestApi()
