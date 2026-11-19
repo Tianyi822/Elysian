@@ -8,9 +8,9 @@ import type { ElysianGateway } from '../../contracts/adapters'
 import { createMockDataset } from './dataset'
 import {
   MockContainerAdapter,
-  MockDependenciesAdapter,
   createInMemoryEventsAdapter,
 } from './mockAdapters'
+import { MockDependenciesAdapter } from './dependenciesMockAdapter'
 import { MockFilesAdapter } from './filesMockAdapter'
 import { MockFirewallAdapter } from './firewallMockAdapter'
 import { MockLogsAdapter } from './logsMockAdapter'
