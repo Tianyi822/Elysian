@@ -13,6 +13,7 @@ import {
 } from '../utils/containerCopy'
 import { useContainersStore } from './containersStore'
 import { useDatabaseStore } from './databaseStore'
+import { useSessionStore } from './sessionStore'
 import { advanceAuthGeneration } from '../utils/authGeneration'
 import { CONTAINERS, CONTAINER_IMAGES } from '../adapters/mock/containersData'
 import { createMockGateway } from '../adapters/mock/gateway'
@@ -96,6 +97,42 @@ function event(
 }
 
 describe('containersStore', () => {
+  it('重新登录后首次读失败，不保留旧容器和镜像列表', async () => {
+    const gateway = { ...gatewayWith(), session: createMockGateway({ eventStream: 'memory' }).session }
+    const session = useSessionStore.getState()
+    const containers = useContainersStore.getState()
+    await session.login(gateway, 'admin', 'password')
+    await containers.load(gateway)
+    expect(useContainersStore.getState().containers).not.toHaveLength(0)
+    expect(useContainersStore.getState().images).not.toHaveLength(0)
+
+    const list = vi.fn(async () => { throw new Error('新会话无法读取容器') })
+    const next = { ...gateway, containers: { ...gateway.containers, list } }
+    await session.logout(gateway)
+    expect(useContainersStore.getState()).toMatchObject({ containers: [], images: [], status: 'idle' })
+    await session.login(next, 'admin', 'password')
+    await containers.load(next)
+    expect(list).toHaveBeenCalledTimes(1)
+    expect(useContainersStore.getState()).toMatchObject({ containers: [], images: [], status: 'error', errorMessage: '新会话无法读取容器' })
+  })
+
+  it('旧创建回执不追加新会话的容器、不关闭新表单或通知', async () => {
+    const receipt = deferred<Container>()
+    const gateway = { ...gatewayWith({ create: () => receipt.promise }), session: createMockGateway({ eventStream: 'memory' }).session }
+    const session = useSessionStore.getState()
+    const containers = useContainersStore.getState()
+    await session.login(gateway, 'admin', 'password')
+    containers.openCreate()
+    const pending = containers.createContainer(gateway, { name: 'old', imageId: 'img-nginx', ports: [], env: [], volumes: [], restartPolicy: 'always' })
+    session.expire()
+    await session.login(gateway, 'admin', 'password')
+    containers.openCreate()
+    receipt.resolve(CONTAINERS[0]!)
+    await pending
+    expect(useContainersStore.getState()).toMatchObject({ containers: [], createOpen: true, creating: false })
+    expect(useMessageStore.getState().messages).toEqual([])
+  })
+
   it('load 拉取容器与镜像并进入 ready', async () => {
     const gateway = gatewayWith()
     await useContainersStore.getState().load(gateway)

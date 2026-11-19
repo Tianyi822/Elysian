@@ -1,7 +1,8 @@
 import type { ElysianEvent } from '@elysian/contracts'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { EventsAdapter } from '../contracts/adapters'
-import { MAX_RECENT_EVENTS, onStreamEvent, useEventStreamStore } from './eventStreamStore'
+import { getLastContainerSample, MAX_RECENT_EVENTS, onStreamEvent, useEventStreamStore } from './eventStreamStore'
+import { advanceAuthGeneration } from '../utils/authGeneration'
 
 function createStubAdapter() {
   const state = {
@@ -119,6 +120,30 @@ describe('事件流 store', () => {
 
     expect(stub.state.unsubscribeCount).toBe(1)
     expect(useEventStreamStore.getState().receivedCount).toBe(0)
+  })
+
+  it('容器采样可在同一登录会话回放，旧连接在换会话后不能再更新', () => {
+    const stream = useEventStreamStore.getState()
+    const first = createStubAdapter()
+    const next = createStubAdapter()
+    const oldStatus = vi.fn()
+    const sample = (id: string): ElysianEvent => ({
+      id, name: 'container/sample', at: '2026-09-12T08:00:00.000Z', payload: { samples: [] },
+    })
+    stream.connect(first.adapter, oldStatus)
+    first.state.handlers?.onEvent(sample('before-logout'))
+    stream.disconnect()
+    stream.connect(first.adapter, oldStatus)
+    expect(getLastContainerSample()?.id).toBe('before-logout')
+    advanceAuthGeneration()
+    expect(getLastContainerSample()).toBeUndefined()
+    first.state.handlers?.onEvent(sample('late'))
+    first.state.handlers?.onContainerStatus?.('live')
+    expect(getLastContainerSample()).toBeUndefined()
+    expect(oldStatus).not.toHaveBeenCalled()
+    stream.connect(next.adapter)
+    next.state.handlers?.onEvent(sample('after-login'))
+    expect(getLastContainerSample()?.id).toBe('after-login')
   })
 
   it('容器状态独立转发，替换和退订前先使旧回调失效', () => {

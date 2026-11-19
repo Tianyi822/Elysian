@@ -1,6 +1,7 @@
 import type { ElysianEvent, EventStreamStatus, Unsubscribe } from '@elysian/contracts'
 import { create } from 'zustand'
 import type { ContainerLiveStatus, EventsAdapter } from '../contracts/adapters'
+import { captureAuthGeneration } from '../utils/authGeneration'
 
 /** 只保留最近的事件，避免长时间运行时内存无限增长。 */
 export const MAX_RECENT_EVENTS = 200
@@ -37,13 +38,12 @@ export function onStreamEvent(listener: (event: ElysianEvent) => void): Unsubscr
 
 /**
  * 最近一拍容器采样的模块级缓存。容器页首屏挂载晚于事件流连接时，
- * 从这里回放最新一拍 container/sample；重连/重订阅不清空——
- * 宁可回放旧一拍也不空屏，下一拍马上覆盖。
+ * 从这里回放最新一拍 container/sample；同一登录会话内重连不丢快照。
  */
-let lastContainerSample: ElysianEvent | undefined
+let lastContainerSample: { event: ElysianEvent; auth: number } | undefined
 
 export function getLastContainerSample(): ElysianEvent | undefined {
-  return lastContainerSample
+  return lastContainerSample?.auth === captureAuthGeneration() ? lastContainerSample.event : undefined
 }
 
 /** 最近一拍单机资源采样的模块级缓存，供挂载晚于事件流连接的顶栏系统负载指示器回放。 */
@@ -59,11 +59,12 @@ export const useEventStreamStore = create<EventStreamState>((set) => ({
   receivedCount: 0,
   connect(adapter, onContainerStatus) {
     const current = ++generation
+    const auth = captureAuthGeneration()
     unsubscribe?.()
 
     unsubscribe = adapter.subscribe({
       onContainerStatus: (status) => {
-        if (current !== generation) return
+        if (current !== generation || auth !== captureAuthGeneration()) return
         onContainerStatus?.(status)
       },
       onStatus: (status) => {
@@ -72,6 +73,7 @@ export const useEventStreamStore = create<EventStreamState>((set) => ({
       },
       onEvent: (event) => {
         if (current !== generation) return
+        if (event.name.startsWith('container/') && auth !== captureAuthGeneration()) return
         // 资源采样与容器事件（container/sample 每拍一条、container/updated 随状态变化）
         // 同为页面的数据心跳与状态流，不是可读的活动记录，进最近活动只会把列表刷成噪音；
         // 监听器（仪表盘、容器页）仍然照常收到；container/sample 另记一拍进模块缓存，
@@ -81,7 +83,7 @@ export const useEventStreamStore = create<EventStreamState>((set) => ({
           event.name === 'container/sample' ||
           event.name === 'container/updated'
         ) {
-          if (event.name === 'container/sample') lastContainerSample = event
+          if (event.name === 'container/sample') lastContainerSample = { event, auth }
           if (event.name === 'resource/sample') lastResourceSample = event
           for (const listener of listeners) listener(event)
           return

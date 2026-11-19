@@ -246,6 +246,7 @@ export const useContainersStore = create<TabMemoryState<ContainerView> & {
   removingImageIds: readonly string[]
   pullingImage?: ImagePullInput & { progress?: ImagePullProgress; cancelling?: boolean }
   imagePullError?: ImagePullInput & { message: string }
+  clearDisplay: () => void
   load: (gateway: ElysianGateway) => Promise<void>
   refreshImages: (gateway: ElysianGateway, options?: { notify?: boolean }) => Promise<void>
   setLiveStatus: (status: 'live' | 'connecting') => void
@@ -257,18 +258,16 @@ export const useContainersStore = create<TabMemoryState<ContainerView> & {
   removeContainer: (gateway: ElysianGateway, containerId: string) => Promise<void>
   removeImage: (gateway: ElysianGateway, imageId: string) => Promise<TableBatchOutcome>
   pullImage: (gateway: ElysianGateway, input: ImagePullInput, options?: ImagePullOptions) => Promise<ImagePullResult>
-  clearImagePullDisplay: () => void
   cancelImagePull: () => void
   dismissImagePullError: () => void
   openDetail: (containerId: string) => void
   closeDetail: () => void
   openTerminal: (gateway: ElysianGateway, containerId: string) => Promise<void>
   closeTerminal: (gateway: ElysianGateway) => Promise<void>
-  clearTerminalDisplay: () => void
   applyTerminalFrame: (sessionId: string, frame: HostTerminalFrame) => void
   handleTerminalClose: (sessionId: string, info: HostTerminalCloseInfo) => void
   runAction: (gateway: ElysianGateway, containerId: string, action: ContainerAction) => Promise<void>
-}>((set, get) => ({
+}>((set, get, store) => ({
   status: 'idle',
   liveStatus: 'live',
   containers: [],
@@ -280,6 +279,25 @@ export const useContainersStore = create<TabMemoryState<ContainerView> & {
   search: '',
   busyActions: [],
   createOpen: false, creating: false, removingImageIds: [], pullingImage: undefined,
+
+  clearDisplay() {
+    const { terminal, tab } = get()
+    const gateway = activeGateway
+    activeGateway = undefined
+    detachLive?.()
+    detachLive = undefined
+    containerActionScope = undefined
+    pendingLoad = undefined
+    inventoryRead = undefined
+    pendingImages = undefined
+    imageRefreshSequence += 1
+    imagePullSequence += 1
+    const pull = imagePullController
+    imagePullController = undefined
+    set({ ...store.getInitialState(), tab }, true)
+    pull?.abort()
+    if (terminal) releaseTerminalSession(gateway, terminal)
+  },
 
   setLiveStatus(liveStatus) {
     set({
@@ -361,9 +379,11 @@ export const useContainersStore = create<TabMemoryState<ContainerView> & {
   },
 
   async createContainer(gateway, input) {
+    const current = containerMutationCurrent(gateway)
     set({ creating: true, createError: undefined })
     try {
       const created = await gateway.containers.create(input)
+      if (!current()) return
       useMessageStore
         .getState()
         .notify({
@@ -378,11 +398,12 @@ export const useContainersStore = create<TabMemoryState<ContainerView> & {
         createOpen: false,
       }))
     } catch (error) {
+      if (!current()) return
       const detail = messageOf(error)
       set({ createError: `创建容器失败：${detail}` })
       useMessageStore.getState().notify({ tone: 'danger', message: `创建容器失败：${detail}` })
     } finally {
-      set({ creating: false })
+      if (current()) set({ creating: false })
     }
   },
 
@@ -500,13 +521,6 @@ export const useContainersStore = create<TabMemoryState<ContainerView> & {
     }
   },
 
-  clearImagePullDisplay() {
-    imagePullSequence += 1
-    imagePullController?.abort()
-    imagePullController = undefined
-    set({ pullingImage: undefined, imagePullError: undefined })
-  },
-
   cancelImagePull() {
     const pulling = get().pullingImage
     if (!pulling || pulling.cancelling || !imagePullController) return
@@ -565,11 +579,6 @@ export const useContainersStore = create<TabMemoryState<ContainerView> & {
   async closeTerminal(gateway) {
     const session = get().terminal
     if (session) releaseTerminalSession(gateway, session)
-    set({ terminal: undefined })
-  },
-  clearTerminalDisplay() {
-    const session = get().terminal
-    if (session) releaseTerminalSession(activeGateway, session)
     set({ terminal: undefined })
   },
   applyTerminalFrame(sessionId, frame) {
