@@ -72,8 +72,7 @@ export type ContainerAppsState = {
   buildPreview: ContainerBuildPreviewState | null
   buildLogs: Record<string, ContainerBuildLogsState>
   clearDisplay(): void
-  load(gateway: ElysianGateway): Promise<void>
-  refresh(gateway: ElysianGateway, options?: { silent?: boolean }): Promise<void>
+  load(gateway: ElysianGateway, options?: { silent?: boolean }): Promise<void>
   create(gateway: ElysianGateway, input: { slug: string; displayName: string }): Promise<boolean>
   remove(gateway: ElysianGateway, slug: string): Promise<void>
   upload(gateway: ElysianGateway, slug: string, files: readonly File[]): Promise<void>
@@ -146,9 +145,7 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
     set(initialDisplay)
   },
 
-  load(gateway) { return get().refresh(gateway, { silent: true }) },
-
-  refresh(gateway, options) {
+  load(gateway, options) {
     const auth = captureAuthGeneration()
     if (pendingApps?.gateway === gateway && pendingApps.auth === auth && pendingApps.snapshot === get().apps) {
       if (!options?.silent) set({ refreshing: true })
@@ -258,7 +255,7 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
     } finally {
       // 中途失败或写超时也回读事实；已落盘的文件不能因为后一项失败而藏在旧清单之外。
       if (current()) {
-        await get().refresh(gateway, { silent: true })
+        await get().load(gateway, { silent: true })
         if (current()) set({ writing: null })
       }
     }
@@ -272,7 +269,7 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
     try {
       await gateway.containers.writeAppContent(slug, path, content)
       if (!current()) return false
-      await get().refresh(gateway, { silent: true })
+      await get().load(gateway, { silent: true })
       if (!current()) return false
       useMessageStore.getState().notify({ tone: 'success', message: `已保存 ${path}` })
       if (isComposeFile(path)) void get().runCheck(gateway, slug, path)

@@ -49,7 +49,7 @@ describe('工作区登录会话边界', () => {
     const list = vi.spyOn(gateway.containers, 'listApps')
     const check = vi.spyOn(gateway.containers, 'checkCompose')
     const store = useContainerAppsStore.getState()
-    await store.load(gateway)
+    await store.load(gateway, { silent: true })
     const pending = store.upload(gateway, 'demo-app', [new File([], 'compose.yml'), new File([], 'second.txt')])
     expect(upload).toHaveBeenCalledTimes(1)
     await useSessionStore.getState().logout(gateway)
@@ -124,7 +124,7 @@ describe('工作区文件状态', () => {
   it('批量上传中途失败仍回读已成功落盘的文件，回读不驱动刷新按钮', async () => {
     const gateway = createMockGateway({ eventStream: 'memory', eventIntervalMs: 60_000 })
     await gateway.containers.createApp({ slug: 'demo-app', displayName: '演示' })
-    await useContainerAppsStore.getState().load(gateway)
+    await useContainerAppsStore.getState().load(gateway, { silent: true })
     const listApps = vi.fn(async () => {
       expect(useContainerAppsStore.getState().refreshing).toBe(false)
       return gateway.containers.listApps()
@@ -152,7 +152,7 @@ describe('工作区文件状态', () => {
 
   it('空清单再次加载保留就绪态，刷新成功清除上次错误', async () => {
     const gateway = createMockGateway({ eventStream: 'memory', eventIntervalMs: 60_000 })
-    await useContainerAppsStore.getState().load(gateway)
+    await useContainerAppsStore.getState().load(gateway, { silent: true })
     useContainerAppsStore.setState({ errorMessage: '上次读取失败' })
     const patched: ElysianGateway = {
       ...gateway,
@@ -164,7 +164,7 @@ describe('工作区文件状态', () => {
         },
       }),
     }
-    await useContainerAppsStore.getState().load(patched)
+    await useContainerAppsStore.getState().load(patched, { silent: true })
     expect(useContainerAppsStore.getState().errorMessage).toBeUndefined()
     expect(useContainerAppsStore.getState().refreshing).toBe(false)
   })

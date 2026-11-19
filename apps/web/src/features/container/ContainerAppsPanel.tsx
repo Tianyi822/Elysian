@@ -28,12 +28,11 @@ export function ContainerAppsPanel() {
   const apps = useContainerAppsStore((s) => s.apps)
   const refreshing = useContainerAppsStore((s) => s.refreshing)
   const load = useContainerAppsStore((s) => s.load)
-  const refresh = useContainerAppsStore((s) => s.refresh)
   const [createOpen, setCreateOpen] = useState(false)
   const [editing, setEditing] = useState<{ slug: string; path: string } | null>(null)
 
   useEffect(() => {
-    void load(gateway)
+    void load(gateway, { silent: true })
   }, [gateway, load])
 
   const docker = isDockerRuntime()
@@ -46,7 +45,7 @@ export function ContainerAppsPanel() {
         <ErrorState
           title="工作区加载失败"
           description={errorMessage}
-          onRetry={() => void load(gateway)}
+          onRetry={() => void load(gateway, { silent: true })}
         />
       )
     }
@@ -68,7 +67,7 @@ export function ContainerAppsPanel() {
           </p>
         </div>
         <div className="ml-auto flex shrink-0 items-center gap-2">
-          <RefreshButton onPress={() => void refresh(gateway)} busy={refreshing} label="刷新工作区" />
+          <RefreshButton onPress={() => void load(gateway)} busy={refreshing} label="刷新工作区" />
           <Button variant="primary" type="button" onClick={() => setCreateOpen(true)} className={CTL_PRIMARY}>
             <Plus aria-hidden size={14} />
             新建工作区
@@ -76,7 +75,7 @@ export function ContainerAppsPanel() {
         </div>
       </div>
       {/* 清单原位更新，工具栏与已有卡片始终保留。 */}
-      {errorMessage ? <StaleDataBanner className="mb-3" error={errorMessage} onRetry={() => void refresh(gateway)} /> : null}
+      {errorMessage ? <StaleDataBanner className="mb-3" error={errorMessage} onRetry={() => void load(gateway)} /> : null}
       <div className="relative rounded-xl" aria-busy={refreshing}>
         {apps.length === 0 ? (
           <EmptyState

@@ -74,7 +74,7 @@ const cases = [
     select: state => ({ status: state.status, snapshot: state.containers, error: state.errorMessage }) }),
   refreshCase({ name: '工作区', store: useContainerAppsStore, empty: [],
     gateway: (base, read) => ({ ...base, containers: adapter(base.containers, { listApps: read }) }),
-    load: (state, gateway) => state.load(gateway),
+    load: (state, gateway) => state.load(gateway, { silent: true }),
     select: state => ({ status: state.status, snapshot: state.apps, error: state.errorMessage }) }),
   refreshCase({ name: '网站', store: useWebsitesStore, empty: { projects: [], proxy: { state: 'active' as const, detail: null } },
     gateway: (base, read) => ({ ...base, websites: adapter(base.websites, { list: read }) }),
@@ -182,6 +182,24 @@ describe('刷新与业务结果的隔离', () => {
     release(old)
     await pending
     expect(useFirewallStore.getState().toggles).toEqual(next)
+  })
+
+  it('工作区手动刷新复用在途静默读取并显示按钮忙碌状态', async () => {
+    const { clearDisplay, load } = useContainerAppsStore.getState()
+    clearDisplay()
+    const gateway = createMockGateway({ eventStream: 'memory' })
+    await load(gateway, { silent: true })
+    const { apps } = useContainerAppsStore.getState()
+    let release!: () => void
+    const list = vi.spyOn(gateway.containers, 'listApps').mockReturnValueOnce(new Promise(resolve => { release = () => resolve(apps) }))
+    const automatic = load(gateway, { silent: true })
+    expect(useContainerAppsStore.getState().refreshing).toBe(false)
+    const manual = load(gateway)
+    expect(useContainerAppsStore.getState()).toMatchObject({ status: 'ready', refreshing: true })
+    expect(list).toHaveBeenCalledTimes(1)
+    release()
+    await Promise.all([automatic, manual])
+    expect(useContainerAppsStore.getState().refreshing).toBe(false)
   })
 
   it('网站手动刷新复用在途静默读取并显示按钮忙碌状态', async () => {
