@@ -21,10 +21,11 @@ import { useImeEnterGuard } from '../../components/useImeEnterGuard'
 import { useMessageStore } from '../../stores/messageStore'
 import { sendPanelPending, type PanelPending } from '../../stores/panelPending'
 import { Button } from '../../components/Button'
+import { FORM_CONTROL_HEIGHT_CLASS, MAINTENANCE_FORM_ACTION_CLASS } from '../../components/formControl'
 import { messageOf } from '../../utils/errorMessage'
 
-const BUTTON = 'h-9 rounded-lg border border-control-line bg-surface-raised px-4 text-sm font-medium text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50'
-const INPUT = 'h-9 w-full rounded-lg border border-control-line bg-surface-raised px-3 text-sm tabular-nums text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50'
+const BUTTON = `${MAINTENANCE_FORM_ACTION_CLASS} transition-colors hover:border-fg-subtle`
+const INPUT = `${FORM_CONTROL_HEIGHT_CLASS} w-full rounded-lg border border-control-line bg-surface-raised px-3 text-sm tabular-nums text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50`
 function updateSummary(update: PanelUpdate): string {
   return !update.releaseTag ? '上游仓库暂无正式发版' : `${update.available ? '可更新至正式发版' : '当前已是最新版本'} · ${update.releaseTag}`
 }

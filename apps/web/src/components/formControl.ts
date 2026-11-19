@@ -38,3 +38,5 @@ export const CTL_STAT = 'stat-chip'
 export const DIALOG_FORM_FIELD_CLASS = `${FORM_CONTROL_HEIGHT_CLASS} w-full min-w-0 rounded-lg border border-control-line bg-surface-raised px-3 text-sm text-fg transition-colors placeholder:text-fg-subtle hover:border-fg-subtle`
 export const DIALOG_FORM_LABEL_CLASS = 'mb-2 block text-xs font-medium leading-5 text-fg-muted'
 export const DIALOG_FORM_ACTION_CLASS = `inline-flex ${FORM_CONTROL_HEIGHT_CLASS} items-center justify-center rounded-lg border border-line px-3 text-xs font-medium text-fg transition-colors hover:bg-surface-raised disabled:cursor-not-allowed disabled:opacity-50`
+
+export const MAINTENANCE_FORM_ACTION_CLASS = `${FORM_CONTROL_HEIGHT_CLASS} rounded-lg border border-control-line bg-surface-raised px-4 text-sm font-medium text-fg disabled:cursor-not-allowed disabled:opacity-50`
