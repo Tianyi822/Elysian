@@ -9,7 +9,6 @@ import { createMockDataset } from './dataset'
 import {
   MockContainerAdapter,
   MockDependenciesAdapter,
-  MockFilesAdapter,
   MockFirewallAdapter,
   MockLogsAdapter,
   MockSshAdapter,
@@ -17,6 +16,7 @@ import {
   MockWebsitesAdapter,
   createInMemoryEventsAdapter,
 } from './mockAdapters'
+import { MockFilesAdapter } from './filesMockAdapter'
 import { MockSessionAdapter } from './sessionMockAdapter'
 import { createResilientEventsAdapter } from '../sse/eventsAdapter'
 import { sharedSubscription } from '../sse/sharedSubscription'
