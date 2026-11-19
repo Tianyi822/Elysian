@@ -65,7 +65,7 @@ export type FilesState = {
   searchResults: readonly FileSearchResult[]
   searching: boolean
   /** 同一目录的重新列举在途：旧列表留在屏上，只由它驱动刷新按钮。 */
-  reloading: boolean
+  refreshing: boolean
   clearDisplay(): void
   load(gateway: ElysianGateway, path: string, options?: { silent?: boolean }): Promise<void>
   computeSizes(gateway: ElysianGateway, paths: readonly string[]): Promise<string[]>
@@ -140,7 +140,7 @@ export const useFilesStore = create<FilesState>((set, get, store) => {
     searchKeyword: '',
     searchResults: [],
     searching: false,
-    reloading: false,
+    refreshing: false,
     download: undefined,
     upload: undefined,
     clearDisplay() {
@@ -161,7 +161,7 @@ export const useFilesStore = create<FilesState>((set, get, store) => {
       const auth = captureAuthGeneration()
       syncSizeAuth(auth)
       if (pendingLoad?.gateway === gateway && pendingLoad.path === path && pendingLoad.auth === auth) {
-        if (!options?.silent) set({ reloading: true })
+        if (!options?.silent) set({ refreshing: true })
         return pendingLoad.promise
       }
       const sequence = ++loadSequence
@@ -169,13 +169,13 @@ export const useFilesStore = create<FilesState>((set, get, store) => {
       const operation = { gateway, path, auth, promise: Promise.resolve() }
       pendingLoad = operation
       const current = () => sequence === loadSequence && auth === captureAuthGeneration()
-      set(inPlace ? { reloading: !options?.silent, errorMessage: undefined } : { status: 'loading', path, entries: [], reloading: false, errorMessage: undefined })
+      set(inPlace ? { refreshing: !options?.silent, errorMessage: undefined } : { status: 'loading', path, entries: [], refreshing: false, errorMessage: undefined })
       operation.promise = (async () => {
         try {
           const entries = await gateway.files.list(path)
-          if (current()) set({ status: 'ready', entries, reloading: false })
+          if (current()) set({ status: 'ready', entries, refreshing: false })
         } catch (error) {
-          if (current()) set({ status: inPlace ? 'ready' : 'error', reloading: false, errorMessage: messageOf(error, '读取目录内容失败') })
+          if (current()) set({ status: inPlace ? 'ready' : 'error', refreshing: false, errorMessage: messageOf(error, '读取目录内容失败') })
         } finally { if (pendingLoad === operation) pendingLoad = undefined }
       })()
       return operation.promise

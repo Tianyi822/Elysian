@@ -43,7 +43,7 @@ export function FilesPage() {
   const searchKeyword = useFilesStore((s) => s.searchKeyword)
   const searchResults = useFilesStore((s) => s.searchResults)
   const searching = useFilesStore((s) => s.searching)
-  const reloading = useFilesStore((s) => s.reloading)
+  const refreshing = useFilesStore((s) => s.refreshing)
   const load = useFilesStore((s) => s.load)
   const paste = useFilesStore((s) => s.paste)
   const search = useFilesStore((s) => s.search)
@@ -86,7 +86,7 @@ export function FilesPage() {
     if (searchKeyword.trim()) void search(gateway, searchKeyword)
   }
 
-  const refreshButton = <RefreshButton className="dt-toolbar-control-icon" onPress={() => void load(gateway, path)} busy={reloading} />
+  const refreshButton = <RefreshButton className="dt-toolbar-control-icon" onPress={() => void load(gateway, path)} busy={refreshing} />
   const parentButton = (
     <IconButton asChild label="上一级" tooltipSide="bottom">
       <Button variant="primary" type="button" aria-label="上一级" onClick={() => go(parentFilesPath(path))}
@@ -147,7 +147,7 @@ export function FilesPage() {
             path={path}
             keyword={searchKeyword}
             searching={searching}
-            reloading={reloading}
+            refreshing={refreshing}
             searchAction={refreshButton}
             toolbar={parentButton}
             onSearch={(keyword) => void search(gateway, keyword)}
@@ -189,7 +189,7 @@ function FileTable({
   path,
   keyword,
   searching,
-  reloading,
+  refreshing,
   searchAction,
   toolbar,
   onSearch,
@@ -205,7 +205,7 @@ function FileTable({
   path: string
   keyword: string
   searching: boolean
-  reloading: boolean
+  refreshing: boolean
   searchAction: ReactNode
   toolbar: ReactNode
   onSearch(keyword: string): void
@@ -335,10 +335,10 @@ function FileTable({
       selected={selected}
       onSelectionChange={setSelected}
       selectionKey={selectionKey}
-      busy={reloading || searching}
+      busy={refreshing || searching}
       bulkActions={() => (
         <Button unstyled type="button" className="dt-action dt-action-primary whitespace-nowrap"
-          disabled={transferBusy || searching || reloading || !sizeTargets.length}
+          disabled={transferBusy || searching || refreshing || !sizeTargets.length}
           onClick={() => void calculateSelected()}>
           计算目录大小
         </Button>

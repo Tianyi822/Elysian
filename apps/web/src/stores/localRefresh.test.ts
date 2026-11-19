@@ -160,13 +160,13 @@ describe('刷新与业务结果的隔离', () => {
     let release!: () => void
     const list = vi.spyOn(gateway.files, 'list').mockReturnValueOnce(new Promise(resolve => { release = () => resolve(entries) }))
     const automatic = useFilesStore.getState().load(gateway, '/', { silent: true })
-    expect(useFilesStore.getState().reloading).toBe(false)
+    expect(useFilesStore.getState().refreshing).toBe(false)
     const manual = useFilesStore.getState().load(gateway, '/')
-    expect(useFilesStore.getState().reloading).toBe(true)
+    expect(useFilesStore.getState().refreshing).toBe(true)
     expect(list).toHaveBeenCalledTimes(1)
     release()
     await Promise.all([automatic, manual])
-    expect(useFilesStore.getState().reloading).toBe(false)
+    expect(useFilesStore.getState().refreshing).toBe(false)
   })
 
   it('旧防火墙读取不能覆盖刚确认的开关', async () => {
