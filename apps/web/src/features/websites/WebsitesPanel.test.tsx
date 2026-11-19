@@ -15,7 +15,7 @@ import type { WebsiteDeploymentTask, WebsiteProjectKind } from '@elysian/contrac
 beforeEach(() => {
   resetWebsitesData()
   useWebsitesStore.setState({ status: 'idle', projects: [], createDialogOpen: false, detailTarget: undefined, settingsTarget: undefined, removeTarget: undefined, proxyStatus: { state: 'active', detail: null }, busyProjectIds: [] })
-  useWebsiteDeploymentsStore.setState({ tasks: [], loading: false, error: undefined })
+  useWebsiteDeploymentsStore.getState().clearDisplay()
   useDependencyProbeStore.getState().reset()
 })
 async function open() {

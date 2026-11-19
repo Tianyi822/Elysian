@@ -14,7 +14,7 @@ const task: WebsiteDeploymentTask = {
 
 beforeEach(async () => {
   await useMessageStore.getState().clear()
-  useWebsiteDeploymentsStore.setState({ tasks: [], loading: false, error: undefined })
+  useWebsiteDeploymentsStore.getState().clearDisplay()
 })
 
 function deferred<T>() {
@@ -50,11 +50,11 @@ describe('部署任务登录会话边界', () => {
     next.resolve([completed])
     await second
 
-    expect(cleared).toMatchObject({ tasks: [], loading: false, error: undefined })
+    expect(cleared).toMatchObject({ tasks: [], status: 'idle', errorMessage: undefined })
     expect(list).toHaveBeenCalledTimes(2)
     expect(readTask).not.toHaveBeenCalled()
-    expect(pending).toMatchObject({ tasks: [], loading: true, error: undefined })
-    expect(useWebsiteDeploymentsStore.getState()).toMatchObject({ tasks: [completed], loading: false, error: undefined })
+    expect(pending).toMatchObject({ tasks: [], status: 'loading', errorMessage: undefined })
+    expect(useWebsiteDeploymentsStore.getState()).toMatchObject({ tasks: [completed], status: 'ready', errorMessage: undefined })
     expect(useMessageStore.getState().messages).toEqual([])
   })
 
@@ -72,9 +72,32 @@ describe('部署任务登录会话边界', () => {
     detail.resolve({ ...task, state: 'failed', error: '旧部署失败' })
     await pending
 
-    expect(useWebsiteDeploymentsStore.getState()).toMatchObject({ tasks: [], loading: false, error: undefined })
+    expect(useWebsiteDeploymentsStore.getState()).toMatchObject({ tasks: [], status: 'idle', errorMessage: undefined })
     expect(useMessageStore.getState().messages).toEqual([])
   })
+})
+
+it('部署任务刷新失败保留快照，重试时合并在途刷新并清除旧提示', async () => {
+  const gateway = createMockGateway({ eventStream: 'memory' })
+  const completed: WebsiteDeploymentTask = { ...task, state: 'succeeded' }
+  const retry = deferred<readonly WebsiteDeploymentTask[]>()
+  const list = vi.spyOn(gateway.websites.deployment!, 'list')
+    .mockResolvedValueOnce([completed])
+    .mockRejectedValueOnce(new Error('部署任务暂时不可用'))
+    .mockReturnValueOnce(retry.promise)
+  const store = useWebsiteDeploymentsStore.getState()
+
+  await store.refresh(gateway)
+  await store.refresh(gateway)
+  expect(useWebsiteDeploymentsStore.getState()).toMatchObject({ tasks: [completed], status: 'error', errorMessage: '部署任务暂时不可用' })
+
+  const pending = store.refresh(gateway)
+  await store.refresh(gateway)
+  expect(list).toHaveBeenCalledTimes(3)
+  expect(useWebsiteDeploymentsStore.getState()).toMatchObject({ tasks: [completed], status: 'loading', errorMessage: '部署任务暂时不可用' })
+  retry.resolve([])
+  await pending
+  expect(useWebsiteDeploymentsStore.getState()).toMatchObject({ tasks: [], status: 'ready', errorMessage: undefined })
 })
 
 describe('网站部署通知', () => {

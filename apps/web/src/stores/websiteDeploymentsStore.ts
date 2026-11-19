@@ -14,13 +14,15 @@ function notifyTransition(previous: WebsiteDeploymentTask | undefined, task: Web
 }
 
 type DeploymentState = {
-  tasks: readonly WebsiteDeploymentTask[]; loading: boolean; error?: string
+  tasks: readonly WebsiteDeploymentTask[]
+  status: 'idle' | 'loading' | 'ready' | 'error'
+  errorMessage?: string
   clearDisplay(): void
   refresh(gateway: ElysianGateway): Promise<void>
   put(task: WebsiteDeploymentTask): void
 }
 
-const initialDisplay = { tasks: [], loading: false, error: undefined } as const
+const initialDisplay = { tasks: [], status: 'idle', errorMessage: undefined } as const
 const reads = createRequestGuard()
 
 export const useWebsiteDeploymentsStore = create<DeploymentState>((set, get) => ({
@@ -35,9 +37,9 @@ export const useWebsiteDeploymentsStore = create<DeploymentState>((set, get) => 
   },
   async refresh(gateway) {
     const api = gateway.websites.deployment
-    if (get().loading || !api) return
+    if (get().status === 'loading' || !api) return
     const current = reads.capture()
-    set({ loading: true })
+    set({ status: 'loading' })
     try {
       const rows = await api.list()
       if (!current()) return
@@ -47,9 +49,9 @@ export const useWebsiteDeploymentsStore = create<DeploymentState>((set, get) => 
       const byId = new Map(updates.map((row) => [row.id, row]))
       const tasks = rows.map((row) => byId.get(row.id) ?? row).sort((a, b) => b.createdAt.localeCompare(a.createdAt))
       for (const task of tasks) notifyTransition(get().tasks.find((row) => row.id === task.id), task)
-      set({ tasks, loading: false, error: undefined })
+      set({ tasks, status: 'ready', errorMessage: undefined })
     } catch (error) {
-      if (current()) set({ loading: false, error: messageOf(error, '部署任务加载失败') })
+      if (current()) set({ status: 'error', errorMessage: messageOf(error, '部署任务加载失败') })
     }
   },
 }))

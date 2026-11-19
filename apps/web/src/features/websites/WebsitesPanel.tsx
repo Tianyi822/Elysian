@@ -90,7 +90,7 @@ export function WebsitesPanel() {
   const [selectedTask, setSelectedTask] = useState<WebsiteDeploymentTask>()
   const [taskListOpen, setTaskListOpen] = useState(false)
   const tasks = useWebsiteDeploymentsStore((s) => s.tasks)
-  const taskError = useWebsiteDeploymentsStore((s) => s.error)
+  const taskError = useWebsiteDeploymentsStore((s) => s.errorMessage)
   const [operationError, setOperationError] = useState<string>()
   useFeedbackMessage(operationError)
   useFeedbackMessage(taskError)
