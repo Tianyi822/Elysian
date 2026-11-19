@@ -53,7 +53,7 @@ export function MessageCenter() {
   const state = useMessageStore()
   const [open, setOpen] = useState(false)
   const [phase, setPhase] = useState<'idle' | 'saving' | 'clearing'>('idle')
-  const [snapshot, setSnapshot] = useState<{ messages: readonly FeedbackMessage[]; visible: string[]; height: number; listHeight: number; hasMore: boolean; error: string | null } | null>(null)
+  const [snapshot, setSnapshot] = useState<{ messages: readonly FeedbackMessage[]; visible: string[]; height: number; listHeight: number; hasMore: boolean; errorMessage?: string } | null>(null)
   const panel = useRef<HTMLDivElement>(null)
   const trigger = useRef<HTMLButtonElement>(null)
   const list = useRef<HTMLOListElement>(null)
@@ -69,7 +69,8 @@ export function MessageCenter() {
     return a.id === b.id ? 0 : a.id < b.id ? 1 : -1
   }), [state.messages])
   const displayed = snapshot?.messages ?? messages
-  const displayError = snapshot ? snapshot.error : state.error
+  const displayError = snapshot ? snapshot.errorMessage : state.errorMessage
+  const loading = state.status === 'loading'
 
   const changeOpen = (next: boolean) => {
     interaction.current += 1
@@ -78,7 +79,7 @@ export function MessageCenter() {
       returnFocus.current = document.activeElement instanceof HTMLElement && document.activeElement !== trigger.current && document.activeElement !== document.body ? document.activeElement : returnFocus.current
       setSnapshot(null)
       setPhase('idle')
-      void useMessageStore.getState().refresh()
+      void useMessageStore.getState().load()
     }
     useMessageStore.getState().setViewing(next)
     setOpen(next)
@@ -118,7 +119,7 @@ export function MessageCenter() {
     const startedAt = interaction.current
     const visible = list.current ? visibleMessageIds(list.current) : []
     setSnapshot({ messages, visible, height: panel.current?.getBoundingClientRect().height ?? 0,
-      listHeight: list.current?.getBoundingClientRect().height ?? 0, hasMore: state.hasMore, error: state.error })
+      listHeight: list.current?.getBoundingClientRect().height ?? 0, hasMore: state.hasMore, errorMessage: state.errorMessage })
     setPhase('saving')
     const succeeded = await useMessageStore.getState().clear()
     if (!mounted.current || !openRef.current || startedAt !== interaction.current) return
@@ -186,9 +187,9 @@ export function MessageCenter() {
               return <MessageItem key={message.id} message={message} unsaved={state.unsavedIds.includes(message.id)} delay={delay} />
             })}
           </ol>
-          {!displayed.length && !state.loading && !state.error && <p className="message-empty text-center text-sm text-fg-subtle">暂无消息</p>}
-          {state.loading && <p role="status" className="px-4 py-3 text-center text-xs text-fg-subtle">正在读取消息…</p>}
-          {(snapshot ? snapshot.hasMore : state.hasMore) && !state.loading && <Button variant="outline" type="button" disabled={phase !== 'idle'} className="message-more" onClick={() => { void state.loadMore() }}>加载更多</Button>}
+          {!displayed.length && !loading && !state.errorMessage && <p className="message-empty text-center text-sm text-fg-subtle">暂无消息</p>}
+          {loading && <p role="status" className="px-4 py-3 text-center text-xs text-fg-subtle">正在读取消息…</p>}
+          {(snapshot ? snapshot.hasMore : state.hasMore) && !loading && <Button variant="outline" type="button" disabled={phase !== 'idle'} className="message-more" onClick={() => { void state.loadMore() }}>加载更多</Button>}
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>

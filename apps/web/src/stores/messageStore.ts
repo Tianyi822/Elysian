@@ -12,15 +12,15 @@ export type MessageState = {
   unsavedIds: readonly string[]
   unread: boolean
   viewing: boolean
-  loading: boolean
+  status: 'idle' | 'loading' | 'ready' | 'error'
   hasMore: boolean
   cursor?: MessageCursor
-  error: string | null
+  errorMessage?: string
   errorKind: ErrorKind
   announcement: FeedbackMessage | null
   notify(input: MessageInput): string
   update(id: string, input: MessageInput): void
-  refresh(): Promise<void>
+  load(): Promise<void>
   loadMore(): Promise<void>
   setViewing(viewing: boolean): void
   clear(): Promise<boolean>
@@ -69,18 +69,18 @@ export function createMessageStore(
           }
         } catch {
           set(state => ({
-            error: '部分消息未能保存，仅在当前页面可用。请重试。', errorKind: 'write',
+            errorMessage: '部分消息未能保存，仅在当前页面可用。请重试。', errorKind: 'write',
             unsavedIds: [...new Set([...state.unsavedIds, message.id])],
           }))
         }
       })
     }
     const read = async (more: boolean) => {
-      if (more && (get().loading || !get().hasMore)) return
+      if (more && (get().status === 'loading' || !get().hasMore)) return
       const version = ++loadVersion
       const cursor = more ? get().cursor : undefined
       const limit = more ? 50 : Math.max(50, get().messages.length)
-      set({ loading: true })
+      set({ status: 'loading' })
       await enqueue(async () => {
         try {
           if (get().viewing) await adapter.markAllRead()
@@ -90,18 +90,18 @@ export function createMessageStore(
           const messages = merge(more ? [...page.messages].reverse() : [], more ? get().messages : [...page.messages].reverse(), pending.values())
           set(state => ({
             messages: state.viewing ? messages.map(message => ({ ...message, read: true })) : messages,
-            cursor: page.cursor, hasMore: Boolean(page.cursor), loading: false,
+            cursor: page.cursor, hasMore: Boolean(page.cursor), status: 'ready',
             unread: !state.viewing && (unread || [...pending.values()].some(message => !message.read)),
-            ...(state.errorKind === 'read' ? { error: null, errorKind: null } : {}),
+            ...(state.errorKind === 'read' ? { errorMessage: undefined, errorKind: null } : {}),
           }))
         } catch {
-          if (version === loadVersion) set({ loading: false, error: '无法读取本地消息，请重试。', errorKind: 'read' })
+          if (version === loadVersion) set({ status: 'error', errorMessage: '无法读取本地消息，请重试。', errorKind: 'read' })
         }
       })
     }
     return {
-      messages: [], unsavedIds: [], unread: false, viewing: false, loading: false, hasMore: false,
-      error: null, errorKind: null, announcement: null,
+      messages: [], unsavedIds: [], unread: false, viewing: false, status: 'idle', hasMore: false,
+      errorMessage: undefined, errorKind: null, announcement: null,
       notify(input) {
         const message: FeedbackMessage = { ...input, id: id(), occurredAt: now(), read: get().viewing }
         revisions.set(message.id, ++mutation)
@@ -116,50 +116,51 @@ export function createMessageStore(
         set(state => ({ messages: merge(state.messages, [message]), unread: state.unread || !message.read, announcement: message }))
         persist(message)
       },
-      refresh: () => read(false),
+      load: () => read(false),
       loadMore: () => read(true),
       setViewing(viewing) {
         set(state => ({ viewing, ...(viewing ? { unread: false, messages: state.messages.map(message => ({ ...message, read: true })) } : {}) }))
         if (viewing) for (const [id, message] of pending) pending.set(id, { ...message, read: true })
         if (viewing) void enqueue(async () => {
           try { await adapter.markAllRead() }
-          catch { set({ error: '无法保存消息已读状态，请重试。', errorKind: 'read' }) }
+          catch { set({ errorMessage: '无法保存消息已读状态，请重试。', errorKind: 'read' }) }
         })
       },
       async clear() {
-        ++loadVersion
+        const version = ++loadVersion
         const snapshot = new Map(get().messages.map(message => [message.id, revisions.get(message.id) ?? 0]))
         const pendingSnapshot = new Map([...pending.keys()].map(id => [id, revisions.get(id)]))
-        set({ viewing: false, loading: false })
+        set(state => ({ viewing: false, status: state.status === 'loading' ? 'idle' : state.status }))
         return enqueue(async () => {
           try {
             await adapter.clear()
             set(state => {
               const messages = state.messages.filter(message => !snapshot.has(message.id) || snapshot.get(message.id) !== (revisions.get(message.id) ?? 0))
               return { messages, unread: messages.some(message => !message.read), cursor: undefined, hasMore: false,
-                unsavedIds: state.unsavedIds.filter(value => messages.some(message => message.id === value)), error: null, errorKind: null,
+                unsavedIds: state.unsavedIds.filter(value => messages.some(message => message.id === value)), errorMessage: undefined, errorKind: null,
+                status: version === loadVersion ? 'ready' : state.status,
                 announcement: messages.length ? state.announcement : null }
             })
             for (const [messageId, revision] of pendingSnapshot) if (revisions.get(messageId) === revision) pending.delete(messageId)
             return true
           } catch {
-            set({ error: '清空消息失败，本地记录仍然保留。请重试。', errorKind: 'clear' })
+            set({ errorMessage: '清空消息失败，本地记录仍然保留。请重试。', errorKind: 'clear' })
             return false
           }
         })
       },
       async retry() {
         const messages = [...pending.values()]
-        set({ error: null, errorKind: null })
+        set({ errorMessage: undefined, errorKind: null })
         for (const message of messages) persist(message)
         await read(false)
       },
       subscribe() {
-        const refresh = () => { if (document.visibilityState !== 'hidden') void get().refresh() }
+        const refresh = () => { if (document.visibilityState !== 'hidden') void get().load() }
         const unsubscribe = adapter.subscribe(refresh)
         window.addEventListener('focus', refresh)
         document.addEventListener('visibilitychange', refresh)
-        void get().refresh()
+        void get().load()
         return () => { unsubscribe(); window.removeEventListener('focus', refresh); document.removeEventListener('visibilitychange', refresh) }
       },
       flush: () => tail,

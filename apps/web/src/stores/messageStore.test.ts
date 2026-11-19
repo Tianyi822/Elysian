@@ -13,12 +13,13 @@ describe('持久化消息', () => {
     const { adapter, store } = setup()
     await adapter.put({ id: 'saved', message: '已保存', tone: 'info', read: false, occurredAt: '2026-10-29T05:00:00.000Z' })
     vi.spyOn(adapter, 'list').mockRejectedValueOnce(new Error('存储不可用'))
-    await store.getState().refresh()
-    expect(store.getState().errorKind).toBe('read')
-    expect(store.getState().messages).toEqual([])
+    expect(store.getState().status).toBe('idle')
+    const load = store.getState().load()
+    expect(store.getState().status).toBe('loading')
+    await load
+    expect(store.getState()).toMatchObject({ status: 'error', errorKind: 'read', messages: [] })
     await store.getState().retry()
-    expect(store.getState().error).toBeNull()
-    expect(store.getState().messages).toHaveLength(1)
+    expect(store.getState()).toMatchObject({ status: 'ready', errorMessage: undefined, messages: [expect.objectContaining({ id: 'saved' })] })
   })
   it('发布与更新保留 ID，刷新恢复记录和已读', async () => {
     const { adapter, store, setTime } = setup()
@@ -30,7 +31,7 @@ describe('持久化消息', () => {
     store.getState().update(first, { tone: 'warning', message: '更新后的第一条' })
     await store.getState().flush()
     const restored = createMessageStore(adapter)
-    await restored.getState().refresh()
+    await restored.getState().load()
     expect(restored.getState().unread).toBe(true)
     expect(restored.getState().messages).toEqual(expect.arrayContaining([expect.objectContaining({ id: first, message: '更新后的第一条', occurredAt: '2026-10-29T05:01:00.000Z', read: false })]))
     restored.getState().setViewing(true)
@@ -45,7 +46,7 @@ describe('持久化消息', () => {
     for (let index = 0; index < 125; index++) store.getState().notify({ tone: 'info', message: String(index) })
     await store.getState().flush()
     const restored = createMessageStore(adapter)
-    await restored.getState().refresh()
+    await restored.getState().load()
     expect(restored.getState().messages).toHaveLength(50)
     await restored.getState().loadMore()
     expect(restored.getState().messages).toHaveLength(100)
@@ -53,7 +54,8 @@ describe('持久化消息', () => {
     expect(restored.getState().messages).toHaveLength(125)
     expect(restored.getState().hasMore).toBe(false)
     expect(await restored.getState().clear()).toBe(true)
-    await restored.getState().refresh()
+    expect(restored.getState().status).toBe('ready')
+    await restored.getState().load()
     expect(restored.getState().messages).toEqual([])
   })
   it('清空期间新增消息保留并维持未读', async () => {
@@ -73,13 +75,34 @@ describe('持久化消息', () => {
     expect(store.getState().unread).toBe(true)
     expect((await adapter.list()).messages.map(item => item.message)).toEqual(['清空后新消息'])
   })
+  it('清空使旧读取失效，清空结束不提前结算后续读取', async () => {
+    const { adapter, store } = setup()
+    const persisted = { id: 'old', message: '旧消息', tone: 'info' as const, read: false, occurredAt: '2026-10-29T05:00:00.000Z' }
+    let resolveOld!: (value: Awaited<ReturnType<typeof adapter.list>>) => void
+    let resolveNext!: (value: Awaited<ReturnType<typeof adapter.list>>) => void
+    vi.spyOn(adapter, 'list')
+      .mockReturnValueOnce(new Promise(resolve => { resolveOld = resolve }))
+      .mockReturnValueOnce(new Promise(resolve => { resolveNext = resolve }))
+
+    const old = store.getState().load()
+    const clear = store.getState().clear()
+    const next = store.getState().load()
+    resolveOld({ messages: [persisted] })
+    await old
+    expect(await clear).toBe(true)
+    expect(store.getState()).toMatchObject({ status: 'loading', messages: [] })
+    resolveNext({ messages: [] })
+    await next
+    expect(store.getState()).toMatchObject({ status: 'ready', messages: [] })
+  })
   it('保存失败保留仅本页消息，重试可持久化', async () => {
     const { adapter, store } = setup()
     vi.spyOn(adapter, 'put').mockRejectedValueOnce(new Error('配额不足'))
     const id = store.getState().notify({ tone: 'info', message: '未能保存' })
     await store.getState().flush()
     expect(store.getState().unsavedIds).toEqual([id])
-    expect(store.getState().error).toContain('仅在当前页面可用')
+    await store.getState().load()
+    expect(store.getState()).toMatchObject({ status: 'ready', errorKind: 'write', errorMessage: expect.stringContaining('仅在当前页面可用') })
     await store.getState().retry()
     expect(store.getState().unsavedIds).toEqual([])
     expect((await adapter.list()).messages[0]?.id).toBe(id)
@@ -96,7 +119,7 @@ describe('持久化消息', () => {
     expect(store.getState().unread).toBe(false)
     expect((await adapter.list()).messages[0]?.read).toBe(true)
     const restored = createMessageStore(adapter)
-    await restored.getState().refresh()
+    await restored.getState().load()
     expect(restored.getState().unread).toBe(false)
   })
   it('清空失败保留记录，成功后不会被旧失败写入复活', async () => {
