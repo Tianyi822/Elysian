@@ -135,6 +135,28 @@ describe('useSilentPolling', () => {
     expect(task).toHaveBeenCalledTimes(2)
   })
 
+  it('恢复可见和聚焦同时发生，合为一次回读且不与定时读取重叠', async () => {
+    const task = vi.fn(async () => {})
+    const { task: focus, calls } = deferredTask()
+    const view = renderHook(() => useSilentPolling(task, { intervalMs: 3000, onFocus: focus }))
+    Object.defineProperty(document, 'hidden', { value: true, configurable: true })
+    document.dispatchEvent(new Event('visibilitychange'))
+    Object.defineProperty(document, 'hidden', { value: false, configurable: true })
+    await act(async () => {
+      document.dispatchEvent(new Event('visibilitychange'))
+      window.dispatchEvent(new Event('focus'))
+    })
+    await advancePoll(3000)
+    expect(focus).toHaveBeenCalledTimes(1)
+    expect(task).not.toHaveBeenCalled()
+    await act(async () => { calls[0]!.resolve() })
+    await advancePoll(3000)
+    expect(task).toHaveBeenCalledTimes(1)
+    view.unmount()
+    window.dispatchEvent(new Event('focus'))
+    expect(focus).toHaveBeenCalledTimes(1)
+  })
+
   it('间隔变化先 abort 旧轮，并等未响应取消的请求结束后再开新轮', async () => {
     const { task, calls } = deferredTask()
     const view = renderHook(({ intervalMs }: { intervalMs: number }) =>

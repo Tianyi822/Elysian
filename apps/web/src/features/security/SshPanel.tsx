@@ -17,6 +17,7 @@ import { ChipGroup } from '../../components/ChipGroup'
 import { StatusTag } from '../../components/StatusTag'
 import { DemoBadge } from '../../components/DemoBadge'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
+import { useSilentPolling } from '../../components/useSilentPolling'
 import { formatDateTime, formatLoginIp, formatLoginTime } from '../../components/format'
 import { RefreshCw, TriangleAlert } from '../../components/icons'
 import { useSshStore } from '../../stores/sshStore'
@@ -100,13 +101,8 @@ export function SshPanel() {
 
   useEffect(() => {
     void load(gateway)
-    const tick = () => { if (document.visibilityState !== 'hidden') void refresh(gateway) }
-    const focus = () => { if (document.visibilityState !== 'hidden') void load(gateway) }
-    const interval = window.setInterval(tick, 5_000)
-    window.addEventListener('focus', focus)
-    document.addEventListener('visibilitychange', focus)
-    return () => { window.clearInterval(interval); window.removeEventListener('focus', focus); document.removeEventListener('visibilitychange', focus) }
-  }, [gateway, load, refresh])
+  }, [gateway, load])
+  useSilentPolling(() => refresh(gateway), { intervalMs: 5_000, onFocus: () => load(gateway) })
 
   if (!overview && (status === 'loading' || status === 'idle')) {
     return <LoadingState label="正在加载 SSH 配置…" />

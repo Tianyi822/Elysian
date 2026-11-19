@@ -6,6 +6,7 @@ import { SEED_LOGIN_RECORDS, SEED_SSH_PORT, SEED_SSH_STATS } from '../../adapter
 import { resetFirewallData } from '../../adapters/mock/firewallData'
 import { useMessageStore } from '../../stores/messageStore'
 import { SSH_PAGE_SIZE, useSshStore } from '../../stores/sshStore'
+import { advancePoll } from '../../test/agentTestUtils'
 import { renderApp } from '../../test/renderApp'
 import { INITIAL_SSH_STATE, openSshTab, resetSshPanel, securityTab, sshSessions } from '../../test/sshPanel'
 import { scrollTablesToEnd } from '../../test/tableRows'
@@ -465,26 +466,56 @@ describe('SSH 管理页签', () => {
     expect(useMessageStore.getState().messages.some((entry) => entry.message.includes('服务端未返回防火墙联动结果'))).toBe(true)
   })
 
-  it('页面五秒静默刷新，隐藏时暂停，重新可见时回读', async () => {
-    const session = sshSessions()
-    const intervals = vi.spyOn(window, 'setInterval')
-    const refresh = vi.spyOn(useSshStore.getState(), 'refresh')
-    const load = vi.spyOn(useSshStore.getState(), 'load')
+  it('每五秒静默读取服务和记录，恢复可见或聚焦时回读全部区块', async () => {
+    const { gateway } = sshSessions()
+    const overview = vi.spyOn(gateway.ssh, 'overview')
+    const records = vi.spyOn(gateway.ssh, 'listLoginRecords')
+    const keys = vi.spyOn(gateway.ssh, 'listKeys')
+    const root = vi.spyOn(gateway.ssh, 'rootAuth')
     const visible = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('visible')
+    const hidden = vi.spyOn(document, 'hidden', 'get').mockReturnValue(false)
+    vi.useFakeTimers()
+    const view = renderApp('/security', { gateway })
+    const advance = (ms: number) => act(() => advancePoll(ms))
+    const setHidden = (value: boolean) => {
+      visible.mockReturnValue(value ? 'hidden' : 'visible')
+      hidden.mockReturnValue(value)
+      document.dispatchEvent(new Event('visibilitychange'))
+    }
+    const expectReads = (automatic: number, all: number) => {
+      expect(overview).toHaveBeenCalledTimes(automatic + all)
+      expect(records).toHaveBeenCalledTimes(automatic + all)
+      expect(keys).toHaveBeenCalledTimes(all)
+      expect(root).toHaveBeenCalledTimes(all)
+    }
     try {
-      await openSshTab(session.gateway)
-      const calls = intervals.mock.calls.filter((call) => call[1] === 5000)
-      const callback = calls[calls.length - 1]?.[0]
-      expect(typeof callback).toBe('function')
-      await act(async () => { if (typeof callback === 'function') callback() })
-      expect(refresh).toHaveBeenCalled()
-      refresh.mockClear(); visible.mockReturnValue('hidden')
-      await act(async () => { if (typeof callback === 'function') callback() })
-      expect(refresh).not.toHaveBeenCalled()
-      load.mockClear(); visible.mockReturnValue('visible')
-      await act(async () => { document.dispatchEvent(new Event('visibilitychange')) })
-      expect(load).toHaveBeenCalled()
-    } finally { intervals.mockRestore(); refresh.mockRestore(); load.mockRestore(); visible.mockRestore() }
+      await advance(0)
+      fireEvent.click(securityTab('SSH 管理'))
+      await advance(0)
+      const refresh = within(screen.getByRole('region', { name: 'SSH 服务' })).getByRole('button', { name: '刷新 SSH 状态' })
+      expectReads(0, 1)
+      await advance(4_999)
+      expectReads(0, 1)
+      await advance(1)
+      expectReads(1, 1)
+      expect(refresh).toBeEnabled()
+
+      await act(async () => {
+        setHidden(true)
+        window.dispatchEvent(new Event('focus'))
+      })
+      await advance(10_000)
+      expectReads(1, 1)
+      await act(async () => { setHidden(false) })
+      expectReads(1, 2)
+      await act(async () => { window.dispatchEvent(new Event('focus')) })
+      expectReads(1, 3)
+    } finally {
+      view.unmount()
+      visible.mockRestore()
+      hidden.mockRestore()
+      vi.useRealTimers()
+    }
   })
 
   it('日志不可用显示原因，不展示零值统计', async () => {

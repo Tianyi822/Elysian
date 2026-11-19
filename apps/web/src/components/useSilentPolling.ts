@@ -1,5 +1,7 @@
 import { useEffect, useRef, useState } from 'react'
 
+type PollTask = (signal: AbortSignal) => Promise<void>
+
 /*
  * 页面静默回读，不驱动手动刷新按钮。
  * - setTimeout 链而非 setInterval：下一次在上一次完成后才排，绝不重叠；
@@ -20,22 +22,25 @@ export type UseSilentPollingOptions = {
   immediate?: boolean
   /** 默认在后台暂停；需要保持原后台节奏的调用方可设为 false。 */
   pauseOnHidden?: boolean
+  /** 可选的回读动作，在窗口聚焦或页面恢复可见时替代定时任务。 */
+  onFocus?: PollTask
 }
 
 export function useSilentPolling(
-  task: (signal: AbortSignal) => Promise<void>,
+  task: PollTask,
   options: UseSilentPollingOptions,
 ): { degraded: boolean } {
   const [degraded, setDegraded] = useState(false)
-  const taskRef = useRef(task)
+  const tasksRef = useRef({ task, onFocus: options.onFocus })
   // Effect 换代时旧请求可能尚未响应 abort；跨代保留在途 Promise，避免新周期重叠。
   const activeTaskRef = useRef<Promise<void> | undefined>(undefined)
-  taskRef.current = task
+  tasksRef.current = { task, onFocus: options.onFocus }
   const intervalMs = options.intervalMs
   const maxBackoffMs = options.maxBackoffMs ?? 60_000
   const enabled = options.enabled !== false
   const immediate = options.immediate === true
   const pauseOnHidden = options.pauseOnHidden !== false
+  const refreshOnFocus = options.onFocus !== undefined
 
   useEffect(() => {
     if (!enabled) return
@@ -46,7 +51,7 @@ export function useSilentPolling(
     let inFlight = false
     const isHidden = () => pauseOnHidden && document.hidden
 
-    const run = async () => {
+    const run = async (readOnFocus = false) => {
       if (cancelled || isHidden() || inFlight) return
       inFlight = true
       let delay = intervalMs
@@ -54,8 +59,11 @@ export function useSilentPolling(
       try {
         if (activeTaskRef.current) await activeTaskRef.current.catch(() => {})
         if (cancelled || isHidden()) return
+        const { task, onFocus } = tasksRef.current
+        const read = readOnFocus ? onFocus ?? task : task
         controller = new AbortController()
-        pending = Promise.resolve().then(() => taskRef.current(controller!.signal))
+        const signal = controller.signal
+        pending = Promise.resolve().then(() => read(signal))
         activeTaskRef.current = pending
         await pending
         if (cancelled) return
@@ -81,13 +89,17 @@ export function useSilentPolling(
       }, delay)
     }
 
+    const onFocus = () => { void run(true) }
     const onVisibility = () => {
       if (document.hidden) {
         if (timer !== undefined) clearTimeout(timer)
         timer = undefined
+      } else if (refreshOnFocus) {
+        onFocus()
       } else if (!cancelled && !inFlight && timer === undefined) schedule(0)
     }
     if (pauseOnHidden) document.addEventListener('visibilitychange', onVisibility)
+    if (refreshOnFocus) window.addEventListener('focus', onFocus)
 
     schedule(immediate ? 0 : intervalMs)
     return () => {
@@ -95,9 +107,10 @@ export function useSilentPolling(
       if (timer !== undefined) clearTimeout(timer)
       controller?.abort()
       if (pauseOnHidden) document.removeEventListener('visibilitychange', onVisibility)
+      if (refreshOnFocus) window.removeEventListener('focus', onFocus)
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [intervalMs, maxBackoffMs, enabled, immediate, pauseOnHidden])
+  }, [intervalMs, maxBackoffMs, enabled, immediate, pauseOnHidden, refreshOnFocus])
 
   return { degraded }
 }
