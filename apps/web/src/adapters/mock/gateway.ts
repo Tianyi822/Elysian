@@ -10,13 +10,13 @@ import {
   MockContainerAdapter,
   MockDependenciesAdapter,
   MockFirewallAdapter,
-  MockLogsAdapter,
   MockSshAdapter,
   MockUserAdapter,
   MockWebsitesAdapter,
   createInMemoryEventsAdapter,
 } from './mockAdapters'
 import { MockFilesAdapter } from './filesMockAdapter'
+import { MockLogsAdapter } from './logsMockAdapter'
 import { MockSessionAdapter } from './sessionMockAdapter'
 import { createResilientEventsAdapter } from '../sse/eventsAdapter'
 import { sharedSubscription } from '../sse/sharedSubscription'
