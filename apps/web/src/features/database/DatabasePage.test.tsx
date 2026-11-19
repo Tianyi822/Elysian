@@ -257,13 +257,22 @@ describe('数据库页面', () => {
       expect(list).toHaveBeenCalledTimes(1)
 
       const rows = await list.mock.results[0]!.value
+      const files = await listSqlite.mock.results[0]!.value
       let finish!: (value: typeof rows) => void
+      let finishSqlite!: (value: typeof files) => void
       list.mockReturnValueOnce(new Promise(resolve => { finish = resolve }))
+      listSqlite.mockReturnValueOnce(new Promise(resolve => { finishSqlite = resolve }))
       await advance(1)
       expect(list).toHaveBeenCalledTimes(2)
       expect(refresh).toBeEnabled()
       expect(card).toBeInTheDocument()
+      fireEvent.click(refresh)
+      expect(refresh).toBeDisabled()
+      expect(list).toHaveBeenCalledTimes(2)
+      expect(listSqlite).toHaveBeenCalledTimes(2)
       await act(async () => { finish(rows) })
+      expect(refresh).toBeEnabled()
+      await act(async () => { finishSqlite(files) })
 
       setHidden(true)
       await advance(30_000)

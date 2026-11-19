@@ -42,8 +42,7 @@ export type DatabaseState = {
   removingSqliteIds: readonly string[]
   clearDisplay(): void
   setEngine(engine: DatabaseContainerEngine): void
-  load(gateway: ElysianGateway): Promise<void>
-  refresh(gateway: ElysianGateway, showIndicator?: boolean): Promise<void>
+  load(gateway: ElysianGateway, options?: { silent?: boolean }): Promise<void>
   refreshAfterMutation(gateway: ElysianGateway, kind: DatabaseKind): Promise<void>
   openCreate(kind: 'container' | 'file'): void
   closeCreate(): void
@@ -78,7 +77,7 @@ const initialDisplay = {
   removingSqliteIds: [],
 } as const
 
-function refreshDataset(gateway: ElysianGateway, kind: DatabaseKind, showIndicator = false, afterMutation = false) {
+function loadDataset(gateway: ElysianGateway, kind: DatabaseKind, { silent, afterMutation = false }: { silent: boolean; afterMutation?: boolean }) {
   const auth = captureAuthGeneration()
   const container = kind === 'container'
   const status = container ? 'status' : 'sqliteStatus'
@@ -88,7 +87,7 @@ function refreshDataset(gateway: ElysianGateway, kind: DatabaseKind, showIndicat
   const pending = pendingLoads[kind]
   const sameRequestContext = pending?.gateway === gateway && pending.auth === auth
   if (sameRequestContext && !afterMutation) {
-    if (showIndicator && container) setState({ refreshing: true })
+    if (!silent && container) setState({ refreshing: true })
     return pending.promise
   }
   const state = getState()
@@ -99,7 +98,7 @@ function refreshDataset(gateway: ElysianGateway, kind: DatabaseKind, showIndicat
   setState({
     [status]: hadData ? 'ready' : 'loading',
     ...(!hadData ? { [errorMessage]: undefined } : {}),
-    ...(container ? { refreshing: showIndicator || (sameRequestContext && state.refreshing) } : {}),
+    ...(container ? { refreshing: !silent || (sameRequestContext && state.refreshing) } : {}),
   })
   operation.promise = (async () => {
     try {
@@ -142,13 +141,11 @@ export const useDatabaseStore = create<DatabaseState>((set, get) => ({
   setEngine: (engine) => {
     set({ engine })
   },
-  load(gateway) { return get().refresh(gateway) },
-  /** 默认静默；手动刷新只驱动对应按钮，保留已读取的行。 */
-  async refresh(gateway, showIndicator = false) {
-    await Promise.all([refreshDataset(gateway, 'container', showIndicator), refreshDataset(gateway, 'file')])
+  async load(gateway, { silent = false } = {}) {
+    await Promise.all([loadDataset(gateway, 'container', { silent }), loadDataset(gateway, 'file', { silent })])
   },
   refreshAfterMutation(gateway, kind) {
-    return refreshDataset(gateway, kind, false, true)
+    return loadDataset(gateway, kind, { silent: true, afterMutation: true })
   },
 
   openCreate(kind) {

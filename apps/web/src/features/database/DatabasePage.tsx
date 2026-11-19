@@ -72,7 +72,6 @@ export function DatabasePage() {
   const errorMessage = useDatabaseStore((state) => state.errorMessage)
   const refreshing = useDatabaseStore((state) => state.refreshing)
   const load = useDatabaseStore((state) => state.load)
-  const refresh = useDatabaseStore((state) => state.refresh)
   const openCreate = useDatabaseStore((state) => state.openCreate)
   const removingContainerIds = useDatabaseStore((state) => state.removingContainerIds)
   const removingSqliteIds = useDatabaseStore((state) => state.removingSqliteIds)
@@ -81,11 +80,11 @@ export function DatabasePage() {
   const check = useDependencyProbeStore((state) => state.check)
 
   useEffect(() => {
-    void load(gateway)
+    void load(gateway, { silent: true })
     // 依赖检测幂等：切页重挂不重探，报告由探测层消费。
     void check(gateway)
   }, [gateway, load, check])
-  useSilentPolling(() => refresh(gateway), { intervalMs: 15_000 })
+  useSilentPolling(() => load(gateway, { silent: true }), { intervalMs: 15_000 })
 
   const containerById = useMemo(
     () => new Map(containers.map((container) => [container.id, container])),
@@ -97,18 +96,18 @@ export function DatabasePage() {
   return (
     <>
       <section aria-label="数据库实例" className="mb-6">
-        {status === 'ready' && errorMessage ? <StaleDataBanner className="mb-3" error={errorMessage} onRetry={() => void refresh(gateway, true)} /> : null}
+        {status === 'ready' && errorMessage ? <StaleDataBanner className="mb-3" error={errorMessage} onRetry={() => void load(gateway)} /> : null}
         <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
           <h2 className="text-base font-semibold">{engine} 数据库容器</h2>
           <div className={`${CTL_TOOLBAR} flex flex-wrap items-center gap-2`}>
-            <RefreshButton onPress={() => void refresh(gateway, true)} busy={refreshing} />
+            <RefreshButton onPress={() => void load(gateway)} busy={refreshing} />
             <Button variant="primary" type="button" disabled={status !== 'ready'} onClick={() => openCreate('container')} className={CTL_PRIMARY}>
               添加数据库
             </Button>
           </div>
         </div>
         {status === 'error' ? (
-          <ErrorState title="数据库数据加载失败" description={errorMessage} onRetry={() => void load(gateway)} />
+          <ErrorState title="数据库数据加载失败" description={errorMessage} onRetry={() => void load(gateway, { silent: true })} />
         ) : status !== 'ready' ? (
           <LoadingState label="正在加载数据库数据…" />
         ) : filtered.length === 0 ? (
@@ -178,11 +177,11 @@ function SqliteFilesSection({
       {status === 'ready' && errorMessage ? (
         <p role="alert" className="mb-3 text-xs text-danger">
           SQLite 文件刷新失败，已保留上次读取结果。{errorMessage}
-          <Button variant="link" type="button" className="ml-2 underline" onClick={() => void load(gateway)}>重试</Button>
+          <Button variant="link" type="button" className="ml-2 underline" onClick={() => void load(gateway, { silent: true })}>重试</Button>
         </p>
       ) : null}
       {status === 'error' ? (
-        <ErrorState title="SQLite 文件加载失败" description={errorMessage} onRetry={() => void load(gateway)} />
+        <ErrorState title="SQLite 文件加载失败" description={errorMessage} onRetry={() => void load(gateway, { silent: true })} />
       ) : status !== 'ready' ? (
         <LoadingState label="正在加载 SQLite 文件…" />
       ) : files.length === 0 ? (
