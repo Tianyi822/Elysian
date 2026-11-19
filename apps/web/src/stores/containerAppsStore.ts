@@ -14,6 +14,7 @@ import type { ElysianGateway } from '../contracts/adapters'
 import { useMessageStore } from './messageStore'
 import { isContainerBuildActive } from '@elysian/contracts'
 import { messageOf } from '../utils/errorMessage'
+import { createRequestGuard } from './requestGuard'
 
 /**
  * 容器工作区的界面状态。数据一律经 gateway.containers 的 adapter 取，
@@ -70,6 +71,7 @@ export type ContainerAppsState = {
   buildsError: Record<string, string | null>
   buildPreview: ContainerBuildPreviewState | null
   buildLogs: Record<string, ContainerBuildLogsState>
+  clearDisplay(): void
   load(gateway: ElysianGateway): Promise<void>
   refresh(gateway: ElysianGateway, options?: { silent?: boolean }): Promise<void>
   create(gateway: ElysianGateway, input: { slug: string; displayName: string }): Promise<boolean>
@@ -115,10 +117,12 @@ export const WORKSPACE_WRITING_PATH = '*'
 
 let pendingApps: { gateway: ElysianGateway; auth: number; snapshot: readonly ContainerApp[]; promise: Promise<void> } | undefined
 const pendingBuilds = new Map<string, { gateway: ElysianGateway; auth: number; snapshot: readonly ContainerBuildTask[] | undefined; promise: Promise<void> }>()
+const workspaceRequests = createRequestGuard()
 
-export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
+const initialDisplay = {
   status: 'idle',
   apps: [],
+  errorMessage: undefined,
   refreshing: false,
   creating: false,
   createError: null,
@@ -130,6 +134,17 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
   buildsError: {},
   buildPreview: null,
   buildLogs: {},
+} as const
+
+export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
+  ...initialDisplay,
+
+  clearDisplay() {
+    workspaceRequests.invalidate()
+    pendingApps = undefined
+    pendingBuilds.clear()
+    set(initialDisplay)
+  },
 
   load(gateway) { return get().refresh(gateway, { silent: true }) },
 
@@ -163,13 +178,16 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
   },
 
   async create(gateway, input) {
+    const current = workspaceRequests.capture()
     set({ creating: true, createError: null })
     try {
       const created = await gateway.containers.createApp(input)
+      if (!current()) return false
       set((state) => ({ creating: false, apps: [...state.apps, created].sort((a, b) => a.slug.localeCompare(b.slug)) }))
       useMessageStore.getState().notify({ tone: 'success', message: `已创建工作区 ${created.slug}` })
       return true
     } catch (cause) {
+      if (!current()) return false
       set({ creating: false, createError: detail(cause) })
       useMessageStore.getState().notify({ tone: 'danger', message: `创建工作区失败：${detail(cause)}` })
       return false
@@ -177,8 +195,10 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
   },
 
   async remove(gateway, slug) {
+    const current = workspaceRequests.capture()
     try {
       await gateway.containers.removeApp(slug)
+      if (!current()) return
       set((state) => {
         // 工作区没了，它的任务清单、预览与日志状态一并让位，不留悬挂键。
         const buildsBySlug = { ...state.buildsBySlug }
@@ -201,6 +221,7 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
       })
       useMessageStore.getState().notify({ tone: 'success', message: `已删除工作区 ${slug} 及其目录` })
     } catch (cause) {
+      if (!current()) return
       // 409（活跃构建任务拦截）等服务端错误原文在这里原样透出。
       useMessageStore.getState().notify({ tone: 'danger', message: `删除工作区失败：${detail(cause)}` })
     }
@@ -212,6 +233,7 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
    */
   async upload(gateway, slug, files) {
     if (files.length === 0) return
+    const current = workspaceRequests.capture()
     set({ writing: appWritingKey(slug, WORKSPACE_WRITING_PATH) })
     const uploaded: string[] = []
     try {
@@ -220,6 +242,7 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
         const relative = (file as File & { webkitRelativePath?: string }).webkitRelativePath || file.name
         set({ writing: appWritingKey(slug, relative) })
         const saved = await gateway.containers.uploadAppFile(slug, relative, file)
+        if (!current()) return
         uploaded.push(saved.path)
       }
       useMessageStore.getState().notify({
@@ -227,39 +250,47 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
         message: uploaded.length === 1 ? `已上传 ${uploaded[0]}` : `已上传 ${uploaded.length} 个文件`,
       })
     } catch (cause) {
+      if (!current()) return
       useMessageStore.getState().notify({
         tone: 'danger',
         message: `上传文件失败：${detail(cause)}${uploaded.length > 0 ? `（已有 ${uploaded.length} 个文件上传成功）` : ''}`,
       })
     } finally {
       // 中途失败或写超时也回读事实；已落盘的文件不能因为后一项失败而藏在旧清单之外。
-      await get().refresh(gateway, { silent: true })
-      set({ writing: null })
+      if (current()) {
+        await get().refresh(gateway, { silent: true })
+        if (current()) set({ writing: null })
+      }
     }
     const compose = uploaded.filter(isComposeFile).pop()
-    if (compose) void get().runCheck(gateway, slug, compose)
+    if (compose && current()) void get().runCheck(gateway, slug, compose)
   },
 
   async save(gateway, slug, path, content) {
+    const current = workspaceRequests.capture()
     set({ writing: appWritingKey(slug, path) })
     try {
       await gateway.containers.writeAppContent(slug, path, content)
+      if (!current()) return false
       await get().refresh(gateway, { silent: true })
+      if (!current()) return false
       useMessageStore.getState().notify({ tone: 'success', message: `已保存 ${path}` })
       if (isComposeFile(path)) void get().runCheck(gateway, slug, path)
       return true
     } catch (cause) {
-      useMessageStore.getState().notify({ tone: 'danger', message: `保存失败：${detail(cause)}` })
+      if (current()) useMessageStore.getState().notify({ tone: 'danger', message: `保存失败：${detail(cause)}` })
       return false
     } finally {
-      set({ writing: null })
+      if (current()) set({ writing: null })
     }
   },
 
   async removeFile(gateway, slug, path) {
+    const current = workspaceRequests.capture()
     set({ writing: appWritingKey(slug, path) })
     try {
       await gateway.containers.removeAppFile(slug, path)
+      if (!current()) return
       set((state) => ({
         apps: state.apps.map((app) =>
           app.slug === slug
@@ -270,19 +301,20 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
       }))
       useMessageStore.getState().notify({ tone: 'success', message: `已删除 ${path}` })
     } catch (cause) {
-      useMessageStore.getState().notify({ tone: 'danger', message: `删除文件失败：${detail(cause)}` })
+      if (current()) useMessageStore.getState().notify({ tone: 'danger', message: `删除文件失败：${detail(cause)}` })
     } finally {
-      set({ writing: null })
+      if (current()) set({ writing: null })
     }
   },
 
   async runCheck(gateway, slug, path) {
+    const current = workspaceRequests.capture()
     set({ check: { slug, path, result: null, loading: true, error: null } })
     try {
       const result = await gateway.containers.checkCompose(slug, path)
-      set({ check: { slug, path, result, loading: false, error: null } })
+      if (current()) set({ check: { slug, path, result, loading: false, error: null } })
     } catch (cause) {
-      set({ check: { slug, path, result: null, loading: false, error: detail(cause) } })
+      if (current()) set({ check: { slug, path, result: null, loading: false, error: detail(cause) } })
     }
   },
 
@@ -323,18 +355,21 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
   },
 
   async previewBuild(gateway, slug, input) {
+    const current = workspaceRequests.capture()
     set({ buildPreview: { slug, loading: true, error: null, plan: null, submitting: false, submitError: null } })
     try {
       const plan = await gateway.containers.previewAppBuild(slug, input)
+      if (!current()) return null
       set({ buildPreview: { slug, loading: false, error: null, plan, submitting: false, submitError: null } })
       return plan
     } catch (cause) {
-      set({ buildPreview: { slug, loading: false, error: detail(cause), plan: null, submitting: false, submitError: null } })
+      if (current()) set({ buildPreview: { slug, loading: false, error: detail(cause), plan: null, submitting: false, submitError: null } })
       return null
     }
   },
 
   async submitBuild(gateway, slug, input, options) {
+    const current = workspaceRequests.capture()
     set((state) => ({
       buildPreview: state.buildPreview?.slug === slug
         ? { ...state.buildPreview, submitting: true, submitError: null }
@@ -342,6 +377,7 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
     }))
     try {
       const task = await gateway.containers.submitAppBuild(slug, input)
+      if (!current()) return false
       set((state) => ({
         buildsBySlug: { ...state.buildsBySlug, [slug]: [task, ...(state.buildsBySlug[slug] ?? [])] },
         buildPreview: state.buildPreview?.slug === slug
@@ -351,6 +387,7 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
       useMessageStore.getState().notify({ tone: 'success', message: '已提交构建任务' })
       return true
     } catch (cause) {
+      if (!current()) return false
       const message = detail(cause)
       set((state) => ({
         buildPreview: state.buildPreview?.slug === slug
@@ -365,16 +402,19 @@ export const useContainerAppsStore = create<ContainerAppsState>((set, get) => ({
   },
 
   async cancelBuild(gateway, slug, taskId) {
+    const current = workspaceRequests.capture()
     try {
       await gateway.containers.cancelAppBuild(slug, taskId)
+      if (!current()) return
       const previous = get().buildsBySlug[slug]?.find((task) => task.id === taskId)
       await get().refreshBuilds(gateway, slug, { silent: true })
-      const current = get().buildsBySlug[slug]?.find((task) => task.id === taskId)
-      if (!previous || !isContainerBuildActive(previous.state) || current?.state !== 'cancelled') {
+      if (!current()) return
+      const task = get().buildsBySlug[slug]?.find((task) => task.id === taskId)
+      if (!previous || !isContainerBuildActive(previous.state) || task?.state !== 'cancelled') {
         useMessageStore.getState().notify({ tone: 'info', message: '已提交取消构建请求' })
       }
     } catch (cause) {
-      useMessageStore.getState().notify({ tone: 'danger', message: `取消构建任务失败：${detail(cause)}` })
+      if (current()) useMessageStore.getState().notify({ tone: 'danger', message: `取消构建任务失败：${detail(cause)}` })
     }
   },
 

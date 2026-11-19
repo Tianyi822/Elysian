@@ -1,5 +1,5 @@
 import { beforeEach, describe, expect, it, vi } from 'vitest'
-import type { ContainerBuildTask } from '@elysian/contracts'
+import type { ContainerAppFile, ContainerBuildTask } from '@elysian/contracts'
 import type { ElysianGateway } from '../contracts/adapters'
 import { createMockGateway } from '../adapters/mock/gateway'
 import {
@@ -7,6 +7,7 @@ import {
   useContainerAppsStore,
 } from './containerAppsStore'
 import { useMessageStore } from './messageStore'
+import { useSessionStore } from './sessionStore'
 
 /**
  * 构建任务区的 store 行为：提交入列、取消后的静默回读、日志增量与 requestId 生成。
@@ -14,22 +15,14 @@ import { useMessageStore } from './messageStore'
  */
 
 function resetStore() {
-  useContainerAppsStore.setState({
-    status: 'idle',
-    apps: [],
-    errorMessage: undefined,
-    refreshing: false,
-    creating: false,
-    createError: null,
-    writing: null,
-    check: null,
-    buildsBySlug: {},
-    buildsLoading: {},
-    buildsRefreshing: {},
-    buildsError: {},
-    buildPreview: null,
-    buildLogs: {},
-  })
+  useContainerAppsStore.getState().clearDisplay()
+}
+
+function deferred<T>() {
+  let resolve!: (value: T) => void
+  let reject!: (error: Error) => void
+  const promise = new Promise<T>((success, failure) => { resolve = success; reject = failure })
+  return { promise, resolve, reject }
 }
 
 async function seedWorkspace(gateway: ElysianGateway) {
@@ -40,6 +33,91 @@ async function seedWorkspace(gateway: ElysianGateway) {
 beforeEach(async () => {
   await useMessageStore.getState().clear()
   resetStore()
+})
+
+describe('工作区登录会话边界', () => {
+  beforeEach(() => useSessionStore.setState({ phase: 'authed', mode: 'real', username: 'admin' }))
+
+  const buildInput = { mode: 'dockerfile', requestId: '0f1e2d3c-4b5a-4978-8a9b-0c1d2e3f4a5b', dockerfile: 'Dockerfile' } as const
+
+  it('登出后旧批量上传不发送下一份文件、不回读也不通知', async () => {
+    const gateway = createMockGateway({ eventStream: 'memory' })
+    await gateway.containers.createApp({ slug: 'demo-app', displayName: '演示' })
+    const file = await gateway.containers.uploadAppFile('demo-app', 'compose.yml', new Blob(['services: {}']))
+    const old = deferred<ContainerAppFile>()
+    const upload = vi.spyOn(gateway.containers, 'uploadAppFile').mockReturnValueOnce(old.promise)
+    const list = vi.spyOn(gateway.containers, 'listApps')
+    const check = vi.spyOn(gateway.containers, 'checkCompose')
+    const store = useContainerAppsStore.getState()
+    await store.load(gateway)
+    const pending = store.upload(gateway, 'demo-app', [new File([], 'compose.yml'), new File([], 'second.txt')])
+    expect(upload).toHaveBeenCalledTimes(1)
+    await useSessionStore.getState().logout(gateway)
+    const afterLogout = useContainerAppsStore.getState()
+    list.mockClear()
+    old.resolve(file)
+    await pending
+
+    expect(upload).toHaveBeenCalledTimes(1)
+    expect(list).not.toHaveBeenCalled()
+    expect(check).not.toHaveBeenCalled()
+    expect(useMessageStore.getState().messages).toEqual([])
+    expect(afterLogout).toMatchObject({ status: 'idle', apps: [], writing: null })
+  })
+
+  it.each(['成功', '失败'] as const)('旧保存%s不释放新登录的同一文件保存', async (outcome) => {
+    const gateway = createMockGateway({ eventStream: 'memory' })
+    await seedWorkspace(gateway)
+    const file = (await gateway.containers.listApps())[0]!.files[0]!
+    const old = deferred<ContainerAppFile>()
+    const next = deferred<ContainerAppFile>()
+    vi.spyOn(gateway.containers, 'writeAppContent').mockReturnValueOnce(old.promise).mockReturnValueOnce(next.promise)
+    const list = vi.spyOn(gateway.containers, 'listApps')
+    const store = useContainerAppsStore.getState()
+    const session = useSessionStore.getState()
+    const first = store.save(gateway, 'demo-app', 'Dockerfile', '旧内容')
+    await session.logout(gateway)
+    await session.login(gateway, 'admin', 'password')
+    const second = store.save(gateway, 'demo-app', 'Dockerfile', '新内容')
+    if (outcome === '成功') old.resolve(file)
+    else old.reject(new Error('旧保存失败'))
+    const result = await first
+    const writing = useContainerAppsStore.getState().writing
+    const messages = useMessageStore.getState().messages.slice()
+    const reads = list.mock.calls.length
+    next.resolve(file)
+
+    expect(await second).toBe(true)
+    expect(result).toBe(false)
+    expect(writing).toBe('demo-app/Dockerfile')
+    expect(messages).toEqual([])
+    expect(reads).toBe(0)
+  })
+
+  it('会话失效清空构建列表、预览和日志，迟到回执不恢复状态', async () => {
+    const gateway = createMockGateway({ eventStream: 'memory' })
+    await seedWorkspace(gateway)
+    const task = await gateway.containers.submitAppBuild('demo-app', buildInput)
+    const store = useContainerAppsStore.getState()
+    await store.refreshBuilds(gateway, 'demo-app')
+    await store.previewBuild(gateway, 'demo-app', buildInput)
+    const oldBuild = deferred<ContainerBuildTask>()
+    const oldLogs = deferred<Awaited<ReturnType<typeof gateway.containers.getAppBuildLogs>>>()
+    vi.spyOn(gateway.containers, 'submitAppBuild').mockReturnValueOnce(oldBuild.promise)
+    vi.spyOn(gateway.containers, 'getAppBuildLogs').mockReturnValueOnce(oldLogs.promise)
+    const build = store.submitBuild(gateway, 'demo-app', buildInput)
+    const logs = store.openBuildLogs(gateway, 'demo-app', task.id)
+    useSessionStore.getState().expire()
+    const cleared = useContainerAppsStore.getState()
+    oldBuild.resolve(task)
+    oldLogs.resolve({ lines: ['旧日志'], next: 9, total: 9 })
+    await logs
+
+    expect(await build).toBe(false)
+    expect(cleared).toEqual(useContainerAppsStore.getInitialState())
+    expect(useContainerAppsStore.getState()).toBe(cleared)
+    expect(useMessageStore.getState().messages).toEqual([])
+  })
 })
 
 describe('工作区文件状态', () => {

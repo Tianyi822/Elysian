@@ -10,6 +10,7 @@ import { useRuntimeLogStore } from './runtimeLogStore'
 import { useSshStore } from './sshStore'
 import { useTerminalsStore } from './terminalsStore'
 import { useContainersStore } from './containersStore'
+import { useContainerAppsStore } from './containerAppsStore'
 import { useDatabaseStore } from './databaseStore'
 import { useModelSettingsStore } from './modelSettingsStore'
 import { useAgentRuntimeStore } from './agentRuntimeStore'
@@ -24,6 +25,7 @@ function clearPrivateDisplays() {
   const containers = useContainersStore.getState()
   containers.clearTerminalDisplay()
   containers.clearImagePullDisplay()
+  useContainerAppsStore.getState().clearDisplay()
   useDatabaseStore.getState().clearDisplay()
   useModelSettingsStore.getState().reset()
   useAgentRuntimeStore.getState().reset()
