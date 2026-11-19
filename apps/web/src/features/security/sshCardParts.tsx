@@ -1,7 +1,9 @@
-export { ToggleSwitch as SwitchToggle } from '../../components/ToggleSwitch'
 import { useId } from 'react'
 import type { ReactNode } from 'react'
+import { ToggleSwitch as SwitchToggle } from '../../components/ToggleSwitch'
 import { CTL_FIELD, CTL_PRIMARY, CTL_SECONDARY, FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
+
+export { SwitchToggle }
 
 /*
  * SSH 管理页的共用卡片部件：卡的形状、卡内区域的形状，以及卡内输入类控件与推进动作的类名。
@@ -76,5 +78,41 @@ export function Region({
       )}
       <div className={heading || aside ? 'mt-3' : ''}>{children}</div>
     </div>
+  )
+}
+
+export function SwitchRow({
+  label,
+  checked,
+  disabled = false,
+  layout = 'inline',
+  onCheckedChange,
+}: {
+  label: string
+  checked: boolean
+  disabled?: boolean
+  /**
+   * inline：始终左文右开关（Root 等单行区）。
+   * responsive：容器够宽时横排，窄时上文字下开关——服务状态三列共用，避免挤叠。
+   */
+  layout?: 'inline' | 'responsive'
+  onCheckedChange: (checked: boolean) => void
+}) {
+  return (
+    <label
+      className={`inline-flex shrink-0 text-sm text-fg ${
+        layout === 'responsive'
+          ? 'flex-col items-center gap-1.5 @md:flex-row @md:gap-2 @md:whitespace-nowrap'
+          : 'items-center gap-2 whitespace-nowrap'
+      } ${disabled ? 'opacity-50' : 'cursor-pointer'}`}
+    >
+      <span>{label}</span>
+      <SwitchToggle
+        label={label}
+        checked={checked}
+        disabled={disabled}
+        onCheckedChange={onCheckedChange}
+      />
+    </label>
   )
 }

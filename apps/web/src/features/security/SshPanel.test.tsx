@@ -10,7 +10,7 @@ import { advancePoll } from '../../test/agentTestUtils'
 import { renderApp } from '../../test/renderApp'
 import { INITIAL_SSH_STATE, openSshTab, resetSshPanel, securityTab, sshSessions } from '../../test/sshPanel'
 import { scrollTablesToEnd } from '../../test/tableRows'
-import { sshPortConfirmConsequences } from './SshPanel'
+import { sshPortConfirmConsequences } from './SshServiceCard'
 
 /**
  * SSH 管理页签的端到端行为：设置卡与数据页签、四状态、开关与保存、弱密码检测、密钥弹窗。
