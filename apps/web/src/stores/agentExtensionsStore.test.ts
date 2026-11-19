@@ -71,6 +71,30 @@ describe('技能目录', () => {
     expect(useAgentExtensionsStore.getState().deleteTarget).toBeNull()
     expect(useAgentExtensionsStore.getState().skills.some((item) => item.id === skill.id)).toBe(false)
   })
+
+  it('重置后旧 Skill 列表和详情请求不能覆盖新读取', async () => {
+    const store = useAgentExtensionsStore.getState()
+    const skills = await gateway.agentExtensions.listSkills()
+    const detail = await gateway.agentExtensions.getSkill(skills[0]!.id)
+    let resolveList!: (items: typeof skills) => void
+    let rejectDetail!: (error: Error) => void
+    vi.spyOn(gateway.agentExtensions, 'listSkills').mockImplementationOnce(() => new Promise(resolve => { resolveList = resolve }))
+    vi.spyOn(gateway.agentExtensions, 'getSkill').mockImplementationOnce(() => new Promise((_, reject) => { rejectDetail = reject }))
+
+    const oldList = store.loadSkills(gateway)
+    const oldDetail = store.loadSkillDetail(gateway, detail.id)
+    store.reset()
+    await Promise.all([store.loadSkills(gateway), store.loadSkillDetail(gateway, detail.id)])
+    const after = useAgentExtensionsStore.getState()
+    resolveList([])
+    rejectDetail(new Error('旧详情读取失败'))
+    await Promise.all([oldList, oldDetail])
+
+    const current = useAgentExtensionsStore.getState()
+    expect(current.skills).toBe(after.skills)
+    expect(current.skills).toEqual(skills)
+    expect(current.skillDetail).toMatchObject({ status: 'ready', item: detail })
+  })
 })
 
 describe('导入任务', () => {
