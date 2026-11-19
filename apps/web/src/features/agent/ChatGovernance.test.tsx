@@ -19,6 +19,26 @@ const governance = (): AgentChatGovernance => ({ decideAccess: vi.fn(async () =>
 beforeEach(async () => { useMessageStore.getState().clear(); sessionStorage.clear() })
 
 describe('聊天审批和执行范围', () => {
+  it('读取失败显示重试，重试过程中不误显示空列表', async () => {
+    const api = governance()
+    let resolve!: (rows: readonly AgentApproval[]) => void
+    vi.mocked(api.approvals)
+      .mockRejectedValueOnce(new Error('审批清单暂不可用'))
+      .mockReturnValueOnce(new Promise(done => { resolve = done }))
+    render(<ChatApprovals api={api} runId="run" onChanged={vi.fn()} onCancel={vi.fn()} />)
+
+    expect(screen.getByText('正在读取审批…')).toBeInTheDocument()
+    const retry = await screen.findByRole('button', { name: '重新读取审批' })
+    expect(screen.queryByText('暂无待审批操作。')).not.toBeInTheDocument()
+    expect(screen.queryByText('正在读取审批…')).not.toBeInTheDocument()
+    fireEvent.click(retry)
+    expect(screen.getByText('正在读取审批…')).toBeInTheDocument()
+    expect(screen.queryByText('暂无待审批操作。')).not.toBeInTheDocument()
+    await act(async () => resolve([]))
+    expect(screen.getByText('暂无待审批操作。')).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '重新读取审批' })).not.toBeInTheDocument()
+  })
+
   it('审批恢复完整命令、工作区版本与真实挂载，批准只作用于精确审批', async () => {
     const user = userEvent.setup()
     const api = governance()

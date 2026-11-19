@@ -11,11 +11,11 @@ import { createRequestGuard } from './requestGuard'
 type ChatApprovalsState = {
   approvals: readonly AgentApproval[]
   pending: Record<string, AgentAccessDecisionInput>
-  error: string | null
+  errorMessage?: string
   acting: boolean
-  loading: boolean
+  status: 'idle' | 'loading' | 'ready' | 'error'
   observe(): () => void
-  reload(): void
+  load(): void
   decide(id: string, decision: 'approved' | 'denied', onChanged: () => void): Promise<void>
   decideAccess(approval: AgentApproval, decision: AgentAccessDecisionInput['decision'], onChanged: () => void): Promise<void>
 }
@@ -49,14 +49,11 @@ export function createChatApprovalsStore(api: AgentChatGovernance | undefined, r
               row.access?.revision === input.expectedRevision && row.access.digest === input.expectedDigest,
             )))
             saveAuthorizationPending(runId, pending)
-            set({ approvals, pending, error: null })
+            set({ approvals, pending, status: 'ready', errorMessage: undefined })
           } catch (cause) {
-            if (canRead()) set({ error: messageOf(cause, '读取审批失败') })
+            if (canRead()) set({ status: 'error', errorMessage: messageOf(cause, '读取审批失败') })
           } finally {
-            if (canRead()) {
-              set({ loading: false })
-              timer = setTimeout(() => void read(), 2000)
-            }
+            if (canRead()) timer = setTimeout(() => void read(), 2000)
           }
         }
         void read()
@@ -69,28 +66,28 @@ export function createChatApprovalsStore(api: AgentChatGovernance | undefined, r
       if (!current?.() || get().acting) return
       stopReading?.()
       stopReading = undefined
-      set({ acting: true, error: null })
+      set({ acting: true, errorMessage: undefined })
       try {
         const receipt = await request()
         if (!current()) return
         set(state => ({ approvals: state.approvals.map(row => row.id === receipt.id ? receipt : row) }))
         onReceived(receipt)
       } catch (cause) {
-        if (current()) set({ error: messageOf(cause, fallback) })
+        if (current()) set({ errorMessage: messageOf(cause, fallback) })
       } finally {
         if (current()) {
-          set({ acting: false, loading: true, approvals: [] })
+          set({ acting: false, status: 'loading', approvals: [] })
           readWhileVisible(current)
         }
       }
     }
 
     return {
-      approvals: [], pending: readAuthorizationPending(runId), error: null, acting: false, loading: true,
+      approvals: [], pending: readAuthorizationPending(runId), acting: false, status: 'idle',
       observe() {
         const current = lifetime.replace()
         isObserved = current
-        get().reload()
+        get().load()
         return () => {
           lifetime.invalidate()
           isObserved = undefined
@@ -98,10 +95,10 @@ export function createChatApprovalsStore(api: AgentChatGovernance | undefined, r
           stopReading = undefined
         }
       },
-      reload() {
+      load() {
         if (get().acting) return
         stopReading?.()
-        set({ approvals: [], error: null, loading: !!api })
+        set({ approvals: [], errorMessage: undefined, status: api ? 'loading' : 'idle' })
         if (isObserved?.()) readWhileVisible(isObserved)
       },
       async decide(id, decision, onChanged) {

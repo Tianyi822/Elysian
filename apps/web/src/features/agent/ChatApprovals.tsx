@@ -11,20 +11,21 @@ const BUTTON = 'inline-flex min-h-8 items-center justify-center gap-1.5 rounded-
 
 export function ChatApprovals({ api, runId, onChanged, onCancel }: { api?: AgentChatGovernance; runId: string; onChanged(): void; onCancel(): void }) {
   const store = useMemo(() => createChatApprovalsStore(api, runId), [api, runId])
-  const { approvals, error, acting, loading, pending, reload, decide, decideAccess } = useStore(store)
+  const { approvals, errorMessage, acting, status, pending, load, decide, decideAccess } = useStore(store)
+  const loading = status === 'loading'
   useEffect(() => store.getState().observe(), [store])
-  useFeedbackMessage(error)
+  useFeedbackMessage(errorMessage)
   return <section aria-label="待审批操作" className="mb-3 max-h-[50dvh] overflow-y-auto border-y border-line py-3 text-xs">
     <div className="mb-2 flex items-center gap-2 font-medium"><ShieldAlert size={15} aria-hidden />待审批操作</div>
     {loading && <p role="status" className="text-fg-muted">正在读取审批…</p>}
-    {error && <Button variant="link" type="submit" className="mb-2 underline" disabled={acting} onClick={reload}>重新读取审批</Button>}
-    {!loading && !error && !approvals.length && <p className="text-fg-muted">暂无待审批操作。</p>}
+    {errorMessage && <Button variant="link" type="submit" className="mb-2 underline" disabled={acting} onClick={load}>重新读取审批</Button>}
+    {!loading && !errorMessage && !approvals.length && <p className="text-fg-muted">暂无待审批操作。</p>}
     {approvals.map(approval => {
       if (approval.kind === 'workflow-gate') return null
       const operation = approval.operation
       const grant = operation.execution?.grant
       if (approval.access) return <RuntimeAccessCard key={approval.id} title={operation.capability.source === 'mcp' ? operation.capability.originalName ?? operation.capability.name : operation.capability.name} access={approval.access} operation={operation}
-        busy={acting || loading || !!error} confirmed={approval.status === 'approved'} pending={pending[approval.id]} onDecision={decision => void decideAccess(approval, decision, onChanged)} onCancel={onCancel} />
+        busy={acting || loading || !!errorMessage} confirmed={approval.status === 'approved'} pending={pending[approval.id]} onDecision={decision => void decideAccess(approval, decision, onChanged)} onCancel={onCancel} />
       return <div key={approval.id} className="border-b border-line py-2 last:border-0">
         <div className="break-all font-medium">{operation.capability.name}</div>
         <pre aria-label="完整操作参数" className="hover-scrollbar my-2 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-md bg-surface-raised p-2 font-mono text-xs">{operation.argumentsJson}</pre>
