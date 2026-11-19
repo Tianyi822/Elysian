@@ -33,6 +33,7 @@ function updateSummary(update: PanelUpdate): string {
 export function PanelMaintenanceSettings() {
   const gateway = useGateway()
   const info = usePanelStore((s) => s.info)
+  const status = usePanelStore((s) => s.status)
   const task = usePanelStore((s) => s.task)
   const trackedTaskId = usePanelStore((s) => s.trackedTaskId)
   const logs = usePanelStore((s) => s.logs)
@@ -40,7 +41,7 @@ export function PanelMaintenanceSettings() {
   const hasMore = usePanelStore((s) => s.hasMore)
   const logViewport = useRef<HTMLDivElement>(null)
   const [retryingCLI, setRetryingCLI] = useState(false)
-  const loadError = usePanelStore((s) => s.error)
+  const loadError = usePanelStore((s) => s.errorMessage)
   const frontendId = useId(), backendId = useId()
   const [frontend, setFrontend] = useState('')
   const [backend, setBackend] = useState('')
@@ -108,7 +109,7 @@ export function PanelMaintenanceSettings() {
     pendingRef.current = null; requestId.current = null
     setSubmitting(false)
     setProgressError(null); setConnectionError(null); setPortsError(null); setUpdateError(null)
-    if (!usePanelStore.getState().info) void usePanelStore.getState().load(gateway, true)
+    if (!usePanelStore.getState().info) void usePanelStore.getState().load(gateway, { preserveTask: true })
     useMessageStore.getState().notify({ tone: 'info', message: '面板维护任务已提交' })
   }
   useEffect(() => {
@@ -192,7 +193,7 @@ export function PanelMaintenanceSettings() {
   return <>
     <section aria-label="面板端口" className="panel-surface p-5">
       <div className="flex items-center gap-1.5"><h2 className="text-sm font-medium text-fg">面板端口</h2><SectionHelp label="面板端口说明">前端端口用于打开面板，后端端口供面板内部使用。保存后会重启，页面会短暂断开。</SectionHelp></div>
-      {!info && !loadError ? <p role="status" className="mt-3 text-xs text-fg-muted">正在读取面板配置…</p> : null}
+      {(status === 'idle' || status === 'loading') && !loadError ? <p role="status" className="mt-3 text-xs text-fg-muted">正在读取面板配置…</p> : null}
       {loadError ? <div className="mt-3"><p role="alert" className="text-xs text-danger">{loadError}</p><Button variant="outline" type="submit" className={`${BUTTON} mt-3`} onClick={() => void usePanelStore.getState().load(gateway)}>重新读取配置</Button></div> : null}
       {info && !info.available ? <p role="status" className="mt-3 text-xs leading-5 text-fg-muted">{info.reason}</p> : null}
       <form onSubmit={onPorts} {...portsGuardProps} className="mt-5 space-y-4">

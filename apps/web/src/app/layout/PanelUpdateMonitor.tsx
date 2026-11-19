@@ -47,7 +47,7 @@ export function PanelUpdateMonitor() {
         if (!initialized) {
           initialized = true
           if (!store().pending) store().setPending(readPanelPending())
-          await store().load(gateway, false, abort.signal)
+          await store().load(gateway, { signal: abort.signal })
           discoverAt = Date.now() + 15_000
           loaded = true
           if (!current()) return
@@ -95,7 +95,7 @@ export function PanelUpdateMonitor() {
           disconnectedAt = undefined
           usePanelStore.setState({ connectionError: null, progressError: null })
         } else if (!pending && !loaded && Date.now() >= discoverAt) {
-          await store().load(gateway, false, abort.signal)
+          await store().load(gateway, { signal: abort.signal })
           discoverAt = Date.now() + 15_000
           if (!current()) return
         }
@@ -118,7 +118,7 @@ export function PanelUpdateMonitor() {
           }
         } else if (store().trackedTaskId === finished.id && refreshedTerminal !== finished.id) {
           refreshedTerminal = finished.id
-          await store().load(gateway, true, abort.signal)
+          await store().load(gateway, { preserveTask: true, signal: abort.signal })
         }
       } catch (cause) {
         failed = true

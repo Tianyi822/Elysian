@@ -8,7 +8,10 @@ import { frontendCommit, PANEL_RELOAD_DELAY_MS, readPanelReload, savePanelReload
 import { messageOf } from '../utils/errorMessage'
 
 type PanelState = {
-  info: PanelInfo | null; task: PanelTask | null; logs: string; offset: number; hasMore: boolean; error: string | null
+  status: 'idle' | 'loading' | 'ready' | 'error'
+  info: PanelInfo | null
+  errorMessage?: string
+  task: PanelTask | null; logs: string; offset: number; hasMore: boolean
   trackedTaskId: string | null
   pending: PanelPending | null
   progressError: string | null
@@ -22,7 +25,7 @@ type PanelState = {
   acceptPending(task: PanelTask, requestId: string): boolean
   requestReload(task: PanelTask, now?: number): void
   consumeReload(taskId: string, auth: number): boolean
-  load(gateway: ElysianGateway, preserveTask?: boolean, signal?: AbortSignal): Promise<void>
+  load(gateway: ElysianGateway, options?: { preserveTask?: boolean; signal?: AbortSignal }): Promise<void>
   poll(gateway: ElysianGateway, signal?: AbortSignal): Promise<PanelTaskReport | null>
   clearDisplay(): void
 }
@@ -30,17 +33,21 @@ let epoch = 0, readVersion = 0
 let owner: ElysianGateway | undefined
 let polling: { gateway: ElysianGateway; id: string; revision: number; auth: number; signal?: AbortSignal; promise: Promise<PanelTaskReport | null> } | undefined
 const monitorBlank = { pending: null, progressError: null, connectionError: null, verificationError: null, needsManualReload: false, verifiedUpdate: null, reload: null }
+const infoBlank = { status: 'idle', info: null, errorMessage: undefined } as const
+const infoStatusWithoutSnapshot = (errorMessage?: string) => errorMessage === undefined ? 'idle' : 'error'
 export const usePanelStore = create<PanelState>((set, get) => ({
-  info: null, task: null, logs: '', offset: 0, hasMore: false, error: null, trackedTaskId: null, ...monitorBlank,
+  ...infoBlank, task: null, logs: '', offset: 0, hasMore: false, trackedTaskId: null, ...monitorBlank,
   clearDisplay() {
     epoch++; readVersion++; owner = undefined; polling = undefined
     savePanelReload(null)
-    set({ info: null, task: null, logs: '', offset: 0, hasMore: false, error: null, trackedTaskId: null, ...monitorBlank })
+    set({ ...infoBlank, task: null, logs: '', offset: 0, hasMore: false, trackedTaskId: null, ...monitorBlank })
   },
   put(task) {
     epoch++
-    const changed = task.id !== get().task?.id
-    set({ task, trackedTaskId: task.id, error: null, progressError: null, connectionError: null,
+    const { task: previous, status, errorMessage } = get()
+    const changed = task.id !== previous?.id
+    set({ task, trackedTaskId: task.id, progressError: null, connectionError: null,
+      ...(status === 'loading' ? { status: infoStatusWithoutSnapshot(errorMessage) } : {}),
       ...(changed ? { logs: '', offset: 0, hasMore: false, verificationError: null, needsManualReload: false, verifiedUpdate: null } : {}) })
   },
   setPending(pending) { savePanelPending(pending); set({ pending }) },
@@ -70,22 +77,32 @@ export const usePanelStore = create<PanelState>((set, get) => ({
     set({ reload: executed })
     return true
   },
-  async load(gateway, preserveTask = false, signal) {
+  async load(gateway, { preserveTask, signal } = {}) {
+    if (signal?.aborted) return
     if (owner && owner !== gateway) get().clearDisplay()
     owner = gateway
     const version = ++readVersion, revision = epoch, auth = captureAuthGeneration()
-    const current = () => version === readVersion && revision === epoch && auth === captureAuthGeneration() && owner === gateway && !signal?.aborted
+    const current = () => version === readVersion && revision === epoch && auth === captureAuthGeneration() && owner === gateway
+    if (!get().info) set({ status: 'loading' })
     try {
       const info = await gateway.panel.info(signal)
-      if (!current()) return
+      if (!current() || signal?.aborted) return
       const previous = get().info
       const task = preserveTask && get().task ? get().task : info.activeTask ?? info.lastTask
       const previousId = (previous?.activeTask ?? previous?.lastTask)?.id
       const tracked = task && (panelTaskIsActive(task) || task.id === get().trackedTaskId || (previous !== null && task.id !== previousId))
-      set({ info, task, error: null, trackedTaskId: tracked ? task.id : null,
+      set({ info, status: 'ready', errorMessage: undefined, task, trackedTaskId: tracked ? task.id : null,
         ...(task?.id !== get().task?.id ? { logs: '', offset: 0, hasMore: false, verifiedUpdate: null, verificationError: null, needsManualReload: false } : {}) })
       if (task) { try { await get().poll(gateway, signal) } catch { /* 全局监控继续恢复任务连接。 */ } }
-    } catch (cause) { if (current()) set({ error: messageOf(cause, '面板信息加载失败') }) }
+    } catch (cause) {
+      if (current() && !signal?.aborted) {
+        set({ status: get().info ? 'ready' : 'error', errorMessage: messageOf(cause, '面板信息加载失败') })
+      }
+    } finally {
+      if (current() && signal?.aborted && get().status === 'loading') {
+        set({ status: infoStatusWithoutSnapshot(get().errorMessage) })
+      }
+    }
   },
   async poll(gateway, signal) {
     const task = get().task; if (!task) return null
@@ -94,7 +111,7 @@ export const usePanelStore = create<PanelState>((set, get) => ({
     const promise = (async () => {
       const report = await gateway.panel.task(task.id, offset, signal)
       if (signal?.aborted || revision !== epoch || auth !== captureAuthGeneration() || (owner && owner !== gateway) || get().task?.id !== task.id || get().offset !== offset) return null
-      set({ task: report.task, logs: (get().logs + report.logs).slice(-128000), offset: report.nextOffset, hasMore: report.hasMore === true, error: null })
+      set({ task: report.task, logs: (get().logs + report.logs).slice(-128000), offset: report.nextOffset, hasMore: report.hasMore === true })
       return report
     })()
     polling = { gateway, id: task.id, revision, auth, signal, promise }
