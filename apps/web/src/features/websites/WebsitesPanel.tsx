@@ -115,7 +115,7 @@ export function WebsitesPanel() {
   const setSearch = useWebsitesStore((s) => s.setSearch)
   const setCategory = useWebsitesStore((s) => s.setCategory)
   const openCreate = useWebsitesStore((s) => s.openCreate)
-  const refresh = useWebsitesStore((s) => s.refresh)
+  const load = useWebsitesStore((s) => s.load)
   const reconcileProxy = useWebsitesStore((s) => s.reconcileProxy)
   // 「访问配置」入口由探测报告驱动：Docker 与 Caddy 都就绪才出现，缺 Caddy 时不显示入口。
   const dependencyReport = useDependencyProbeStore((s) => s.report)
@@ -127,7 +127,7 @@ export function WebsitesPanel() {
 
   return (
     <div>
-      {refreshError ? <StaleDataBanner className="mb-3" error={refreshError} onRetry={() => void refresh(gateway)} /> : null}
+      {refreshError ? <StaleDataBanner className="mb-3" error={refreshError} onRetry={() => void load(gateway)} /> : null}
       <div className={`${CTL_TOOLBAR} rect-toolbar shell-first-row mb-4 flex flex-wrap items-center gap-2 panel-surface px-4 py-3`}>
         <Button variant="primary" type="button" onClick={openCreate} className={TOOL_BUTTON_CLASS}>
           添加项目
@@ -162,7 +162,7 @@ export function WebsitesPanel() {
               className="w-full"
             />
           </div>
-          <RefreshButton onPress={() => { void Promise.all([refresh(gateway), recheck(gateway)]) }} busy={refreshing || rechecking} />
+          <RefreshButton onPress={() => { void Promise.all([load(gateway), recheck(gateway)]) }} busy={refreshing || rechecking} />
         </div>
       </div>
       {taskListOpen && <div className="mb-4 space-y-2 panel-surface p-4" aria-label="部署任务列表">

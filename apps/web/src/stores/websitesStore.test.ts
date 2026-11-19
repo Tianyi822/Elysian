@@ -30,11 +30,11 @@ describe('网站项目登录会话边界', () => {
     vi.spyOn(gateway.websites, 'setRunning').mockReturnValueOnce(old.promise).mockReturnValueOnce(next.promise)
     const store = useWebsitesStore.getState()
     const session = useSessionStore.getState()
-    await store.load(gateway)
+    await store.load(gateway, { silent: true })
     const beforeLogout = store.setRunning(gateway, project, true)
     await session.logout(gateway)
     await session.login(gateway, 'admin', 'password')
-    await store.load(gateway)
+    await store.load(gateway, { silent: true })
     const afterLogin = store.setRunning(gateway, project, false)
 
     if (outcome === '成功') old.resolve({ ...project, runState: 'running' })
@@ -59,7 +59,7 @@ describe('网站项目登录会话边界', () => {
     vi.spyOn(gateway.websites, 'logs').mockResolvedValue(['旧会话日志'])
     const list = vi.spyOn(gateway.websites, 'list')
     const store = useWebsitesStore.getState()
-    await store.load(gateway)
+    await store.load(gateway, { silent: true })
     await store.openDetail(gateway, result.project)
     const pending = store.saveAccess(gateway, result.project.id, { mode: 'direct' })
     useSessionStore.getState().expire()
@@ -77,7 +77,7 @@ describe('网站项目登录会话边界', () => {
 describe('网站状态', () => {
   it('本地演示从空列表创建直连站点', async () => {
     const gateway = createMockGateway({ eventStream: 'memory', eventIntervalMs: 60_000 })
-    await useWebsitesStore.getState().load(gateway)
+    await useWebsitesStore.getState().load(gateway, { silent: true })
     expect(useWebsitesStore.getState().projects).toEqual([])
     const ok = await useWebsitesStore.getState().createProject(gateway, 'html', { name: 'docs', port: 8088, access: { mode: 'direct' } })
     expect(ok).toBe(true)

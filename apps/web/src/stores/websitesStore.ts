@@ -46,8 +46,7 @@ type WebsitesState = {
   detailLogsError?: string
   busyProjectIds: readonly string[]
   clearDisplay: () => void
-  load: (gateway: ElysianGateway) => Promise<void>
-  refresh: (gateway: ElysianGateway, options?: { silent?: boolean }) => Promise<void>
+  load: (gateway: ElysianGateway, options?: { silent?: boolean }) => Promise<void>
   /** 域级对账：从登记全量重新下发反向代理配置，成功后刷新列表与通道状态。 */
   reconcileProxy: (gateway: ElysianGateway) => Promise<void>
   setSearch: (search: string) => void
@@ -146,9 +145,7 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
       set(initialDisplay)
     },
 
-    load(gateway) { return get().refresh(gateway, { silent: true }) },
-
-    refresh(gateway, options) {
+    load(gateway, options) {
       const auth = captureAuthGeneration()
       if (pendingLoad?.gateway === gateway && pendingLoad.auth === auth && pendingLoad.snapshot === get().projects && pendingLoad.proxy === get().proxyStatus) {
         if (!options?.silent) set({ refreshing: true })
@@ -188,7 +185,7 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
         set({ proxyStatus: proxy })
         notify('反向代理配置已重新下发')
         // 路由事实要等下一次列表读取：成功后静默刷新一次，横幅随之下线。
-        await get().refresh(gateway, { silent: true })
+        await get().load(gateway, { silent: true })
       } catch (error) {
         if (current()) notify(messageOf(error, '反向代理配置下发失败'), 'danger')
       } finally {
@@ -245,7 +242,7 @@ export const useWebsitesStore = create<WebsitesState>((set, get) => {
         }))
         notify(`项目 ${updated.name} 的访问配置已保存${NOTICE_SUFFIX}`)
         notifyFirewallPortSync(firewallPort)
-        await get().refresh(gateway, { silent: true })
+        await get().load(gateway, { silent: true })
         if (!current()) return
         return get().projects.find((project) => project.id === projectId) ?? updated
       } catch (error) {

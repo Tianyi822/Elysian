@@ -78,7 +78,7 @@ const cases = [
     select: state => ({ status: state.status, snapshot: state.apps, error: state.errorMessage }) }),
   refreshCase({ name: '网站', store: useWebsitesStore, empty: { projects: [], proxy: { state: 'active' as const, detail: null } },
     gateway: (base, read) => ({ ...base, websites: adapter(base.websites, { list: read }) }),
-    load: (state, gateway) => state.load(gateway),
+    load: (state, gateway) => state.load(gateway, { silent: true }),
     select: state => ({ status: state.status, snapshot: state.projects, error: state.errorMessage }) }),
   refreshCase({ name: '数据库', store: useDatabaseStore, empty: [],
     gateway: (base, read) => ({ ...base, databases: adapter(base.databases, { list: read, listSqlite: async () => [] }) }),
@@ -184,16 +184,34 @@ describe('刷新与业务结果的隔离', () => {
     expect(useFirewallStore.getState().toggles).toEqual(next)
   })
 
+  it('网站手动刷新复用在途静默读取并显示按钮忙碌状态', async () => {
+    const { clearDisplay, load } = useWebsitesStore.getState()
+    clearDisplay()
+    const gateway = createMockGateway({ eventStream: 'memory' })
+    await load(gateway, { silent: true })
+    const { projects, proxyStatus: proxy } = useWebsitesStore.getState()
+    let release!: () => void
+    const list = vi.spyOn(gateway.websites, 'list').mockReturnValueOnce(new Promise(resolve => { release = () => resolve({ projects, proxy }) }))
+    const automatic = load(gateway, { silent: true })
+    expect(useWebsitesStore.getState().refreshing).toBe(false)
+    const manual = load(gateway)
+    expect(useWebsitesStore.getState()).toMatchObject({ status: 'ready', refreshing: true })
+    expect(list).toHaveBeenCalledTimes(1)
+    release()
+    await Promise.all([automatic, manual])
+    expect(useWebsitesStore.getState().refreshing).toBe(false)
+  })
+
   it('代理配置确认后重新读取，旧网站请求不能覆盖新通道状态', async () => {
     useWebsitesStore.setState(useWebsitesStore.getInitialState(), true)
     const gateway = createMockGateway({ eventStream: 'memory' })
-    await useWebsitesStore.getState().load(gateway)
+    await useWebsitesStore.getState().load(gateway, { silent: true })
     const old = { projects: useWebsitesStore.getState().projects, proxy: useWebsitesStore.getState().proxyStatus }
     const proxy = { state: 'active' as const, detail: '新的通道状态' }
     let release!: (value: typeof old) => void
     const read = vi.spyOn(gateway.websites, 'list').mockReturnValueOnce(new Promise(resolve => { release = resolve })).mockResolvedValueOnce({ ...old, proxy })
     vi.spyOn(gateway.websites, 'reconcileProxy').mockResolvedValue(proxy)
-    const pending = useWebsitesStore.getState().load(gateway)
+    const pending = useWebsitesStore.getState().load(gateway, { silent: true })
     await useWebsitesStore.getState().reconcileProxy(gateway)
     expect(read).toHaveBeenCalledTimes(2)
     release(old)

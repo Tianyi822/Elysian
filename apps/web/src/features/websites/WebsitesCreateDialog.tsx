@@ -103,7 +103,7 @@ export function WebsitesCreateDialog({ project, existingTask, onClose }: { proje
       setTask(latest); useWebsiteDeploymentsStore.getState().put(latest)
       if (batch.next > offset.current) { setLogs((text) => (text + batch.lines.join('')).slice(-128_000)); offset.current = batch.next }
       const finished = !websiteDeploymentIsActive(latest.state) && latest.state !== 'awaiting-config'
-      if (finished && !completed.current) { completed.current = true; void useWebsitesStore.getState().refresh(gateway) }
+      if (finished && !completed.current) { completed.current = true; void useWebsitesStore.getState().load(gateway) }
       return !finished || batch.next < batch.total
     } catch (e) {
       if (!currentSession()) return false

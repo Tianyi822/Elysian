@@ -25,7 +25,7 @@ export function CaddyConfigDialog({ onClose, onAddProject }: { onClose: () => vo
   const projects = useWebsitesStore((s) => s.projects)
   const proxy = useWebsitesStore((s) => s.proxyStatus)
   const saveAccess = useWebsitesStore((s) => s.saveAccess)
-  const refresh = useWebsitesStore((s) => s.refresh)
+  const load = useWebsitesStore((s) => s.load)
   const report = useDependencyProbeStore((s) => s.report)
   const dependencyStatus = useDependencyProbeStore((s) => s.status)
   const rechecking = useDependencyProbeStore((s) => s.rechecking)
@@ -104,7 +104,7 @@ export function CaddyConfigDialog({ onClose, onAddProject }: { onClose: () => vo
         </div>
         <div className="space-y-4 overflow-y-auto p-4 sm:p-5">
           <div role="status" className={`${SECTION} text-xs ${available ? 'text-success' : 'text-warning'}`}>
-            <div className="flex flex-wrap items-center justify-between gap-2"><span>{available ? 'Caddy 管理通道已连接' : `Caddy 管理通道异常：${report?.caddy.detail ?? proxy.detail ?? '请重新检测'}`}</span>{!available ? <Button variant="outline" type="button" disabled={rechecking} onClick={() => { void recheck(gateway).then((result) => result === null ? undefined : refresh(gateway)) }} className={ACTION}>{rechecking ? '正在检测…' : '重新检测'}</Button> : null}</div>
+            <div className="flex flex-wrap items-center justify-between gap-2"><span>{available ? 'Caddy 管理通道已连接' : `Caddy 管理通道异常：${report?.caddy.detail ?? proxy.detail ?? '请重新检测'}`}</span>{!available ? <Button variant="outline" type="button" disabled={rechecking} onClick={() => { void recheck(gateway).then((result) => result === null ? undefined : load(gateway)) }} className={ACTION}>{rechecking ? '正在检测…' : '重新检测'}</Button> : null}</div>
             <p className="mt-1 text-fg-muted">IP＋端口直连不依赖 Caddy；域名访问需要 Caddy 与公开 CA 证书。</p>
           </div>
           <section className={SECTION}><h3 className="text-sm font-medium text-fg">1 选择项目</h3>

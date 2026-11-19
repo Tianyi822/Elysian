@@ -21,7 +21,7 @@ export function WebsitesPage() {
   const recheck = useDependencyProbeStore((s) => s.recheck)
 
   useEffect(() => {
-    void load(gateway)
+    void load(gateway, { silent: true })
     // 依赖检测幂等：切页重挂不重探，报告由探测层消费。
     void check(gateway)
   }, [gateway, load, check])
@@ -35,7 +35,7 @@ export function WebsitesPage() {
       <ErrorState
         title="网站数据加载失败"
         description={errorMessage}
-        onRetry={() => { void Promise.all([load(gateway), recheck(gateway)]) }}
+        onRetry={() => { void Promise.all([load(gateway, { silent: true }), recheck(gateway)]) }}
       />
     )
   }
