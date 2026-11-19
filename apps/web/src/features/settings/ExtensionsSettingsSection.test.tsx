@@ -442,6 +442,56 @@ describe('MCP 容器运行时权限', () => {
     expect(await screen.findByText('本次探测成功')).toBeInTheDocument()
   })
 
+  it('已受理的探测在后台仍每秒回读，失败停等手动重试，终态停止', async () => {
+    const gateway = createMockGateway({ eventStream: 'memory', eventIntervalMs: 60000 })
+    const api = gateway.agentExtensions
+    const storedRequest = api.getMcpProbeRequest.bind(api)
+    let state: 'waiting' | 'running' | 'completed' = 'waiting'
+    const read = vi.spyOn(api, 'getMcpProbeRequest').mockImplementation(async id => ({ ...await storedRequest(id), state }))
+    const decide = vi.spyOn(api, 'decideMcpProbeRequest').mockImplementation(async id => {
+      state = 'running'
+      return { ...await storedRequest(id), state }
+    })
+    const create = vi.spyOn(api, 'createMcpProbeRequest')
+    const user = userEvent.setup()
+    renderApp('/settings?tab=mcp', { gateway })
+    const row = (await screen.findByText('演示文件系统（stdio）')).closest<HTMLElement>('[role="row"]')!
+    await user.click(within(row).getByRole('button', { name: '探测' }))
+    const confirm = await screen.findByRole('button', { name: '确认并继续' })
+    await waitFor(() => expect(confirm).toBeEnabled())
+    read.mockClear()
+    const visibility = vi.spyOn(document, 'visibilityState', 'get').mockReturnValue('hidden')
+    vi.useFakeTimers()
+    const advance = (ms: number) => act(() => vi.advanceTimersByTimeAsync(ms))
+    try {
+      fireEvent.click(confirm)
+      await advance(0)
+      const id = decide.mock.calls[0]![0]
+      expect(read).toHaveBeenCalledExactlyOnceWith(id, expect.any(AbortSignal))
+      expect(screen.getByText('正在连接服务并读取目录…')).toBeInTheDocument()
+      read.mockRejectedValueOnce(new Error('暂时无法读取探测进度'))
+      await advance(999)
+      expect(read).toHaveBeenCalledTimes(1)
+      await advance(1)
+      expect(screen.getByText('暂时无法读取探测进度')).toBeInTheDocument()
+      await advance(3000)
+      expect(read).toHaveBeenCalledTimes(2)
+
+      state = 'completed'
+      fireEvent.click(screen.getByRole('button', { name: '重新读取探测状态' }))
+      await advance(0)
+      expect(read).toHaveBeenNthCalledWith(3, id, expect.any(AbortSignal))
+      expect(screen.getByText('本次探测成功')).toBeInTheDocument()
+      await advance(3000)
+      expect(read).toHaveBeenCalledTimes(3)
+      expect(create).toHaveBeenCalledTimes(1)
+      expect(decide).toHaveBeenCalledTimes(1)
+    } finally {
+      visibility.mockRestore()
+      vi.useRealTimers()
+    }
+  })
+
   it('新 stdio 配置声明业务目录，无需预建授权编号', async () => {
     const gateway = createMockGateway({ eventStream: 'memory', eventIntervalMs: 60000 })
     const create = vi.spyOn(gateway.agentExtensions, 'createMcpServer')

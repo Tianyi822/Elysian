@@ -1,9 +1,10 @@
 import { randomId } from '../../utils/randomId'
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import type { AgentMCPProbeRequest, AgentMCPServer } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { captureAuthGeneration } from '../../utils/authGeneration'
 import { RuntimeAccessCard } from '../../components/RuntimeAccessCard'
+import { useSilentPolling } from '../../components/useSilentPolling'
 import { ExtensionDialog } from './extensionUi'
 import { CTL_SECONDARY } from '../../components/formControl'
 import { McpCatalog } from './McpSection'
@@ -23,29 +24,27 @@ export function McpProbeDialog({ server, visible, onClose }: { server: AgentMCPS
   const createPromise = useRef<Promise<AgentMCPProbeRequest> | undefined>(undefined)
   useEffect(() => { lifetime.current += 1; return () => { lifetime.current += 1 } }, [api, server.id, server.revision])
   const savePointer = (value: McpProbePointer) => { setPointer(value); saveMcpProbePointer(server, value) }
-  useEffect(() => {
-    if (!visible) return
-    const controller = new AbortController(), owner = lifetime.current, auth = captureAuthGeneration()
-    const current = () => !controller.signal.aborted && owner === lifetime.current && auth === captureAuthGeneration()
-    let timer: ReturnType<typeof setTimeout> | undefined
-    const read = async () => {
-      setReading(true)
-      try {
-        if (!pointer.id && !createPromise.current) {
-          saveMcpProbePointer(server, pointer)
-          createPromise.current = api.createMcpProbeRequest(server.id, { revision: server.revision, requestId: pointer.requestId })
-        }
-        const value = pointer.id ? await api.getMcpProbeRequest(pointer.id, controller.signal) : await createPromise.current!
-        if (!current()) return
-        setRequest(value); setError(undefined)
-        if (!pointer.id) savePointer({ ...pointer, id: value.id })
-        if (['preparing', 'running'].includes(value.state)) timer = setTimeout(() => void read(), 1000)
-      } catch (cause) { if (current()) setError(messageOf(cause, '探测状态读取失败')) }
-      finally { if (current()) setReading(false) }
-    }
-    void read()
-    return () => { controller.abort(); clearTimeout(timer) }
-  }, [api, server.id, server.revision, visible, pointer.id, pointer.requestId, attempt])
+  const readScope = useMemo(() => ({ auth: captureAuthGeneration() }),
+    [api, server.id, server.revision, visible, pointer.id, pointer.requestId, attempt])
+  useSilentPolling(async signal => {
+    const current = () => !signal.aborted && readScope.auth === captureAuthGeneration()
+    if (!current()) return false
+    setReading(true)
+    try {
+      if (!pointer.id && !createPromise.current) {
+        saveMcpProbePointer(server, pointer)
+        createPromise.current = api.createMcpProbeRequest(server.id, { revision: server.revision, requestId: pointer.requestId })
+      }
+      const value = pointer.id ? await api.getMcpProbeRequest(pointer.id, signal) : await createPromise.current!
+      if (!current()) return false
+      setRequest(value); setError(undefined)
+      if (!pointer.id) savePointer({ ...pointer, id: value.id })
+      return value.state === 'preparing' || value.state === 'running'
+    } catch (cause) {
+      if (current()) setError(messageOf(cause, '探测状态读取失败'))
+      return false
+    } finally { if (current()) setReading(false) }
+  }, { intervalMs: 1000, enabled: visible, immediate: true, pauseOnHidden: false, scope: readScope })
   const decide = async (decision: 'once' | 'session' | 'denied') => {
     if (!request || busy || reading) return
     const owner = lifetime.current, auth = captureAuthGeneration()
