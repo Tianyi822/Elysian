@@ -11,13 +11,13 @@ import { SelectDropdown } from '../../components/SelectDropdown'
 import { useImeEnterGuard } from '../../components/useImeEnterGuard'
 import { EmptyState, LoadingState } from '../../components/states/StateViews'
 import { CTL_PRIMARY, CTL_SECONDARY, CTL_DANGER, CTL_FIELD, CTL_TOOLBAR } from '../../components/formControl'
+import { formatLocalDateTime } from '../../components/format'
 import { ChatMarkdown } from '../../components/ChatMarkdown'
 import { X } from '../../components/icons'
 import './memory.css'
 import { Button } from '../../components/Button'
 
 const bytes = (value: string) => new TextEncoder().encode(value).length
-const date = (value: string) => new Date(value).toLocaleString('zh-CN', { hour12: false })
 /** 编辑表单排除只读的导入原文。 */
 const KIND_OPTIONS = (Object.entries(AGENT_MEMORY_PAGE_KIND_LABELS) as [AgentMemoryPageKind, string][])
   .filter(([kind]) => kind !== 'sources')
@@ -111,7 +111,7 @@ export function WikiPage() {
                 <span className="text-xs text-fg-muted">{AGENT_MEMORY_PAGE_KIND_LABELS[item.kind]}</span>
                 <span className="text-xs text-fg-subtle tabular-nums">r{item.revision}</span>
                 <span className="text-xs text-fg-subtle">{item.maintenance === 'automatic' ? '自动维护' : '人工维护'}</span>
-                <time dateTime={item.updatedAt} className="text-xs text-fg-subtle tabular-nums">{date(item.updatedAt)}</time>
+                <time dateTime={item.updatedAt} className="text-xs text-fg-subtle tabular-nums">{formatLocalDateTime(item.updatedAt)}</time>
                 {item.status === 'withdrawn' && <span className="text-xs text-danger">已撤回</span>}
               </Button>
             </li>)}
@@ -122,7 +122,7 @@ export function WikiPage() {
       <Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" />
       {/* 浏览页弹窗被锁定：点外部与 Escape 都不关闭，关闭只走右上角 X、取消或保存完成后的路径。 */}
       <Dialog.Content onPointerDownOutside={event => event.preventDefault()} onInteractOutside={event => event.preventDefault()} onEscapeKeyDown={event => event.preventDefault()} className="fixed left-1/2 top-1/2 z-[61] flex max-h-[90dvh] w-[min(44rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col panel-surface shadow-xl">
-        <header className="flex items-start justify-between gap-3 border-b border-line p-4"><div className="min-w-0"><Dialog.Title className="break-words text-base font-medium">{page?.title ?? selected?.title}</Dialog.Title><Dialog.Description className="mt-1 text-xs text-fg-muted">{editing ? '保存会产生新修订，并切换为人工维护。冲突时保留当前草稿。' : page ? <span className="tabular-nums">{AGENT_MEMORY_PAGE_KIND_LABELS[page.kind]} · 修订 r{page.revision} · 更新于 {date(page.updatedAt)} · {page.maintenance === 'automatic' ? '自动维护' : '人工维护'}{page.status === 'withdrawn' ? ' · 已撤回' : ''}</span> : state.error ? '页面读取失败，可在下方重试。' : '正在读取页面…'}</Dialog.Description></div><IconButton label="关闭窗口" variant="ghost" onPress={requestClose}><X size={16} aria-hidden /></IconButton></header>
+        <header className="flex items-start justify-between gap-3 border-b border-line p-4"><div className="min-w-0"><Dialog.Title className="break-words text-base font-medium">{page?.title ?? selected?.title}</Dialog.Title><Dialog.Description className="mt-1 text-xs text-fg-muted">{editing ? '保存会产生新修订，并切换为人工维护。冲突时保留当前草稿。' : page ? <span className="tabular-nums">{AGENT_MEMORY_PAGE_KIND_LABELS[page.kind]} · 修订 r{page.revision} · 更新于 {formatLocalDateTime(page.updatedAt)} · {page.maintenance === 'automatic' ? '自动维护' : '人工维护'}{page.status === 'withdrawn' ? ' · 已撤回' : ''}</span> : state.error ? '页面读取失败，可在下方重试。' : '正在读取页面…'}</Dialog.Description></div><IconButton label="关闭窗口" variant="ghost" onPress={requestClose}><X size={16} aria-hidden /></IconButton></header>
         {discard && <div role="alert" className="flex flex-wrap items-center gap-2 border-b border-line bg-warning/10 p-3 text-xs"><span className="flex-1">有未保存的内容。</span><Button variant="outline" type="button" className={CTL_SECONDARY} onClick={() => setDiscard(false)}>继续编辑</Button><Button variant="destructive" type="button" className={CTL_DANGER} onClick={close}>放弃修改</Button></div>}
         <div className="memory-dialog-body hover-scrollbar"><fieldset disabled={state.saving} className="min-w-0">
           {state.reading ? <p role="status" className="memory-empty">正在读取文档…</p>

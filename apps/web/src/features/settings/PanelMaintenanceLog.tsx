@@ -2,6 +2,7 @@ import { useMemo } from 'react'
 import type { Ref } from 'react'
 import { Terminal } from '../../components/icons'
 import { CopyButton } from '../../components/CopyButton'
+import { formatLocalDateTime } from '../../components/format'
 
 export function PanelMaintenanceLog({ logs, viewportRef }: { logs: string; viewportRef: Ref<HTMLDivElement> }) {
   const lines = useMemo(() => logs.split('\n').filter(line => line.trim()).map(line => {
@@ -18,7 +19,7 @@ export function PanelMaintenanceLog({ logs, viewportRef }: { logs: string; viewp
     </div>
     <div ref={viewportRef} aria-label="维护任务日志" role="region" tabIndex={0} className="hover-scrollbar max-h-64 overflow-auto bg-[var(--t-code-bg)] px-3 py-1 font-mono text-[0.6875rem] leading-5 text-[var(--t-code-fg)] focus-visible:-outline-offset-2">
       {lines.map((line, index) => <div key={index} className="grid grid-cols-[3.5rem_minmax(0,1fr)] gap-2 border-b border-line/50 py-2 last:border-0 sm:grid-cols-[4.25rem_minmax(0,1fr)] sm:gap-3">
-        <time dateTime={line.timestamp} title={line.timestamp ? `${new Date(line.timestamp).toLocaleString('zh-CN', { hour12: false })}（本地时间）` : undefined} className="select-none text-[0.625rem] tabular-nums text-fg-subtle">{line.time || '—'}</time>
+        <time dateTime={line.timestamp} title={line.timestamp ? `${formatLocalDateTime(line.timestamp)}（本地时间）` : undefined} className="select-none text-[0.625rem] tabular-nums text-fg-subtle">{line.time || '—'}</time>
         <div className={`min-w-0 whitespace-pre-wrap break-words [overflow-wrap:anywhere] ${/失败|异常/.test(line.message) ? 'text-danger' : line.timestamp ? 'font-medium' : ''}`}>{line.parts.map((part, partIndex) => <div key={partIndex}>{part.trim()}</div>)}</div>
       </div>)}
     </div>

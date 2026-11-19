@@ -17,17 +17,19 @@ async function seedPage(gateway: ReturnType<typeof createMockGateway>, input: { 
 describe('知识 Wiki 独立浏览页', () => {
   it('一行一页展示元信息，整行点击打开查看弹窗渲染 Markdown', async () => {
     const user = userEvent.setup(), gateway = createMockGateway({ eventStream: 'memory' })
-    await seedPage(gateway, { slug: 'operations/nginx', title: 'Nginx 运维', markdown: '# 检查配置\n\n执行前先检查。', kind: 'runbook' })
+    const page = await seedPage(gateway, { slug: 'operations/nginx', title: 'Nginx 运维', markdown: '# 检查配置\n\n执行前先检查。', kind: 'runbook' })
+    const localTime = new Date(page.updatedAt).toLocaleString('zh-CN', { hour12: false })
     renderApp('/wiki', { gateway })
     const row = await screen.findByRole('button', { name: /Nginx 运维/ })
     expect(within(row).getByText('操作手册')).toBeInTheDocument()
     expect(within(row).getByText('r1')).toBeInTheDocument()
     expect(within(row).getByText('人工维护')).toBeInTheDocument()
+    expect(within(row).getByText(localTime, { selector: 'time' })).toHaveAttribute('datetime', page.updatedAt)
     await user.click(row)
     const dialog = await screen.findByRole('dialog')
     expect(within(dialog).getByRole('heading', { name: 'Nginx 运维' })).toBeInTheDocument()
     expect(within(dialog).getByText(/修订 r1/)).toBeInTheDocument()
-    expect(within(dialog).getByText(/更新于/)).toBeInTheDocument()
+    expect(within(dialog).getByText(/更新于/)).toHaveTextContent(`更新于 ${localTime}`)
     expect(await within(dialog).findByText('执行前先检查。')).toBeInTheDocument()
   })
 

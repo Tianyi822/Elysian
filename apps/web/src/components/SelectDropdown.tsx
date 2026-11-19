@@ -9,12 +9,12 @@ import { useImeEnterGuard } from './useImeEnterGuard'
 import { Button } from './Button'
 
 /**
- * 自定义单选下拉：Radix 触发器 + 候选项，不使用原生 select，因此不会呼出操作系统的下拉控件。
- * 值集合由调用方决定，在这里收窄回联合类型。
+ * 表单与复杂候选使用的单选下拉：由 Radix 管理触发器和候选项，不呼出操作系统的下拉控件。
+ * 与 GooeySelect 的紧凑菜单分别维护；值集合由调用方决定，在这里收窄回联合类型。
  *
  * 工具栏里的筛选下拉给 `label`（字段名前缀）与 `active`（筛选生效中）：只有当前值时，
  * 一排下拉读起来就是几个重复的词，看不出各自在筛什么。
- * 表单用 `fullWidth`，顶栏收起后的页签用 `triggerClassName` 自己控制显隐，菜单仍走这里。
+ * 表单可用 `fullWidth`，有特殊布局的调用方可传 `triggerClassName`。
  * 浮层不锁页面滚动：默认的模态锁会按滚动条宽度给 body 加 margin，窄屏上会把整页挤窄。
  * 菜单通过 Portal 挂到 body。对话框自己的滚动锁会在 document 上取消滚轮默认行为，
  * 因此可滚动的菜单要拦下 wheel / touchmove，否则列表滚不动。

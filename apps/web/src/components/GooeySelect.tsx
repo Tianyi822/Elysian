@@ -2,7 +2,7 @@ import { useState } from 'react'
 import { motion, useReducedMotion } from 'framer-motion'
 import { GooeyMenu } from './easyui/GooeyMenu'
 
-/** Shared EasyUI selection menu. Domain values and selection effects stay with the caller. */
+/** 适配 EasyUI GooeyMenu，用于紧凑的视图收纳和工具栏筛选；表单候选用 SelectDropdown。 */
 export function GooeySelect<T extends string>({
   ariaLabel, items, value, onSelect, fallbackLabel = '请选择', disabled = false,
   active = true, className, fieldLabel,

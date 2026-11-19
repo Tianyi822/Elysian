@@ -1,5 +1,5 @@
 /**
- * 时间格式化统一走固定时区，保证在任何机器上渲染结果一致，测试也不受本地时区影响。
+ * 业务时间默认走固定时区，保证跨机器显示一致；标明本地时间的读数单独格式化。
  */
 const DATE_TIME_FORMATTER = new Intl.DateTimeFormat('zh-CN', {
   timeZone: 'Asia/Shanghai',
@@ -12,6 +12,11 @@ const DATE_TIME_FORMATTER = new Intl.DateTimeFormat('zh-CN', {
 
 export function formatDateTime(iso: string): string {
   return DATE_TIME_FORMATTER.format(new Date(iso))
+}
+
+/** 按浏览器本地时区展示完整日期和时间。 */
+export function formatLocalDateTime(iso: string): string {
+  return new Date(iso).toLocaleString('zh-CN', { hour12: false })
 }
 
 /** 只到日的日期（`2026-12-20`），用于到期时间这类不含时刻的字段。 */
