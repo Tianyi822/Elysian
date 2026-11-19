@@ -1,6 +1,5 @@
-import { tableBatchFailure, type TableBatchOutcome } from '../utils/tableBatch'
 import { captureAuthGeneration } from '../utils/authGeneration'
-import type { Container, ContainerAction, ContainerCreateInput, ContainerImage, ContainerSample, ContainerStatus, ImagePullProgress, Unsubscribe } from '@elysian/contracts'
+import type { Container, ContainerAction, ContainerCreateInput, ContainerSample, ContainerStatus, Unsubscribe } from '@elysian/contracts'
 import { create } from 'zustand'
 import type {
   ElysianGateway,
@@ -18,8 +17,8 @@ import {
 } from '../utils/containerCopy'
 import { getLastContainerSample, onStreamEvent } from './eventStreamStore'
 import { useMessageStore } from './messageStore'
-import { abortableDelay, awaitAbortable, throwIfAborted } from '../utils/abortable'
 import { messageOf } from '../utils/errorMessage'
+import { createContainerImages, type ContainerImagesState } from './containerImages'
 import { createContainerInventory } from './containerInventory'
 import { createTabMemorySlice, type TabMemoryState } from './tabMemoryStore'
 
@@ -79,24 +78,15 @@ let detachLive: Unsubscribe | undefined
 let activeGateway: ElysianGateway | undefined
 let containerActionScope: { gateway: ElysianGateway; auth: number } | undefined
 let pendingLoad: { read: Promise<void>; promise: Promise<void> } | undefined
-let imageRevision = 0
-let imageActionGeneration = captureAuthGeneration()
-let imageRefreshSequence = 0
-let pendingImages: { gateway: ElysianGateway; auth: number; revision: number; notify: boolean; promise: Promise<void> } | undefined
-let imagePullSequence = 0
-let imagePullController: AbortController | undefined
 
+const imageActions = createContainerImages(
+  () => useContainersStore.getState(),
+  (update) => useContainersStore.setState(update),
+)
 const inventory = createContainerInventory(
   () => useContainersStore.getState(),
   (update) => useContainersStore.setState(update),
-  () => {
-    const revision = imageRevision
-    return () => {
-      if (revision !== imageRevision) return false
-      imageRevision += 1
-      return true
-    }
-  },
+  imageActions.captureImageCommit,
 )
 
 /** 容器页和数据库页共用 Docker 清单，数据库登记及其读取状态由数据库域维护。 */
@@ -197,23 +187,13 @@ function replayLatestSample(): void {
   if (latest?.name === 'container/sample') applySamples(latest.payload.samples)
 }
 
-/** 拉取的模拟传输耗时；测试用假计时器推进。 */
-const PULL_DELAY_MS = 1500
-
-type ImagePullInput = { name: string; tag: string; registry?: string }
-type ImagePullResult = { status: 'succeeded' | 'interrupted' } | { status: 'failed'; error: string }
-/** 调用方核验最新清单并负责呈现回执。省略时使用镜像表的回执和通知。 */
-type ImagePullOptions = { confirmInventory: () => Promise<void> }
 type ContainerView = 'grid' | 'images' | 'apps'
 
-export const useContainersStore = create<TabMemoryState<ContainerView> & {
+export const useContainersStore = create<TabMemoryState<ContainerView> & ContainerImagesState & {
   status: 'idle' | 'loading' | 'ready' | 'error'
   liveStatus: 'live' | 'connecting'
   errorMessage?: string
   containers: readonly Container[]
-  images: readonly ContainerImage[]
-  /** 镜像手动刷新的忙碌标记（loading 期间锁按钮）；结果经全局通知组件反馈，页面不另写反馈条。 */
-  imageRefreshStatus: 'idle' | 'loading'
   samples: Readonly<Record<string, { cpuPercent: number; memMb: number }>>
   statusFilter: ContainerStatus | 'all'
   search: string
@@ -223,12 +203,8 @@ export const useContainersStore = create<TabMemoryState<ContainerView> & {
   createOpen: boolean
   creating: boolean
   createError?: string
-  removingImageIds: readonly string[]
-  pullingImage?: ImagePullInput & { progress?: ImagePullProgress; cancelling?: boolean }
-  imagePullError?: ImagePullInput & { message: string }
   clearDisplay: () => void
   load: (gateway: ElysianGateway) => Promise<void>
-  refreshImages: (gateway: ElysianGateway, options?: { notify?: boolean }) => Promise<void>
   setLiveStatus: (status: 'live' | 'connecting') => void
   setStatusFilter: (filter: ContainerStatus | 'all') => void
   setSearch: (value: string) => void
@@ -236,10 +212,6 @@ export const useContainersStore = create<TabMemoryState<ContainerView> & {
   closeCreate: () => void
   createContainer: (gateway: ElysianGateway, input: ContainerCreateInput) => Promise<void>
   removeContainer: (gateway: ElysianGateway, containerId: string) => Promise<void>
-  removeImage: (gateway: ElysianGateway, imageId: string) => Promise<TableBatchOutcome>
-  pullImage: (gateway: ElysianGateway, input: ImagePullInput, options?: ImagePullOptions) => Promise<ImagePullResult>
-  cancelImagePull: () => void
-  dismissImagePullError: () => void
   openDetail: (containerId: string) => void
   closeDetail: () => void
   openTerminal: (gateway: ElysianGateway, containerId: string) => Promise<void>
@@ -251,14 +223,13 @@ export const useContainersStore = create<TabMemoryState<ContainerView> & {
   status: 'idle',
   liveStatus: 'live',
   containers: [],
-  images: [],
-  imageRefreshStatus: 'idle',
+  ...imageActions.state,
   samples: {},
   ...createTabMemorySlice<ContainerView>('grid', set),
   statusFilter: 'all',
   search: '',
   busyActions: [],
-  createOpen: false, creating: false, removingImageIds: [], pullingImage: undefined,
+  createOpen: false, creating: false,
 
   clearDisplay() {
     const { terminal, tab } = get()
@@ -269,13 +240,9 @@ export const useContainersStore = create<TabMemoryState<ContainerView> & {
     containerActionScope = undefined
     pendingLoad = undefined
     inventory.reset()
-    pendingImages = undefined
-    imageRefreshSequence += 1
-    imagePullSequence += 1
-    const pull = imagePullController
-    imagePullController = undefined
+    const cancelPull = imageActions.invalidate()
     set({ ...store.getInitialState(), tab }, true)
-    pull?.abort()
+    cancelPull()
     if (terminal) releaseTerminalSession(gateway, terminal)
   },
 
@@ -289,7 +256,7 @@ export const useContainersStore = create<TabMemoryState<ContainerView> & {
   load(gateway) {
     containerMutationCurrent(gateway)
     const auth = captureAuthGeneration()
-    if (imageActionGeneration !== auth) { imageActionGeneration = auth; set({ removingImageIds: [] }) }
+    imageActions.syncActionGeneration(auth)
     const read = readContainerInventory(gateway)
     if (pendingLoad?.read === read) return pendingLoad.promise
     const operation = { read, promise: Promise.resolve() }
@@ -306,41 +273,6 @@ export const useContainersStore = create<TabMemoryState<ContainerView> & {
       } catch (error) {
         if (current()) set({ status: hadData ? 'ready' : 'error', errorMessage: messageOf(error, '读取容器数据失败') })
       } finally { if (pendingLoad === operation) pendingLoad = undefined }
-    })()
-    return operation.promise
-  },
-
-  refreshImages(gateway, options) {
-    const manual = options?.notify !== false
-    const auth = captureAuthGeneration(), revision = imageRevision
-    if (pendingImages?.gateway === gateway && pendingImages.auth === auth && pendingImages.revision === revision) {
-      if (manual) { pendingImages.notify = true; set({ imageRefreshStatus: 'loading' }) }
-      return pendingImages.promise
-    }
-    const sequence = ++imageRefreshSequence
-    const operation = { gateway, auth, revision, notify: manual, promise: Promise.resolve() }
-    pendingImages = operation
-    const current = () => sequence === imageRefreshSequence && auth === captureAuthGeneration()
-    set({ imageRefreshStatus: manual ? 'loading' : 'idle' })
-    operation.promise = (async () => {
-      try {
-        const images = await gateway.containers.listImages()
-        if (!current()) return
-        if (revision !== imageRevision) {
-          if (operation.notify) useMessageStore.getState().notify({ tone: 'success', message: '镜像列表已由其他操作更新' })
-          return
-        }
-        imageRevision += 1
-        set({ images })
-        if (operation.notify) useMessageStore.getState().notify({ tone: 'success', message: '镜像列表已刷新' })
-      } catch (error) {
-        if (current()) useMessageStore.getState().notify({ tone: 'danger', message: `刷新镜像失败：${messageOf(error)}` })
-      } finally {
-        if (pendingImages === operation) {
-          pendingImages = undefined
-          if (current()) set({ imageRefreshStatus: 'idle' })
-        }
-      }
     })()
     return operation.promise
   },
@@ -393,122 +325,6 @@ export const useContainersStore = create<TabMemoryState<ContainerView> & {
   closeDetail() {
     set({ detailContainerId: undefined })
   },
-
-  async removeImage(gateway, imageId) {
-    const auth = captureAuthGeneration()
-    if (imageActionGeneration !== auth) { imageActionGeneration = auth; set({ removingImageIds: [] }) }
-    if (get().removingImageIds.includes(imageId)) return { status: 'failed', error: '镜像正在删除' }
-    imageRevision += 1
-    const image = get().images.find((i) => i.id === imageId)
-    set((state) => ({ removingImageIds: [...state.removingImageIds, imageId] }))
-    try {
-      await gateway.containers.removeImage(imageId)
-      if (auth !== captureAuthGeneration()) return { status: 'unknown', error: '登录状态已变化，结果未确认' }
-      imageRevision += 1
-      set((state) => ({
-        images: state.images.filter((candidate) => candidate.id !== imageId),
-        removingImageIds: state.removingImageIds.filter((id) => id !== imageId),
-      }))
-      const label = image ? `${image.name}:${image.tag}` : imageId
-      useMessageStore.getState().notify({
-        tone: 'success',
-        message: `镜像 ${label} 已删除${demoNoticeSuffix(isDockerRuntime(), MOCK_ACTION_NOTE)}`,
-      })
-      return { status: 'succeeded' }
-    } catch (error) {
-      if (auth !== captureAuthGeneration()) return { status: 'unknown', error: '登录状态已变化，结果未确认' }
-      const detail = messageOf(error)
-      set((state) => ({ removingImageIds: state.removingImageIds.filter((id) => id !== imageId) }))
-      useMessageStore.getState().notify({ tone: 'danger', message: `删除镜像失败：${detail}` })
-      try {
-        const revision = imageRevision
-        const images = await gateway.containers.listImages()
-        if (auth === captureAuthGeneration() && revision === imageRevision) { imageRevision += 1; set({ images }) }
-      } catch {
-        // 刷新失败时保留当前列表。
-      }
-      return tableBatchFailure(error)
-    }
-  },
-
-  async pullImage(gateway, input, options) {
-    if (get().pullingImage) return { status: 'interrupted' }
-    const pullSequence = ++imagePullSequence
-    const auth = captureAuthGeneration()
-    const current = () => imagePullSequence === pullSequence && auth === captureAuthGeneration()
-    const controller = new AbortController()
-    imagePullController = controller
-    imageRevision += 1
-    set({ pullingImage: input, ...(options ? {} : { imagePullError: undefined }) })
-    try {
-      if (!options && !isDockerRuntime()) {
-        // 镜像表在本地演示中模拟传输耗时后再落数据集；测试用假计时器推进这一段。
-        await abortableDelay(PULL_DELAY_MS, controller.signal)
-      }
-      throwIfAborted(controller.signal)
-      const image = await awaitAbortable(gateway.containers.pullImage(input, (progress) => {
-        set((state) => state.pullingImage && current() && !controller.signal.aborted
-          ? { pullingImage: { ...state.pullingImage, progress } }
-          : state)
-      }, controller.signal), controller.signal)
-      if (!current()) return { status: 'interrupted' }
-      throwIfAborted(controller.signal)
-      imageRevision += 1
-      if (options) {
-        await awaitAbortable(options.confirmInventory(), controller.signal)
-        if (!current()) return { status: 'interrupted' }
-        set({ pullingImage: undefined })
-        return { status: 'succeeded' }
-      }
-      useMessageStore.getState().notify({
-        tone: 'success',
-        message: `镜像 ${image.name}:${image.tag} 已拉取${demoNoticeSuffix(isDockerRuntime(), MOCK_ACTION_NOTE)}`,
-      })
-      // 追加与清拉取中状态一次完成，避免界面闪现「新行 + 拉取中行并存」的中间帧。
-      set((state) => ({
-        images: state.images.some((candidate) => candidate.id === image.id ||
-          (candidate.name === image.name && candidate.tag === image.tag))
-          ? state.images.map((candidate) => candidate.id === image.id ||
-            (candidate.name === image.name && candidate.tag === image.tag) ? image : candidate)
-          : [...state.images, image],
-        pullingImage: undefined,
-      }))
-      return { status: 'succeeded' }
-    } catch (error) {
-      if (!current()) return { status: 'interrupted' }
-      const aborted = controller.signal.aborted
-      const detail = options ? messageOf(error, '镜像拉取失败') : messageOf(error)
-      if (options) {
-        set({ pullingImage: undefined })
-        return aborted ? { status: 'interrupted' } : { status: 'failed', error: detail }
-      }
-      useMessageStore.getState().notify(aborted
-        ? { tone: 'info', message: `已取消镜像 ${input.name}:${input.tag} 的拉取请求` }
-        : { tone: 'danger', message: `拉取镜像失败：${detail}` })
-      imageRevision += 1
-      // 失败留在镜像列表中，避免短暂通知消失后只剩「进度突然没了」。
-      set({ pullingImage: undefined, imagePullError: aborted ? undefined : { ...input, message: detail } })
-      try {
-        const revision = imageRevision
-        const images = await gateway.containers.listImages()
-        if (current() && revision === imageRevision) { imageRevision += 1; set({ images }) }
-      } catch {
-        // 刷新失败时保留当前列表。
-      }
-      return aborted ? { status: 'interrupted' } : { status: 'failed', error: detail }
-    } finally {
-      if (imagePullController === controller) imagePullController = undefined
-    }
-  },
-
-  cancelImagePull() {
-    const pulling = get().pullingImage
-    if (!pulling || pulling.cancelling || !imagePullController) return
-    set({ pullingImage: { ...pulling, cancelling: true } })
-    imagePullController.abort()
-  },
-
-  dismissImagePullError() { set({ imagePullError: undefined }) },
 
   async openTerminal(gateway, containerId) {
     const current = get().terminal

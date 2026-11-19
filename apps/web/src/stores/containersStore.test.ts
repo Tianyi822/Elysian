@@ -722,6 +722,22 @@ describe('拉取镜像', () => {
     vi.useRealTimers()
   })
 
+  it('清屏取消在途拉取，迟到成功不启动库存核验或通知', async () => {
+    const receipt = deferred<ContainerImage>()
+    const pullImage = vi.fn<ElysianGateway['containers']['pullImage']>(() => receipt.promise)
+    const confirmInventory = vi.fn(async () => {})
+    const store = useContainersStore.getState()
+    const pending = store.pullImage(gatewayWith({ pullImage }), { name: 'old-pull', tag: 'latest' }, { confirmInventory })
+
+    store.clearDisplay()
+    expect(pullImage.mock.calls[0]?.[2]?.aborted).toBe(true)
+    receipt.resolve({ ...CONTAINER_IMAGES[0]!, name: 'old-pull' })
+    await expect(pending).resolves.toEqual({ status: 'interrupted' })
+    expect(confirmInventory).not.toHaveBeenCalled()
+    expect(useContainersStore.getState()).toMatchObject({ pullingImage: undefined, images: [] })
+    expect(useMessageStore.getState().messages).toEqual([])
+  })
+
   it('准备阶段也能停止，不派发拉取且通知为取消', async () => {
     vi.useFakeTimers()
     const pullImage = vi.fn()
