@@ -29,21 +29,15 @@ import type {
   HostTerminalHandlers,
   HostTerminalSessionInfo,
 } from '../../contracts/adapters'
-import { containerTerminalCompletions, execContainerCommand } from './containerTerminal'
 import { mockImageArtifact } from './containersData'
 import { autoContainerName } from '@elysian/contracts'
+import { MockContainerTerminal } from './containerMockTerminal'
 import { MockContainerWorkspace, type MockContainerWorkspaceOptions } from './containerMockWorkspace'
 import type { MockDataset } from './dataset'
 
-type MockContainerTerminalSession = {
-  containerId: string
-  handlers: HostTerminalHandlers
-}
-
 export class MockContainerAdapter implements ContainerAdapter {
   readonly terminalMode = 'repl' as const
-  private nextTerminalId = 1
-  private readonly terminalSessions = new Map<string, MockContainerTerminalSession>()
+  private readonly terminal: MockContainerTerminal
   private readonly workspace: MockContainerWorkspace
 
   constructor(
@@ -56,6 +50,7 @@ export class MockContainerAdapter implements ContainerAdapter {
     },
     options: MockContainerWorkspaceOptions = {},
   ) {
+    this.terminal = new MockContainerTerminal(dataset)
     this.workspace = new MockContainerWorkspace(options)
   }
 
@@ -110,46 +105,32 @@ export class MockContainerAdapter implements ContainerAdapter {
     containerId: string,
     handlers: HostTerminalHandlers,
   ): Promise<HostTerminalSessionInfo> {
-    const container = this.dataset().containers.find((c) => c.id === containerId)
-    if (!container) throw new Error('容器不存在，无法执行演示终端命令')
-    const id = `ctr-term-${this.nextTerminalId}`
-    this.nextTerminalId += 1
-    this.terminalSessions.set(id, { containerId, handlers })
-    return { id, user: 'demo', hostLabel: container.name, prompt: '$ ' }
+    return this.terminal.connectTerminal(containerId, handlers)
   }
 
   async executeTerminalCommand(sessionId: string, command: string) {
-    const session = this.requireTerminalSession(sessionId)
-    const container = this.dataset().containers.find((c) => c.id === session.containerId)
-    if (!container) throw new Error('容器不存在，无法执行演示终端命令')
-    const image = this.dataset().images.find((i) => i.id === container.imageId)
-    if (!image) throw new Error('容器所用镜像不存在，无法执行演示终端命令')
-    return execContainerCommand(container, image, command)
+    return this.terminal.executeTerminalCommand(sessionId, command)
   }
   async sendTerminalInput(sessionId: string, _data: Uint8Array): Promise<void> {
-    this.requireTerminalSession(sessionId)
-    throw new Error('演示终端不提供真实 PTY')
+    return this.terminal.sendTerminalInput(sessionId, _data)
   }
-  async resizeTerminal(sessionId: string, _cols: number, _rows: number): Promise<void> { this.requireTerminalSession(sessionId) }
-  acknowledgeTerminal(_sessionId: string, _bytes: number): void {}
+  async resizeTerminal(sessionId: string, _cols: number, _rows: number): Promise<void> {
+    return this.terminal.resizeTerminal(sessionId, _cols, _rows)
+  }
+  acknowledgeTerminal(sessionId: string, bytes: number): void {
+    this.terminal.acknowledgeTerminal(sessionId, bytes)
+  }
   terminalCompletions(sessionId: string, input: string): readonly string[] {
-    this.requireTerminalSession(sessionId)
-    return containerTerminalCompletions(input)
+    return this.terminal.terminalCompletions(sessionId, input)
   }
 
   async disconnectTerminal(sessionId: string): Promise<void> {
-    if (!this.terminalSessions.delete(sessionId)) {
-      throw new Error(`终端会话不存在 ${sessionId}`)
-    }
+    return this.terminal.disconnectTerminal(sessionId)
   }
 
   /** 取消未决的终端连接：mock 的 connectTerminal 同步 resolve，没有 pending 概念，no-op。 */
-  cancelTerminalConnect(): void {}
-
-  private requireTerminalSession(sessionId: string): MockContainerTerminalSession {
-    const session = this.terminalSessions.get(sessionId)
-    if (!session) throw new Error(`终端会话不存在 ${sessionId}`)
-    return session
+  cancelTerminalConnect(): void {
+    this.terminal.cancelTerminalConnect()
   }
 
   async requestAction(containerId: string, action: ContainerAction): Promise<Container> {

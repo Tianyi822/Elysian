@@ -50,6 +50,8 @@ describe('MockContainerAdapter', () => {
 
     const info = await adapter.connectTerminal('ctr-nginx-proxy', { onFrame: () => {}, onClose: () => {} })
     expect((await adapter.executeTerminalCommand(info.id, 'env')).lines).toEqual(['TZ=Asia/Shanghai'])
+    await adapter.disconnectTerminal(info.id)
+    await expect(adapter.executeTerminalCommand(info.id, 'env')).rejects.toThrow('终端会话不存在')
 
     await expect(adapter.connectTerminal('ctr-nope', { onFrame: () => {}, onClose: () => {} })).rejects.toThrow(
       '容器不存在',
