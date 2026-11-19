@@ -1,65 +1,20 @@
 import { captureAuthGeneration } from '../utils/authGeneration'
 import type { Container, ContainerAction, ContainerCreateInput, ContainerStatus } from '@elysian/contracts'
 import { create } from 'zustand'
-import type {
-  ElysianGateway,
-  HostTerminalCloseInfo,
-  HostTerminalFrame,
-} from '../contracts/adapters'
-import { hostTerminalCloseMessage } from '../terminal/terminalCloseMessage'
-import { deactivateRawTerminal, disposeRawTerminal, rawTerminalRuntime } from '../terminal/rawTerminalRuntime'
+import type { ElysianGateway } from '../contracts/adapters'
 import { isDockerRuntime } from '../utils/isDockerRuntime'
 import { demoNoticeSuffix, MOCK_ACTION_NOTE } from '../utils/demoNotice'
 import {
   containerActionSuccessMessage,
   containerRemoveBlockedReason,
-  CONTAINER_TERMINAL_CLOSE_FALLBACK,
 } from '../utils/containerCopy'
 import { useMessageStore } from './messageStore'
 import { messageOf } from '../utils/errorMessage'
 import { createContainerImages, type ContainerImagesState } from './containerImages'
 import { createContainerEvents } from './containerEvents'
 import { createContainerInventory } from './containerInventory'
+import { createContainerTerminal, type ContainerTerminalSession, type ContainerTerminalState } from './containerTerminal'
 import { createTabMemorySlice, type TabMemoryState } from './tabMemoryStore'
-
-type ContainerTerminalStatus = 'connecting' | 'connected' | 'error'
-
-type TerminalSession = {
-  containerId: string
-  sessionId: string
-  openId?: string
-  prompt?: string
-  status: ContainerTerminalStatus
-  errorMessage?: string
-}
-
-let pendingTerminalSeq = 1
-
-function nextPendingTerminalId(): string {
-  const id = `pending-ctr-term-${pendingTerminalSeq}`
-  pendingTerminalSeq += 1
-  return id
-}
-
-/**
- * 终端会话的统一释放入口：connected 断开真实会话，connecting 经 cancelTerminalConnect
- * 取消未决连接（先 settle 再关 socket，被取消的 openTerminal 不会悬挂）。
- * closeTerminal 与 container/removed 共用，防止 connecting 态的 pending WS 无人关闭、
- * 占用服务端会话槽位直到空闲超时。
- */
-function releaseTerminalSession(gateway: ElysianGateway | undefined, session: TerminalSession): void {
-  disposeRawTerminal(`container:${session.sessionId}`)
-  if (!gateway) return
-  if (session.status === 'connected') {
-    void gateway.containers.disconnectTerminal(session.sessionId).catch(() => {
-      // 适配层已无此会话时界面仍要关掉窗口。
-    })
-    return
-  }
-  if (session.status === 'connecting') {
-    gateway.containers.cancelTerminalConnect?.()
-  }
-}
 
 let activeGateway: ElysianGateway | undefined
 let containerActionScope: { gateway: ElysianGateway; auth: number } | undefined
@@ -69,6 +24,10 @@ const imageActions = createContainerImages(
   () => useContainersStore.getState(),
   (update) => useContainersStore.setState(update),
 )
+const terminalActions = createContainerTerminal(
+  () => useContainersStore.getState(),
+  (update) => useContainersStore.setState(update as never),
+)
 const events = createContainerEvents({
   get: () => useContainersStore.getState(),
   set: (update) => {
@@ -76,7 +35,7 @@ const events = createContainerEvents({
   },
   getGateway: () => activeGateway,
   onResync: () => { void refreshAfterResync() },
-  releaseTerminal: (gateway, session) => releaseTerminalSession(gateway, session as TerminalSession),
+  releaseTerminal: (gateway, session) => terminalActions.releaseTerminal(gateway, session as ContainerTerminalSession),
 })
 const inventory = createContainerInventory(
   () => useContainersStore.getState(),
@@ -116,16 +75,16 @@ function containerBusy(keys: readonly string[], id: string): boolean {
 
 type ContainerView = 'grid' | 'images' | 'apps'
 
-export const useContainersStore = create<TabMemoryState<ContainerView> & ContainerImagesState & {
+export const useContainersStore = create<TabMemoryState<ContainerView> & ContainerImagesState & ContainerTerminalState & {
   status: 'idle' | 'loading' | 'ready' | 'error'
   liveStatus: 'live' | 'connecting'
   errorMessage?: string
   containers: readonly Container[]
   samples: Readonly<Record<string, { cpuPercent: number; memMb: number }>>
+  terminal?: ContainerTerminalSession
   statusFilter: ContainerStatus | 'all'
   search: string
   detailContainerId?: string
-  terminal?: TerminalSession
   busyActions: readonly string[]
   createOpen: boolean
   creating: boolean
@@ -141,16 +100,13 @@ export const useContainersStore = create<TabMemoryState<ContainerView> & Contain
   removeContainer: (gateway: ElysianGateway, containerId: string) => Promise<void>
   openDetail: (containerId: string) => void
   closeDetail: () => void
-  openTerminal: (gateway: ElysianGateway, containerId: string) => Promise<void>
-  closeTerminal: (gateway: ElysianGateway) => Promise<void>
-  applyTerminalFrame: (sessionId: string, frame: HostTerminalFrame) => void
-  handleTerminalClose: (sessionId: string, info: HostTerminalCloseInfo) => void
   runAction: (gateway: ElysianGateway, containerId: string, action: ContainerAction) => Promise<void>
 }>((set, get, store) => ({
   status: 'idle',
   liveStatus: 'live',
   containers: [],
   ...imageActions.state,
+  ...terminalActions.state,
   samples: {},
   ...createTabMemorySlice<ContainerView>('grid', set),
   statusFilter: 'all',
@@ -169,7 +125,7 @@ export const useContainersStore = create<TabMemoryState<ContainerView> & Contain
     const cancelPull = imageActions.invalidate()
     set({ ...store.getInitialState(), tab }, true)
     cancelPull()
-    if (terminal) releaseTerminalSession(gateway, terminal)
+    if (terminal) terminalActions.releaseTerminal(gateway, terminal)
   },
 
   setLiveStatus(liveStatus) {
@@ -250,71 +206,6 @@ export const useContainersStore = create<TabMemoryState<ContainerView> & Contain
   },
   closeDetail() {
     set({ detailContainerId: undefined })
-  },
-
-  async openTerminal(gateway, containerId) {
-    const current = get().terminal
-    if (current?.status === 'connecting') return
-    if (current) releaseTerminalSession(gateway, current)
-    const pendingId = nextPendingTerminalId()
-    const generation = captureAuthGeneration()
-    set({ terminal: { containerId, sessionId: pendingId, openId: pendingId, prompt: '$ ', status: 'connecting' } })
-    const earlyFrames: Array<{ id: string; frame: HostTerminalFrame }> = []
-    let accepted = false
-    let earlyClose: { id: string; info: HostTerminalCloseInfo } | undefined
-    try {
-      const info = await gateway.containers.connectTerminal(containerId, {
-        onFrame(id, frame) {
-          if (get().terminal?.openId !== pendingId) return
-          if (accepted) get().applyTerminalFrame(id, frame)
-          else earlyFrames.push({ id, frame })
-        },
-        onClose(id, closeInfo) {
-          if (get().terminal?.openId !== pendingId) return
-          if (accepted) get().handleTerminalClose(id, closeInfo)
-          else earlyClose = { id, info: closeInfo }
-        },
-      })
-      if (generation !== captureAuthGeneration() || get().terminal?.sessionId !== pendingId) {
-        await gateway.containers.disconnectTerminal(info.id).catch(() => {}); return
-      }
-      if (gateway.containers.terminalMode === 'pty') rawTerminalRuntime(`container:${info.id}`).configure({
-        send: data => gateway.containers.sendTerminalInput(info.id, data),
-        resize: (cols, rows) => gateway.containers.resizeTerminal(info.id, cols, rows),
-        acknowledge: bytes => gateway.containers.acknowledgeTerminal(info.id, bytes),
-        onError: message => {
-          get().handleTerminalClose(info.id, { code: 1006, reason: message })
-          void gateway.containers.disconnectTerminal(info.id).catch(() => {})
-        },
-      })
-      set(state => ({ terminal: state.terminal?.sessionId === pendingId ? { ...state.terminal, sessionId: info.id, prompt: info.prompt, status: 'connected' } : state.terminal }))
-      accepted = true
-      for (const { id, frame } of earlyFrames) get().applyTerminalFrame(id, frame)
-      if (earlyClose) get().handleTerminalClose(earlyClose.id, earlyClose.info)
-    } catch (error) {
-      if (generation !== captureAuthGeneration() || get().terminal?.sessionId !== pendingId) return
-      const errorMessage = messageOf(error, '连接容器终端失败')
-      set(state => ({ terminal: state.terminal && { ...state.terminal, status: 'error', errorMessage } }))
-      useMessageStore.getState().notify({ tone: 'danger', message: errorMessage })
-    }
-  },
-  async closeTerminal(gateway) {
-    const session = get().terminal
-    if (session) releaseTerminalSession(gateway, session)
-    set({ terminal: undefined })
-  },
-  applyTerminalFrame(sessionId, frame) {
-    if (get().terminal?.sessionId !== sessionId) return
-    if (frame.type === 'output') { rawTerminalRuntime(`container:${sessionId}`).write(frame.data); return }
-    get().handleTerminalClose(sessionId, { code: 1008, reason: `会话已退出（退出码 ${frame.exitCode}）` })
-  },
-  handleTerminalClose(sessionId, info) {
-    const session = get().terminal
-    if (!session || session.sessionId !== sessionId || session.status === 'error') return
-    deactivateRawTerminal(`container:${sessionId}`)
-    const errorMessage = info.reason || hostTerminalCloseMessage(info.code, info.reason, CONTAINER_TERMINAL_CLOSE_FALLBACK)
-    set({ terminal: { ...session, status: 'error', errorMessage } })
-    useMessageStore.getState().notify({ tone: 'danger', message: errorMessage })
   },
 
   async runAction(gateway, containerId, action) {
