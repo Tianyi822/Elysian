@@ -1,4 +1,4 @@
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { AgentApproval, AgentExecutionGrant, AgentExecutionProfile, AgentRuntimeAccess } from '@elysian/contracts'
@@ -85,6 +85,33 @@ describe('聊天审批和执行范围', () => {
     const input = vi.mocked(api.decideAccess).mock.calls[0]![1]
     await user.click(await screen.findByRole('button', { name: '按原选择重试' }))
     expect(api.decideAccess).toHaveBeenNthCalledWith(2, 'approval', input)
+  })
+
+  it('确认前发出的旧轮询不能清除结果未知时需要重试的原请求', async () => {
+    const api = governance()
+    const row = { ...approval, access }
+    let finishRead!: (rows: readonly AgentApproval[]) => void
+    let failDecision!: (error: Error) => void
+    vi.mocked(api.approvals).mockResolvedValue([row]).mockResolvedValueOnce([row])
+      .mockImplementationOnce(() => new Promise(done => { finishRead = done }))
+    vi.mocked(api.decideAccess).mockImplementationOnce(() => new Promise((_, reject) => { failDecision = reject }))
+    vi.useFakeTimers()
+    try {
+      render(<ChatApprovals api={api} runId="run" onChanged={vi.fn()} onCancel={vi.fn()} />)
+      await act(async () => {})
+      await act(async () => { await vi.advanceTimersByTimeAsync(2000) })
+      expect(api.approvals).toHaveBeenCalledTimes(2)
+      fireEvent.click(screen.getByRole('button', { name: '确认并继续' }))
+      const input = vi.mocked(api.decideAccess).mock.calls[0]![1]
+
+      await act(async () => { finishRead([]) })
+      await act(async () => { failDecision(new Error('确认结果未知')) })
+      await act(async () => {})
+      fireEvent.click(screen.getByRole('button', { name: '按原选择重试' }))
+      expect(api.decideAccess).toHaveBeenNthCalledWith(2, 'approval', input)
+    } finally {
+      vi.useRealTimers()
+    }
   })
 
   it('拒绝权限和停止任务是独立操作', async () => {
