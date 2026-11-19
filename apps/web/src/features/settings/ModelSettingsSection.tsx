@@ -16,7 +16,7 @@ export function ModelSettingsSection({ active }: { active: boolean }) {
   const settings = useModelSettingsStore()
   useEffect(() => { void runtime.load(gateway) }, [gateway, runtime.load])
   useEffect(() => {
-    if (runtime.status === 'ready' && runtime.info?.available) void settings.load(gateway)
+    if (runtime.status === 'ready' && runtime.info?.available) void settings.load(gateway, { silent: true })
   }, [gateway, runtime.status, runtime.info?.available, settings.load])
   const { degraded } = useSilentPolling((signal) => runtime.load(gateway, { silent: true, signal }), { intervalMs: 15_000, enabled: active })
   useFeedbackMessage(degraded ? '运行时连接中断，正在重试' : null, 'warning')
@@ -26,12 +26,12 @@ export function ModelSettingsSection({ active }: { active: boolean }) {
   if (runtime.status === 'error') return <ErrorState title="模型运行时读取失败" description={runtime.errorMessage} onRetry={() => void runtime.load(gateway)} />
   if (!runtime.info?.available || runtime.unavailableReason) return <AgentUnavailableState reason={runtime.unavailableReason ?? runtime.info?.reason} worker={runtime.info?.worker} storage={runtime.info?.storage} />
   return <div className="flex flex-col gap-3">
-    <div className="relative rounded-xl" aria-busy={settings.reloading}>
+    <div className="relative rounded-xl" aria-busy={settings.refreshing}>
       {settings.status === 'idle' || settings.status === 'loading' ? <LoadingState label="正在读取模型配置…" /> : null}
       {runtime.errorMessage ? <p role="alert" className="mb-3 text-xs text-danger">{runtime.errorMessage}<Button variant="link" type="button" className="ml-2 underline" onClick={() => void runtime.load(gateway)}>重试</Button></p> : null}
-      {settings.status === 'ready' && settings.errorMessage ? <p role="alert" className="mb-3 text-xs text-danger">{settings.errorMessage}<Button variant="link" type="button" className="ml-2 underline" onClick={() => void settings.refresh(gateway)}>重试</Button></p> : null}
-      {settings.status === 'error' ? <ErrorState title="模型配置读取失败" description={settings.errorMessage} onRetry={() => void settings.refresh(gateway)} /> : null}
-      {settings.status === 'ready' ? <ModelProfilesPanel active={active} refreshing={settings.reloading} onRefresh={() => void settings.refresh(gateway)} /> : null}
+      {settings.status === 'ready' && settings.errorMessage ? <p role="alert" className="mb-3 text-xs text-danger">{settings.errorMessage}<Button variant="link" type="button" className="ml-2 underline" onClick={() => void settings.load(gateway)}>重试</Button></p> : null}
+      {settings.status === 'error' ? <ErrorState title="模型配置读取失败" description={settings.errorMessage} onRetry={() => void settings.load(gateway)} /> : null}
+      {settings.status === 'ready' ? <ModelProfilesPanel active={active} refreshing={settings.refreshing} onRefresh={() => void settings.load(gateway)} /> : null}
     </div>
   </div>
 }

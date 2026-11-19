@@ -112,7 +112,7 @@ function ModelServiceDialog({ service, visible, onClose }: { service?: AgentMode
     } catch (error) {
       if (discoveryRequest.current === controller && !controller.signal.aborted) {
         setError(messageOf(error, '获取模型失败，请重试或手动添加'))
-        if (isRevisionConflict(error)) await useModelSettingsStore.getState().refresh(gateway)
+        if (isRevisionConflict(error)) await useModelSettingsStore.getState().load(gateway)
       }
     } finally {
       if (discoveryRequest.current === controller) { discoveryRequest.current = undefined; setFetchingModels(false) }

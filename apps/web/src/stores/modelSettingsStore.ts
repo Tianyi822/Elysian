@@ -41,12 +41,11 @@ type ModelSettingsState = {
   models: readonly AgentModelProfile[]
   services: readonly AgentModelService[]
   errorMessage?: string
-  reloading: boolean
+  refreshing: boolean
   saving: boolean
   search: string
   setSearch(value: string): void
-  load(gateway: ElysianGateway): Promise<void>
-  refresh(gateway: ElysianGateway): Promise<void>
+  load(gateway: ElysianGateway, options?: { silent?: boolean }): Promise<void>
   saveService(gateway: ElysianGateway, input: AgentModelServiceInput, editing?: { id: string; revision: number }): Promise<boolean>
   saveModel(gateway: ElysianGateway, input: AgentModelProfileInput, editing?: { id: string; revision: number }): Promise<boolean>
   setModelsEnabled(gateway: ElysianGateway, service: AgentModelService, modelIds: readonly string[], enabled: boolean): Promise<BatchMutationResult>
@@ -55,16 +54,16 @@ type ModelSettingsState = {
 
 const messageOf = (error: unknown) => errorMessageOf(error, '读取模型配置失败')
 const notify = (message: string, tone: 'success' | 'danger' = 'success') => useMessageStore.getState().notify({ message, tone })
-const initial = { status: 'idle' as const, models: [], services: [], reloading: false, saving: false, search: '', errorMessage: undefined }
+const initial = { status: 'idle' as const, models: [], services: [], refreshing: false, saving: false, search: '', errorMessage: undefined }
 
 export const useModelSettingsStore = create<ModelSettingsState>((set, get) => {
   let sequence = 0
   const writes = createRequestGuard()
   let pendingRead: { gateway: ElysianGateway; auth: number; models: readonly AgentModelProfile[]; services: readonly AgentModelService[]; promise: Promise<void> } | undefined
-  const read = (gateway: ElysianGateway, refresh: boolean): Promise<void> => {
+  const load: ModelSettingsState['load'] = (gateway, { silent } = {}) => {
     const auth = captureAuthGeneration()
     if (pendingRead?.gateway === gateway && pendingRead.auth === auth && pendingRead.models === get().models && pendingRead.services === get().services) {
-      if (refresh) set({ reloading: true })
+      if (!silent) set({ refreshing: true })
       return pendingRead.promise
     }
     const request = ++sequence
@@ -72,22 +71,21 @@ export const useModelSettingsStore = create<ModelSettingsState>((set, get) => {
     const operation = { gateway, auth, models: get().models, services: get().services, promise: Promise.resolve() }
     pendingRead = operation
     const current = () => request === sequence && auth === captureAuthGeneration()
-    set({ status: hadData ? 'ready' : 'loading', reloading: refresh && hadData, errorMessage: undefined })
+    set({ status: hadData ? 'ready' : 'loading', refreshing: !silent && hadData, errorMessage: undefined })
     operation.promise = (async () => {
       try {
         const services = await gateway.modelSettings.listModelServices()
-        if (current() && operation.models === get().models && operation.services === get().services) set({ models: services.flatMap(service => service.models), services, status: 'ready', reloading: false, errorMessage: undefined })
+        if (current() && operation.models === get().models && operation.services === get().services) set({ models: services.flatMap(service => service.models), services, status: 'ready', refreshing: false, errorMessage: undefined })
       } catch (error) {
-        if (current()) set({ status: hadData ? 'ready' : 'error', reloading: false, errorMessage: messageOf(error) })
-      } finally { if (pendingRead === operation) { pendingRead = undefined; if (current()) set({ reloading: false }) } }
+        if (current()) set({ status: hadData ? 'ready' : 'error', refreshing: false, errorMessage: messageOf(error) })
+      } finally { if (pendingRead === operation) { pendingRead = undefined; if (current()) set({ refreshing: false }) } }
     })()
     return operation.promise
   }
   return {
     ...initial,
     setSearch: (search) => set({ search }),
-    load(gateway) { return read(gateway, false) },
-    async refresh(gateway) { await read(gateway, true) },
+    load,
     async setModelsEnabled(gateway, snapshot, modelIds, enabled) {
       const current = get().services.find(service => service.id === snapshot.id)
       if (get().saving) return { status: 'failed', error: '模型配置正在保存，请稍后重试' }
@@ -102,7 +100,7 @@ export const useModelSettingsStore = create<ModelSettingsState>((set, get) => {
       }
       const isCurrent = writes.capture()
       sequence += 1; pendingRead = undefined
-      set({ saving: true, reloading: false, errorMessage: undefined })
+      set({ saving: true, refreshing: false, errorMessage: undefined })
       try {
         const service = await gateway.modelSettings.updateModelService(current.id, { ...input, expectedRevision: current.revision })
         if (!isCurrent()) return { status: 'unknown', error: '登录状态已变化，请重新读取模型配置核实结果' }
@@ -112,7 +110,7 @@ export const useModelSettingsStore = create<ModelSettingsState>((set, get) => {
         const result = batchFailure(error)
         if (isCurrent()) {
           set({ errorMessage: result.error })
-          if (isRevisionConflict(error)) await read(gateway, false)
+          if (isRevisionConflict(error)) await load(gateway, { silent: true })
         }
         return result
       } finally { if (isCurrent()) set({ saving: false }) }
@@ -131,7 +129,7 @@ export const useModelSettingsStore = create<ModelSettingsState>((set, get) => {
       if (get().saving) return false
       const isCurrent = writes.capture()
       sequence += 1; pendingRead = undefined
-      set({ saving: true, errorMessage: undefined, reloading: false })
+      set({ saving: true, errorMessage: undefined, refreshing: false })
       try {
         const service = editing
           ? await gateway.modelSettings.updateModelService(editing.id, { ...input, expectedRevision: editing.revision })
@@ -139,12 +137,12 @@ export const useModelSettingsStore = create<ModelSettingsState>((set, get) => {
         if (!isCurrent()) return false
         set(state => { const services = [...state.services.filter(item => item.id !== service.id), service]; return { services, models: services.flatMap(item => item.models) } })
         notify(`模型服务「${service.name}」已${editing ? '更新' : '创建'}${demoNoticeSuffix(isDockerRuntime())}`)
-        await read(gateway, false)
+        await load(gateway, { silent: true })
         return isCurrent()
       } catch (error) {
         if (!isCurrent()) return false
         const message = isRevisionConflict(error) ? '模型服务已被其他修改更新，已读取最新修订，表单草稿已保留' : messageOf(error)
-        if (isRevisionConflict(error)) await read(gateway, false)
+        if (isRevisionConflict(error)) await load(gateway, { silent: true })
         if (!isCurrent()) return false
         set({ errorMessage: message })
         notify(message, 'danger')
@@ -158,7 +156,7 @@ export const useModelSettingsStore = create<ModelSettingsState>((set, get) => {
       if (get().saving) return false
       const isCurrent = writes.capture()
       sequence += 1; pendingRead = undefined
-      set({ saving: true, errorMessage: undefined, reloading: false })
+      set({ saving: true, errorMessage: undefined, refreshing: false })
       try {
         const profile = editing
           ? await gateway.modelSettings.updateModelProfile(editing.id, { ...input, expectedRevision: editing.revision })
@@ -166,12 +164,12 @@ export const useModelSettingsStore = create<ModelSettingsState>((set, get) => {
         if (!isCurrent()) return false
         set((state) => ({ models: [...state.models.filter((item) => item.id !== profile.id), profile] }))
         notify(`模型配置「${profile.model}」已${editing ? '更新' : '创建'}（修订 ${profile.revision}）${demoNoticeSuffix(isDockerRuntime())}`)
-        await read(gateway, false)
+        await load(gateway, { silent: true })
         return isCurrent()
       } catch (error) {
         if (!isCurrent()) return false
         const message = isRevisionConflict(error) ? '模型配置已被其他修改更新，已重新读取最新修订，请基于最新内容重试' : messageOf(error)
-        if (isRevisionConflict(error)) await read(gateway, false)
+        if (isRevisionConflict(error)) await load(gateway, { silent: true })
         if (!isCurrent()) return false
         set({ errorMessage: message })
         notify(message, 'danger')

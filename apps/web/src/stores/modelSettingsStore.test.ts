@@ -2,6 +2,7 @@ import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type {
   AgentModelProfile,
   AgentModelProfileInput,
+  AgentModelService,
 } from '@elysian/contracts'
 import type { ElysianGateway } from '../contracts/adapters'
 import { createMockGateway } from '../adapters/mock/gateway'
@@ -35,6 +36,28 @@ const MODEL_INPUT: AgentModelProfileInput = {
 }
 
 beforeEach(async () => { resetModelSettingsData(); useModelSettingsStore.getState().reset(); await useMessageStore.getState().clear() })
+describe('模型配置读取', () => {
+  it('保留成功空清单，手动刷新共用在途静默读取并单独显示忙碌态', async () => {
+    const { gateway, adapter } = makeGateway()
+    let resolve!: (services: AgentModelService[]) => void
+    const read = vi.spyOn(adapter, 'listModelServices')
+      .mockResolvedValueOnce([])
+      .mockImplementationOnce(() => new Promise((done) => { resolve = done }))
+    const state = useModelSettingsStore.getState
+    await state().load(gateway, { silent: true })
+    const snapshot = state().services
+    const silent = state().load(gateway, { silent: true })
+    expect(state()).toMatchObject({ status: 'ready', services: [], refreshing: false })
+    const manual = state().load(gateway)
+    expect(state().services).toBe(snapshot)
+    expect(state().refreshing).toBe(true)
+    expect(read).toHaveBeenCalledTimes(2)
+    resolve([])
+    await Promise.all([silent, manual])
+    expect(state()).toMatchObject({ status: 'ready', services: [], refreshing: false })
+  })
+})
+
 describe('模型设置保存与冲突回读', () => {
   it('新建模型（提交凭据）后列表回显 hasCredential=true 且凭据不回显', async () => {
     const { gateway } = makeGateway()
@@ -116,7 +139,7 @@ describe('模型设置保存与冲突回读', () => {
     const read = vi.spyOn(adapter, 'listModelServices').mockRejectedValueOnce(new Error('读取失败'))
     await useModelSettingsStore.getState().load(gateway)
     expect(useModelSettingsStore.getState().status).toBe('error')
-    await useModelSettingsStore.getState().refresh(gateway)
+    await useModelSettingsStore.getState().load(gateway)
     expect(useModelSettingsStore.getState().status).toBe('ready')
     expect(read).toHaveBeenCalledTimes(2)
   })
@@ -154,7 +177,7 @@ describe('模型表格批量启停', () => {
     const write = vi.spyOn(adapter, 'updateModelService').mockImplementationOnce(() => new Promise(done => { resolve = done }))
     const pending = useModelSettingsStore.getState().setModelsEnabled(gateway, service, [service.models[0]!.id], false)
     vi.spyOn(adapter, 'listModelServices').mockResolvedValueOnce(services.map(item => item.id === service.id ? newer : item))
-    await useModelSettingsStore.getState().refresh(gateway)
+    await useModelSettingsStore.getState().load(gateway)
     resolve(receipt)
     expect((await pending).status).toBe('succeeded')
     expect(write).toHaveBeenCalledTimes(1)
