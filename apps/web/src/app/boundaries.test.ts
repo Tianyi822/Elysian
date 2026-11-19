@@ -62,6 +62,11 @@ describe('浏览器侧边界', () => {
     expect(source).not.toMatch(/['"]\.\.\/adapters\//)
   })
 
+  it('MCP 探测弹窗不直接读写会话存储', () => {
+    const source = readFileSync(join(WEB_SRC, 'features/settings/McpProbeDialog.tsx'), 'utf8')
+    expect(source).not.toMatch(/\bsessionStorage\b/)
+  })
+
   it('适配器源码不导入 store', () => {
     for (const file of listSourceFiles(join(WEB_SRC, 'adapters'))) {
       const source = readFileSync(join(WEB_SRC, file), 'utf8')

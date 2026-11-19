@@ -1,6 +1,6 @@
 import { randomId } from '../../utils/randomId'
 import { useEffect, useRef, useState } from 'react'
-import type { AgentMCPProbeDecision, AgentMCPProbeRequest, AgentMCPServer } from '@elysian/contracts'
+import type { AgentMCPProbeRequest, AgentMCPServer } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { captureAuthGeneration } from '../../utils/authGeneration'
 import { RuntimeAccessCard } from '../../components/RuntimeAccessCard'
@@ -9,18 +9,12 @@ import { CTL_SECONDARY } from '../../components/formControl'
 import { McpCatalog } from './McpSection'
 import { Button } from '../../components/Button'
 import { messageOf } from '../../utils/errorMessage'
-
-type Pointer = { requestId: string; id?: string; decision?: AgentMCPProbeDecision; cancelRequestId?: string }
-const storageKey = (server: AgentMCPServer) => `elysian:mcp-probe:v1:${server.id}:${server.revision}`
-const readPointer = (server: AgentMCPServer): Pointer => {
-  try { const value = JSON.parse(sessionStorage.getItem(storageKey(server)) ?? 'null') as Pointer | null; if (value && typeof value.requestId === 'string') return value } catch { /* 浏览器禁用存储时保持当前页面内幂等。 */ }
-  return { requestId: randomId() }
-}
+import { readMcpProbePointer, saveMcpProbePointer, type McpProbePointer } from '../../stores/mcpProbePending'
 
 export function McpProbeDialog({ server, visible, onClose }: { server: AgentMCPServer; visible: boolean; onClose(): void }) {
   const api = useGateway().agentExtensions
   const [request, setRequest] = useState<AgentMCPProbeRequest>()
-  const [pointer, setPointer] = useState(() => readPointer(server))
+  const [pointer, setPointer] = useState<McpProbePointer>(() => readMcpProbePointer(server) ?? { requestId: randomId() })
   const [error, setError] = useState<string>()
   const [busy, setBusy] = useState(false)
   const [reading, setReading] = useState(true)
@@ -28,7 +22,7 @@ export function McpProbeDialog({ server, visible, onClose }: { server: AgentMCPS
   const lifetime = useRef(0)
   const createPromise = useRef<Promise<AgentMCPProbeRequest> | undefined>(undefined)
   useEffect(() => { lifetime.current += 1; return () => { lifetime.current += 1 } }, [api, server.id, server.revision])
-  const savePointer = (value: Pointer) => { setPointer(value); try { sessionStorage.setItem(storageKey(server), JSON.stringify(value)) } catch { /* 同页仍保留原请求。 */ } }
+  const savePointer = (value: McpProbePointer) => { setPointer(value); saveMcpProbePointer(server, value) }
   useEffect(() => {
     if (!visible) return
     const controller = new AbortController(), owner = lifetime.current, auth = captureAuthGeneration()
@@ -38,7 +32,7 @@ export function McpProbeDialog({ server, visible, onClose }: { server: AgentMCPS
       setReading(true)
       try {
         if (!pointer.id && !createPromise.current) {
-          try { sessionStorage.setItem(storageKey(server), JSON.stringify(pointer)) } catch { /* 同页保留。 */ }
+          saveMcpProbePointer(server, pointer)
           createPromise.current = api.createMcpProbeRequest(server.id, { revision: server.revision, requestId: pointer.requestId })
         }
         const value = pointer.id ? await api.getMcpProbeRequest(pointer.id, controller.signal) : await createPromise.current!

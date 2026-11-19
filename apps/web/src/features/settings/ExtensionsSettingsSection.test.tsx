@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { act, fireEvent, render, screen, within, waitFor } from '@testing-library/react'
 import { Profiler, type ProfilerOnRenderCallback } from 'react'
 import * as Tooltip from '@radix-ui/react-tooltip'
@@ -388,6 +388,10 @@ describe('配置边界与请求恢复', () => {
 })
 
 describe('MCP 容器运行时权限', () => {
+  afterEach(() => {
+    sessionStorage.removeItem('elysian:mcp-probe:v1:mcp-demo-stdio:1')
+  })
+
   it('先显示申请，只有确认本次允许后才执行探测', async () => {
     const gateway = createMockGateway({ eventStream: 'memory', eventIntervalMs: 60000 })
     const decide = vi.spyOn(gateway.agentExtensions, 'decideMcpProbeRequest')
@@ -404,6 +408,37 @@ describe('MCP 容器运行时权限', () => {
     expect(oldProbe).not.toHaveBeenCalled()
     await user.click(screen.getByRole('button', { name: '确认并继续' }))
     expect(decide).toHaveBeenCalledWith(expect.any(String), expect.objectContaining({ decision: 'allow-once', expectedVersion: 1, requestId: expect.any(String) }))
+    expect(await screen.findByText('本次探测成功')).toBeInTheDocument()
+  })
+
+  it('页面重新挂载后回读原探测申请，并按原选择重试结果未知的确认', async () => {
+    const gateway = createMockGateway({ eventStream: 'memory', eventIntervalMs: 60000 })
+    const create = vi.spyOn(gateway.agentExtensions, 'createMcpProbeRequest')
+    const read = vi.spyOn(gateway.agentExtensions, 'getMcpProbeRequest')
+    const decide = vi.spyOn(gateway.agentExtensions, 'decideMcpProbeRequest')
+      .mockRejectedValueOnce(new Error('探测确认结果未知'))
+    const user = userEvent.setup()
+    const openProbe = async () => {
+      const row = (await screen.findByText('演示文件系统（stdio）')).closest<HTMLElement>('[role="row"]')!
+      await user.click(within(row).getByRole('button', { name: '探测' }))
+    }
+
+    const firstPage = renderApp('/settings?tab=mcp', { gateway })
+    await openProbe()
+    await user.click(await screen.findByRole('button', { name: '确认并继续' }))
+    await screen.findByRole('button', { name: '按原选择重试' })
+    const [id, originalDecision] = decide.mock.calls[0]!
+    firstPage.unmount()
+
+    read.mockClear()
+    renderApp('/settings?tab=mcp', { gateway })
+    await openProbe()
+    const retry = await screen.findByRole('button', { name: '按原选择重试' })
+    expect(create).toHaveBeenCalledTimes(1)
+    expect(read).toHaveBeenCalledWith(id, expect.any(AbortSignal))
+    expect(decide).toHaveBeenCalledTimes(1)
+    await user.click(retry)
+    expect(decide).toHaveBeenNthCalledWith(2, id, originalDecision)
     expect(await screen.findByText('本次探测成功')).toBeInTheDocument()
   })
 
