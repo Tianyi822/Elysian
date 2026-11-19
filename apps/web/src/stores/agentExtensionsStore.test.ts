@@ -292,6 +292,29 @@ describe('MCP 服务', () => {
     expect(useAgentExtensionsStore.getState().probe).toBeNull()
   })
 
+  it('重置后固定目录的旧错误不覆盖新目录和探测结果', async () => {
+    const store = useAgentExtensionsStore.getState()
+    const projection = await gateway.agentExtensions.probeMcpServer('mcp-demo-http', 2)
+    let rejectCatalog!: (error: Error) => void
+    vi.spyOn(gateway.agentExtensions, 'getMcpCatalog')
+      .mockImplementationOnce(() => new Promise((_, reject) => { rejectCatalog = reject }))
+
+    const oldCatalog = store.loadMcpCatalog(gateway, 'mcp-demo-http', 2)
+    store.reset()
+    expect(useAgentExtensionsStore.getState().catalog).toBeNull()
+    await Promise.all([
+      store.loadMcpCatalog(gateway, 'mcp-demo-http', 2, projection.digest),
+      store.probeMcpServer(gateway, 'mcp-demo-http', 2),
+    ])
+    rejectCatalog(new Error('旧目录连接失败'))
+    await oldCatalog
+
+    expect(useAgentExtensionsStore.getState()).toMatchObject({
+      catalog: { status: 'ready', digest: projection.digest, projection },
+      probe: { status: 'ready', projection },
+    })
+  })
+
   it('新建服务进列表；保存错误留在 mcpSaveError', async () => {
     const store = useAgentExtensionsStore.getState()
     await store.loadMcpServers(gateway)
