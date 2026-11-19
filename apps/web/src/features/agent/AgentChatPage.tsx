@@ -65,12 +65,12 @@ export function AgentChatPage() {
     reasoning: state.reasoning,
     liveOutput: state.liveOutput,
     outgoingMessage: state.outgoingMessage,
-    loading: state.loading,
+    restoringAttachments: state.restoringAttachments,
     refreshing: state.refreshing,
     sending: state.sending,
     stopping: state.stopping,
     uploadingAttachments: state.uploadingAttachments,
-    syncError: state.syncError,
+    syncErrorMessage: state.syncErrorMessage,
     inputError: state.inputError,
     localSessions: state.localSessions,
     initialize: state.initialize,
@@ -143,13 +143,13 @@ export function AgentChatPage() {
   const reasoningLevels = model?.reasoningLevels ?? []
   const reasoningLevel = session?.reasoningLevel && reasoningLevels.includes(session.reasoningLevel) ? session.reasoningLevel : defaultReasoningLevel(reasoningLevels, model?.defaultReasoningLevel) ?? ''
   const restoring = !!session?.remote && !chat.remoteSession
-  const attachmentsLocked = !session || chat.loading || busy || chat.uploadingAttachments || restoring || !!session.pending || !!session.editing
-  const readError = navigationFailure || (chat.syncError && error && chat.syncError !== error
-    ? `会话：${chat.syncError}\n模型：${error}`
-    : chat.syncError || error)
-  const retryReadLabel = navigationFailure ? '重新初始化会话' : chat.syncError && error ? '重新读取会话和模型' : chat.syncError ? '重新读取会话' : '重新读取模型'
-  useFeedbackMessage(readError, !error && chat.syncError?.startsWith('实时连接暂时中断') ? 'warning' : 'danger', { replace: true })
-  const modelUnavailable = api.available && status === 'ready' && !chat.loading && !restoring && (!models.length || (session?.remote && !model))
+  const attachmentsLocked = !session || chat.restoringAttachments || busy || chat.uploadingAttachments || restoring || !!session.pending || !!session.editing
+  const readError = navigationFailure || (chat.syncErrorMessage && error && chat.syncErrorMessage !== error
+    ? `会话：${chat.syncErrorMessage}\n模型：${error}`
+    : chat.syncErrorMessage || error)
+  const retryReadLabel = navigationFailure ? '重新初始化会话' : chat.syncErrorMessage && error ? '重新读取会话和模型' : chat.syncErrorMessage ? '重新读取会话' : '重新读取模型'
+  useFeedbackMessage(readError, !error && chat.syncErrorMessage?.startsWith('实时连接暂时中断') ? 'warning' : 'danger', { replace: true })
+  const modelUnavailable = api.available && status === 'ready' && !chat.restoringAttachments && !restoring && (!models.length || (session?.remote && !model))
   const inputHints = [
     modelUnavailable ? '请选择支持文本与工具调用的可用模型，或前往设置添加模型。' : null,
     !api.available ? '当前为本地演示，请在已连接后端的面板中使用聊天。' : null,
@@ -158,7 +158,7 @@ export function AgentChatPage() {
   ].filter(Boolean)
   const retryReads = () => {
     if (navigationFailure) setNavigationAttempt(value => value + 1)
-    if (chat.syncError) void chat.refresh(api)
+    if (chat.syncErrorMessage) void chat.refresh(api)
     if (error) reload()
   }
   const focusListTrigger = () => listTrigger.current?.focus()
@@ -177,7 +177,7 @@ export function AgentChatPage() {
     return () => { active = false }
   }, [api, location.key, requestedId, requestedDraft, chat.initialize, navigationAttempt])
   useEffect(() => {
-    if (navigationReady !== location.key || !session || chat.loading || chat.sending) return
+    if (navigationReady !== location.key || !session || chat.restoringAttachments || chat.sending) return
     const remoteId = session?.remote?.sessionId
     const draftId = remoteId ? undefined : session.id
     if (remoteId === requestedId && draftId === requestedDraft) return
@@ -185,7 +185,7 @@ export function AgentChatPage() {
     if (remoteId) next.set('session', remoteId)
     else next.delete('session')
     setParams(next, { replace: true, state: { ...routeState, agentDraftId: draftId } })
-  }, [navigationReady, location.key, session?.id, session?.remote?.sessionId, requestedId, requestedDraft, chat.loading, chat.sending, params, setParams])
+  }, [navigationReady, location.key, session?.id, session?.remote?.sessionId, requestedId, requestedDraft, chat.restoringAttachments, chat.sending, params, setParams])
   useEffect(() => {
     if (!listCollapsed || !restoreListFocus.current) return
     restoreListFocus.current = false
@@ -203,8 +203,8 @@ export function AgentChatPage() {
   }, [wide, shell.conversationDrawerOpen, shell.closeConversationDrawer])
   useSilentPolling(async () => {
     const state = useAgentChatStore.getState()
-    if (!state.listLoading && (state.sessions.some(row => row.activeRunId || row.activeWorkflowId) || state.localSessions.some(row => row.pending))) {
-      await chat.loadSessions(api, false, true)
+    if (state.listStatus !== 'loading' && (state.sessions.some(row => row.activeRunId || row.activeWorkflowId) || state.localSessions.some(row => row.pending))) {
+      await chat.loadSessions(api, { silent: true })
     }
   }, { intervalMs: 5000, enabled: api.available, scope: api })
   useEffect(() => {
@@ -214,9 +214,9 @@ export function AgentChatPage() {
   }, [session?.id, session?.modelId, session?.remote, session?.pending, model, models, status, busy, chat.setModel])
   useEffect(() => {
     // 选择器不提供「默认」项：未选择或旧选择失效时把模型声明的默认档落进会话记录，提交与展示同一来源。
-    if (!model || chat.loading || chat.sending || session?.pending) return
+    if (!model || chat.restoringAttachments || chat.sending || session?.pending) return
     if ((session?.reasoningLevel ?? '') !== reasoningLevel) chat.setReasoningLevel(reasoningLevel || null)
-  }, [model, reasoningLevel, session?.reasoningLevel, session?.pending, chat.loading, chat.sending, chat.setReasoningLevel])
+  }, [model, reasoningLevel, session?.reasoningLevel, session?.pending, chat.restoringAttachments, chat.sending, chat.setReasoningLevel])
 
   const localSessionId = session?.id
   const remoteSessionId = session?.remote?.sessionId
@@ -225,7 +225,7 @@ export function AgentChatPage() {
     await chat.refresh(api, signal)
     const latest = useAgentChatStore.getState()
     return Boolean(isChatRunActive(latest.run) || latest.remoteSession?.activeRunId || latest.remoteSession?.activeWorkflowId || latest.session?.pending)
-  }, { intervalMs: 1500, enabled: !!remoteSessionId && !chat.loading && !chat.sending && api.available,
+  }, { intervalMs: 1500, enabled: !!remoteSessionId && !chat.restoringAttachments && !chat.sending && api.available,
     immediate: true, abortOnHidden: true, scope: detailScope })
 
   const liveRunId = isChatRunActive(chat.run) ? chat.run!.id : undefined
@@ -260,7 +260,7 @@ export function AgentChatPage() {
     if (following.current && history.current) history.current.scrollTop = history.current.scrollHeight
   }, [chat.messages.length, chat.outgoingMessage, chat.reasoning[chat.run?.id ?? ''], session?.id])
 
-  const canSubmit = Boolean(api.available && (model || session?.pending) && !busy && !chat.uploadingAttachments && !chat.loading && !restoring && (status === 'ready' || session?.pending))
+  const canSubmit = Boolean(api.available && (model || session?.pending) && !busy && !chat.uploadingAttachments && !chat.restoringAttachments && !restoring && (status === 'ready' || session?.pending))
   const canSend = Boolean(canSubmit && !session?.editing && !session?.pending?.input.replaceMessageId && !session?.pending?.input.continueFromRunId && session?.draft.trim())
   const canResend = Boolean(canSubmit && (session?.pending?.input.replaceMessageId || session?.editing?.text.trim()))
   const resend = () => {
@@ -338,9 +338,9 @@ export function AgentChatPage() {
     } else { const next = new URLSearchParams(params); next.set('session', key); setParams(next) }
     shell.closeConversationDrawer()
   }
-  const refreshList = () => { setListRefreshing(true); void chat.loadSessions(api, false, false, true).finally(() => setListRefreshing(false)) }
+  const refreshList = () => { setListRefreshing(true); void chat.loadSessions(api, { userInitiated: true }).finally(() => setListRefreshing(false)) }
   const list = <ChatSessionList onSelect={selectConversation} onNew={newConversation}
-    onRefresh={refreshList} onMore={() => { void chat.loadSessions(api, true, false, true) }} refreshing={listRefreshing}
+    onRefresh={refreshList} onMore={() => { void chat.loadSessions(api, { more: true, userInitiated: true }) }} refreshing={listRefreshing}
     onClose={closeList} />
   // 会话栏默认收起，与主导航互不联动；手动展开后两栏可同开。
   const showSidebar = wide && !listCollapsed
@@ -382,8 +382,8 @@ export function AgentChatPage() {
     }}>
       {!chat.messages.length && !chat.outgoingMessage && !waitingForMessage ? <div className="chat-empty">
         {session?.remote ? <>
-          <h2 className="text-xl font-medium">{chat.syncError ? '会话暂时无法读取' : restoring || chat.loading ? '正在读取会话…' : '暂无消息'}</h2>
-          {!chat.syncError && (restoring || chat.loading) && <p className="mt-3 text-sm text-fg-muted">正在加载历史消息。</p>}
+          <h2 className="text-xl font-medium">{chat.syncErrorMessage ? '会话暂时无法读取' : restoring || chat.restoringAttachments ? '正在读取会话…' : '暂无消息'}</h2>
+          {!chat.syncErrorMessage && (restoring || chat.restoringAttachments) && <p className="mt-3 text-sm text-fg-muted">正在加载历史消息。</p>}
         </> : <>
         <Bot size={38} className="mb-5 text-fg-muted" aria-hidden />
         <h2 className="text-2xl font-medium tracking-tight sm:text-[28px]">今天想聊什么？</h2>
@@ -445,7 +445,7 @@ export function AgentChatPage() {
             </article>
             {(chat.timelines[message.runId]?.entries.length || chat.timelines[message.runId]?.done || chat.timelines[message.runId]?.plan) ? <ChatTimeline key={message.runId} timeline={chat.timelines[message.runId]!} answer={answer} showPlan={message.runId !== session?.remote?.runId}
               active={active && !finalizing && !waitingInput} stopped={stopped} stopping={active && stopping} api={api} onProgress={followContent} />
-              : answer?.origin === 'runtime' && !stopped ? <ChatRuntimeResult key={message.runId} content={answer.content} /> : <ChatResponse key={message.runId} content={(chat.timelines[message.runId] || chat.syncError ? answer?.content : undefined) ?? live?.content ?? ''} reasoning={chat.reasoning[message.runId] ?? ''}
+              : answer?.origin === 'runtime' && !stopped ? <ChatRuntimeResult key={message.runId} content={answer.content} /> : <ChatResponse key={message.runId} content={(chat.timelines[message.runId] || chat.syncErrorMessage ? answer?.content : undefined) ?? live?.content ?? ''} reasoning={chat.reasoning[message.runId] ?? ''}
                 active={active && !finalizing} stopped={stopped} stopping={active && stopping} copyable={!!answer} quarantined={answer?.quarantined} onProgress={followContent} />}
             {message.runId === chat.run?.id && message.runId === session?.remote?.runId && chat.run.continuation && !session.pending?.input.continueFromRunId && <div className="flex flex-wrap items-center gap-3 text-xs text-fg-muted">
               <Button variant="outline" type="button" className="chat-new" disabled={!canSubmit || !!session.editing || (!session.pending?.input.continueFromRunId && !chat.run.continuation.allowed) || (!!session.pending && !session.pending.input.continueFromRunId)}
@@ -495,7 +495,7 @@ export function AgentChatPage() {
         <textarea
           id="agent-message" ref={input} value={session?.draft ?? ''} rows={2}
           placeholder={restoring ? '正在读取会话…' : '向 Ely 发送消息…'} className="chat-textarea hover-scrollbar"
-          disabled={!session || chat.loading || chat.sending || !!session.pending}
+          disabled={!session || chat.restoringAttachments || chat.sending || !!session.pending}
           onChange={event => chat.setDraft(event.target.value)}
           onPaste={event => pasteFiles(event)}
           onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !isImeKey(event)) { event.preventDefault(); send() } }}
@@ -511,7 +511,7 @@ export function AgentChatPage() {
             <SelectDropdown ariaLabel="权限模式" value={permissionMode.value} onSelect={chat.setPermissionMode}
               items={PERMISSION_MODES.map(({ Icon, ...mode }) => ({ ...mode, icon: <Icon size={16} /> }))}
               leadingIcon={<PermissionIcon size={16} aria-hidden />}
-              disabled={!session || chat.loading || busy || restoring || !!session.pending}
+              disabled={!session || chat.restoringAttachments || busy || restoring || !!session.pending}
               triggerClassName="chat-select chat-permission-select" contentClassName="chat-composer-menu chat-permission-menu" />
           </div>
           <div className="chat-model">

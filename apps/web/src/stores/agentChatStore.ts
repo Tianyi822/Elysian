@@ -18,17 +18,17 @@ type AgentChatState = {
   session: AgentChatSession | null
   sessions: readonly AgentSession[]
   localSessions: readonly AgentChatSession[]
-  listLoading: boolean
-  listError: string | null
+  listStatus: 'idle' | 'loading' | 'ready' | 'error'
+  listErrorMessage?: string
   listHasMore: boolean
   listCursor: string
   initialize(api: AgentConversationAdapter, requestedId?: string): Promise<void>
   selectSession(api: AgentConversationAdapter, key: string): Promise<void>
-  loadSessions(api: AgentConversationAdapter, more?: boolean, quiet?: boolean, userInitiated?: boolean): Promise<void>
+  loadSessions(api: AgentConversationAdapter, options?: { more?: boolean; silent?: boolean; userInitiated?: boolean }): Promise<void>
   renameSession(api: AgentConversationAdapter, id: string, title: string): Promise<void>
   deleteSession(api: AgentConversationAdapter, id: string): Promise<void>
   clearDisplay(): void
-  loading: boolean
+  restoringAttachments: boolean
   reportOperation(message: string, tone?: MessageTone): void
   inputError: string | null
   reportInput(message: string): void
@@ -44,7 +44,7 @@ type AgentChatState = {
   uploadingAttachments: boolean
   stopping: boolean
   refreshing: boolean
-  syncError: string | null
+  syncErrorMessage?: string
   ensureSession(): Promise<void>
   prepareRemoteSession(api: AgentConversationAdapter, model: AgentModelProfile): Promise<void>
   newSession(): Promise<void>
@@ -67,7 +67,7 @@ type AgentChatState = {
 const allAttachments = agentChatAllAttachments
 const persistenceNotice = '浏览器暂时无法保存会话，刷新后可能丢失本页内容。'
 const attachmentTotalNotice = '本条消息附件合计超过 8 MiB，请分批发送。'
-const remoteBlank = { remoteSession: null, messages: [], outgoingMessage: null, reasoning: {}, timelines: {}, liveOutput: null, run: null, sending: false, uploadingAttachments: false, stopping: false, refreshing: false, syncError: null, inputError: null }
+const remoteBlank = { remoteSession: null, messages: [], outgoingMessage: null, reasoning: {}, timelines: {}, liveOutput: null, run: null, sending: false, uploadingAttachments: false, stopping: false, refreshing: false, syncErrorMessage: undefined, inputError: null }
 const outgoingMessageFor = (session: AgentChatSession, content: string, refs?: readonly AgentAttachmentRef[]) => ({
   content,
   attachments: session.attachments.filter(attachment => attachment.serverId && (!refs || refs.some(ref => ref.id === attachment.serverId)))
@@ -161,7 +161,7 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
     const restore = async (session: AgentChatSession) => {
       const currentGeneration = ++generation
       if (get().session?.id !== session.id) { attachmentPreparation?.abort(); remoteVersion += 1; attachmentUploadVersion += 1; completedReasoning.clear(); set(remoteBlank) }
-      set({ session, loading: true, outgoingMessage: session.pending && !session.pending.input.replaceMessageId
+      set({ session, restoringAttachments: true, outgoingMessage: session.pending && !session.pending.input.replaceMessageId
         ? outgoingMessageFor(session, session.pending.input.content, session.pending.input.attachments ?? []) : null })
       let attachments: AgentChatAttachment[]
       try { attachments = await adapter.restore(allAttachments(session)) }
@@ -177,7 +177,7 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
       set({
         session: { ...current, attachments: current.attachments.map(match), messages: current.messages.map(message => ({ ...message, attachments: message.attachments.map(match) })),
           ...(current.editing ? { editing: { ...current.editing, preparedAttachments: current.editing.preparedAttachments?.map(item => ({ ...item, attachment: match(item.attachment) })) } } : {}) },
-        loading: false,
+        restoringAttachments: false,
       })
       const missing = attachments.filter(attachment => !attachment.available).map(attachment => attachment.id).sort().join(',')
       if (missing && missingAttachmentSets.get(session.id) !== missing) notify('部分附件已无法从浏览器恢复，请重新选择需要发送的文件。', 'info')
@@ -347,10 +347,12 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
         return false
       }
     }
+    const listStatusAfterMutation = () => get().listStatus === 'loading' ? (listInitialized ? 'ready' : 'idle') : get().listStatus
+
     return {
       ...remoteBlank,
       session: null,
-      sessions: [], localSessions: [], listLoading: false, listError: null, listHasMore: false, listCursor: '',
+      sessions: [], localSessions: [], listStatus: 'idle', listErrorMessage: undefined, listHasMore: false, listCursor: '',
       reportOperation: notify,
       reportInput,
       clearDisplay() {
@@ -366,38 +368,38 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
         missingAttachmentSets.clear()
         persistenceFailed = false
         attachmentPersistenceFailed = false
-        set({ ...remoteBlank, session: null, sessions: [], localSessions: [], loading: false, listLoading: false, listError: null, listHasMore: false, listCursor: '' })
+        set({ ...remoteBlank, session: null, sessions: [], localSessions: [], restoringAttachments: false, listStatus: 'idle', listErrorMessage: undefined, listHasMore: false, listCursor: '' })
       },
-      async loadSessions(api, more = false, quiet = false, userInitiated = false) {
-        if (!api.available || (more && (!get().listHasMore || get().listLoading))) return
+      async loadSessions(api, { more, silent, userInitiated } = {}) {
+        if (!api.available || (more && (!get().listHasMore || get().listStatus === 'loading'))) return
         const version = ++listVersion
         const cursor = more ? get().listCursor : ''
-        set({ listLoading: true, listError: null, localSessions: adapter.list() })
+        set({ listStatus: 'loading', listErrorMessage: undefined, localSessions: adapter.list() })
         try {
           const page = await api.listSessions(cursor)
           if (version !== listVersion) return
           if (page.hasMore && page.nextCursor === cursor) throw new Error('会话列表分页未前进，请重新读取')
           listFeedback = null
-          if (quiet && listInitialized) {
+          if (silent && listInitialized) {
             // 静默回读只更新列表内容，保留最后已加载页的游标和结束标记。
             // 显式刷新才重置分页；活动时间变化带来的重复由后续加载按 ID 去重。
             const records = new Map(page.items.map(row => [row.id, row]))
             for (const row of get().sessions) if (!records.has(row.id)) records.set(row.id, row)
-            set({ sessions: [...records.values()] })
+            set({ listStatus: 'ready', sessions: [...records.values()] })
             return
           }
           const records = new Map((more ? get().sessions : []).map(row => [row.id, row]))
           for (const row of page.items) records.set(row.id, row)
           listInitialized = true
-          set({ sessions: [...records.values()], listCursor: page.nextCursor, listHasMore: page.hasMore })
+          set({ listStatus: 'ready', sessions: [...records.values()], listCursor: page.nextCursor, listHasMore: page.hasMore })
         } catch (error) {
           if (version === listVersion) {
-            if (userInitiated || listFeedback !== failureMessage(error)) notify(failureMessage(error))
-            listFeedback = failureMessage(error)
-            set({ listError: failureMessage(error) })
+            const message = failureMessage(error)
+            if (userInitiated || listFeedback !== message) notify(message)
+            listFeedback = message
+            set({ listStatus: 'error', listErrorMessage: message })
           }
         }
-        finally { if (version === listVersion) set({ listLoading: false }) }
       },
       async initialize(api, requestedId) {
         const lifetime = lifecycle
@@ -444,7 +446,7 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
           if (error instanceof AgentHttpError && error.status === 404) {
             // 会话已被别处删除：按会话消失处理，过滤行并说明，弹窗正常关闭。
             listVersion += 1
-            set({ sessions: get().sessions.filter(row => row.id !== id), listLoading: false })
+            set({ sessions: get().sessions.filter(row => row.id !== id), listStatus: listStatusAfterMutation() })
             notify('原会话已不存在，列表已更新。', 'info')
             return
           }
@@ -455,7 +457,7 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
         // 作废在途的列表读取，避免静默回读用旧标题覆盖刚确认的回执。
         listVersion += 1
         set({
-          listLoading: false,
+          listStatus: listStatusAfterMutation(),
           sessions: get().sessions.map(row => row.id === id ? remote : row),
           ...(get().remoteSession?.id === id ? { remoteSession: { ...get().remoteSession!, title: remote.title } } : {}),
         })
@@ -474,20 +476,20 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
         if (lifetime !== lifecycle) return
         listVersion += 1
         const fallback = get().sessions.find(row => row.id !== id)
-        set({ sessions: get().sessions.filter(row => row.id !== id), listLoading: false })
+        set({ sessions: get().sessions.filter(row => row.id !== id), listStatus: listStatusAfterMutation() })
         set({ localSessions: adapter.list() })
         if (get().session && agentChatSessionKey(get().session!) === id) {
           attachmentPreparation?.abort()
           generation += 1; remoteVersion += 1; submissionVersion += 1; attachmentUploadVersion += 1
           completedReasoning.clear()
-          set({ ...remoteBlank, loading: false })
+          set({ ...remoteBlank, restoringAttachments: false })
           const navigation = navigationVersion + 1
           if (fallback) await get().selectSession(api, fallback.id)
           else await get().newSession()
           if (lifetime === lifecycle && navigation === navigationVersion) notify(fallback ? '会话已删除，已切换到其他会话。' : '会话已删除，已新建空白会话。', 'info')
         } else notify('会话已删除。', 'success')
       },
-      loading: false,
+      restoringAttachments: false,
       async ensureSession() {
         if (get().session) { await restoring; return }
         if (restoring) { await restoring; return }
@@ -509,11 +511,11 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
         attachmentUploadVersion += 1
         completedReasoning.clear()
         restoring = undefined
-        set({ ...remoteBlank, loading: false })
+        set({ ...remoteBlank, restoringAttachments: false })
         persist(session)
       },
       async prepareRemoteSession(api, model) {
-        if (get().sending || get().loading || !api.available || !model.active || !model.capabilities.text || !model.capabilities.tools) return
+        if (get().sending || get().restoringAttachments || !api.available || !model.active || !model.capabilities.text || !model.capabilities.tools) return
         const session = current()
         if (session.remote || session.pending) return
         const lifetime = lifecycle
@@ -523,7 +525,7 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
           if (lifetime !== lifecycle || !stillCurrent(session.id)) return
           update({ remote: { sessionId: remote.id } })
           set({ remoteSession: remote })
-          void get().loadSessions(api, false, true)
+          void get().loadSessions(api, { silent: true })
         } catch (cause) { if (lifetime === lifecycle && stillCurrent(session.id)) notify(failureMessage(cause)) }
         finally { if (lifetime === lifecycle && stillCurrent(session.id)) set({ sending: false }) }
       },
@@ -679,7 +681,7 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
         const lifetime = lifecycle
         const continuing = session.pending?.input.continueFromRunId ?? continueFromRunId
         const text = session.pending?.input.content ?? (continuing ? '继续完成上轮未完成的任务。' : (session.editing?.text ?? session.draft).trim())
-        if (!api.available || !text || get().loading || get().sending || get().uploadingAttachments || get().stopping || isChatRunActive(get().run)) return false
+        if (!api.available || !text || get().restoringAttachments || get().sending || get().uploadingAttachments || get().stopping || isChatRunActive(get().run)) return false
         const version = ++submissionVersion
         const valid = () => lifetime === lifecycle && version === submissionVersion && stillCurrent(session.id)
         if (!session.pending) {
@@ -769,7 +771,7 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
           }, signal)
           if (valid()) await get().refresh(api, signal)
         } catch {
-          if (valid()) set({ syncError: '实时连接暂时中断，正在重新连接；已接收的内容已保留。' })
+          if (valid()) set({ syncErrorMessage: '实时连接暂时中断，正在重新连接；已接收的内容已保留。' })
         }
       },
       async refresh(api, signal, refreshRunIds) {
@@ -825,7 +827,7 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
           if (!valid()) return
           if (run) messages = messages.map(message => message.runId === run.id ? { ...message, runStatus: run.status } : message)
           setMessages(messages)
-          set({ remoteSession: remote, run, syncError: null })
+          set({ remoteSession: remote, run, syncErrorMessage: undefined })
           // 从历史新打开的会话，以服务端模型初始化本地偏好。
           if (!current().modelId) update({ modelId: remote.modelProfileId })
           if (latestRun) acceptRun(latestRun)
@@ -855,7 +857,7 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
               if (fallback) await get().selectSession(api, fallback.id)
               else await get().newSession()
               if (lifetime === lifecycle && navigation === navigationVersion && !signal?.aborted) notify('原会话已不存在，已切换会话。原草稿和未确认请求仍保存在本地。', 'info')
-            } else set({ syncError: failureMessage(error) })
+            } else set({ syncErrorMessage: failureMessage(error) })
           }
         } finally { if (valid()) set({ refreshing: false }) }
       },

@@ -11,7 +11,7 @@ import { ChatSessionList } from './ChatSessionList'
 beforeEach(() => {
   useAgentChatStore.getState().clearDisplay()
   for (const row of agentChatLocalAdapter.list()) agentChatLocalAdapter.remove(agentChatSessionKey(row))
-  useAgentChatStore.setState({ session: null, localSessions: [], sessions: [], listLoading: false, listError: null })
+  useAgentChatStore.getState().clearDisplay()
 })
 
 function renderList(backend: ReturnType<typeof chatTestApi>, onRender?: ProfilerOnRenderCallback) {
@@ -55,7 +55,7 @@ it('刷新失败保留已有会话，重试成功更新列表并清除错误', a
   await useAgentChatStore.getState().loadSessions(backend.api)
   renderList(backend)
   backend.api.listSessions.mockRejectedValueOnce(new Error('读取失败'))
-  await act(async () => { await useAgentChatStore.getState().loadSessions(backend.api, false, false, true) })
+  await act(async () => { await useAgentChatStore.getState().loadSessions(backend.api, { userInitiated: true }) })
   expect(screen.getByRole('button', { name: '原会话' })).toBeInTheDocument()
   expect(screen.getByRole('alert')).toHaveTextContent('会话暂时无法读取')
   expect(screen.queryByText('暂无会话')).not.toBeInTheDocument()

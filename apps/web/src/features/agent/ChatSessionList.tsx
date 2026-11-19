@@ -69,13 +69,14 @@ export function ChatSessionList({ onSelect, onNew, onRefresh, onMore, onClose, r
     localSessions: state.localSessions,
     sessions: state.sessions,
     sending: state.sending,
-    listLoading: state.listLoading,
-    listError: state.listError,
+    listStatus: state.listStatus,
+    listErrorMessage: state.listErrorMessage,
     listHasMore: state.listHasMore,
   })))
   const [renameTarget, setRenameTarget] = useState<SessionRow | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<SessionRow | null>(null)
   const selected = chat.selected
+  const loading = chat.listStatus === 'loading'
   const local = new Map(chat.localSessions.map(row => [agentChatSessionKey(row), row]))
   const drafts = chat.localSessions.filter(row => !row.remote && (row.id === selected || row.draft || row.attachments.length))
   const rows: SessionRow[] = [...drafts.map(row => ({ id: row.id, title: row.draft || '新会话', active: false, server: false })),
@@ -94,12 +95,12 @@ export function ChatSessionList({ onSelect, onNew, onRefresh, onMore, onClose, r
     </div>
     <Button variant="outline" type="button" className="chat-new chat-session-new" disabled={chat.sending} onClick={onNew}><Plus size={15} aria-hidden />新会话</Button>
     <div className="chat-session-rows hover-scrollbar">
-      {chat.listLoading && !rows.length ? <LoadingState label="正在读取会话…" /> : <>
-        {chat.listError && <div role="alert" className="space-y-2 px-3 py-5 text-sm text-fg-muted">
-          <p>会话暂时无法读取</p><p className="text-xs">{chat.listError}</p>
-          <Button variant="outline" type="button" disabled={chat.listLoading} onClick={onRefresh}>重试读取会话列表</Button>
+      {loading && !rows.length ? <LoadingState label="正在读取会话…" /> : <>
+        {chat.listErrorMessage && <div role="alert" className="space-y-2 px-3 py-5 text-sm text-fg-muted">
+          <p>会话暂时无法读取</p><p className="text-xs">{chat.listErrorMessage}</p>
+          <Button variant="outline" type="button" disabled={loading} onClick={onRefresh}>重试读取会话列表</Button>
         </div>}
-        {!rows.length && !chat.listError && <p className="px-3 py-5 text-sm text-fg-muted">暂无会话</p>}
+        {!rows.length && !chat.listErrorMessage && <p className="px-3 py-5 text-sm text-fg-muted">暂无会话</p>}
         {rows.map(row => <div className="chat-session-item" key={row.id}>
           <Tooltip.Root>
             <Tooltip.Trigger asChild>
@@ -118,7 +119,7 @@ export function ChatSessionList({ onSelect, onNew, onRefresh, onMore, onClose, r
           {row.server && <SessionRowEditMenu row={row} sending={chat.sending}
             onRename={setRenameTarget} onDelete={setDeleteTarget} />}
         </div>)}
-        {chat.listHasMore && <Button variant="outline" className="chat-session-more" type="button" disabled={chat.listLoading} onClick={onMore}>{chat.listLoading ? '正在读取…' : '加载更多'}</Button>}
+        {chat.listHasMore && <Button variant="outline" className="chat-session-more" type="button" disabled={loading} onClick={onMore}>{loading ? '正在读取…' : '加载更多'}</Button>}
       </>}
     </div>
     {renameTarget && <SessionRenameDialog target={renameTarget} onClose={() => setRenameTarget(null)} />}
