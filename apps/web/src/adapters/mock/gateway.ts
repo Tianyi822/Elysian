@@ -6,9 +6,7 @@ import { mockPanelAdapter } from './panelMock'
 import { createHttpPanelAdapter } from '../http/panelHttpAdapter'
 import type { ElysianGateway } from '../../contracts/adapters'
 import { createMockDataset } from './dataset'
-import {
-  MockContainerAdapter,
-} from './mockAdapters'
+import { MockContainerAdapter } from './containerMockAdapter'
 import { MockDependenciesAdapter } from './dependenciesMockAdapter'
 import { MockFilesAdapter } from './filesMockAdapter'
 import { MockFirewallAdapter } from './firewallMockAdapter'
