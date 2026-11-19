@@ -9,7 +9,6 @@ import { createMockDataset } from './dataset'
 import {
   MockContainerAdapter,
   MockDependenciesAdapter,
-  MockUserAdapter,
   MockWebsitesAdapter,
   createInMemoryEventsAdapter,
 } from './mockAdapters'
@@ -18,6 +17,7 @@ import { MockFirewallAdapter } from './firewallMockAdapter'
 import { MockLogsAdapter } from './logsMockAdapter'
 import { MockSessionAdapter } from './sessionMockAdapter'
 import { MockSshAdapter } from './sshMockAdapter'
+import { MockUserAdapter } from './usersMockAdapter'
 import { createResilientEventsAdapter } from '../sse/eventsAdapter'
 import { sharedSubscription } from '../sse/sharedSubscription'
 import type { ElysianEvent, EventStreamStatus } from '@elysian/contracts'
