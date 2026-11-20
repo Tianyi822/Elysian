@@ -10,7 +10,6 @@ import (
 	"math"
 	"net"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -18,6 +17,8 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"elysian/server/internal/shared"
 )
 
 const maximumConfigBytes = 4 << 20
@@ -261,7 +262,7 @@ func waitForCaddy(args []string) error {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), budget)
 		command := append([]string{"-sS", "--noproxy", "*", "--connect-timeout", "2", "--max-time", strconv.FormatFloat(budget.Seconds(), 'f', -1, 64), "--max-filesize", strconv.Itoa(maximumConfigBytes), "-o", args[1], "-w", "%{http_code}"}, connection...)
-		out, err := exec.CommandContext(ctx, "curl", command...).Output()
+		out, err := shared.SystemCommandContext(ctx, "curl", command...).Output()
 		cancel()
 		if err == nil && string(out) == "200" {
 			actual, err := readConfig(args[1])

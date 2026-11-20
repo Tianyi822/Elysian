@@ -12,7 +12,6 @@ import (
 	"net"
 	"net/http"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"regexp"
 	"strconv"
@@ -22,6 +21,7 @@ import (
 	"time"
 
 	"elysian/server/internal/agent/harness/sessionstore"
+	"elysian/server/internal/shared"
 )
 
 func (h SystemHost) ObserveResources(ctx context.Context) (resourceObservation, error) {
@@ -538,7 +538,7 @@ func (h SystemHost) prepareResourceRecoveryAt(ctx context.Context, id, worker, m
 	if err = copyRegular(worker, tmp, 0700); err != nil {
 		return err
 	}
-	c := exec.CommandContext(ctx, tmp, "maintenance-resource-version")
+	c := shared.SystemCommandContext(ctx, tmp, "maintenance-resource-version")
 	c.Env = []string{"HOME=" + filepath.Dir(h.Store.Root), "PATH=/usr/local/go/bin:/usr/local/bin:/usr/bin:/bin", "ELYSIAN_BARE_METAL=1", "ELYSIAN_DOCKER_SOCKET=" + h.DockerSocket}
 	output, err := c.Output()
 	if err != nil || strings.TrimSpace(string(output)) != "1" {

@@ -17,11 +17,16 @@ const systemCommandTimeout = 30 * time.Second
 // 调用方必须在 Run/Wait 后调用 cancel，密码等敏感参数不进入错误消息。
 func SystemCommand(parent context.Context, name string, args ...string) (*exec.Cmd, context.Context, context.CancelFunc) {
 	ctx, cancel := context.WithTimeout(parent, systemCommandTimeout)
+	return SystemCommandContext(ctx, name, args...), ctx, cancel
+}
+
+// SystemCommandContext 使用调用方的截止时间，取消时终止整个命令进程组。
+func SystemCommandContext(ctx context.Context, name string, args ...string) *exec.Cmd {
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }
 	cmd.WaitDelay = time.Second
-	return cmd, ctx, cancel
+	return cmd
 }
 
 func SystemCommandError(ctx context.Context, err error) error {

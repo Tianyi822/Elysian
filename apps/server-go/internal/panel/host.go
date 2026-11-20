@@ -2,7 +2,6 @@ package panel
 
 import (
 	"context"
-	"elysian/server/internal/config"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -16,6 +15,9 @@ import (
 	"strings"
 	"syscall"
 	"time"
+
+	"elysian/server/internal/config"
+	"elysian/server/internal/shared"
 )
 
 type SystemHost struct {
@@ -43,9 +45,8 @@ func (w logWriter) Write(b []byte) (int, error) {
 }
 
 func (h SystemHost) command(ctx context.Context, name string, args ...string) (string, error) {
-	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	c, _, cancel := shared.SystemCommand(ctx, name, args...)
 	defer cancel()
-	c := exec.CommandContext(ctx, name, args...)
 	c.Env = []string{"PATH=/usr/local/go/bin:/usr/local/bin:/usr/local/sbin:/usr/sbin:/usr/bin:/sbin:/bin", "LANG=C.UTF-8", "HOME=/var/lib/elysian"}
 	b, err := c.CombinedOutput()
 	if err != nil {
