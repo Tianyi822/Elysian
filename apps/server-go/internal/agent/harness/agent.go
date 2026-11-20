@@ -378,6 +378,7 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 	estimate := a.estimatePromptTokens(ctx, request)
 	localPayloadBytes, localImageTokens := requestEstimateParts(request)
 	m := a.manager
+	guardErr := m.checkDispatchGuard()
 	m.mu.Lock()
 	empty := ModelRequestRecord{}
 	execution := m.executionLocked(a.run.ID)
@@ -399,11 +400,9 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 		m.mu.Unlock()
 		return empty, err
 	}
-	if m.deps.DispatchGuard != nil {
-		if err := m.deps.DispatchGuard(); err != nil {
-			m.mu.Unlock()
-			return empty, err
-		}
+	if guardErr != nil {
+		m.mu.Unlock()
+		return empty, guardErr
 	}
 	if run.Model == nil || m.deps.Profiles == nil {
 		m.mu.Unlock()

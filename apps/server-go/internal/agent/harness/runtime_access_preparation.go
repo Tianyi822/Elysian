@@ -19,6 +19,7 @@ func (m *Manager) prepareAuthorizedRuntime(ctx context.Context, run Run, o Opera
 	}
 	env := execution.RuntimeEnvironment{Profile: o.Execution.Profile, Platform: o.Access.Runtime.Platform, RequiresDownload: o.Access.Runtime.RequiresDownload}
 	progress := func(p execution.RuntimeProgress) error {
+		guardErr := m.checkDispatchGuard()
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		if m.closed || ctx.Err() != nil {
@@ -27,10 +28,8 @@ func (m *Manager) prepareAuthorizedRuntime(ctx context.Context, run Run, o Opera
 		if err := m.checkOperationAuthorization(context.Background(), o); err != nil {
 			return err
 		}
-		if m.deps.DispatchGuard != nil {
-			if err := m.deps.DispatchGuard(); err != nil {
-				return err
-			}
+		if guardErr != nil {
+			return guardErr
 		}
 		next := &RuntimePreparation{State: p.State, Current: p.Current, Total: p.Total}
 		if o.Preparation != nil && *o.Preparation == *next {

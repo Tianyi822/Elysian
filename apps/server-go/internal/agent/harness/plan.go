@@ -62,6 +62,7 @@ func (a *agentExecution) validatePlanAccess(record ModelRequestRecord) error {
 // 计划、回执和恢复游标一起提交。没有外部操作，不申请资源租约或审批。
 func (a *agentExecution) executePlan(ctx context.Context, index int, proposal model.ToolCall) error {
 	m := a.manager
+	guardErr := m.checkDispatchGuard()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed || m.storageError || ctx.Err() != nil || m.store.DispatchError() != nil {
@@ -70,10 +71,8 @@ func (a *agentExecution) executePlan(ctx context.Context, index int, proposal mo
 	if err := a.validatePlanAccess(*a.pending); err != nil {
 		return err
 	}
-	if m.deps.DispatchGuard != nil {
-		if err := m.deps.DispatchGuard(); err != nil {
-			return err
-		}
+	if guardErr != nil {
+		return guardErr
 	}
 	_, err := m.store.ChangeRun(ctx, a.run.ID, "update-plan", func(tx sessionstore.Tx, r *Run) error {
 		if r.Status != StateRunning || r.CancelRequestedAt != "" {

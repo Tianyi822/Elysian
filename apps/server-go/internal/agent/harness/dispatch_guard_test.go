@@ -12,6 +12,7 @@ import (
 	"elysian/server/internal/agent/harness/model"
 	"elysian/server/internal/agent/harness/sessionstore"
 	"elysian/server/internal/agent/harness/state"
+	"elysian/server/internal/agent/harness/worker"
 )
 
 func TestOperationDispatchGuard(t *testing.T) {
@@ -120,4 +121,116 @@ func TestOperationDispatchGuard(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestWorkerGuardChecksQueueAfterConcurrentCancellation(t *testing.T) {
+	s, _ := openRuntimeTestStore(t)
+	run := createRuntimeTestRun(t, s, "queue-guard", runtimeStoreTestTime)
+	ctx, stop := context.WithCancel(context.Background())
+	entered, release, next := make(chan struct{}), make(chan struct{}), make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(release) })
+	var guards, dispatched atomic.Int32
+	m := &Manager{ctx: ctx, store: s, wake: make(chan struct{}, 1), executions: map[string]*executionState{}, deps: Deps{
+		Now: s.now, NewID: state.RandomID, Tools: &runtimeTestTools{},
+		DispatchGuard: func() error {
+			switch guards.Add(1) {
+			case 1:
+				close(entered)
+				<-release
+			case 2:
+				close(next)
+			}
+			return nil
+		},
+	}}
+	m.signal() // 空队列处理完第一轮后，唤醒下一轮，证明 Worker 已越过第一次检查。
+	slot := &workerSlot{process: &runtimeTestProcess{run: func(context.Context, string, []worker.Step, worker.Invoker) error {
+		dispatched.Add(1)
+		return nil
+	}}}
+	done := make(chan struct{})
+	go func() { defer close(done); m.workerLoop(slot) }()
+	defer func() { stop(); unblock(); <-done }()
+	awaitGuard(t, m, entered)
+	if cancelled, err := m.Cancel(ctx, run.ID); err != nil || cancelled.Status != StateCancelled {
+		t.Fatalf("未能在查询期间取消排队任务：%+v %v", cancelled, err)
+	}
+	unblock()
+	select {
+	case <-next:
+	case <-time.After(5 * time.Second):
+		t.Fatal("Worker 未越过阻塞的检查")
+	}
+	got, err := s.get(ctx, run.ID)
+	if err != nil || got.Status != StateCancelled || got.StartedAt != "" || dispatched.Load() != 0 {
+		t.Fatalf("Worker 启动了已取消的排队任务：%+v %v", got, err)
+	}
+}
+
+func TestRunningGuardRejectsConcurrentCancellation(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		call func(context.Context, *agentExecution) error
+	}{
+		{"模型", func(ctx context.Context, a *agentExecution) error {
+			_, err := a.requestModel(ctx, "inference", model.Request{}, nil, 0)
+			return err
+		}},
+		{"计划", func(ctx context.Context, a *agentExecution) error {
+			return a.executePlan(ctx, 0, planReply(planFixture).ToolCalls[0])
+		}},
+		{"提问", func(ctx context.Context, a *agentExecution) error {
+			return a.executeUserInput(ctx, 0, userInputReply(questionFixture).ToolCalls[0], "")
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _ := openRuntimeTestStore(t)
+			run := continuousStoreRun(t, s, "running-guard")
+			ctx, cancel := context.WithCancel(context.Background())
+			defer cancel()
+			run, err := s.change(ctx, run.ID, "start", func(tx sessionstore.Tx, r *Run) error {
+				r.Status = StateRunning
+				return saveRun(ctx, tx, r)
+			})
+			if err != nil {
+				t.Fatal(err)
+			}
+			entered, release := make(chan struct{}), make(chan struct{})
+			unblock := sync.OnceFunc(func() { close(release) })
+			m := &Manager{store: s, executions: map[string]*executionState{run.ID: {cancel: cancel}}, deps: Deps{
+				Now: s.now, NewID: state.RandomID, DispatchGuard: func() error { close(entered); <-release; return nil },
+			}}
+			run.Snapshot = &CapabilitySnapshot{Tools: []Capability{planCapability()}}
+			a := &agentExecution{manager: m, run: run, pending: &ModelRequestRecord{ID: "original"}}
+			result, done := make(chan error, 1), make(chan struct{})
+			go func() { defer close(done); result <- tc.call(ctx, a) }()
+			defer func() { unblock(); <-done }()
+			awaitGuard(t, m, entered)
+			cancelled, err := m.Cancel(context.Background(), run.ID)
+			if err != nil || cancelled.CancelRequestedAt == "" {
+				t.Fatalf("未能在查询期间记录取消：%+v %v", cancelled, err)
+			}
+			unblock()
+			if err = <-result; !errors.Is(err, context.Canceled) {
+				t.Fatalf("应以取消而非继续执行结束：%v", err)
+			}
+			got, err := s.get(context.Background(), run.ID)
+			if err != nil || got.LastSeq != cancelled.LastSeq || got.Usage != run.Usage || got.Plan != nil {
+				t.Fatalf("取消后留下了新的运行记录或计量：%+v %v", got, err)
+			}
+		})
+	}
+}
+
+func awaitGuard(t *testing.T, m *Manager, entered <-chan struct{}) {
+	t.Helper()
+	select {
+	case <-entered:
+	case <-time.After(5 * time.Second):
+		t.Fatal("未到达维护守卫")
+	}
+	if !m.mu.TryLock() {
+		t.Fatal("慢守卫占用了 Manager 锁")
+	}
+	m.mu.Unlock()
 }

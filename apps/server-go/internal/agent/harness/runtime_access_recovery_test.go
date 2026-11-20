@@ -8,6 +8,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -66,6 +67,60 @@ func readRecoveryApproval(t *testing.T, s *store, id string) Approval {
 		t.Fatal(err)
 	}
 	return a
+}
+
+func TestRuntimePreparationGuardDoesNotBlockCancellation(t *testing.T) {
+	s, _ := openRuntimeTestStore(t)
+	run, operation, _ := pullingRuntimeFixture(t, s, "pull-guard")
+	root := t.TempDir()
+	socket := filepath.Join(root, "engine.sock")
+	listener, err := net.Listen("unix", socket)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var pulls atomic.Int32
+	server := &http.Server{Handler: http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if req.Method == http.MethodPost && req.URL.Path == "/v1.41/images/create" {
+			pulls.Add(1)
+		}
+		w.WriteHeader(http.StatusNotFound)
+	})}
+	go func() { _ = server.Serve(listener) }()
+	t.Cleanup(func() { _ = server.Close() })
+	executor, err := execution.New(execution.Options{SocketPath: socket, MountRoot: root, SupervisorPath: "/test-supervisor"})
+	if err != nil {
+		t.Fatal(err)
+	}
+	ctx := context.Background()
+	t.Cleanup(func() { _ = executor.Close(ctx) })
+	callCtx, cancel := context.WithCancel(ctx)
+	defer cancel()
+	entered, release := make(chan struct{}), make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(release) })
+	m := &Manager{ctx: ctx, store: s, executions: map[string]*executionState{run.ID: {cancel: cancel}}, deps: Deps{
+		Now: s.now, NewID: hstate.RandomID, Catalog: &Extensions{Executor: executor},
+		DispatchGuard: func() error { close(entered); <-release; return nil },
+	}}
+	result, done := make(chan error, 1), make(chan struct{})
+	go func() {
+		defer close(done)
+		_, err := m.prepareAuthorizedRuntime(callCtx, run, operation)
+		result <- err
+	}()
+	defer func() { cancel(); unblock(); <-done }()
+	awaitGuard(t, m, entered)
+	cancelled, err := m.Cancel(ctx, run.ID)
+	if err != nil || cancelled.CancelRequestedAt == "" {
+		t.Fatalf("镜像准备查询期间取消失败：%+v %v", cancelled, err)
+	}
+	unblock()
+	if err := <-result; !errors.Is(err, context.Canceled) {
+		t.Fatalf("应中止镜像准备：%v", err)
+	}
+	got, err := s.get(ctx, run.ID)
+	if err != nil || pulls.Load() != 0 || got.LastSeq != cancelled.LastSeq {
+		t.Fatalf("取消后仍发起下载或写入准备记录：%+v %v", got, err)
+	}
 }
 
 func TestRuntimePreparationCrashRestoresUnknownWithNewApproval(t *testing.T) {

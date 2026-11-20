@@ -57,15 +57,14 @@ func parseUserInput(raw json.RawMessage) ([]UserInputQuestion, error) {
 // 澄清是父进程内部交互，不占用外部操作租约；回答仍作为原工具调用的结果。
 func (a *agentExecution) executeUserInput(ctx context.Context, index int, proposal model.ToolCall, rejection string) error {
 	m := a.manager
+	guardErr := m.checkDispatchGuard()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed || ctx.Err() != nil || m.store.DispatchError() != nil {
 		return context.Canceled
 	}
-	if m.deps.DispatchGuard != nil {
-		if err := m.deps.DispatchGuard(); err != nil {
-			return err
-		}
+	if guardErr != nil {
+		return guardErr
 	}
 	now := stamp(m.deps.Now())
 	_, err := m.store.ChangeRun(ctx, a.run.ID, "user-input", func(tx sessionstore.Tx, r *Run) error {

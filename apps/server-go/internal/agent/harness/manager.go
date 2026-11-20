@@ -615,9 +615,7 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 			p = proc
 			backoff = time.Second
 		}
-		m.mu.Lock()
-		if m.deps.DispatchGuard != nil && m.deps.DispatchGuard() != nil {
-			m.mu.Unlock()
+		if err := m.checkDispatchGuard(); err != nil {
 			timer := time.NewTimer(time.Second)
 			select {
 			case <-m.ctx.Done():
@@ -625,6 +623,15 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 				return
 			case <-timer.C:
 			}
+			continue
+		}
+		m.mu.Lock()
+		if m.ctx.Err() != nil {
+			m.mu.Unlock()
+			return
+		}
+		if m.blocked != "" || m.store.DispatchError() != nil {
+			m.mu.Unlock()
 			continue
 		}
 		if err := m.expireApprovals(m.ctx); err != nil && m.ctx.Err() == nil {
