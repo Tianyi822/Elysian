@@ -280,64 +280,69 @@ func (s *sshService) patchAndApplyPrepared(patch []sshdPatchEntry, prepare func(
 				return err
 			}
 		}
-		if err = s.writeAtomic(s.paths.sshdConfig, &original, next); err != nil {
-			return err
-		}
-		rollback := func(cause error) error {
-			if rb := s.writeAtomic(s.paths.sshdConfig, nil, original); rb != nil {
-				return fmt.Errorf("%v；恢复 SSH 原配置失败：%w", cause, rb)
-			}
-			if running {
-				var rb error
-				if restoreState != nil {
-					rb = restoreState()
-				} else if s.deps.applyConfig != nil {
-					rb = s.deps.applyConfig(portChanged)
-				} else {
-					alive, _ := s.serviceRunning()
-					if alive {
-						rb = s.deps.reloadSshd()
-					} else {
-						rb = s.deps.startSshd()
-					}
-				}
-				if rb == nil {
-					ok, e := s.waitForServiceState(true)
-					rb = e
-					if !ok && rb == nil {
-						rb = fmt.Errorf("SSH 原服务未恢复")
-					}
-				}
-				if rb != nil {
-					return fmt.Errorf("%v；原配置已恢复，但恢复 SSH 服务失败：%w", cause, rb)
-				}
-			}
-			return fmt.Errorf("%w；已恢复 SSH 原配置和服务状态", cause)
+		return s.applyWithRollback(original, next, running, portChanged, expectedPort, restoreState)
+	})
+}
+
+func (s *sshService) applyWithRollback(original, next string, running, portChanged bool, expectedPort int, restoreState func() error) error {
+	if err := s.writeAtomic(s.paths.sshdConfig, &original, next); err != nil {
+		return err
+	}
+	rollback := func(cause error) error {
+		if rb := s.writeAtomic(s.paths.sshdConfig, nil, original); rb != nil {
+			return fmt.Errorf("%v；恢复 SSH 原配置失败：%w", cause, rb)
 		}
 		if running {
-			if s.deps.applyConfig != nil {
-				err = s.deps.applyConfig(portChanged)
+			var rb error
+			if restoreState != nil {
+				rb = restoreState()
+			} else if s.deps.applyConfig != nil {
+				rb = s.deps.applyConfig(portChanged)
 			} else {
-				err = s.deps.reloadSshd()
-			}
-			if err != nil {
-				return rollback(fmt.Errorf("应用 SSH 配置失败：%w", err))
-			}
-			alive, e := s.serviceAliveAfterReload()
-			if e != nil {
-				return rollback(e)
-			}
-			if !alive {
-				return rollback(fmt.Errorf("重载后 sshd 进程退出"))
-			}
-			if portChanged && s.deps.verifyConfig != nil {
-				if err = s.deps.verifyConfig(expectedPort); err != nil {
-					return rollback(err)
+				alive, _ := s.serviceRunning()
+				if alive {
+					rb = s.deps.reloadSshd()
+				} else {
+					rb = s.deps.startSshd()
 				}
 			}
+			if rb == nil {
+				ok, e := s.waitForServiceState(true)
+				rb = e
+				if !ok && rb == nil {
+					rb = fmt.Errorf("SSH 原服务未恢复")
+				}
+			}
+			if rb != nil {
+				return fmt.Errorf("%v；原配置已恢复，但恢复 SSH 服务失败：%w", cause, rb)
+			}
 		}
-		return nil
-	})
+		return fmt.Errorf("%w；已恢复 SSH 原配置和服务状态", cause)
+	}
+	if running {
+		var err error
+		if s.deps.applyConfig != nil {
+			err = s.deps.applyConfig(portChanged)
+		} else {
+			err = s.deps.reloadSshd()
+		}
+		if err != nil {
+			return rollback(fmt.Errorf("应用 SSH 配置失败：%w", err))
+		}
+		alive, e := s.serviceAliveAfterReload()
+		if e != nil {
+			return rollback(e)
+		}
+		if !alive {
+			return rollback(fmt.Errorf("重载后 sshd 进程退出"))
+		}
+		if portChanged && s.deps.verifyConfig != nil {
+			if err = s.deps.verifyConfig(expectedPort); err != nil {
+				return rollback(err)
+			}
+		}
+	}
+	return nil
 }
 
 func effectiveDirectiveMatches(text string, p sshdPatchEntry) bool {
