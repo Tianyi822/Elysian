@@ -39,6 +39,7 @@ func TestDeploymentRealProjects(t *testing.T) {
 	limits := defaultDeploymentLimits()
 	limits.Timeout = 15 * time.Minute
 	m := newDeploymentManager(s, deploymentEngine{transport: transport, limits: limits}, filepath.Join(t.TempDir(), "tasks"), filepath.Join(t.TempDir(), "sources"), filepath.Join(t.TempDir(), "logs"))
+	t.Cleanup(func() { _ = m.Close(context.Background()) })
 	java := `import com.sun.net.httpserver.HttpServer;import java.net.InetSocketAddress;public class Main{public static void main(String[] args)throws Exception{HttpServer s=HttpServer.create(new InetSocketAddress("0.0.0.0",Integer.parseInt(args[0])),0);s.createContext("/",e->{byte[] b="ok".getBytes();e.sendResponseHeaders(200,b.length);e.getResponseBody().write(b);e.close();});s.start();}}`
 	fixtures := []struct {
 		name, kind, version, command, target, mode string
@@ -389,6 +390,7 @@ func TestDeploymentRealGitSources(t *testing.T) {
 	catalog := &fakeCatalogSource{report: runtimeCatalogReport{Catalog: runtimeCatalog{Go: []catalogEntry{{Version: "1.25.1", Image: "golang:1.25.1"}}}}}
 	s := NewWebsiteService(serviceDeps{registry: NewMemoryWebsiteRegistry(), runtimeCatalog: catalog})
 	m := newDeploymentManager(s, deploymentEngine{transport: transport, limits: defaultDeploymentLimits()}, filepath.Join(t.TempDir(), "tasks"), filepath.Join(t.TempDir(), "sources"), filepath.Join(t.TempDir(), "logs"))
+	t.Cleanup(func() { _ = m.Close(context.Background()) })
 	publicCommit := ""
 	for _, tc := range []struct{ name, url, ref, token, state string }{
 		{"公开默认分支", "https://github.com/octocat/Hello-World.git", "", "", "ready"},

@@ -17,6 +17,7 @@ import (
 func TestDeploymentSourceAndResumeRoutes(t *testing.T) {
 	f := fixture(t, nil, nil, nil, nil)
 	m := newDeploymentManager(f.service, deploymentEngine{limits: defaultDeploymentLimits()}, t.TempDir(), t.TempDir(), t.TempDir())
+	t.Cleanup(func() { _ = m.Close(context.Background()) })
 	r := chi.NewRouter()
 	mountDeploymentRoutes(r, m)
 	var archive bytes.Buffer
@@ -95,6 +96,7 @@ func TestDeploymentSourceAndResumeRoutes(t *testing.T) {
 func TestDeploymentProjectStatusResponses(t *testing.T) {
 	f := fixture(t, nil, nil, nil, nil)
 	m := newDeploymentManager(f.service, deploymentEngine{limits: defaultDeploymentLimits()}, t.TempDir(), t.TempDir(), t.TempDir())
+	t.Cleanup(func() { _ = m.Close(context.Background()) })
 	if err := f.registry.Put(context.Background(), WebsiteRecord{ID: "existing"}); err != nil {
 		t.Fatal(err)
 	}

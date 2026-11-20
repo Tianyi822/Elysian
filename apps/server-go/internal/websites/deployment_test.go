@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -184,6 +185,7 @@ func TestInterruptedTasksAreDurable(t *testing.T) {
 		t.Fatal(e)
 	}
 	m := newDeploymentManager(NewWebsiteService(serviceDeps{registry: NewMemoryWebsiteRegistry()}), deploymentEngine{limits: defaultDeploymentLimits()}, root, source, logs)
+	t.Cleanup(func() { _ = m.Close(context.Background()) })
 	actual, e := m.getTask(id)
 	if e != nil {
 		t.Fatal(e)
@@ -192,6 +194,49 @@ func TestInterruptedTasksAreDurable(t *testing.T) {
 		t.Fatalf("中断事实错误：%+v", actual)
 	}
 }
+
+func TestWebsiteCloseStopsDeploymentCleanupWithoutCancellingTasks(t *testing.T) {
+	root, source, logs := t.TempDir(), t.TempDir(), t.TempDir()
+	synctest.Test(t, func(t *testing.T) {
+		service := NewWebsiteService(serviceDeps{registry: NewMemoryWebsiteRegistry()})
+		m := newDeploymentManager(service, deploymentEngine{limits: defaultDeploymentLimits()}, root, source, logs)
+		service.deployments = m
+		facade := &AgentFacade{service: service}
+		closeWebsite := func() {
+			if err := facade.Close(context.Background()); err != nil {
+				t.Error(err)
+			}
+		}
+		defer closeWebsite()
+		first := &sourceRecord{ID: newDeploymentID(), ExpiresAt: time.Now().Add(30 * time.Minute).Format(time.RFC3339)}
+		second := &sourceRecord{ID: newDeploymentID(), ExpiresAt: time.Now().Add(90 * time.Minute).Format(time.RFC3339)}
+		taskCtx, cancelTask := context.WithCancel(context.Background())
+		defer cancelTask()
+		m.mu.Lock()
+		m.sources[first.ID] = first
+		m.sources[second.ID] = second
+		m.cancel[newDeploymentID()] = cancelTask
+		m.mu.Unlock()
+		time.Sleep(time.Hour)
+		synctest.Wait()
+		if _, err := m.getSource(first.ID); err == nil {
+			t.Fatal("小时清理应删除已过期的来源")
+		}
+		if _, err := m.getSource(second.ID); err != nil {
+			t.Fatalf("尚未到期的来源应保留：%v", err)
+		}
+		closeWebsite()
+		time.Sleep(2 * time.Hour)
+		synctest.Wait()
+		if _, err := m.getSource(second.ID); err != nil {
+			t.Fatalf("关闭后不应再触发清理：%v", err)
+		}
+		if err := taskCtx.Err(); err != nil {
+			t.Fatalf("关闭清理循环不应取消在途任务：%v", err)
+		}
+	})
+}
+
 func TestVersionRequirementsAndPackageRoots(t *testing.T) {
 	for _, tc := range []struct {
 		v, r string
@@ -271,6 +316,7 @@ func TestRestartRestoresPublishingCheckpoint(t *testing.T) {
 				t.Fatal(err)
 			}
 			m := newDeploymentManager(f.service, deploymentEngine{limits: defaultDeploymentLimits()}, tasks, t.TempDir(), t.TempDir())
+			t.Cleanup(func() { _ = m.Close(context.Background()) })
 			restored, restoreErr := f.service.record(context.Background(), previous.ID)
 			if restoreErr != nil || stringOrEmpty(restored.ContainerID) != oldID {
 				t.Fatal("没有恢复旧登记")

@@ -26,6 +26,11 @@ func NewAgentFacade(deps Deps) *AgentFacade {
 	return &AgentFacade{service: service, authorize: deps.AgentAuthorize}
 }
 
+// Close 回收 HTTP 与 Agent 共用的部署清理循环。
+func (a *AgentFacade) Close(ctx context.Context) error {
+	return a.service.deployments.Close(ctx)
+}
+
 func (a *AgentFacade) Registry() Registry     { return a.service.deps.registry }
 func (a *AgentFacade) Caddy() seam.CaddyAdmin { return a.service.deps.caddy }
 func (a *AgentFacade) Authorize(ctx context.Context) error {

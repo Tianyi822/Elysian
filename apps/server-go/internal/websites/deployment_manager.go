@@ -28,6 +28,10 @@ type deploymentManager struct {
 	tasks                     map[string]*deploymentTask
 	cancel                    map[string]context.CancelFunc
 	workers                   chan struct{}
+
+	cleanupStop chan struct{}
+	cleanupDone chan struct{}
+	cleanupOnce sync.Once
 }
 
 func newDeploymentManager(s *websiteService, e deploymentEngine, root, sourceRoot, logRoot string) *deploymentManager {
@@ -105,13 +109,35 @@ func newDeploymentManager(s *websiteService, e deploymentEngine, root, sourceRoo
 		}
 	}
 	m.cleanup()
+	m.cleanupStop = make(chan struct{})
+	m.cleanupDone = make(chan struct{})
+	ticker := time.NewTicker(time.Hour)
 	go func() {
-		for range time.NewTicker(time.Hour).C {
-			m.cleanup()
+		defer close(m.cleanupDone)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-m.cleanupStop:
+				return
+			case <-ticker.C:
+				m.cleanup()
+			}
 		}
 	}()
 	return m
 }
+
+// Close 停止并等待定期清理，不更改在途部署。
+func (m *deploymentManager) Close(ctx context.Context) error {
+	m.cleanupOnce.Do(func() { close(m.cleanupStop) })
+	select {
+	case <-m.cleanupDone:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
+}
+
 func productionDeploymentManager(s *websiteService, engine deploymentEngine) *deploymentManager {
 	limits := defaultDeploymentLimits()
 	read := func(key string, current int64) int64 {

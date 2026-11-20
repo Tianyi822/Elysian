@@ -15,6 +15,7 @@ import (
 func TestAgentWebsiteTaskProjectionAndTargetIsolation(t *testing.T) {
 	f := fixture(t, nil, nil, nil, nil)
 	m := newDeploymentManager(f.service, deploymentEngine{limits: defaultDeploymentLimits()}, t.TempDir(), t.TempDir(), t.TempDir())
+	t.Cleanup(func() { _ = m.Close(context.Background()) })
 	f.service.deployments = m
 	task := deploymentTask{ID: newDeploymentID(), Name: "new-site", ProjectID: "created-project", State: "failed", Error: "SECRET_RAW", CreatedAt: "created", UpdatedAt: "updated", Input: deploymentInput{RequestID: newDeploymentID()}, Config: buildConfig{Command: "TOKEN=SECRET_RAW"}}
 	m.tasks[task.ID] = &task
@@ -53,6 +54,7 @@ func TestAgentWebsiteCleanupUncertaintySurvivesRestart(t *testing.T) {
 	}}
 	engine := deploymentEngine{transport: transport, limits: defaultDeploymentLimits()}
 	m := newDeploymentManager(f.service, engine, root, sourceRoot, logs)
+	t.Cleanup(func() { _ = m.Close(context.Background()) })
 	f.service.deployments = m
 	task := deploymentTask{ID: newDeploymentID(), Name: "site", State: "building", BuildContainer: testContainerID, CreatedAt: time.Now().UTC().Format(time.RFC3339), Input: deploymentInput{RequestID: newDeploymentID()}}
 	m.tasks[task.ID] = &task
@@ -68,13 +70,23 @@ func TestAgentWebsiteCleanupUncertaintySurvivesRestart(t *testing.T) {
 	if _, err = os.Stat(filepath.Join(root, task.ID+".json")); err != nil {
 		t.Fatal(err)
 	}
-	f.service.deployments = newDeploymentManager(f.service, engine, root, sourceRoot, logs)
+	if err = m.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	restarted := newDeploymentManager(f.service, engine, root, sourceRoot, logs)
+	t.Cleanup(func() { _ = restarted.Close(context.Background()) })
+	f.service.deployments = restarted
 	status, err = facade.InspectTask(context.Background(), task.ID)
 	if err != nil || status.Terminal || status.State != "unknown" {
 		t.Fatalf("restart released unconfirmed task: %#v %v", status, err)
 	}
+	if err = restarted.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
 	cleanupOK = true
-	f.service.deployments = newDeploymentManager(f.service, engine, root, sourceRoot, logs)
+	recovered := newDeploymentManager(f.service, engine, root, sourceRoot, logs)
+	t.Cleanup(func() { _ = recovered.Close(context.Background()) })
+	f.service.deployments = recovered
 	status, err = facade.InspectTask(context.Background(), task.ID)
 	if err != nil || !status.Terminal || status.State != "interrupted" {
 		t.Fatalf("confirmed restart cleanup did not resolve task: %#v %v", status, err)
@@ -84,6 +96,7 @@ func TestAgentWebsiteCleanupUncertaintySurvivesRestart(t *testing.T) {
 func TestAgentWebsitePendingRecoveryNeverReportsTerminal(t *testing.T) {
 	f := fixture(t, nil, nil, nil, nil)
 	m := newDeploymentManager(f.service, deploymentEngine{limits: defaultDeploymentLimits()}, t.TempDir(), t.TempDir(), t.TempDir())
+	t.Cleanup(func() { _ = m.Close(context.Background()) })
 	f.service.deployments = m
 	for _, state := range []string{"succeeded", "failed", "cancelled", "interrupted"} {
 		task := deploymentTask{ID: newDeploymentID(), State: state, Pending: &WebsiteRecord{ID: "unconfirmed"}}
@@ -98,6 +111,7 @@ func TestAgentWebsitePendingRecoveryNeverReportsTerminal(t *testing.T) {
 func TestCancelOwnedWebsiteTaskMatchesIdentityAndStops(t *testing.T) {
 	f := fixture(t, nil, nil, nil, nil)
 	m := newDeploymentManager(f.service, deploymentEngine{limits: defaultDeploymentLimits()}, t.TempDir(), t.TempDir(), t.TempDir())
+	t.Cleanup(func() { _ = m.Close(context.Background()) })
 	f.service.deployments = m
 	task := deploymentTask{ID: newDeploymentID(), Name: "site", State: "awaiting-config", Input: deploymentInput{RequestID: newDeploymentID()}}
 	m.tasks[task.ID] = &task
