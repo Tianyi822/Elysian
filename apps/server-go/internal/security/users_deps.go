@@ -13,7 +13,6 @@ import (
 	"errors"
 	"os"
 	"os/exec"
-	"strings"
 	"time"
 )
 
@@ -47,10 +46,7 @@ func runGetentViaExecFile(execFn ExecFileLike, args []string) (string, error) {
 	if errors.As(err, &exitErr) && exitErr.ExitCode() == 2 {
 		return "", nil
 	}
-	if detail := strings.TrimSpace(stderr); detail != "" {
-		return "", errors.New(detail)
-	}
-	return "", errors.New(execDetail(err))
+	return "", errors.New(shared.CommandErrorWithStderr(err, stderr).Error())
 }
 
 // runGetentReal 真实 getent 执行（退出码 2 归一为空输出）。
@@ -67,11 +63,10 @@ func realExecFile(name string, args []string) (string, string, error) {
 func execContextOutput(ctx context.Context, name string, args []string) (string, string, error) {
 	cmd, bounded, cancel := shared.SystemCommand(ctx, name, args...)
 	defer cancel()
-	var stdout, stderr bytes.Buffer
+	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	err := cmd.Run()
-	return stdout.String(), stderr.String(), shared.SystemCommandError(bounded, err)
+	stderr, err := shared.RunCapture(cmd)
+	return stdout.String(), stderr, shared.SystemCommandError(bounded, err)
 }
 
 // newRealUsersDeps 容器内真实依赖。

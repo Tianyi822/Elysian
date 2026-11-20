@@ -88,34 +88,19 @@ type sshHostDeps struct {
 	pathsOverride       *sshPaths
 }
 
-// execDetail 子进程失败 → 中文错误详情：优先带 stderr（trim 后非空），没有时回退
-// 错误消息本身；命令上下文由服务层拼装。
-func execDetail(err error) string {
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) && len(exitErr.Stderr) > 0 {
-		if detail := strings.TrimSpace(string(exitErr.Stderr)); detail != "" {
-			return detail
-		}
-	}
-	return err.Error()
-}
-
 // execToStdout 执行命令并返回 stdout；失败抛带 stderr 详情的错误。
 func execToStdout(name string, args []string) (string, error) {
 	cmd, ctx, cancel := shared.SystemCommand(context.Background(), name, args...)
 	defer cancel()
 	cmd.Env = append(os.Environ(), "LC_ALL=C")
-	var stdout, stderr bytes.Buffer
+	var stdout bytes.Buffer
 	cmd.Stdout = &stdout
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
+	stderr, err := shared.RunCapture(cmd)
+	if err != nil {
 		if ctx.Err() != nil {
 			return "", shared.SystemCommandError(ctx, err)
 		}
-		if detail := strings.TrimSpace(stderr.String()); detail != "" {
-			return "", errors.New(detail)
-		}
-		return "", errors.New(execDetail(err))
+		return "", errors.New(shared.CommandErrorWithStderr(err, stderr).Error())
 	}
 	return stdout.String(), nil
 }

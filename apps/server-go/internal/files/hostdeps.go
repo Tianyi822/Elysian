@@ -1,14 +1,13 @@
 package files
 
 import (
-	"bytes"
-	"errors"
 	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
-	"strings"
 	"syscall"
+
+	"elysian/server/internal/shared"
 	"time"
 )
 
@@ -122,14 +121,9 @@ func (realHostDeps) RmPath(path string) error { return os.RemoveAll(path) }
 // 本身（对齐 TS 接线层 commandFailure 的 detail 口径）；命令上下文由服务层拼装。
 // 数组传参（exec 的参数切片），绝不拼 shell 字符串。
 func runToStdout(name string, args []string) error {
-	cmd := exec.Command(name, args...)
-	var stderr bytes.Buffer
-	cmd.Stderr = &stderr
-	if err := cmd.Run(); err != nil {
-		if detail := strings.TrimSpace(stderr.String()); detail != "" {
-			return errors.New(detail)
-		}
-		return err
+	stderr, err := shared.RunCapture(exec.Command(name, args...))
+	if err != nil {
+		return shared.CommandErrorWithStderr(err, stderr)
 	}
 	return nil
 }
