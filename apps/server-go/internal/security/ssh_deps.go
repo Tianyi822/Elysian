@@ -252,7 +252,7 @@ func createPidProbeFor(paths sshPaths) sshdPidProbe {
 // 信号名按 TS 版字面（SIGTERM/SIGHUP），不取 Go 的 Signal.String()。
 func signalSshd(pid int, signalName string, sig syscall.Signal) error {
 	if err := syscall.Kill(pid, sig); err != nil {
-		return fmt.Errorf("向 sshd（pid %d）发送 %s 失败：%v", pid, signalName, err)
+		return fmt.Errorf("向 sshd（pid %d）发送 %s 失败：%w", pid, signalName, err)
 	}
 	return nil
 }
@@ -470,7 +470,7 @@ func newRealSshDeps(now func() time.Time, override *sshPaths) *sshHostDeps {
 			if err != nil {
 				// 父进程退出非 0：原因只在日志增量里（stderr 恒空），带上它才可诊断。
 				if detail := readLogDeltaLines(p.sshdLog, logBefore, 1024); detail != "" {
-					return fmt.Errorf("%v；sshd 日志：%s", err, detail)
+					return fmt.Errorf("%w；sshd 日志：%s", err, detail)
 				}
 				return err
 			}

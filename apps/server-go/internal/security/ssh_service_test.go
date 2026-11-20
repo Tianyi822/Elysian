@@ -7,10 +7,13 @@ package security
 import (
 	"errors"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 
+	"elysian/server/internal/middleware"
 	"elysian/server/internal/shared"
 )
 
@@ -38,6 +41,39 @@ func mustErrorText(t *testing.T, name string, err error, want string) {
 	}
 	if err.Error() != want {
 		t.Errorf("%s 错误文案不符：\n got %q\nwant %q", name, err.Error(), want)
+	}
+}
+
+func TestHostErrorsKeepCauseAndResponse(t *testing.T) {
+	cause := errors.New("宿主操作未完成")
+	ssh, host, fs := newTestSshService()
+	fs.writeFile("/etc/ssh/sshd_config", defaultConfig())
+	host.writeRunningPid()
+	ssh.deps.runChpasswd = func(string) (string, error) { return "", cause }
+	ssh.deps.verifyConfig = func(int) error { return cause }
+	users := &usersService{}
+	for _, tc := range []struct {
+		name string
+		run  func() error
+		want string
+	}{
+		{"SSH 命令", func() error { return ssh.commandError("ssh-keygen", []string{"-l"}, cause) }, "ssh-keygen 执行失败（ssh-keygen -l）：宿主操作未完成"},
+		{"用户命令", func() error { return users.commandError("getent", []string{"passwd"}, cause) }, "getent 执行失败（getent passwd）：宿主操作未完成"},
+		{"Root 改密", func() error { _, err := ssh.ResetRootPassword("Str0ngPass!2026"); return err }, "chpasswd 执行失败：宿主操作未完成"},
+		{"SSH 配置恢复", func() error { _, err := ssh.SetPort(2202); return err }, "宿主操作未完成；已恢复 SSH 原配置和服务状态"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			err := tc.run()
+			mustErrorText(t, tc.name, err, tc.want)
+			if !errors.Is(err, cause) {
+				t.Errorf("原宿主错误未保留：%v", err)
+			}
+			w := httptest.NewRecorder()
+			middleware.WriteError(w, err)
+			if w.Code != http.StatusInternalServerError || w.Body.String() != fmt.Sprintf(`{"error":%q}`, tc.want) {
+				t.Fatalf("原 HTTP 错误回执发生变化：%d %s", w.Code, w.Body)
+			}
+		})
 	}
 }
 

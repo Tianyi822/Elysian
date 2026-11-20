@@ -68,7 +68,7 @@ func methodIncludesPassword(method string) bool {
 // commandError 命令失败的统一包装。
 func (s *usersService) commandError(command string, args []string, err error) error {
 	full := append([]string{command}, args...)
-	return fmt.Errorf("%s 执行失败（%s）：%v", command, strings.Join(full, " "), err)
+	return fmt.Errorf("%s 执行失败（%s）：%w", command, strings.Join(full, " "), err)
 }
 
 // assertNoteSafe 备注双侧判据：控制字符对照统一禁区，逗号是 GECOS 的字段分隔符。
@@ -326,7 +326,7 @@ func (s *usersService) Create(name string, input HostUserInput) (HostUser, error
 	if password != nil {
 		if _, err := s.deps.runChpasswd(name + ":" + *password); err != nil {
 			// 错误信息只描述命令本身：密码绝不进命令行，也不进任何日志与报错。
-			return HostUser{}, fmt.Errorf("chpasswd 执行失败：%v", err)
+			return HostUser{}, fmt.Errorf("chpasswd 执行失败：%w", err)
 		}
 	}
 
@@ -424,7 +424,7 @@ func (s *usersService) Update(userId string, input HostUserInput) (HostUser, err
 
 	if password != nil {
 		if _, err := s.deps.runChpasswd(entry.Name + ":" + *password); err != nil {
-			return HostUser{}, fmt.Errorf("chpasswd 执行失败：%v", err)
+			return HostUser{}, fmt.Errorf("chpasswd 执行失败：%w", err)
 		}
 	}
 

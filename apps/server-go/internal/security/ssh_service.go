@@ -103,7 +103,7 @@ func (s *sshService) serializeConfigWrite(critical func() error) error {
 // 消息），`${command} 执行失败（${完整命令行}）：${detail}`。
 func (s *sshService) commandError(command string, args []string, err error) error {
 	full := append([]string{command}, args...)
-	return fmt.Errorf("%s 执行失败（%s）：%v", command, strings.Join(full, " "), err)
+	return fmt.Errorf("%s 执行失败（%s）：%w", command, strings.Join(full, " "), err)
 }
 
 // ensureDir 路径不存在时递归创建。
@@ -222,7 +222,7 @@ func (s *sshService) serviceAliveAfterReload() (bool, error) {
 func (s *sshService) readConfigText() (string, error) {
 	text, err := s.deps.readText(s.paths.sshdConfig)
 	if err != nil {
-		return "", fmt.Errorf("无法读取 sshd 配置（%s）：%v", s.paths.sshdConfig, err)
+		return "", fmt.Errorf("无法读取 sshd 配置（%s）：%w", s.paths.sshdConfig, err)
 	}
 	return text, nil
 }
@@ -551,7 +551,7 @@ func (s *sshService) patchAndApplyPrepared(patch []sshdPatchEntry, prepare func(
 					return fmt.Errorf("%v；原配置已恢复，但恢复 SSH 服务失败：%w", cause, rb)
 				}
 			}
-			return fmt.Errorf("%v；已恢复 SSH 原配置和服务状态", cause)
+			return fmt.Errorf("%w；已恢复 SSH 原配置和服务状态", cause)
 		}
 		if running {
 			if s.deps.applyConfig != nil {
@@ -1059,7 +1059,7 @@ func (s *sshService) ResetRootPassword(password string) (SshPasswordResetResult,
 		return SshPasswordResetResult{}, err
 	}
 	if _, err := s.deps.runChpasswd("root:" + password); err != nil {
-		return SshPasswordResetResult{}, fmt.Errorf("chpasswd 执行失败：%v", err)
+		return SshPasswordResetResult{}, fmt.Errorf("chpasswd 执行失败：%w", err)
 	}
 	if err := s.writeStamp(s.paths.passwordResetAtStamp, s.deps.nowIso()); err != nil {
 		return SshPasswordResetResult{}, fmt.Errorf("Root 密码已修改，但记录重置时间失败，请使用新密码登录：%w", err)
