@@ -12,7 +12,7 @@ import (
 	"syscall"
 	"time"
 
-	"elysian/server/internal/config"
+	"elysian/server/internal/taskstore"
 )
 
 // SealUnacceptedOperation is a host-only recovery gate. All accepted operations
@@ -54,10 +54,9 @@ func (a *AgentFacade) SealUnacceptedOperation(ctx context.Context, requestID, ta
 		}
 	}
 	task := ContainerOperationTask{ID: id, RequestID: requestID, Target: target, Digest: digest, State: "failed", Stage: "not-accepted", UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano), ErrorCode: "docker-operation-not-accepted", Message: "已核实原提交未被受理、业务变更未执行；原请求已封存，请修正参数后使用新的请求编号"}
-	if err := config.AtomicJSON(filepath.Join(a.operationRoot, id+".json"), task); err != nil {
+	if err := a.publishContainerOperationLocked(id, task); err != nil {
 		return ContainerOperationTask{}, err
 	}
-	a.operations[id] = task
 	return task, nil
 }
 
@@ -73,7 +72,7 @@ func (a *AgentFacade) verifyContainerOperationLedger() error {
 	if !ok || stat.Uid != uint32(os.Getuid()) || !info.IsDir() || info.Mode()&os.ModeSymlink != 0 || info.Mode().Perm()&0077 != 0 {
 		return errors.New("容器操作任务目录身份或权限无效")
 	}
-	files, err := filepath.Glob(filepath.Join(a.operationRoot, "*.json"))
+	files, err := taskstore.Dir(a.operationRoot).Glob()
 	if err != nil {
 		return err
 	}

@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"strings"
 	"sync/atomic"
+	"syscall"
 	"testing"
 	"time"
 
@@ -119,7 +120,10 @@ func TestContainerOperationPanicLogsAndKeepsUnknown(t *testing.T) {
 }
 
 func TestContainerOperationRejectsUntrustedTaskRecord(t *testing.T) {
-	root := t.TempDir()
+	root := filepath.Join(t.TempDir(), "tasks")
+	if err := os.Mkdir(root, 0700); err != nil {
+		t.Fatal(err)
+	}
 	request := strings.Repeat("a", 64)
 	task := ContainerOperationTask{ID: operationID(request), RequestID: request, State: "succeeded"}
 	raw, _ := json.Marshal(task)
@@ -130,8 +134,59 @@ func TestContainerOperationRejectsUntrustedTaskRecord(t *testing.T) {
 	if err := os.Symlink(source, filepath.Join(root, task.ID+".json")); err != nil {
 		t.Fatal(err)
 	}
-	if _, err := (&AgentFacade{operationRoot: root}).InspectContainerOperation(context.Background(), task.ID); err == nil {
-		t.Fatal("symlink record trusted")
+	if _, err := (&AgentFacade{operationRoot: root}).InspectContainerOperation(context.Background(), task.ID); !errors.Is(err, syscall.ELOOP) {
+		t.Fatalf("符号链接账本应在打开文件时被拒绝：%v", err)
+	}
+}
+
+func TestAgentDockerLedgerRejectsCorruptRecords(t *testing.T) {
+	request := strings.Repeat("a", 64)
+	for _, ledger := range []struct {
+		name string
+		id   string
+		task any
+		load func(string) (bool, error)
+		want string
+	}{
+		{"镜像", pullTaskID(request), AgentPullTask{ID: pullTaskID(request), RequestID: request, State: "succeeded"}, func(root string) (bool, error) {
+			a := &AgentFacade{taskRoot: root}
+			err := a.loadPullTasks()
+			return a.pullTasks != nil, err
+		}, "镜像任务记录损坏"},
+		{"容器", operationID(request), ContainerOperationTask{ID: operationID(request), RequestID: request, State: "succeeded"}, func(root string) (bool, error) {
+			a := &AgentFacade{operationRoot: root}
+			err := a.loadContainerOperations()
+			return a.operations != nil, err
+		}, "容器操作任务记录损坏"},
+	} {
+		t.Run(ledger.name, func(t *testing.T) {
+			raw, err := json.Marshal(ledger.task)
+			if err != nil {
+				t.Fatal(err)
+			}
+			for _, record := range []struct {
+				name string
+				file string
+				body []byte
+			}{
+				{"坏 JSON", ledger.id + ".json", []byte("{")},
+				{"文件名错配", "other.json", raw},
+			} {
+				t.Run(record.name, func(t *testing.T) {
+					root := filepath.Join(t.TempDir(), "tasks")
+					if err := os.Mkdir(root, 0700); err != nil {
+						t.Fatal(err)
+					}
+					if err := os.WriteFile(filepath.Join(root, record.file), record.body, 0600); err != nil {
+						t.Fatal(err)
+					}
+					loaded, err := ledger.load(root)
+					if loaded || err == nil || err.Error() != ledger.want {
+						t.Fatalf("坏账本不得发布：loaded=%v，err=%v", loaded, err)
+					}
+				})
+			}
+		})
 	}
 }
 

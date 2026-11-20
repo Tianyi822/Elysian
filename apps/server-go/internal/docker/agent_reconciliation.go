@@ -5,10 +5,8 @@ import (
 	"encoding/json"
 	"net/http"
 
-	"elysian/server/internal/config"
 	"elysian/server/internal/seam"
 	"elysian/server/internal/shared"
-	"path/filepath"
 )
 
 func validContainerResolution(r ContainerOperationResolution, task ContainerOperationTask) bool {
@@ -63,9 +61,5 @@ func (a *AgentFacade) ReconcileContainerOperation(ctx context.Context, resolutio
 		return shared.InvalidRequest("只能核实执行已停止的容器操作")
 	}
 	current.Resolution = &resolution
-	if err := config.AtomicJSON(filepath.Join(a.operationRoot, current.ID+".json"), current); err != nil {
-		return err
-	}
-	a.operations[current.ID] = current
-	return nil
+	return a.publishContainerOperationLocked(current.ID, current)
 }

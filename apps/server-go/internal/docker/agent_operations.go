@@ -19,6 +19,7 @@ import (
 	"elysian/server/internal/paths"
 	"elysian/server/internal/seam"
 	"elysian/server/internal/shared"
+	"elysian/server/internal/taskstore"
 )
 
 const ContainerOperationDomain = "docker-container-operation"
@@ -100,7 +101,7 @@ func (a *AgentFacade) loadContainerOperations() error {
 			return errors.New("容器操作任务目录身份或权限无效")
 		}
 	}
-	files, err := filepath.Glob(filepath.Join(root, "*.json"))
+	files, err := taskstore.Dir(root).Glob()
 	if err != nil {
 		return err
 	}
@@ -140,6 +141,10 @@ func (a *AgentFacade) loadContainerOperations() error {
 	return nil
 }
 
+func (a *AgentFacade) publishContainerOperationLocked(id string, task ContainerOperationTask) error {
+	return taskstore.SaveAndPublish(taskstore.Dir(a.operationRoot), a.operations, id, task, config.AtomicJSON)
+}
+
 func (a *AgentFacade) updateContainerOperation(id string, update func(*ContainerOperationTask)) error {
 	a.operationMu.Lock()
 	defer a.operationMu.Unlock()
@@ -152,11 +157,7 @@ func (a *AgentFacade) updateContainerOperation(id string, update func(*Container
 	} // A late receipt cannot reopen an administratively resolved task.
 	update(&task)
 	task.UpdatedAt = time.Now().UTC().Format(time.RFC3339Nano)
-	if err := config.AtomicJSON(filepath.Join(a.operationRoot, id+".json"), &task); err != nil {
-		return err
-	}
-	a.operations[id] = task
-	return nil
+	return a.publishContainerOperationLocked(id, task)
 }
 
 func (a *AgentFacade) submitContainerOperation(requestID, target string, input any, run func(context.Context, string) (any, error)) (ContainerOperationTask, error) {
@@ -190,10 +191,9 @@ func (a *AgentFacade) submitContainerOperation(requestID, target string, input a
 		}
 	}
 	task := ContainerOperationTask{ID: id, RequestID: requestID, Target: target, Digest: digest, State: "running", Stage: "accepted", UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
-	if err := config.AtomicJSON(filepath.Join(a.operationRoot, id+".json"), &task); err != nil {
+	if err := a.publishContainerOperationLocked(id, task); err != nil {
 		return ContainerOperationTask{}, err
 	}
-	a.operations[id] = task
 	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Minute)
 	a.operationCancel[id] = cancel
 	a.operationWG.Add(1)

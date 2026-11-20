@@ -15,6 +15,7 @@ import (
 	"elysian/server/internal/contract"
 	"elysian/server/internal/paths"
 	"elysian/server/internal/shared"
+	"elysian/server/internal/taskstore"
 )
 
 type AgentPullTask struct {
@@ -42,7 +43,7 @@ func (a *AgentFacade) loadPullTasks() error {
 	if err := os.MkdirAll(root, 0700); err != nil {
 		return err
 	}
-	files, err := filepath.Glob(filepath.Join(root, "*.json"))
+	files, err := taskstore.Dir(root).Glob()
 	if err != nil {
 		return err
 	}
@@ -135,10 +136,9 @@ func (a *AgentFacade) PullFromRegistry(ctx context.Context, imageRef, requestID,
 	// Persist before dispatch. A lost response must never trigger a second pull.
 	now := a.service.deps.now().UTC().Format(time.RFC3339Nano)
 	task := AgentPullTask{ID: id, RequestID: requestID, ImageRef: imageRef, Registry: registry, State: "running", CreatedAt: now, UpdatedAt: now}
-	if err := config.AtomicJSON(filepath.Join(a.taskRoot, id+".json"), &task); err != nil {
+	if err := taskstore.SaveAndPublish(taskstore.Dir(a.taskRoot), a.pullTasks, id, &task, config.AtomicJSON); err != nil {
 		return AgentPullTask{}, err
 	}
-	a.pullTasks[id] = &task
 	background, cancel := context.WithTimeout(context.Background(), a.service.deps.agentPullTimeout)
 	if a.pullCancel == nil {
 		a.pullCancel = map[string]context.CancelFunc{}
@@ -173,9 +173,7 @@ func (a *AgentFacade) PullFromRegistry(ctx context.Context, imageRef, requestID,
 			updated.State = "succeeded"
 			updated.Image = &image
 		}
-		if config.AtomicJSON(filepath.Join(a.taskRoot, id+".json"), &updated) == nil {
-			a.pullTasks[id] = &updated
-		}
+		_ = taskstore.SaveAndPublish(taskstore.Dir(a.taskRoot), a.pullTasks, id, &updated, config.AtomicJSON)
 	}()
 	return task, nil
 }
@@ -233,7 +231,7 @@ func (a *AgentFacade) recordPullProgress(id string, progress imagePullProgress, 
 	if lastSaved.IsZero() || now.Sub(*lastSaved) >= time.Second {
 		// 失败也节流，避免磁盘故障使每个进度帧都同步重试。
 		*lastSaved = now
-		_ = config.AtomicJSON(filepath.Join(a.taskRoot, id+".json"), &updated)
+		_ = config.AtomicJSON(taskstore.Dir(a.taskRoot).Path(id), &updated)
 	}
 }
 

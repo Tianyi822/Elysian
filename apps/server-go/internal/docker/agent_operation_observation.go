@@ -4,10 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"net/http"
-	"path/filepath"
 	"time"
 
-	"elysian/server/internal/config"
 	"elysian/server/internal/seam"
 )
 
@@ -75,16 +73,14 @@ func (a *AgentFacade) ObserveContainerOperation(ctx context.Context, id string) 
 			return current, nil
 		}
 		current.ExecObservedRunning = true
-		if err := config.AtomicJSON(filepath.Join(a.operationRoot, id+".json"), &current); err != nil {
+		if err := a.publishContainerOperationLocked(id, current); err != nil {
 			return task, err
 		}
-		a.operations[id] = current
 		return current, nil
 	}
 	current.Observation = &ContainerOperationObservation{TaskID: task.ID, RequestID: task.RequestID, Target: task.Target, Digest: task.Digest, ExecID: task.ExecID, ExitCode: *state.ExitCode, ObservedAt: time.Now().UTC().Format(time.RFC3339Nano)}
-	if err := config.AtomicJSON(filepath.Join(a.operationRoot, id+".json"), &current); err != nil {
+	if err := a.publishContainerOperationLocked(id, current); err != nil {
 		return task, err
 	}
-	a.operations[id] = current
 	return current, nil
 }
