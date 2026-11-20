@@ -31,6 +31,7 @@ func TestNoCrossDomainImports(t *testing.T) {
 		"elysian/server/internal/paths":      true,
 		"elysian/server/internal/seam":       true,
 		"elysian/server/internal/contract":   true,
+		"elysian/server/internal/jscompat":   true,
 		"elysian/server/internal/shared":     true,
 		"elysian/server/internal/middleware": true,
 		"elysian/server/internal/tasklog":    true,

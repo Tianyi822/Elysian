@@ -2,6 +2,8 @@ package files
 
 import (
 	"strings"
+
+	"elysian/server/internal/jscompat"
 )
 
 /*
@@ -20,15 +22,7 @@ const hostUserNameMaxLength = 32
 // utf16Len 按 UTF-16 码元计长（对齐 JS String.prototype.length：BMP 内一字符一码元，
 // 增补平面一字符两码元）。
 func utf16Len(s string) int {
-	n := 0
-	for _, r := range s {
-		if r > 0xFFFF {
-			n += 2
-		} else {
-			n++
-		}
-	}
-	return n
+	return jscompat.UTF16Length(s)
 }
 
 // isJSWhitespace JS 的空白字符集（WhiteSpace ∪ LineTerminator，含 BOM/零宽不换行空格）：

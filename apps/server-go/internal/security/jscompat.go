@@ -7,121 +7,16 @@ package security
 
 import (
 	"math"
-	"regexp"
 	"strconv"
 	"strings"
+
+	"elysian/server/internal/jscompat"
 )
 
-// jsDecimalRe JS 十进制数字面量：整数、小数、科学计数（不含十六进制与前缀形式）。
-var jsDecimalRe = regexp.MustCompile(`^(\d+\.?\d*|\.\d+)([eE][+-]?\d+)?$`)
-
-// jsHexRe / jsBinaryRe / jsOctalRe 0x/0b/0o 前缀整数字面量（JS Number("0x1A")=26）。
-var (
-	jsHexRe    = regexp.MustCompile(`^[0-9a-fA-F]+$`)
-	jsBinaryRe = regexp.MustCompile(`^[01]+$`)
-	jsOctalRe  = regexp.MustCompile(`^[0-7]+$`)
-)
-
-// jsNumber 对 JSON 解码值执行 JS Number() 强转；第二个返回值为 true 表示 NaN。
+// jsNumber 保留 SSH 路由的 null 及 NaN 回执口径。
 func jsNumber(v any) (float64, bool) {
-	switch x := v.(type) {
-	case nil: // JSON null → Number(null) = 0
-		return 0, false
-	case bool:
-		if x {
-			return 1, false
-		}
-		return 0, false
-	case float64:
-		return x, math.IsNaN(x)
-	case string:
-		return jsStrToNumber(x)
-	case []any:
-		// JS Number([])：空数组 → 0；单元素 → Number(String(元素))；多元素 → NaN。
-		if len(x) == 0 {
-			return 0, false
-		}
-		if len(x) == 1 {
-			return jsNumber(jsToPrimitiveString(x[0]))
-		}
-		return math.NaN(), true
-	default: // 对象 → NaN
-		return math.NaN(), true
-	}
-}
-
-// jsToPrimitiveString 数组元素进 Number() 前的原文化：null/undefined → ""，其余同 String()。
-func jsToPrimitiveString(v any) string {
-	switch v.(type) {
-	case nil:
-		return ""
-	case []any, map[string]any:
-		return ""
-	default:
-		return jsStringOf(v)
-	}
-}
-
-// jsStrToNumber JS 字符串到数字的强转：去首尾空白后按十进制/十六进制/二进制/
-// 八进制/Infinity 解析，解析不出为 NaN。
-func jsStrToNumber(s string) (float64, bool) {
-	t := strings.TrimFunc(s, func(r rune) bool {
-		return r == ' ' || r == '\t' || r == '\n' || r == '\r' || r == '\v' || r == '\f' || r == 0x85 || r == 0xa0 || r == 0xfeff
-	})
-	if t == "" {
-		return 0, false // Number("") === 0
-	}
-	sign := 1.0
-	body := t
-	if body[0] == '+' || body[0] == '-' {
-		if body[0] == '-' {
-			sign = -1
-		}
-		body = body[1:]
-	}
-	if body == "" {
-		return math.NaN(), true // "+" / "-" 单独不是数字
-	}
-	if body == "Infinity" {
-		return sign * math.Inf(1), false
-	}
-	switch {
-	case strings.HasPrefix(body, "0x") || strings.HasPrefix(body, "0X"):
-		if !jsHexRe.MatchString(body[2:]) {
-			return math.NaN(), true
-		}
-		n, err := strconv.ParseUint(body[2:], 16, 64)
-		if err != nil {
-			return math.NaN(), true
-		}
-		return sign * float64(n), false
-	case strings.HasPrefix(body, "0b") || strings.HasPrefix(body, "0B"):
-		if !jsBinaryRe.MatchString(body[2:]) {
-			return math.NaN(), true
-		}
-		n, err := strconv.ParseUint(body[2:], 2, 64)
-		if err != nil {
-			return math.NaN(), true
-		}
-		return sign * float64(n), false
-	case strings.HasPrefix(body, "0o") || strings.HasPrefix(body, "0O"):
-		if !jsOctalRe.MatchString(body[2:]) {
-			return math.NaN(), true
-		}
-		n, err := strconv.ParseUint(body[2:], 8, 64)
-		if err != nil {
-			return math.NaN(), true
-		}
-		return sign * float64(n), false
-	}
-	if !jsDecimalRe.MatchString(body) {
-		return math.NaN(), true
-	}
-	n, err := strconv.ParseFloat(body, 64)
-	if err != nil {
-		return math.NaN(), true
-	}
-	return sign * n, false
+	n := jscompat.ParseNumberNull(v)
+	return n, math.IsNaN(n)
 }
 
 // jsStringOf 对 JSON 解码值执行 JS String() 强转（错误文案逐字对齐用）。
@@ -161,68 +56,7 @@ func jsDisplay(v any, present bool) string {
 	return jsStringOf(v)
 }
 
-// jsNumberToString 按 ECMAScript Number::toString 规则输出：最短往返十进制数字，
-// 指数阈值（21/-6）与指数零填充规则与 V8 一致（String(1e-7)="1e-7"、
-// String(1e21)="1e+21"、String(-0)="0"）。
-func jsNumberToString(f float64) string {
-	if math.IsNaN(f) {
-		return "NaN"
-	}
-	if math.IsInf(f, 1) {
-		return "Infinity"
-	}
-	if math.IsInf(f, -1) {
-		return "-Infinity"
-	}
-	if f == 0 {
-		return "0"
-	}
-	neg := false
-	if f < 0 {
-		neg = true
-		f = -f
-	}
-	// 最短往返数字与十进制指数：digits（k 位）× 10^(n-1)。
-	scientific := strconv.FormatFloat(f, 'e', -1, 64)
-	eIdx := strings.IndexByte(scientific, 'e')
-	digits := strings.Replace(scientific[:eIdx], ".", "", 1)
-	exp, _ := strconv.Atoi(scientific[eIdx+1:])
-	k := len(digits)
-	n := exp + 1
-	var b strings.Builder
-	if neg {
-		b.WriteByte('-')
-	}
-	switch {
-	case k <= n && n <= 21:
-		b.WriteString(digits)
-		for i := 0; i < n-k; i++ {
-			b.WriteByte('0')
-		}
-	case 0 < n && n <= 21:
-		b.WriteString(digits[:n])
-		b.WriteByte('.')
-		b.WriteString(digits[n:])
-	case -6 < n && n <= 0:
-		b.WriteString("0.")
-		for i := 0; i < -n; i++ {
-			b.WriteByte('0')
-		}
-		b.WriteString(digits)
-	default:
-		b.WriteString(digits[:1])
-		if k > 1 {
-			b.WriteByte('.')
-			b.WriteString(digits[1:])
-		}
-		b.WriteByte('e')
-		if n-1 >= 0 {
-			b.WriteByte('+')
-		}
-		b.WriteString(strconv.Itoa(n - 1))
-	}
-	return b.String()
-}
+func jsNumberToString(f float64) string { return jscompat.NumberToString(f) }
 
 // jsParseInt JS parseInt(s, 10)：跳过前导空白、可选符号、连续数字，无数字为 NaN。
 // pidfile 与 /proc 的取值解析沿用该语义（"12abc" 在 JS 里取 12）。

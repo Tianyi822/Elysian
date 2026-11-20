@@ -144,8 +144,16 @@ func TestJsNumber强转语义(t *testing.T) {
 		{"单元素数组数字串", any([]any{"2202"}), 2202, false},
 		{"单元素数组数字", any([]any{5.0}), 5, false},
 		{"单元素数组null", any([]any{nil}), 0, false},
+		{"单元素布尔数组字符串化", any([]any{true}), 0, true},
+		{"单元素对象数组空串", any([]any{map[string]any{}}), 0, false},
+		{"单元素嵌套数组空串", any([]any{[]any{"24"}}), 0, false},
 		{"多元素数组", any([]any{1.0, 2.0}), 0, true},
 		{"带空白的串", any("  22 \n"), 22, false},
+		{"接受 BOM 与 NEL", any("\ufeff22\u0085"), 22, false},
+		{"拒绝 EM SPACE", any("\u200322"), 0, true},
+		{"保留带符号的进制前缀", any("-0x10"), -16, false},
+		{"拒绝十六进制浮点", any("0x1p2"), 0, true},
+		{"十进制越界", any("1e999"), 0, true},
 		{"加号串", any("+22"), 22, false},
 		{"加号", any("+"), 0, true},
 	}
@@ -171,6 +179,7 @@ func TestJsNumberToString按ECMAScript规则(t *testing.T) {
 		{0, "0"},
 		{math.Copysign(0, -1), "0"},
 		{100000000000000000000, "100000000000000000000"}, // 1e20 固定记法
+		{1000000000000000100, "1000000000000000100"},
 		{1e21, "1e+21"},    // 1e21 起指数记法
 		{1e-6, "0.000001"}, // -6 < n 固定记法
 		{1e-7, "1e-7"},     // n=-6 指数记法且指数无零填充

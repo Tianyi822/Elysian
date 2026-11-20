@@ -2,10 +2,10 @@ package firewall
 
 import (
 	"math"
-	"regexp"
 	"strconv"
 	"strings"
-	"unicode"
+
+	"elysian/server/internal/jscompat"
 )
 
 // JS 语义兼容层（盘点 §9.1/§9.6）：canonical id 与界面行 id 全部经 JS encodeURIComponent
@@ -85,124 +85,14 @@ func hexVal(c byte) byte {
 	}
 }
 
-// jsNumber 复刻 JS 的 Number() 强转：JSON 值（nil/bool/float64/string/array/object）
-// 按 ECMAScript ToNumber 规则取数。undefined（缺失或 null）→ NaN、字符串数字可转、
-// 垃圾字符串 → NaN、空数组 → 0、单元素数组取其元素、对象 → NaN。
-func jsNumber(v any) float64 {
-	switch x := v.(type) {
-	case nil:
-		return math.NaN()
-	case bool:
-		if x {
-			return 1
-		}
-		return 0
-	case float64:
-		return x
-	case string:
-		return jsStringToNumber(x)
-	case []any:
-		if len(x) == 0 {
-			return 0
-		}
-		if len(x) == 1 {
-			return jsNumber(x[0])
-		}
-		return math.NaN()
-	default:
-		// map[string]any 及其余一切对象：Number({}) → NaN。
-		return math.NaN()
-	}
-}
+func jsNumber(v any) float64 { return jscompat.ParseNumberUndefined(v) }
 
-// jsStringToNumber 复刻 JS 对字符串的 Number() 解析：先剥空白（含 \u00a0/\ufeff），
-// 空串 → 0，十进制/十六进制(0x)/二进制(0b)/八进制(0o)/科学计数可转，Infinity 字面量
-// 可转，其余（含 inf/nan 拼写、下滑线、多余字符）→ NaN。
-func jsStringToNumber(s string) float64 {
-	t := strings.TrimFunc(s, func(r rune) bool {
-		return r == '\u00a0' || r == '\ufeff' || unicode.IsSpace(r)
-	})
-	if t == "" {
-		return 0
-	}
-	neg := false
-	body := t
-	switch {
-	case strings.HasPrefix(body, "+"):
-		body = body[1:]
-	case strings.HasPrefix(body, "-"):
-		neg = true
-		body = body[1:]
-	}
-	if body == "Infinity" {
-		if neg {
-			return math.Inf(-1)
-		}
-		return math.Inf(1)
-	}
-	if body == "" {
-		return math.NaN()
-	}
-	apply := func(f float64) float64 {
-		if neg {
-			return -f
-		}
-		return f
-	}
-	lower := strings.ToLower(body)
-	for prefix, base := range map[string]int{"0x": 16, "0b": 2, "0o": 8} {
-		if strings.HasPrefix(lower, prefix) {
-			digits := body[2:]
-			if digits == "" || strings.ContainsAny(digits, "_") {
-				return math.NaN()
-			}
-			u, err := strconv.ParseUint(digits, base, 64)
-			if err != nil {
-				return math.NaN()
-			}
-			return apply(float64(u))
-		}
-	}
-	if strings.ContainsRune(body, '_') {
-		return math.NaN()
-	}
-	f, err := strconv.ParseFloat(body, 64)
-	if err != nil {
-		return math.NaN()
-	}
-	// Go 接受 "inf"/"nan" 等拼写，JS 只认 Infinity（上面已处理）。
-	if math.IsInf(f, 0) || math.IsNaN(f) {
-		return math.NaN()
-	}
-	return apply(f)
-}
-
-var jsExponentPad = regexp.MustCompile(`e([+-])0(\d)$`)
-
-// jsNumberToString 复刻 JS String(number)：NaN/Infinity 原样、整数不带小数点、
-// 1e21 起与 1e-6 以下用科学计数（Go 的指数位补零要剥掉，如 1e-07 → 1e-7）。
-// 错误消息里的数字全部经它格式化（`端口无效：NaN（…）` 逐字契约）。
+// 防火墙错误文案保留整值的完整十进制形式（含负零）。
 func jsNumberToString(f float64) string {
-	if math.IsNaN(f) {
-		return "NaN"
-	}
-	if math.IsInf(f, 1) {
-		return "Infinity"
-	}
-	if math.IsInf(f, -1) {
-		return "-Infinity"
-	}
-	abs := math.Abs(f)
-	if f == math.Trunc(f) && abs < 1e21 {
+	if math.Abs(f) < 1e21 && jscompat.IsInteger(f) {
 		return strconv.FormatFloat(f, 'f', 0, 64)
 	}
-	if abs >= 1e21 || (f != 0 && abs < 1e-6) {
-		return jsExponentPad.ReplaceAllString(strconv.FormatFloat(f, 'g', -1, 64), "e${1}${2}")
-	}
-	return strconv.FormatFloat(f, 'f', -1, 64)
+	return jscompat.NumberToString(f)
 }
 
-// jsIsInteger 复刻 Number.isInteger：有限且无小数部分。
-func jsIsInteger(f float64) bool {
-	return !math.IsNaN(f) && !math.IsInf(f, 0) && math.Trunc(f) == f
-}
+func jsIsInteger(f float64) bool { return jscompat.IsInteger(f) }

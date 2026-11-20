@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"elysian/server/internal/atomicfile"
+	"elysian/server/internal/jscompat"
 )
 
 // 面板数据文件的读写纪律（auth 域私有公共件，credentialsStore/sessionStore 共用）：
@@ -74,15 +75,7 @@ func formatISOMillis(ms int64) string {
 // utf16Length 计算字符串的 UTF-16 code unit 数（与 JS string.length 同口径：BMP 外
 // 字符计 2）。登录字段上限、密码最小长度与回跳长度上限都用它对齐 TS 的 .length 语义。
 func utf16Length(s string) int {
-	units := 0
-	for _, r := range s {
-		if r > 0xFFFF {
-			units += 2
-		} else {
-			units++
-		}
-	}
-	return units
+	return jscompat.UTF16Length(s)
 }
 
 // codeCarrier 带 errno code 的错误（TS ErrnoException.code 的等价物）：诊断归因优先取它。

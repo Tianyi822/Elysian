@@ -8,6 +8,7 @@ import (
 	"os"
 
 	"elysian/server/internal/atomicfile"
+	"elysian/server/internal/jscompat"
 )
 
 // 面板数据文件的读写纪律（websitesRegistry.ts / websitesCertificates.ts 同一套）：
@@ -47,13 +48,5 @@ func randomUUID() string {
 // utf16Length 计算字符串的 UTF-16 code unit 数（与 JS string.length 同口径：BMP 外
 // 字符计 2）。项目名 1-64、备注/命令/Git 地址上限、域名 253 上限都按它对齐 TS 语义。
 func utf16Length(s string) int {
-	units := 0
-	for _, r := range s {
-		if r > 0xFFFF {
-			units += 2
-		} else {
-			units++
-		}
-	}
-	return units
+	return jscompat.UTF16Length(s)
 }

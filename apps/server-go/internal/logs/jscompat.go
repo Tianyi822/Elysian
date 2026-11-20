@@ -1,10 +1,11 @@
 package logs
 
 import (
-	"math"
 	"strconv"
 	"strings"
 	"time"
+
+	"elysian/server/internal/jscompat"
 )
 
 /*
@@ -24,65 +25,11 @@ func strconvFormatGeneral(f float64) string {
 	return strconv.FormatFloat(f, 'g', -1, 64)
 }
 
-// parseJSNumber JS Number(raw) 的子集：JS 空白 trim、正负号、十进制（含小数与指数）、
-// 0x/0X 十六进制、0b/0o 二八进制、"Infinity"。解析失败返回 (!ok)。
 func parseJSNumber(raw string) (float64, bool) {
-	s := trimJS(raw)
-	if s == "" {
-		return 0, false
-	}
-	neg := false
-	body := s
-	if body[0] == '+' || body[0] == '-' {
-		neg = body[0] == '-'
-		body = body[1:]
-	}
-	if body == "" {
-		return 0, false
-	}
-	// 十六进制 / 二进制 / 八进制前缀（Number() 支持，ParseFloat 不认）。
-	if len(body) > 2 && body[0] == '0' {
-		switch body[1] {
-		case 'x', 'X':
-			if n, err := strconv.ParseUint(body[2:], 16, 64); err == nil {
-				return signedFloat(float64(n), neg), true
-			}
-			return 0, false
-		case 'b', 'B':
-			if n, err := strconv.ParseUint(body[2:], 2, 64); err == nil {
-				return signedFloat(float64(n), neg), true
-			}
-			return 0, false
-		case 'o', 'O':
-			if n, err := strconv.ParseUint(body[2:], 8, 64); err == nil {
-				return signedFloat(float64(n), neg), true
-			}
-			return 0, false
-		}
-	}
-	// 十进制（含指数）与 Infinity/NaN：交给 ParseFloat；下划线等 JS 不认的形会失败。
-	f, err := strconv.ParseFloat(s, 64)
-	if err != nil {
-		return 0, false
-	}
-	return f, true
+	return jscompat.ParseNonEmptyNumberText(trimJS(raw))
 }
 
-// signedFloat 应用符号（十六进制等分支已手工剥前缀）。
-func signedFloat(f float64, neg bool) float64 {
-	if neg {
-		return -f
-	}
-	return f
-}
-
-// isJSIntegerNumber Number.isInteger 判据。
-func isJSIntegerNumber(f float64) bool {
-	if math.IsInf(f, 0) || math.IsNaN(f) {
-		return false
-	}
-	return f == math.Trunc(f)
-}
+func isJSIntegerNumber(f float64) bool { return jscompat.IsInteger(f) }
 
 // dateParseLayouts Date.parse 常见形：ISO（带/不带时区、日期段）、HTTP 日期、斜杠日期。
 // 不带时区的形按 UTC 解释（容器时区为 UTC；本地开发差异登记在盘点风险 3）。

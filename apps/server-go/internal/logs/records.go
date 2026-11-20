@@ -5,6 +5,8 @@ import (
 	"math"
 	"strings"
 	"unicode/utf16"
+
+	"elysian/server/internal/jscompat"
 )
 
 /*
@@ -66,7 +68,7 @@ func trimJS(s string) string {
 
 // jsLength 字符串的 UTF-16 code unit 数（等价 JS string.length）。
 func jsLength(s string) int {
-	return len(utf16.Encode([]rune(s)))
+	return jscompat.UTF16Length(s)
 }
 
 // jsSlice 按 UTF-16 code unit 截取（等价 String.prototype.slice(0, n)；可在代理对中间截断，

@@ -73,20 +73,48 @@ func TestJsNumber(t *testing.T) {
 	}
 }
 
+func TestJSNumberLegacyProfile(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		in   any
+		want float64
+	}{
+		{"单元素布尔数组递归", []any{true}, 1},
+		{"单元素 null 数组递归", []any{nil}, math.NaN()},
+		{"嵌套数组递归", []any{[]any{"24"}}, 24},
+		{"Unicode 空白", "\u200322\u0085", 22},
+		{"BOM 空白", "\ufeff0b11", 3},
+		{"保留带符号的进制前缀", "-0x10", -16},
+		{"拒绝数字分隔符", "1_0", math.NaN()},
+		{"十进制越界", "1e999", math.NaN()},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			got := jsNumber(tc.in)
+			if got != tc.want && !(math.IsNaN(got) && math.IsNaN(tc.want)) {
+				t.Fatalf("数字 = %v；期望 %v", got, tc.want)
+			}
+		})
+	}
+}
+
 func TestJsNumberToString(t *testing.T) {
 	cases := map[float64]string{
-		math.NaN():  "NaN",
-		8080:        "8080",
-		0:           "0",
-		8080.5:      "8080.5",
-		70000:       "70000",
-		math.Inf(1): "Infinity",
-		1e21:        "1e+21",
+		math.NaN():          "NaN",
+		8080:                "8080",
+		0:                   "0",
+		8080.5:              "8080.5",
+		70000:               "70000",
+		math.Inf(1):         "Infinity",
+		1e21:                "1e+21",
+		1000000000000000100: "1000000000000000128",
 	}
 	for input, want := range cases {
 		if got := jsNumberToString(input); got != want {
 			t.Errorf("jsNumberToString(%v) = %q，want %q", input, got, want)
 		}
+	}
+	if got := jsNumberToString(math.Copysign(0, -1)); got != "-0" {
+		t.Fatalf("防火墙错误文案的负零 = %q", got)
 	}
 }
 
