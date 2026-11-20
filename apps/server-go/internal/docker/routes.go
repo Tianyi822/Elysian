@@ -253,7 +253,10 @@ type policyBody struct {
 
 // ---------- SSE ----------
 
-// sseSubscriber 单订阅者的帧队列（hub 广播侧不阻塞）。
+// 同步订阅最多入队完整重放窗口、最后采样、两条状态和首启 resync。
+const sseQueueLimit = nonSampleBufferSize + 4
+
+// sseSubscriber 单订阅者的帧队列（hub 广播侧不等待发送）。
 type sseSubscriber struct {
 	mu     sync.Mutex
 	cond   *sync.Cond
@@ -269,16 +272,29 @@ func newSseSubscriber() *sseSubscriber {
 
 func (s *sseSubscriber) push(frame string) {
 	s.mu.Lock()
+	defer s.mu.Unlock()
+	if s.closed {
+		return
+	}
+	if len(s.queue) == sseQueueLimit {
+		// 中间状态不能静默丢弃：让客户端从最后实际收到的 ID 重连。
+		s.closeLocked()
+		return
+	}
 	s.queue = append(s.queue, frame)
-	s.mu.Unlock()
 	s.cond.Signal()
 }
 
 func (s *sseSubscriber) close() {
 	s.mu.Lock()
-	s.closed = true
+	s.closeLocked()
 	s.mu.Unlock()
-	s.cond.Broadcast()
+}
+
+func (s *sseSubscriber) closeLocked() {
+	s.closed = true
+	s.queue = nil
+	s.cond.Signal()
 }
 
 func (s *sseSubscriber) pop() (string, bool) {
@@ -291,6 +307,7 @@ func (s *sseSubscriber) pop() (string, bool) {
 		return "", false
 	}
 	frame := s.queue[0]
+	s.queue[0] = ""
 	s.queue = s.queue[1:]
 	return frame, true
 }
@@ -327,15 +344,16 @@ func sseHandler(hub *eventsHub) http.HandlerFunc {
 		w.Header().Set("Cache-Control", "no-cache, no-transform")
 		w.WriteHeader(http.StatusOK)
 
-		flusher, _ := w.(http.Flusher)
+		controller := http.NewResponseController(w)
 		writeFrame := func(frame string) bool {
-			if _, err := io.WriteString(w, frame); err != nil {
-				return false
+			// 和镜像拉取流一样，只限制单帧写出，不限制整个订阅时长。
+			_ = controller.SetWriteDeadline(time.Now().Add(30 * time.Second))
+			_, err := io.WriteString(w, frame)
+			if err == nil {
+				err = controller.Flush()
 			}
-			if flusher != nil {
-				flusher.Flush()
-			}
-			return true
+			_ = controller.SetWriteDeadline(time.Time{})
+			return err == nil
 		}
 
 		// 首帧 retry；断开监视与心跳先于出队循环建立（否则缓存循环等下一帧时

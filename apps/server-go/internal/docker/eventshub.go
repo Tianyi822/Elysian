@@ -116,6 +116,11 @@ func (h *eventsHub) Subscribe(handlers hubHandlers) (func(), error) {
 	wasZero := len(h.subscribers) == 1
 
 	h.deliverReplayLocked(handlers.lastEventID, handlers.onEvent)
+	if !wasZero && handlers.lastEventID == "" {
+		// 客户端可能在收到首个游标前已断开，不能只补采样而缺状态基线。
+		frame := h.buildFrameLocked("container/resync", struct{}{}, false)
+		handlers.onEvent(frame.event, frame.id, frame.data)
+	}
 
 	if h.dockerLive {
 		handlers.onStatus("live")
