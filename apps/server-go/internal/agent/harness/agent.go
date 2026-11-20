@@ -420,16 +420,9 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 	if estimate < 1 {
 		estimate = estimateRequestTokens(request)
 	}
-	// 预算按累计实际用量封顶：这里只拒绝「本轮提示词都装不下」的请求，不按单次最大输出上限整份预留——
-	// 最大输出上限是供应商允许值而非预期消耗，整份预留会让 max 思考档在多轮工具循环里提前耗尽预算。
-	// 输出导致的超支由响应后判定接管：超预算且仍需继续调工具时失败，最终答复允许过线完成。
-	if resourceBudgetRun(run) && purpose == "inference" && run.Usage.ResultBytes >= run.Limits.RunResultBytes {
+	if err := a.modelBudgetGate(run, purpose, estimate, request.MaxTokens); err != nil {
 		m.mu.Unlock()
-		return empty, bad("result-budget", "本轮工具结果容量已用完")
-	}
-	if !hstate.ContinuousRun(run) && (modelLimitReached(run, 1, a.modelRequestReserve(purpose)) || run.Usage.Tokens+estimate > run.Limits.TokenBudget || purpose == "failure-summary" && run.Usage.Tokens+estimate+request.MaxTokens > run.Limits.TokenBudget) {
-		m.mu.Unlock()
-		return empty, bad("model-budget", "模型请求次数或 token 预算已耗尽")
+		return empty, err
 	}
 	record := ModelRequestRecord{ID: m.deps.NewID(), RunID: run.ID, Index: run.Usage.ModelRequests, Purpose: purpose, Status: StateRunning, StartedAt: stamp(m.deps.Now()), ContextRefs: refs, MemoryRevision: revision, EstimatedTokens: estimate, HistorySeq: run.HistorySeq}
 	if hstate.ContinuousRun(run) {
@@ -493,61 +486,12 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 	callCtx, cancel := context.WithTimeout(ctx, time.Duration(run.Limits.ModelTimeoutSeconds)*time.Second)
 	defer cancel()
 	if purpose == "inference" {
-		a.reasoningRequestID, a.reasoning, a.content = record.ID, "", ""
-		request.OnReasoning = func(delta string) {
-			m.mu.Lock()
-			defer m.mu.Unlock()
-			if callCtx.Err() == nil && !m.closed && m.executionLocked(run.ID) == execution && a.reasoningRequestID == record.ID && len(a.reasoning)+len(a.content)+len(delta) <= run.Limits.ModelResponseBytes {
-				a.reasoning += delta
-			}
-		}
-		request.OnContent = func(delta string) {
-			m.mu.Lock()
-			defer m.mu.Unlock()
-			if callCtx.Err() == nil && !m.closed && m.executionLocked(run.ID) == execution && a.reasoningRequestID == record.ID && len(a.reasoning)+len(a.content)+len(delta) <= run.Limits.ModelResponseBytes {
-				a.content += delta
-			}
-		}
+		a.bindModelStreamLocked(callCtx, run, execution, record.ID, &request)
 	}
 	m.mu.Unlock()
-	resultCh := make(chan modelOutcome, 1)
-	go func() {
-		var result modelOutcome
-		defer func() {
-			if recovered := recover(); recovered != nil {
-				applog.Default().RecoveredPanic("Agent 模型请求", recovered)
-				result.err = errors.New("模型客户端发生内部错误")
-			}
-			resultCh <- result
-		}()
-		if result.err = waitRecords(m.store, callCtx); result.err != nil {
-			result.err = &Error{Status: 503, Code: "record-storage-unavailable", Message: "记录副本同步未完成，尚未发出模型请求"}
-			return
-		}
-		result.response, result.err = m.deps.ModelClient.Complete(callCtx, profile, request)
-	}()
-	var result modelOutcome
-	select {
-	case result = <-resultCh:
-	case <-execution.deletedDone:
-		return record, context.Canceled
-	case <-callCtx.Done():
-		timer := time.NewTimer(time.Duration(run.Limits.CancelGraceSeconds) * time.Second)
-		select {
-		case result = <-resultCh:
-			timer.Stop()
-		case <-execution.deletedDone:
-			timer.Stop()
-			return record, context.Canceled
-		case <-timer.C:
-			m.mu.Lock()
-			m.executionUnresponsiveLocked(execution, "模型请求未确认停止，任务派发已暂停，请重启面板后检查")
-			m.mu.Unlock()
-			return record, &Error{Status: 503, Code: "model-unresponsive", Message: "模型请求未确认停止，运行结果未确认"}
-		}
-	}
-	if callCtx.Err() != nil {
-		result.err = callCtx.Err()
+	result, streamErr := m.consumeModelStream(callCtx, profile, request, execution, run.Limits.CancelGraceSeconds)
+	if streamErr != nil {
+		return record, streamErr
 	}
 	if purpose != "inference" {
 		result.response.Reasoning = "" // 整理与 checkpoint 的内容不作为聊天思考公开。
@@ -744,4 +688,79 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 		return record, bad("model-budget", "模型累计 token 用量超过预算")
 	}
 	return record, nil
+}
+
+func (a *agentExecution) modelBudgetGate(run Run, purpose string, estimate, maxTokens int) error {
+	// 预算按累计实际用量封顶：这里只拒绝「本轮提示词都装不下」的请求，不按单次最大输出上限整份预留——
+	// 最大输出上限是供应商允许值而非预期消耗，整份预留会让 max 思考档在多轮工具循环里提前耗尽预算。
+	// 输出导致的超支由响应后判定接管：超预算且仍需继续调工具时失败，最终答复允许过线完成。
+	if resourceBudgetRun(run) && purpose == "inference" && run.Usage.ResultBytes >= run.Limits.RunResultBytes {
+		return bad("result-budget", "本轮工具结果容量已用完")
+	}
+	if !hstate.ContinuousRun(run) && (modelLimitReached(run, 1, a.modelRequestReserve(purpose)) || run.Usage.Tokens+estimate > run.Limits.TokenBudget || purpose == "failure-summary" && run.Usage.Tokens+estimate+maxTokens > run.Limits.TokenBudget) {
+		return bad("model-budget", "模型请求次数或 token 预算已耗尽")
+	}
+	return nil
+}
+
+func (a *agentExecution) bindModelStreamLocked(callCtx context.Context, run Run, execution *executionState, requestID string, request *model.Request) {
+	m := a.manager
+	a.reasoningRequestID, a.reasoning, a.content = requestID, "", ""
+	request.OnReasoning = func(delta string) {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if callCtx.Err() == nil && !m.closed && m.executionLocked(run.ID) == execution && a.reasoningRequestID == requestID && len(a.reasoning)+len(a.content)+len(delta) <= run.Limits.ModelResponseBytes {
+			a.reasoning += delta
+		}
+	}
+	request.OnContent = func(delta string) {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		if callCtx.Err() == nil && !m.closed && m.executionLocked(run.ID) == execution && a.reasoningRequestID == requestID && len(a.reasoning)+len(a.content)+len(delta) <= run.Limits.ModelResponseBytes {
+			a.content += delta
+		}
+	}
+}
+
+func (m *Manager) consumeModelStream(callCtx context.Context, profile model.Profile, request model.Request, execution *executionState, cancelGraceSeconds int) (modelOutcome, error) {
+	resultCh := make(chan modelOutcome, 1)
+	go func() {
+		var result modelOutcome
+		defer func() {
+			if recovered := recover(); recovered != nil {
+				applog.Default().RecoveredPanic("Agent 模型请求", recovered)
+				result.err = errors.New("模型客户端发生内部错误")
+			}
+			resultCh <- result
+		}()
+		if result.err = waitRecords(m.store, callCtx); result.err != nil {
+			result.err = &Error{Status: 503, Code: "record-storage-unavailable", Message: "记录副本同步未完成，尚未发出模型请求"}
+			return
+		}
+		result.response, result.err = m.deps.ModelClient.Complete(callCtx, profile, request)
+	}()
+	var result modelOutcome
+	select {
+	case result = <-resultCh:
+	case <-execution.deletedDone:
+		return modelOutcome{}, context.Canceled
+	case <-callCtx.Done():
+		timer := time.NewTimer(time.Duration(cancelGraceSeconds) * time.Second)
+		select {
+		case result = <-resultCh:
+			timer.Stop()
+		case <-execution.deletedDone:
+			timer.Stop()
+			return modelOutcome{}, context.Canceled
+		case <-timer.C:
+			m.mu.Lock()
+			m.executionUnresponsiveLocked(execution, "模型请求未确认停止，任务派发已暂停，请重启面板后检查")
+			m.mu.Unlock()
+			return modelOutcome{}, &Error{Status: 503, Code: "model-unresponsive", Message: "模型请求未确认停止，运行结果未确认"}
+		}
+	}
+	if callCtx.Err() != nil {
+		result.err = callCtx.Err()
+	}
+	return result, nil
 }
