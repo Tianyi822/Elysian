@@ -29,16 +29,16 @@ func cursorAfter(a, b MemoryCursor) bool {
 
 func refKey(r EvidenceRef) string { return r.RunID + ":" + r.EventSeq }
 
-// contextFacts 在完整的工具提议/结果组边界读取；未完成旧调用显式标结果未知。
-// 不复制工具结果到模型记录或记忆。数据库读取只在父进程发生。
-// loadImages 为 false 时（记忆整理与工作流收尾）不读附件字节也不挂图：
-// 这些请求本就剥离全部 Images，历史图片只需保留文字注记语义。
 type contextFactsResult struct {
 	memory WorkingMemory
 	groups []factGroup
 	shared []model.Message
 }
 
+// contextFacts 在完整的工具提议/结果组边界读取；未完成旧调用显式标结果未知。
+// 不复制工具结果到模型记录或记忆。数据库读取只在父进程发生。
+// loadImages 为 false 时（记忆整理与工作流收尾）不读附件字节也不挂图：
+// 这些请求本就剥离全部 Images，历史图片只需保留文字注记语义。
 func (a *agentExecution) contextFacts(ctx context.Context, loadImages bool) (WorkingMemory, []factGroup, []model.Message, error) {
 	m := a.manager
 	m.mu.Lock()
@@ -93,6 +93,19 @@ func (a *agentExecution) contextFactsRead(ctx context.Context, loadImages bool) 
 	} else {
 		a.currentImages = nil
 	}
+	groups, err := a.rebuildFactGroups(ctx, memory.Coverage, runs, imagePlans)
+	if err != nil {
+		return memory, nil, nil, err
+	}
+	shared, err := a.sharedContextHistory(ctx)
+	if err != nil {
+		return memory, nil, nil, err
+	}
+	return memory, groups, shared, nil
+}
+
+func (a *agentExecution) rebuildFactGroups(ctx context.Context, memoryCoverage MemoryCursor, runs []Run, imagePlans map[string]runImagePlan) ([]factGroup, error) {
+	m := a.manager
 	imageSupport := a.run.Model != nil && a.run.Model.Capabilities.Image
 	var groups []factGroup
 	for _, run := range runs {
@@ -101,7 +114,7 @@ func (a *agentExecution) contextFactsRead(ctx context.Context, loadImages bool) 
 		}
 		invalid, e := wikiArtifactInvalid(ctx, m.store, "run", run.ID)
 		if e != nil {
-			return memory, nil, nil, e
+			return nil, e
 		}
 		if invalid {
 			groups = append(groups, factGroup{cursor: MemoryCursor{RunNumber: run.RunNumber, EventSeq: run.LastSeq}, refs: []EvidenceRef{{RunID: run.ID, EventSeq: run.LastSeq}}, messages: []model.Message{otherContextMessage("user", "历史运行 "+run.ID+" 的知识来源已撤回，内容已隔离；执行凭据仍留存，不能据此重试外部动作。")}})
@@ -114,7 +127,7 @@ func (a *agentExecution) contextFactsRead(ctx context.Context, loadImages bool) 
 			continue // 跨步骤只接收固定完成凭据，不串入其他步骤的原始工具过程。
 		}
 		inputCursor := MemoryCursor{RunNumber: run.RunNumber, EventSeq: "1"}
-		if cursorAfter(inputCursor, memory.Coverage) {
+		if cursorAfter(inputCursor, memoryCoverage) {
 			ref := EvidenceRef{RunID: run.ID, EventSeq: "1"}
 			prefix := "任务输入（来源 " + refKey(ref) + "）：\n"
 			content := prefix + run.Input
@@ -150,24 +163,24 @@ func (a *agentExecution) contextFactsRead(ctx context.Context, loadImages bool) 
 		}
 
 		coverage := int64(0)
-		if state.ContinuousRun(a.run) && run.RunNumber == memory.Coverage.RunNumber {
-			coverage, _ = state.NumberCursor(memory.Coverage.EventSeq)
+		if state.ContinuousRun(a.run) && run.RunNumber == memoryCoverage.RunNumber {
+			coverage, _ = state.NumberCursor(memoryCoverage.EventSeq)
 		}
 		records, err := readView(ctx, m.store).ContextModelRequests(ctx, run.ID, coverage)
 		if err != nil {
-			return memory, nil, nil, err
+			return nil, err
 		}
 		calls, err := readView(ctx, m.store).ContextCalls(ctx, run.ID, coverage)
 		if err != nil {
-			return memory, nil, nil, err
+			return nil, err
 		}
 		operations, err := readView(ctx, m.store).ContextOperations(ctx, run.ID, coverage)
 		if err != nil {
-			return memory, nil, nil, err
+			return nil, err
 		}
 		approvals, err := readView(ctx, m.store).SessionApprovals(ctx, run.ID)
 		if err != nil {
-			return memory, nil, nil, err
+			return nil, err
 		}
 		operationByCall := map[string]*Operation{}
 		for i := range operations {
@@ -180,7 +193,7 @@ func (a *agentExecution) contextFactsRead(ctx context.Context, loadImages bool) 
 		}
 		items, readErr := readView(ctx, m.store).ContextItems(ctx, run.ID)
 		if readErr != nil {
-			return memory, nil, nil, readErr
+			return nil, readErr
 		}
 		materialSources := map[string]string{}
 		skillBodies := map[string]bool{}
@@ -192,7 +205,7 @@ func (a *agentExecution) contextFactsRead(ctx context.Context, loadImages bool) 
 		}
 		events, err := readView(ctx, m.store).ContextEvents(ctx, run.ID, coverage)
 		if err != nil {
-			return memory, nil, nil, err
+			return nil, err
 		}
 		callSeq := map[string]string{}
 		for _, event := range events {
@@ -246,7 +259,7 @@ func (a *agentExecution) contextFactsRead(ctx context.Context, loadImages bool) 
 						}
 					}
 				} else if run.ID == a.run.ID {
-					return memory, nil, nil, bad("invalid-agent-operation", "当前工具调用组尚未闭合")
+					return nil, bad("invalid-agent-operation", "当前工具调用组尚未闭合")
 				}
 				if a.run.Snapshot != nil && a.run.Snapshot.ToolLoading == onDemandToolsV2 && found != nil && skillBodies[found.ID] {
 					content = `{"status":"skill-instruction-recorded","note":"适用于本轮的完整正文由独立技能上下文提供"}`
@@ -267,7 +280,7 @@ func (a *agentExecution) contextFactsRead(ctx context.Context, loadImages bool) 
 				}
 				results = append(results, result)
 			}
-			if !cursorAfter(group.cursor, memory.Coverage) {
+			if !cursorAfter(group.cursor, memoryCoverage) {
 				continue
 			}
 			refsJSON, _ := json.Marshal(group.refs)
@@ -286,7 +299,7 @@ func (a *agentExecution) contextFactsRead(ctx context.Context, loadImages bool) 
 					continue
 				}
 				cursor := MemoryCursor{RunNumber: run.RunNumber, EventSeq: event.Seq}
-				if !cursorAfter(cursor, memory.Coverage) {
+				if !cursorAfter(cursor, memoryCoverage) {
 					continue
 				}
 				for _, call := range calls {
@@ -300,7 +313,7 @@ func (a *agentExecution) contextFactsRead(ctx context.Context, loadImages bool) 
 		}
 		for _, item := range items {
 			cursor := MemoryCursor{RunNumber: run.RunNumber, EventSeq: item.EventSeq}
-			if !cursorAfter(cursor, memory.Coverage) {
+			if !cursorAfter(cursor, memoryCoverage) {
 				continue
 			}
 			ref := EvidenceRef{RunID: run.ID, EventSeq: item.EventSeq}
@@ -309,7 +322,7 @@ func (a *agentExecution) contextFactsRead(ctx context.Context, loadImages bool) 
 		}
 		if run.ID != a.run.ID && state.Terminal(run.Status) && run.Status != StateSucceeded {
 			cursor := MemoryCursor{RunNumber: run.RunNumber, EventSeq: run.LastSeq}
-			if cursorAfter(cursor, memory.Coverage) {
+			if cursorAfter(cursor, memoryCoverage) {
 				ref := EvidenceRef{RunID: run.ID, EventSeq: run.LastSeq}
 				detail, _ := json.Marshal(map[string]any{"status": run.Status, "endReason": run.EndReason, "error": run.Error})
 				groups = append(groups, factGroup{cursor: cursor, refs: []EvidenceRef{ref}, messages: []model.Message{otherContextMessage("user", "历史运行终态（来源 "+refKey(ref)+"）："+string(detail))}})
@@ -319,7 +332,7 @@ func (a *agentExecution) contextFactsRead(ctx context.Context, loadImages bool) 
 	if a.run.WorkflowID != "" {
 		workflowGroups, err := m.workflowContextFacts(ctx, a.run)
 		if err != nil {
-			return memory, nil, nil, err
+			return nil, err
 		}
 		if a.workflowOutput != nil {
 			workflowGroups = append(workflowGroups, a.workflowOutput.fact(a.run))
@@ -337,17 +350,22 @@ func (a *agentExecution) contextFactsRead(ctx context.Context, loadImages bool) 
 		groups = append(groups, workflowGroups...)
 	}
 	sort.SliceStable(groups, func(i, j int) bool { return cursorAfter(groups[j].cursor, groups[i].cursor) })
+	return groups, nil
+}
+
+func (a *agentExecution) sharedContextHistory(ctx context.Context) ([]model.Message, error) {
+	m := a.manager
 	// 读取时固定接受输入时的 Session 边界，排除其他任务的工具/记忆。
 	messages, err := readView(ctx, m.store).ContextMessages(ctx, a.run.SessionID, a.run.TaskID, a.run.HistorySeq)
 	if err != nil {
-		return memory, nil, nil, err
+		return nil, err
 	}
 	var shared []model.Message
 	a.sharedWikiRefs = nil
 	for i := len(messages) - 1; i >= 0; i-- {
 		invalid, e := wikiArtifactInvalid(ctx, m.store, "message", messages[i].ID)
 		if e != nil {
-			return memory, nil, nil, e
+			return nil, e
 		}
 		if invalid {
 			continue
@@ -357,7 +375,7 @@ func (a *agentExecution) contextFactsRead(ctx context.Context, loadImages bool) 
 		} // 分支只继承父快照，不读取兄弟公开输出。
 		refs, e := wikiArtifactRefs(ctx, m.store, "message", messages[i].ID)
 		if e != nil {
-			return memory, nil, nil, e
+			return nil, e
 		}
 		a.sharedWikiRefs = append(a.sharedWikiRefs, refs)
 		prefix := "其他任务公开对话：\n"
@@ -370,7 +388,7 @@ func (a *agentExecution) contextFactsRead(ctx context.Context, loadImages bool) 
 		shared = append(shared, model.Message{Role: messages[i].Role, Content: prefix + messages[i].Content,
 			EstimatedBreakdown: &model.ContextBreakdown{Messages: estimateContextText(messages[i].Content), Other: estimateContextText(prefix)}})
 	}
-	return memory, groups, shared, nil
+	return shared, nil
 }
 
 func (a *agentExecution) tools(ctx context.Context) ([]model.Tool, error) {
