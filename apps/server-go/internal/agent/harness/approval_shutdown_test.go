@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"os"
 	"sync"
 	"sync/atomic"
@@ -16,11 +17,16 @@ import (
 
 type approvalShutdownProcess struct {
 	worker.Process
-	wrap func(worker.AgentBroker) worker.AgentBroker
+	wrap             func(worker.AgentBroker) worker.AgentBroker
+	wrapCancellation bool
 }
 
 func (p *approvalShutdownProcess) RunAgent(ctx context.Context, id string, broker worker.AgentBroker) error {
-	return p.Process.(worker.AgentProcess).RunAgent(ctx, id, p.wrap(broker))
+	err := p.Process.(worker.AgentProcess).RunAgent(ctx, id, p.wrap(broker))
+	if p.wrapCancellation && errors.Is(err, worker.ErrSuspended) && ctx.Err() != nil {
+		return fmt.Errorf("等待挂起回执：%w", ctx.Err())
+	}
+	return err
 }
 
 type approvalShutdownBroker struct {
@@ -47,10 +53,14 @@ func (b *approvalShutdownBroker) ExecuteAgent(ctx context.Context, responseID st
 }
 
 func TestApprovalShutdownBeforeSuspensionAcknowledged(t *testing.T) {
-	for _, realWorker := range []bool{false, true} {
+	for _, workerKind := range []string{"fake-worker", "real-worker", "wrapped-cancellation"} {
 		for _, workflow := range []bool{false, true} {
+			if workerKind == "wrapped-cancellation" && !workflow {
+				// 普通持续任务走检查点恢复；旧工作流覆盖此处的挂起判据。
+				continue
+			}
 			for _, decision := range []string{"pending", "approved", "cancelled"} {
-				name := map[bool]string{false: "fake-worker", true: "real-worker"}[realWorker] + "/" + map[bool]string{false: "agent", true: "workflow-agent"}[workflow] + "/" + decision
+				name := workerKind + "/" + map[bool]string{false: "agent", true: "workflow-agent"}[workflow] + "/" + decision
 				t.Run(name, func(t *testing.T) {
 					ctx := context.Background()
 					entered, cancelled, release := make(chan struct{}), make(chan struct{}), make(chan struct{})
@@ -84,13 +94,13 @@ func TestApprovalShutdownBeforeSuspensionAcknowledged(t *testing.T) {
 						d.Spawn = func(ctx context.Context) (worker.Process, error) {
 							var process worker.Process = &agentTestProcess{}
 							var err error
-							if realWorker {
+							if workerKind == "real-worker" {
 								process, err = worker.Spawn(ctx, worker.Options{Path: os.Args[0], Args: []string{"-test.run=^TestRuntimeWorkerHelper$"}, Env: []string{"HOME=/tmp", "ELYSIAN_RUNTIME_TEST_CHILD=1"}})
 								if err != nil {
 									return nil, err
 								}
 							}
-							return &approvalShutdownProcess{Process: process, wrap: func(b worker.AgentBroker) worker.AgentBroker {
+							return &approvalShutdownProcess{Process: process, wrapCancellation: workerKind == "wrapped-cancellation", wrap: func(b worker.AgentBroker) worker.AgentBroker {
 								return &approvalShutdownBroker{AgentBroker: b, first: &first, entered: entered, cancelled: cancelled, release: release}
 							}}, nil
 						}

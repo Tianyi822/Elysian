@@ -3,6 +3,7 @@ package harness
 import (
 	"context"
 	"encoding/json"
+	"errors"
 
 	"elysian/server/internal/agent/harness/sessionstore"
 	"elysian/server/internal/agent/harness/state"
@@ -47,7 +48,7 @@ func (m *Manager) WikiPageRevision(ctx context.Context, space, id string, revisi
 	var p WikiPage
 	var raw string
 	err := readView(ctx, m.store).WikiPageRevision(ctx, space, id, revision, &raw)
-	if err == sessionstore.ErrNotFound {
+	if errors.Is(err, sessionstore.ErrNotFound) {
 		return p, &Error{Status: 404, Code: "wiki-revision-not-found", Message: "Wiki 页面修订不存在"}
 	}
 	if err != nil {

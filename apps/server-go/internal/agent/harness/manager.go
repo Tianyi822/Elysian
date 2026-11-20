@@ -837,7 +837,7 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 		// 关闭与挂起同时发生时，真实 Worker 可能优先返回 context.Canceled。
 		// 只有父侧调用已完成检查且 Worker 已确认回收，才能依据持久审批边界保留暂停。
 		stoppedDuringShutdown := false
-		if m.ctx.Err() != nil && err == context.Canceled {
+		if m.ctx.Err() != nil && errors.Is(err, context.Canceled) {
 			closeCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
 			stoppedDuringShutdown = p.Close(closeCtx) == nil
 			stop()
