@@ -40,12 +40,9 @@ func newUUID() string {
 	return string(buf)
 }
 
-// uidOf 取文件属主 uid；取不到回 -1。
-func uidOf(info os.FileInfo) int {
-	if st, ok := info.Sys().(*syscall.Stat_t); ok {
-		return int(st.Uid)
-	}
-	return -1
+func statRegistryFile(info os.FileInfo) bool {
+	uid := uint32(os.Getuid())
+	return atomicfile.StatTrusted(info, atomicfile.TrustOptions{MaxBytes: registrySizeLimit, RejectPerm: 0o077, OwnerUID: &uid})
 }
 
 // nlinkOf 取硬链接数；取不到回 -1。
@@ -63,9 +60,4 @@ func writeFileAtomic(path string, data []byte) error {
 		CreateParent: true,
 		TempSuffix:   func() string { return "." + newUUID() + ".tmp" },
 	})
-}
-
-// openNoFollow 以 O_NOFOLLOW 只读打开；符号链接与权限问题原样上抛。
-func openNoFollow(path string) (*os.File, error) {
-	return os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
 }

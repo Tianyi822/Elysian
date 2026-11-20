@@ -42,3 +42,24 @@ func TestDatabaseRegistryTrustContract(t *testing.T) {
 		})
 	}
 }
+
+func TestSQLiteDataFileRequiresSingleLink(t *testing.T) {
+	s := newTestSqliteService(t, nil)
+	const id = "10000000-0000-4000-8000-000000000000"
+	path, err := s.pathFor(id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, []byte("SQLite 测试文件"), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	if got, err := s.checkedFile(id); err != nil || got != path {
+		t.Fatalf("单链接私有文件应可用：%q %v", got, err)
+	}
+	if err := os.Link(path, path+".alias"); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := s.checkedFile(id); err == nil || err.Error() != "SQLite 文件权限、类型或位置无效" {
+		t.Fatalf("受管数据文件必须拒绝多链接，得到 %v", err)
+	}
+}

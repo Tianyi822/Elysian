@@ -12,12 +12,14 @@ import (
 	"encoding/hex"
 	"encoding/json"
 	"encoding/pem"
+	"errors"
 	"os"
 	"regexp"
 	"strings"
 	"sync"
 	"time"
 
+	"elysian/server/internal/atomicfile"
 	"elysian/server/internal/shared"
 )
 
@@ -332,18 +334,14 @@ func (s *fileWebsiteCertificateStore) Read(_ context.Context, ref string) (Certi
 	if err != nil {
 		return CertificateMaterial{}, err
 	}
-	handle, err := openNoFollow(path)
+	handle, err := atomicfile.OpenTrusted(path, websiteFilePolicy(certificateFileMaxBytes))
 	if err != nil {
+		if errors.Is(err, atomicfile.ErrUntrusted) {
+			return CertificateMaterial{}, errCertificateFileUnusable
+		}
 		return CertificateMaterial{}, err
 	}
 	defer handle.Close()
-	info, err := handle.Stat()
-	if err != nil {
-		return CertificateMaterial{}, err
-	}
-	if !statTrusted(info, certificateFileMaxBytes) {
-		return CertificateMaterial{}, errCertificateFileUnusable
-	}
 	data, err := readAll(handle)
 	if err != nil {
 		return CertificateMaterial{}, err

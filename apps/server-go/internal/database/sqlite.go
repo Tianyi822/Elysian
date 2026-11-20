@@ -12,6 +12,7 @@ import (
 	"sync"
 	"time"
 
+	"elysian/server/internal/atomicfile"
 	"elysian/server/internal/paths"
 	"elysian/server/internal/shared"
 )
@@ -226,7 +227,7 @@ func (s *sqliteService) directory() (string, error) {
 
 // records 读取并校验登记文件。
 func (s *sqliteService) records() ([]sqliteRecord, error) {
-	handle, err := openNoFollow(s.options.RegistryPath)
+	handle, err := atomicfile.OpenNoFollow(s.options.RegistryPath)
 	if err != nil {
 		if isNoEntry(err) {
 			return nil, nil
@@ -238,7 +239,7 @@ func (s *sqliteService) records() ([]sqliteRecord, error) {
 	if err != nil {
 		return nil, rewrapFsError(err)
 	}
-	if !info.Mode().IsRegular() || info.Size() > 1024*1024 || info.Mode()&0o077 != 0 || uidOf(info) != os.Getuid() {
+	if !statRegistryFile(info) {
 		return nil, errors.New("SQLite 登记文件权限无效")
 	}
 	var parsed []sqliteRecord
@@ -299,10 +300,8 @@ func (s *sqliteService) checkedFile(id string) (string, error) {
 	if err != nil {
 		return "", rewrapFsError(err)
 	}
-	if !info.Mode().IsRegular() || nlinkOf(info) != 1 || info.Size() > sqliteFileLimit ||
-		info.Mode()&0o077 != 0 ||
-		(s.options.UID != nil && uint32(uidOf(info)) != *s.options.UID) ||
-		filepath.Dir(real) != directory {
+	policy := atomicfile.TrustOptions{MaxBytes: sqliteFileLimit, RejectPerm: 0o077, OwnerUID: s.options.UID, SingleLink: true}
+	if !atomicfile.StatTrusted(info, policy) || filepath.Dir(real) != directory {
 		return "", errors.New("SQLite 文件权限、类型或位置无效")
 	}
 	return path, nil
@@ -523,7 +522,7 @@ func (s *sqliteService) removeFiles(id string) error {
 
 // validateHeader 校验上传文件头（SQLite 魔数与 WAL 拒收）。
 func validateHeader(path string) error {
-	handle, err := openNoFollow(path)
+	handle, err := atomicfile.OpenNoFollow(path)
 	if err != nil {
 		return rewrapFsError(err)
 	}

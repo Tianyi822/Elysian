@@ -24,7 +24,7 @@ const sessionsMaxBytes = 1024 * 1024
 
 // openNoFollow 以 O_RDONLY|O_NOFOLLOW 打开：最终组件是符号链接时得 ELOOP。
 func openNoFollow(path string) (*os.File, error) {
-	return os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	return atomicfile.OpenNoFollow(path)
 }
 
 // isNoFollowMiss 判定打开失败是否属于 fail-closed 集合：文件不存在（ENOENT）与
@@ -36,17 +36,8 @@ func isNoFollowMiss(err error) bool {
 // statTrusted 对已打开文件的 fstat 做信任校验：普通文件、体积不超限、group/other
 // 无任何权限（权限被放宽即不可用）、属主是当前进程 uid。任一不过即 false。
 func statTrusted(fi os.FileInfo, maxBytes int64) bool {
-	if !fi.Mode().IsRegular() || fi.Size() > maxBytes {
-		return false
-	}
-	if fi.Mode().Perm()&0o077 != 0 {
-		return false
-	}
-	stat, ok := fi.Sys().(*syscall.Stat_t)
-	if !ok {
-		return false
-	}
-	return stat.Uid == uint32(os.Getuid())
+	uid := uint32(os.Getuid())
+	return atomicfile.StatTrusted(fi, atomicfile.TrustOptions{MaxBytes: maxBytes, RejectPerm: 0o077, OwnerUID: &uid})
 }
 
 // writeFileAtomic 原子写：mkdir（recursive、0700）→ 写 `<path>.<uuid>.tmp`（独占、0600）

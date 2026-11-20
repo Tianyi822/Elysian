@@ -3,9 +3,9 @@ package database
 import (
 	"encoding/json"
 	"errors"
-	"os"
 	"sync"
 
+	"elysian/server/internal/atomicfile"
 	"elysian/server/internal/shared"
 )
 
@@ -37,7 +37,7 @@ func newFileDatabaseRegistry(path string) *fileDatabaseRegistry {
 
 // read 读取并校验登记文件；ENOENT 视为空表。
 func (r *fileDatabaseRegistry) read() ([]databaseRecord, error) {
-	f, err := openNoFollow(r.path)
+	f, err := atomicfile.OpenNoFollow(r.path)
 	if err != nil {
 		if isNoEntry(err) {
 			return nil, nil
@@ -49,8 +49,7 @@ func (r *fileDatabaseRegistry) read() ([]databaseRecord, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !info.Mode().IsRegular() || info.Size() > registrySizeLimit ||
-		info.Mode()&0o077 != 0 || uidOf(info) != os.Getuid() {
+	if !statRegistryFile(info) {
 		return nil, errors.New("数据库登记文件权限或内容无效")
 	}
 	var rows []databaseRecord

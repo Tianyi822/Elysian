@@ -6,7 +6,8 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"syscall"
+
+	"elysian/server/internal/atomicfile"
 )
 
 // 面板数据文件的读写纪律（websitesRegistry.ts / websitesCertificates.ts 同一套）：
@@ -20,25 +21,9 @@ const registryMaxBytes = 1024 * 1024
 // certificateFileMaxBytes 单个证书材料文件体积上限：128 KiB。
 const certificateFileMaxBytes = 128 * 1024
 
-// openNoFollow 以 O_RDONLY|O_NOFOLLOW 打开：最终组件是符号链接时得 ELOOP。
-func openNoFollow(path string) (*os.File, error) {
-	return os.OpenFile(path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
-}
-
-// statTrusted 对已打开文件的 fstat 做信任校验：普通文件、体积不超限、group/other
-// 无任何权限（权限被放宽即不可用）、属主是当前进程 uid。任一不过即 false。
-func statTrusted(fi os.FileInfo, maxBytes int64) bool {
-	if !fi.Mode().IsRegular() || fi.Size() > maxBytes {
-		return false
-	}
-	if fi.Mode().Perm()&0o077 != 0 {
-		return false
-	}
-	stat, ok := fi.Sys().(*syscall.Stat_t)
-	if !ok {
-		return false
-	}
-	return stat.Uid == uint32(os.Getuid())
+func websiteFilePolicy(maxBytes int64) atomicfile.TrustOptions {
+	uid := uint32(os.Getuid())
+	return atomicfile.TrustOptions{MaxBytes: maxBytes, RejectPerm: 0o077, OwnerUID: &uid}
 }
 
 // isENOENT 判定错误是否为文件不存在（目录/文件被外部抢先清理视为已完成）。

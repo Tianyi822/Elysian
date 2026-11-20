@@ -73,7 +73,7 @@ type fileWebsiteRegistry struct {
 
 // read 读取并校验登记文件：不存在 → 空表；内容/权限不可信 → 显式报错不静默清空。
 func (r *fileWebsiteRegistry) read() ([]WebsiteRecord, error) {
-	handle, err := openNoFollow(r.path)
+	handle, err := atomicfile.OpenNoFollow(r.path)
 	if err != nil {
 		if isENOENT(err) {
 			return nil, nil
@@ -85,7 +85,7 @@ func (r *fileWebsiteRegistry) read() ([]WebsiteRecord, error) {
 	if err != nil {
 		return nil, err
 	}
-	if !statTrusted(info, registryMaxBytes) {
+	if !atomicfile.StatTrusted(info, websiteFilePolicy(registryMaxBytes)) {
 		return nil, errRegistryUnusable
 	}
 	data, err := readAll(handle)

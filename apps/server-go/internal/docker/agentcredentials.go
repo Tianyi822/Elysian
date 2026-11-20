@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"os"
 	"sync"
-	"syscall"
 
 	"elysian/server/internal/atomicfile"
 )
@@ -44,7 +43,7 @@ func (s *agentCredentialStore) load() ([]agentServiceCredentialRecord, error) {
 }
 
 func (s *agentCredentialStore) loadLocked() ([]agentServiceCredentialRecord, error) {
-	file, err := os.OpenFile(s.path, os.O_RDONLY|syscall.O_NOFOLLOW, 0)
+	file, err := atomicfile.OpenNoFollow(s.path)
 	if err != nil {
 		if os.IsNotExist(err) {
 			return nil, nil

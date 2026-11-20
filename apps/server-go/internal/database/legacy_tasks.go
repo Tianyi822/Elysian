@@ -8,8 +8,9 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"os"
 	"path/filepath"
+
+	"elysian/server/internal/atomicfile"
 )
 
 // LegacyTaskLedger reads receipts from the retired database task runner.
@@ -52,7 +53,7 @@ func (l LegacyTaskLedger) Read(ctx context.Context, id, requestID string) (Legac
 	if !containerIDPattern.MatchString(id) {
 		return LegacyTaskReceipt{}, errors.New("旧数据库任务标识无效")
 	}
-	f, err := openNoFollow(filepath.Join(l.StateDir, "agent-database-tasks", id+".json"))
+	f, err := atomicfile.OpenNoFollow(filepath.Join(l.StateDir, "agent-database-tasks", id+".json"))
 	if err != nil {
 		return LegacyTaskReceipt{}, err
 	}
@@ -61,7 +62,7 @@ func (l LegacyTaskLedger) Read(ctx context.Context, id, requestID string) (Legac
 	if err != nil {
 		return LegacyTaskReceipt{}, err
 	}
-	if !info.Mode().IsRegular() || info.Size() > registrySizeLimit || info.Mode().Perm()&0077 != 0 || uidOf(info) != os.Getuid() {
+	if !statRegistryFile(info) {
 		return LegacyTaskReceipt{}, errors.New("旧数据库任务文件权限或大小无效")
 	}
 	var task struct {
