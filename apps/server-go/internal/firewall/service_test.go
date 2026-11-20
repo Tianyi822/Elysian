@@ -392,6 +392,40 @@ func TestServiceIpRulesUpdateRemoveByCanonical(t *testing.T) {
 	}
 }
 
+func TestServiceIpRuleUpdateStopsAfterFirstWriteFails(t *testing.T) {
+	const old = "deny from 203.0.113.9"
+	id := ipCanonicalId(ufwIpSpec{Action: "deny", Direction: "in", From: "203.0.113.9"}) + ".ipv4"
+	for _, tc := range []struct {
+		label, policy, first string
+	}{
+		{"替换规则", "allow", "allow from 203.0.113.9"},
+		{"只改备注", "deny", "delete " + old},
+	} {
+		t.Run(tc.label, func(t *testing.T) {
+			fake := createFakeDeps(fakeUfwDepsSeed{Rules: []string{old}})
+			var writes []string
+			fake.ufwWrapper = func(args []string, next func() (string, error)) (string, error) {
+				if args[0] == "status" || args[0] == "show" {
+					return next()
+				}
+				writes = append(writes, strings.Join(args, " "))
+				return "", errors.New("测试写入失败")
+			}
+			svc := newService(fake)
+			_, err := svc.UpdateIpRule(id, IpRuleInput{Policy: tc.policy, Source: "203.0.113.9"})
+			if err == nil || err.Error() != "ufw 执行失败（"+tc.first+"）：测试写入失败" {
+				t.Fatalf("原失败回执不符：%v", err)
+			}
+			if len(writes) != 1 || writes[0] != tc.first {
+				t.Fatalf("首个写操作失败后不得继续：%v", writes)
+			}
+			if got := fake.getAdded(); len(got) != 1 || got[0] != old {
+				t.Fatalf("未完成写入后原规则未保留：%v", got)
+			}
+		})
+	}
+}
+
 func TestServiceCreateForwardWritesNatAndKernel(t *testing.T) {
 	fake := createFakeDeps(fakeUfwDepsSeed{Active: true})
 	svc := newService(fake)
