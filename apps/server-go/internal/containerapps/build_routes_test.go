@@ -20,10 +20,8 @@ import (
 // 走路由层的请求辅助（复用既有 do 的同源形状）。
 
 func TestBuildEndpointsUnavailableWithoutEngine(t *testing.T) {
-	handler, mountRoot := newTestHandler(t)
+	handler, _ := newTestHandler(t)
 	// 不注入引擎与任务机：六个构建端点整组 503。
-	_ = handler
-	_ = mountRoot
 	targets := []struct{ method, path string }{
 		{http.MethodPost, "/app/builds/preview"},
 		{http.MethodPost, "/app/builds"},
@@ -33,13 +31,24 @@ func TestBuildEndpointsUnavailableWithoutEngine(t *testing.T) {
 		{http.MethodPost, "/app/builds/11111111-1111-1111-1111-111111111111/cancel"},
 	}
 	for _, target := range targets {
-		response := do(t, handler, target.method, target.path, "application/json", []byte(`{}`))
+		response := do(t, handler, target.method, target.path, "text/plain", []byte(`坏请求体`))
 		if response.Code != http.StatusServiceUnavailable {
 			t.Fatalf("%s %s 应 503，实际 %d %s", target.method, target.path, response.Code, response.Body.String())
 		}
-		if !strings.Contains(response.Body.String(), "Docker 服务未就绪") {
+		if response.Body.String() != `{"error":"Docker 服务未就绪"}` {
 			t.Fatalf("503 文案逐字不符：%s", response.Body.String())
 		}
+	}
+	request := httptest.NewRequest(http.MethodPost, testOrigin+"/app/builds/preview", nil)
+	request.Header.Set("Origin", "https://cross-origin.invalid")
+	recorder := httptest.NewRecorder()
+	handler.Router().ServeHTTP(recorder, request)
+	if recorder.Code != http.StatusForbidden {
+		t.Fatalf("同源守卫应先于构建可用性判定：%d %s", recorder.Code, recorder.Body.String())
+	}
+	unknown := do(t, handler, http.MethodGet, "/app/builds/task/unknown", "", nil)
+	if unknown.Code != http.StatusNotFound {
+		t.Fatalf("未注册的构建路径应保持 404：%d %s", unknown.Code, unknown.Body.String())
 	}
 	// 文件端点不受影响。
 	files := do(t, handler, http.MethodGet, "/app/files", "", nil)

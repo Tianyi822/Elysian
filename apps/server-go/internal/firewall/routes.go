@@ -78,9 +78,7 @@ func NewRouterChecked(deps Deps) (chi.Router, error) {
 	if !deps.Available {
 		// 整片 503：任意方法、含未知路径，容器边界保护先于一切守卫。
 		r := chi.NewRouter()
-		r.HandleFunc("/*", func(w http.ResponseWriter, _ *http.Request) {
-			shared.SendError(w, http.StatusServiceUnavailable, "真实防火墙仅在 Docker 容器内可用")
-		})
+		r.HandleFunc("/*", middleware.Unavailable("真实防火墙仅在 Docker 容器内可用"))
 		return r, nil
 	}
 	svc := deps.service

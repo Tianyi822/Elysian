@@ -80,13 +80,12 @@ func newRouter(deps routerDeps) chi.Router {
 	r := chi.NewRouter()
 	r.Use(middleware.EndpointErrorHandler)
 	if !deps.available || (deps.service == nil && deps.sqlite == nil) {
+		unavailable := middleware.Unavailable("真实数据库仅在 Docker 环境可用")
 		r.Use(func(http.Handler) http.Handler {
-			return http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-				shared.SendError(w, http.StatusServiceUnavailable, "真实数据库仅在 Docker 环境可用")
-			})
+			return unavailable
 		})
-		r.NotFound(notAvailableHandler)
-		r.MethodNotAllowed(notAvailableHandler)
+		r.NotFound(unavailable)
+		r.MethodNotAllowed(unavailable)
 		return r
 	}
 	r.Use(middleware.SameOriginGuard())
@@ -114,11 +113,6 @@ func newRouter(deps routerDeps) chi.Router {
 		http.Error(w, "404 Not Found", http.StatusNotFound)
 	})
 	return r
-}
-
-// notAvailableHandler 503 态下未知路径也保持整片不可用。
-func notAvailableHandler(w http.ResponseWriter, _ *http.Request) {
-	shared.SendError(w, http.StatusServiceUnavailable, "真实数据库仅在 Docker 环境可用")
 }
 
 // handle 把返回错误的 handler 接到统一错误映射。

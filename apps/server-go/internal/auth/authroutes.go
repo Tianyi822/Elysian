@@ -422,8 +422,7 @@ func NewRouter(deps Deps) chi.Router {
 	// —— 设置页端点（RequireSession 覆盖之下，豁免清单不含任何一条）——
 	r.Post("/username", handle(func(w http.ResponseWriter, r *http.Request) error {
 		if !resolved.enabled {
-			shared.SendError(w, http.StatusServiceUnavailable, AuthDisabledMessage)
-			return nil
+			return shared.Unavailable(AuthDisabledMessage)
 		}
 		parsed, err := middleware.ReadJSONBody(w, r, 0)
 		if err != nil {
@@ -470,8 +469,7 @@ func NewRouter(deps Deps) chi.Router {
 		// 先于读体：演示语义下写凭据文件会凭空造出真凭据，也不读体（该分支不落改密
 		// 审计——没有任何改密尝试被解析）。
 		if !resolved.enabled {
-			shared.SendError(w, http.StatusServiceUnavailable, AuthDisabledMessage)
-			return nil
+			return shared.Unavailable(AuthDisabledMessage)
 		}
 		actor, err := resolved.requestUsername(r)
 		if err != nil {
@@ -534,8 +532,7 @@ func NewRouter(deps Deps) chi.Router {
 
 	r.Get("/sessions", handle(func(w http.ResponseWriter, r *http.Request) error {
 		if !resolved.enabled {
-			shared.SendError(w, http.StatusServiceUnavailable, AuthDisabledMessage)
-			return nil
+			return shared.Unavailable(AuthDisabledMessage)
 		}
 		w.Header().Set("Cache-Control", "no-store")
 		currentID, _ := seam.ParseSessionCookie(r.Header.Get("Cookie"))
@@ -559,8 +556,7 @@ func NewRouter(deps Deps) chi.Router {
 
 	r.Post("/sessions/logout-others", handle(func(w http.ResponseWriter, r *http.Request) error {
 		if !resolved.enabled {
-			shared.SendError(w, http.StatusServiceUnavailable, AuthDisabledMessage)
-			return nil
+			return shared.Unavailable(AuthDisabledMessage)
 		}
 		currentID, ok := seam.ParseSessionCookie(r.Header.Get("Cookie"))
 		// RequireSession 刚校验过当前会话，currentID 必有值；无值只出现在绕过中间件

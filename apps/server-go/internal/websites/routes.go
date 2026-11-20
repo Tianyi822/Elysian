@@ -100,7 +100,7 @@ func NewRouter(deps Deps) chi.Router {
 	r := chi.NewRouter()
 	if !deps.EngineAvailable || deps.Engine == nil || deps.Views == nil {
 		// chi 的 NotFound 不经过 Use 中间件，503 短路须以全捕获路由承载。
-		unavailable := unavailableHandler(unavailableMsg)
+		unavailable := middleware.Unavailable(unavailableMsg)
 		r.Handle("/", unavailable)
 		r.Handle("/*", unavailable)
 		return r
@@ -408,13 +408,6 @@ func attachFallback(r chi.Router) {
 	}
 	r.NotFound(fallback)
 	r.MethodNotAllowed(fallback)
-}
-
-// unavailableHandler 整片 503 处理器（任意方法含未知路径，先于同源守卫）。
-func unavailableHandler(message string) http.HandlerFunc {
-	return func(w http.ResponseWriter, _ *http.Request) {
-		shared.SendError(w, http.StatusServiceUnavailable, message)
-	}
 }
 
 // logsBody / reconcileBody / okBody 响应形状（键序即输出序）。

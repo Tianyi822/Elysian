@@ -55,7 +55,7 @@ func newRouter(deps routerDeps) chi.Router {
 
 	if !deps.available {
 		// 第一段 503：任意方法含未知路径（catch-all 路由，保证次序先于一切）。
-		r.HandleFunc("/*", unavailableHandler(unavailableMsg))
+		r.HandleFunc("/*", middleware.Unavailable(unavailableMsg))
 		return r
 	}
 	if !deps.socketReady || deps.service == nil {
@@ -63,7 +63,7 @@ func newRouter(deps routerDeps) chi.Router {
 		if reason == "" {
 			reason = notReadyFallback
 		}
-		r.HandleFunc("/*", unavailableHandler(notReadyPrefix+"："+reason))
+		r.HandleFunc("/*", middleware.Unavailable(notReadyPrefix+"："+reason))
 		return r
 	}
 
@@ -224,13 +224,6 @@ func attachFallback(r chi.Router) {
 	}
 	r.NotFound(fallback)
 	r.MethodNotAllowed(fallback)
-}
-
-// unavailableHandler 整片 503（任意方法含未知路径）。
-func unavailableHandler(message string) http.HandlerFunc {
-	return func(w http.ResponseWriter, _ *http.Request) {
-		shared.SendError(w, http.StatusServiceUnavailable, message)
-	}
 }
 
 // statusBody / containersBody / imagesBody / policyBody 响应形状（键序即输出序）。

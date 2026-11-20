@@ -85,12 +85,12 @@ func (h Handler) Router() chi.Router {
 		r.Get("/content", h.readContent)
 		r.Put("/content", h.writeContent)
 		r.Get("/compose-check", h.checkCompose)
-		r.Post("/builds/preview", h.previewBuild)
-		r.Post("/builds", h.submitBuild)
-		r.Get("/builds", h.listBuilds)
-		r.Get("/builds/{taskId}", h.getBuild)
-		r.Get("/builds/{taskId}/logs", h.getBuildLogs)
-		r.Post("/builds/{taskId}/cancel", h.cancelBuild)
+		r.Post("/builds/preview", h.buildEndpoint(h.previewBuild))
+		r.Post("/builds", h.buildEndpoint(h.submitBuild))
+		r.Get("/builds", h.buildEndpoint(h.listBuilds))
+		r.Get("/builds/{taskId}", h.buildEndpoint(h.getBuild))
+		r.Get("/builds/{taskId}/logs", h.buildEndpoint(h.getBuildLogs))
+		r.Post("/builds/{taskId}/cancel", h.buildEndpoint(h.cancelBuild))
 	})
 	return r
 }
@@ -98,6 +98,13 @@ func (h Handler) Router() chi.Router {
 // buildsReady 判构建端点是否可用：引擎事实 + 传输器 + 任务机三件齐备。
 func (h Handler) buildsReady() bool {
 	return h.EngineAvailable && h.Engine != nil && h.Builds != nil
+}
+
+func (h Handler) buildEndpoint(ready http.HandlerFunc) http.HandlerFunc {
+	if !h.buildsReady() {
+		return middleware.Unavailable(notReadyBuildMsg)
+	}
+	return ready
 }
 
 // view 组装单个工作区的界面视图。
@@ -420,10 +427,6 @@ func (h Handler) buildWorkspaceDir(w http.ResponseWriter, r *http.Request) (stri
 // previewBuild POST /{slug}/builds/preview：构建预览（只读不构建），做引擎镜像占用
 // 回查与 FROM 源 DNS 校验。
 func (h Handler) previewBuild(w http.ResponseWriter, r *http.Request) {
-	if !h.buildsReady() {
-		shared.SendError(w, http.StatusServiceUnavailable, notReadyBuildMsg)
-		return
-	}
 	workspaceDir, slug, ok := h.buildWorkspaceDir(w, r)
 	if !ok {
 		return
@@ -455,10 +458,6 @@ func (h Handler) previewBuild(w http.ResponseWriter, r *http.Request) {
 
 // submitBuild POST /{slug}/builds：提交构建任务（202 + 任务对象；幂等同参返回原任务）。
 func (h Handler) submitBuild(w http.ResponseWriter, r *http.Request) {
-	if !h.buildsReady() {
-		shared.SendError(w, http.StatusServiceUnavailable, notReadyBuildMsg)
-		return
-	}
 	workspaceDir, slug, ok := h.buildWorkspaceDir(w, r)
 	if !ok {
 		return
@@ -480,10 +479,6 @@ func (h Handler) submitBuild(w http.ResponseWriter, r *http.Request) {
 
 // listBuilds GET /{slug}/builds：按创建时间倒序列出任务（no-store）。
 func (h Handler) listBuilds(w http.ResponseWriter, r *http.Request) {
-	if !h.buildsReady() {
-		shared.SendError(w, http.StatusServiceUnavailable, notReadyBuildMsg)
-		return
-	}
 	_, slug, ok := h.buildWorkspaceDir(w, r)
 	if !ok {
 		return
@@ -494,10 +489,6 @@ func (h Handler) listBuilds(w http.ResponseWriter, r *http.Request) {
 
 // getBuild GET /{slug}/builds/{taskId}：单任务（no-store）。
 func (h Handler) getBuild(w http.ResponseWriter, r *http.Request) {
-	if !h.buildsReady() {
-		shared.SendError(w, http.StatusServiceUnavailable, notReadyBuildMsg)
-		return
-	}
 	_, slug, ok := h.buildWorkspaceDir(w, r)
 	if !ok {
 		return
@@ -514,10 +505,6 @@ func (h Handler) getBuild(w http.ResponseWriter, r *http.Request) {
 // getBuildLogs GET /{slug}/builds/{taskId}/logs?offset=0：分页日志（与 websites 部署
 // 日志同形状：lines/next/total，单次最多 64 KiB）。
 func (h Handler) getBuildLogs(w http.ResponseWriter, r *http.Request) {
-	if !h.buildsReady() {
-		shared.SendError(w, http.StatusServiceUnavailable, notReadyBuildMsg)
-		return
-	}
 	_, slug, ok := h.buildWorkspaceDir(w, r)
 	if !ok {
 		return
@@ -543,10 +530,6 @@ func (h Handler) getBuildLogs(w http.ResponseWriter, r *http.Request) {
 // cancelBuild POST /{slug}/builds/{taskId}/cancel：取消活跃任务（排队中直接终态，
 // 构建中取消引擎流）。
 func (h Handler) cancelBuild(w http.ResponseWriter, r *http.Request) {
-	if !h.buildsReady() {
-		shared.SendError(w, http.StatusServiceUnavailable, notReadyBuildMsg)
-		return
-	}
 	_, slug, ok := h.buildWorkspaceDir(w, r)
 	if !ok {
 		return

@@ -52,3 +52,10 @@ func WriteError(w http.ResponseWriter, err error) {
 		shared.SendError(w, http.StatusInternalServerError, err.Error())
 	}
 }
+
+// Unavailable 写出固定的 503 回执；判定条件与挂载位置由各域负责。
+func Unavailable(message string) http.HandlerFunc {
+	return func(w http.ResponseWriter, _ *http.Request) {
+		shared.SendError(w, http.StatusServiceUnavailable, message)
+	}
+}

@@ -48,9 +48,7 @@ func NewSshRouter(deps Deps) chi.Router {
 	// 不可用整片换 503 分支：不注册任何具体路由，任意方法、任意子路径（含未知
 	// 路径）都命中 NotFound 兜底；同源守卫不参与（跨源请求同样 503）。
 	if !deps.Available {
-		r.NotFound(func(w http.ResponseWriter, req *http.Request) {
-			shared.SendError(w, http.StatusServiceUnavailable, "真实 SSH 管理仅在 Docker 容器内或正式安装中可用")
-		})
+		r.NotFound(middleware.Unavailable("真实 SSH 管理仅在 Docker 容器内或正式安装中可用"))
 		return r
 	}
 

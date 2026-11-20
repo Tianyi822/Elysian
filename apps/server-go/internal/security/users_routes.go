@@ -24,9 +24,7 @@ func NewUsersRouter(deps Deps) chi.Router {
 
 	// 不可用整片换 503 分支：任意方法、含未知路径（同源守卫不参与）。
 	if !deps.Available {
-		r.NotFound(func(w http.ResponseWriter, req *http.Request) {
-			shared.SendError(w, http.StatusServiceUnavailable, "真实用户管理仅在 Docker 容器内可用")
-		})
+		r.NotFound(middleware.Unavailable("真实用户管理仅在 Docker 容器内可用"))
 		return r
 	}
 
