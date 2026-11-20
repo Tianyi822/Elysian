@@ -11,10 +11,11 @@ import (
 )
 
 func (m *Manager) CancelWorkflow(ctx context.Context, id string) (WorkflowInstance, error) {
+	guardErr := m.checkDispatchGuard()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var w WorkflowInstance
-	if err := m.agentWritable(); err != nil {
+	if err := m.agentWritableLocked(guardErr); err != nil {
 		return w, err
 	}
 	err := writeStore(m.store, ctx, "workflow-cancel", func(tx sessionstore.Tx) error {
@@ -92,6 +93,7 @@ func (m *Manager) CancelWorkflow(ctx context.Context, id string) (WorkflowInstan
 	return w, storageFailure(err)
 }
 func (m *Manager) RecoverWorkflow(ctx context.Context, id string, input WorkflowRecoveryInput) (WorkflowInstance, bool, error) {
+	guardErr := m.checkDispatchGuard()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var w WorkflowInstance
@@ -115,7 +117,7 @@ func (m *Manager) RecoverWorkflow(ctx context.Context, id string, input Workflow
 	if !errors.Is(err, sessionstore.ErrNotFound) {
 		return w, false, storageFailure(err)
 	}
-	if err = m.agentWritable(); err != nil {
+	if err = m.agentWritableLocked(guardErr); err != nil {
 		return w, false, err
 	}
 	if err = recoveryEvidence(input); err != nil {

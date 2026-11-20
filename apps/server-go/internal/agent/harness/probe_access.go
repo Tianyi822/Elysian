@@ -89,9 +89,10 @@ func (m *Manager) RequestProbeAccess(ctx context.Context, e *Extensions, server 
 		Request ProbeAccessRequest
 	}{server.Public(), result})
 	result.Access.Digest, result.Access.ScopeKey = result.Digest, result.Digest
+	guardErr := m.checkDispatchGuard()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if err := m.checkRuntimeProbeLocked(ctx, server); err != nil {
+	if err := m.checkRuntimeProbeLocked(ctx, server, guardErr); err != nil {
 		return ProbeAccessRequest{}, err
 	}
 	err = writeStore(m.store, ctx, "probe-access-request", func(tx sessionstore.Tx) error {
@@ -147,6 +148,7 @@ func (m *Manager) DecideProbeAccess(ctx context.Context, e *Extensions, id strin
 	if !validProbeRequestID(in.RequestID) || (in.Decision != "allow-once" && in.Decision != "deny") {
 		return result, bad("invalid-probe-decision", "探测只能仅本次允许或拒绝，并须提供请求编号")
 	}
+	guardErr := m.checkDispatchGuard()
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
@@ -162,7 +164,7 @@ func (m *Manager) DecideProbeAccess(ctx context.Context, e *Extensions, id strin
 		m.mu.Unlock()
 		return result, err
 	}
-	if err = m.checkRuntimeProbeLocked(ctx, server); err != nil {
+	if err = m.checkRuntimeProbeLocked(ctx, server, guardErr); err != nil {
 		m.mu.Unlock()
 		return result, err
 	}
@@ -380,17 +382,18 @@ func probeRuntimeExecutionAuthorization(ctx context.Context, dispatchID string) 
 // The new confirmation creates its own exact authority. A legacy grant is only
 // the proposal's source; server revision and persistent MCP revocation gates
 // still apply to every confirmed operation.
-func (m *Manager) checkRuntimeProbeLocked(ctx context.Context, server mcp.Server) error {
+func (m *Manager) checkRuntimeProbeLocked(ctx context.Context, server mcp.Server, guardErr error) error {
 	if server.Stdio != nil {
 		copy := *server.Stdio
 		copy.GrantID = ""
 		copy.GrantRevision = 0
 		server.Stdio = &copy
 	}
-	return m.checkProbeLocked(ctx, server)
+	return m.checkProbeLocked(ctx, server, guardErr)
 }
 func (m *Manager) checkRuntimeProbe(ctx context.Context, server mcp.Server) error {
+	guardErr := m.checkDispatchGuard()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.checkRuntimeProbeLocked(ctx, server)
+	return m.checkRuntimeProbeLocked(ctx, server, guardErr)
 }

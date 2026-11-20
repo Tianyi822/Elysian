@@ -11,8 +11,9 @@ import (
 
 // 调用时不持有 Manager 锁；网络前后持久化均在锁内完成。
 func (m *Manager) embeddingComplete(ctx context.Context, profile EmbeddingProfile, input string, record EmbeddingRequest) ([]float64, error) {
+	guardErr := m.checkDispatchGuard()
 	m.mu.Lock()
-	if err := m.agentWritable(); err != nil {
+	if err := m.agentWritableLocked(guardErr); err != nil {
 		m.mu.Unlock()
 		return nil, err
 	}

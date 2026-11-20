@@ -12,9 +12,10 @@ import (
 )
 
 func (m *Manager) PutWorkflowDefinition(ctx context.Context, id string, expected int, d WorkflowDefinition) (WorkflowDefinition, error) {
+	guardErr := m.checkDispatchGuard()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if err := m.agentWritable(); err != nil {
+	if err := m.agentWritableLocked(guardErr); err != nil {
 		return d, err
 	}
 	if err := validateWorkflowDefinition(d); err != nil {
@@ -59,6 +60,7 @@ func (m *Manager) WorkflowDefinition(ctx context.Context, id string, revision in
 	return d, storageFailure(e)
 }
 func (m *Manager) CreateWorkflow(ctx context.Context, input CreateWorkflowInput) (WorkflowInstance, bool, error) {
+	guardErr := m.checkDispatchGuard()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var w WorkflowInstance
@@ -89,7 +91,7 @@ func (m *Manager) CreateWorkflow(ctx context.Context, input CreateWorkflowInput)
 	if !errors.Is(err, sessionstore.ErrNotFound) {
 		return w, false, storageFailure(err)
 	}
-	if err = m.agentWritable(); err != nil {
+	if err = m.agentWritableLocked(guardErr); err != nil {
 		return w, false, err
 	}
 	if len(input.InputJSON) > 32768 {

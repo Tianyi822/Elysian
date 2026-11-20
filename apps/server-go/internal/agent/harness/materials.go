@@ -237,12 +237,13 @@ func (m *Manager) Revoke(ctx context.Context, kind, id string, revision int, rea
 
 // 探测可能启动 stdio 代码，因此同样服从持久撤销和维护派发守卫。
 func (m *Manager) checkProbe(ctx context.Context, server mcp.Server) error {
+	guardErr := m.checkDispatchGuard()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.checkProbeLocked(ctx, server)
+	return m.checkProbeLocked(ctx, server, guardErr)
 }
 
-func (m *Manager) checkProbeLocked(ctx context.Context, server mcp.Server) error {
+func (m *Manager) checkProbeLocked(ctx context.Context, server mcp.Server, guardErr error) error {
 	if m.closed || m.store == nil {
 		return closedError()
 	}
@@ -252,10 +253,8 @@ func (m *Manager) checkProbeLocked(ctx context.Context, server mcp.Server) error
 	if m.blocked != "" {
 		return &Error{Status: 503, Code: "runtime-unavailable", Message: m.blocked}
 	}
-	if m.deps.DispatchGuard != nil {
-		if err := m.deps.DispatchGuard(); err != nil {
-			return err
-		}
+	if guardErr != nil {
+		return guardErr
 	}
 	o := Operation{Capability: Capability{Source: "mcp-tool", Ref: RevisionRef{ID: server.ID, Revision: server.Revision}}}
 	if server.Stdio != nil && server.Stdio.GrantID != "" {

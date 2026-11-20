@@ -19,8 +19,9 @@ import (
 // server is still external execution. Its durable scope is the executor label
 // identity even if a crash happens before Docker returns a container ID.
 func (m *Manager) probeServer(ctx context.Context, e *Extensions, server mcp.Server) (mcp.Catalog, error) {
+	guardErr := m.checkDispatchGuard()
 	m.mu.Lock()
-	if err := m.checkProbeLocked(ctx, server); err != nil {
+	if err := m.checkProbeLocked(ctx, server, guardErr); err != nil {
 		m.mu.Unlock()
 		return mcp.Catalog{}, err
 	}
@@ -154,13 +155,14 @@ func (m *Manager) executeProbe(ctx context.Context, e *Extensions, server mcp.Se
 	}
 	defer func() { resultErr = errors.Join(resultErr, m.toolRuntime.ReleaseCatalog(lease.ID)) }()
 	authorized, err := m.toolAuthority.Authorize(ctx, tools.AuthorizationBinding{OperationID: lease.ID, DispatchID: lease.ID, Tool: name, ArgumentsDigest: tools.ArgumentsDigest(args), CatalogID: lease.ID}, probeAuthorizationPayload(lease), func(checkCtx context.Context) error {
+		guardErr := m.checkDispatchGuard()
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		var checkErr error
 		if lease.Probe != nil {
-			checkErr = m.checkRuntimeProbeLocked(checkCtx, server)
+			checkErr = m.checkRuntimeProbeLocked(checkCtx, server, guardErr)
 		} else {
-			checkErr = m.checkProbeLocked(checkCtx, server)
+			checkErr = m.checkProbeLocked(checkCtx, server, guardErr)
 		}
 		if checkErr != nil {
 			return checkErr
@@ -195,6 +197,7 @@ func (m *Manager) executeProbe(ctx context.Context, e *Extensions, server mcp.Se
 // ReconcileProbeLease only releases administrator probe leases. Run operations
 // must continue through their execution barrier so both records stay atomic.
 func (m *Manager) ReconcileProbeLease(ctx context.Context, id, evidence, decision string) (ResourceLease, error) {
+	guardErr := m.checkDispatchGuard()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var lease ResourceLease
@@ -204,10 +207,8 @@ func (m *Manager) ReconcileProbeLease(ctx context.Context, id, evidence, decisio
 	if strings.TrimSpace(evidence) == "" || len(evidence) > 8192 || decision != "confirmed-stopped" {
 		return lease, bad("invalid-reconciliation", "探测租约核实必须提供外部停止证据与 confirmed-stopped 决定")
 	}
-	if m.deps.DispatchGuard != nil {
-		if err := m.deps.DispatchGuard(); err != nil {
-			return lease, err
-		}
+	if guardErr != nil {
+		return lease, guardErr
 	}
 	err := writeStore(m.store, ctx, "probe-reconcile", func(tx sessionstore.Tx) error {
 		var raw string

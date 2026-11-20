@@ -206,6 +206,40 @@ func TestProbeConflictingLeaseAndMaintenancePreventAnyStartup(t *testing.T) {
 	}
 }
 
+func TestProbeStartGuardRechecksRevocation(t *testing.T) {
+	m, _ := sessionAPIManager(t)
+	server := mcp.Server{ID: "probe-server", Revision: 1}
+	entered, release := make(chan struct{}), make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(release) })
+	revoked := false
+	m.deps.DispatchGuard = func() error {
+		close(entered)
+		<-release
+		if !revoked {
+			return errors.New("测试未写入撤销事实")
+		}
+		return nil
+	}
+	ctx := context.Background()
+	result, done := make(chan error, 1), make(chan struct{})
+	go func() {
+		defer close(done)
+		_, err := m.probeServer(ctx, &Extensions{}, server)
+		result <- err
+	}()
+	defer func() { unblock(); <-done }()
+	awaitGuard(t, m, entered)
+	if err := m.Revoke(ctx, "mcp", server.ID, server.Revision, "测试撤销"); err != nil {
+		t.Fatal(err)
+	}
+	revoked = true
+	unblock()
+	runtimeErrorCode(t, <-result, "capability-revoked")
+	if leases, err := m.ResourceLeases(ctx); err != nil || len(leases) != 0 {
+		t.Fatalf("已撤销探测不得取得租约：%+v %v", leases, err)
+	}
+}
+
 func TestExecutionRuntimesRouteReturnsEmptyArrayAndHonorsClosedManager(t *testing.T) {
 	executor, err := execution.New(execution.Options{SupervisorPath: "/test-supervisor"})
 	if err != nil {

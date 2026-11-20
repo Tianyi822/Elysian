@@ -67,6 +67,7 @@ func (m *Manager) checkOperationAuthorization(ctx context.Context, o Operation) 
 	return nil
 }
 func (m *Manager) DecideAccess(ctx context.Context, id string, in AccessDecision) (Approval, error) {
+	guardErr := m.checkDispatchGuard()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var a Approval
@@ -79,10 +80,8 @@ func (m *Manager) DecideAccess(ctx context.Context, id string, in AccessDecision
 	if err := m.store.DispatchError(); err != nil {
 		return a, storageFailure(err)
 	}
-	if m.deps.DispatchGuard != nil {
-		if err := m.deps.DispatchGuard(); err != nil {
-			return a, err
-		}
+	if guardErr != nil {
+		return a, guardErr
 	}
 	err := writeStore(m.store, ctx, "access-decision", func(tx sessionstore.Tx) error {
 		var raw string
@@ -178,16 +177,15 @@ func (m *Manager) RevokeSessionAuthorization(ctx context.Context, sessionID, id 
 	if !requestPattern.MatchString(in.RequestID) || in.ExpectedRevision < 1 {
 		return a, bad("invalid-revocation", "撤回请求编号或版本无效")
 	}
+	guardErr := m.checkDispatchGuard()
 	m.mu.Lock()
 	if m.closed {
 		m.mu.Unlock()
 		return a, closedError()
 	}
-	if m.deps.DispatchGuard != nil {
-		if err := m.deps.DispatchGuard(); err != nil {
-			m.mu.Unlock()
-			return a, err
-		}
+	if guardErr != nil {
+		m.mu.Unlock()
+		return a, guardErr
 	}
 	var affected []Operation
 	err := writeStore(m.store, ctx, "session-authorization-revoke", func(tx sessionstore.Tx) error {

@@ -216,6 +216,12 @@ func TestWorkflowUnknownRequiresReconciliationAndSeparateReceipt(t *testing.T) {
 	if e != nil || w.Status != StateSucceeded {
 		t.Fatalf("人工补录失败：%v %+v", e, w)
 	}
+	m.mu.Lock()
+	m.deps.DispatchGuard = func() error { return bad("maintenance", "维护期间暂停派发") }
+	m.mu.Unlock()
+	if same, dup, err := m.RecoverWorkflow(ctx, w.ID, input); err != nil || !dup || same.ID != w.ID || same.Status != StateSucceeded {
+		t.Fatalf("维护期间无法回读已保存的恢复回执：%+v duplicate=%v err=%v", same, dup, err)
+	}
 	r, e := m.Get(ctx, oldRun)
 	if e != nil || r.Status == StateSucceeded || calls.Load() != 1 {
 		t.Fatal("人工凭据重写了执行事实")
@@ -267,6 +273,15 @@ func TestWorkflowConcurrentIdempotencyAndHTTP(t *testing.T) {
 	if same, dup, e := m.CreateWorkflow(ctx, input); e != nil || !dup || same.ID != id {
 		t.Fatal("停用优先于幂等")
 	}
+	m.mu.Lock()
+	m.deps.DispatchGuard = func() error { return bad("maintenance", "维护期间暂停派发") }
+	m.mu.Unlock()
+	if same, dup, err := m.CreateWorkflow(ctx, input); err != nil || !dup || same.ID != id {
+		t.Fatalf("维护期间无法回读已接受的工作流：%+v duplicate=%v err=%v", same, dup, err)
+	}
+	input.RequestID = "new-during-maintenance"
+	_, _, e = m.CreateWorkflow(ctx, input)
+	runtimeErrorCode(t, e, "maintenance")
 }
 func TestWorkflowMaintenanceFenceRevokesApprovalAndSurvivesRestart(t *testing.T) {
 	ctx := context.Background()

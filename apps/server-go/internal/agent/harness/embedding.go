@@ -106,9 +106,10 @@ func (m *Manager) createEmbeddingProfile(ctx context.Context, in EmbeddingProfil
 	return p.Public(), nil
 }
 func (m *Manager) CreateEmbeddingProfile(ctx context.Context, in EmbeddingProfileInput) (EmbeddingProfile, error) {
+	guardErr := m.checkDispatchGuard()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if err := m.agentWritable(); err != nil {
+	if err := m.agentWritableLocked(guardErr); err != nil {
 		return EmbeddingProfile{}, err
 	}
 	return m.createEmbeddingProfile(ctx, in)
@@ -141,9 +142,10 @@ func (m *Manager) updateEmbeddingProfile(ctx context.Context, id string, expecte
 	return p.Public(), nil
 }
 func (m *Manager) UpdateEmbeddingProfile(ctx context.Context, id string, expected int, in EmbeddingProfileInput) (EmbeddingProfile, error) {
+	guardErr := m.checkDispatchGuard()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if err := m.agentWritable(); err != nil {
+	if err := m.agentWritableLocked(guardErr); err != nil {
 		return EmbeddingProfile{}, err
 	}
 	return m.updateEmbeddingProfile(ctx, id, expected, in)

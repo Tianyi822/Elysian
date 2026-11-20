@@ -446,16 +446,15 @@ func (m *Manager) BarriersFiltered(ctx context.Context, workflowID string) ([]Ex
 	return value, storageFailure(readErr)
 }
 func (m *Manager) Decide(ctx context.Context, id, decision string) (Approval, error) {
+	guardErr := m.checkDispatchGuard()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var a Approval
 	if m.closed {
 		return a, closedError()
 	}
-	if m.deps.DispatchGuard != nil {
-		if err := m.deps.DispatchGuard(); err != nil {
-			return a, err
-		}
+	if guardErr != nil {
+		return a, guardErr
 	}
 	if decision != "approved" && decision != "denied" {
 		return a, bad("invalid-decision", "审批决定必须为 approved 或 denied")

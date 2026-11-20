@@ -119,6 +119,7 @@ func (a *agentExecution) executeUserInput(ctx context.Context, index int, propos
 }
 
 func (m *Manager) AnswerUserInput(ctx context.Context, runID, inputID string, input AnswerUserInput) (UserInputReceipt, error) {
+	guardErr := m.checkDispatchGuard()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	var receipt UserInputReceipt
@@ -131,10 +132,8 @@ func (m *Manager) AnswerUserInput(ctx context.Context, runID, inputID string, in
 	if err := m.store.DispatchError(); err != nil {
 		return receipt, &Error{Status: 503, Code: "record-storage-unavailable", Message: "运行记录副本不可用，请稍后重试"}
 	}
-	if m.deps.DispatchGuard != nil {
-		if err := m.deps.DispatchGuard(); err != nil {
-			return receipt, err
-		}
+	if guardErr != nil {
+		return receipt, guardErr
 	}
 	run, err := m.store.ChangeRun(ctx, runID, "user-input-answer", func(tx sessionstore.Tx, r *Run) error {
 		var raw string

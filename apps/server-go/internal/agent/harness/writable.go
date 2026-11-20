@@ -1,6 +1,6 @@
 package harness
 
-func (m *Manager) agentWritable() error {
+func (m *Manager) agentWritableLocked(guardErr error) error {
 	if m.closed {
 		return closedError()
 	}
@@ -10,8 +10,5 @@ func (m *Manager) agentWritable() error {
 	if m.storageError {
 		return &Error{Status: 503, Code: "storage-unavailable", Message: "运行存储不可用"}
 	}
-	if m.deps.DispatchGuard != nil {
-		return m.deps.DispatchGuard()
-	}
-	return nil
+	return guardErr
 }

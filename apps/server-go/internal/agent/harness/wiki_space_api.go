@@ -9,9 +9,10 @@ import (
 )
 
 func (m *Manager) UpdateWikiSpace(ctx context.Context, id string, expected int, name string) (WikiSpace, error) {
+	guardErr := m.checkDispatchGuard()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if err := m.agentWritable(); err != nil {
+	if err := m.agentWritableLocked(guardErr); err != nil {
 		return WikiSpace{}, err
 	}
 	s, err := m.ensureWikiSpaceLocked(ctx, id)

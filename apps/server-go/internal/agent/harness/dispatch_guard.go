@@ -4,8 +4,9 @@ package harness
 func (m *Manager) checkDispatchGuard() error {
 	m.mu.Lock()
 	guard := m.deps.DispatchGuard
+	closed := m.closed
 	m.mu.Unlock()
-	if guard != nil {
+	if !closed && guard != nil {
 		return guard()
 	}
 	return nil

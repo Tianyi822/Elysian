@@ -121,10 +121,11 @@ func (m *Manager) mutateWorkspace(ctx context.Context, taskID string, expectedRe
 	if expectedRevision < 0 {
 		return workspace.Version{}, bad("invalid-workspace-revision", "工作区预期版本不能为负数")
 	}
+	guardErr := m.checkDispatchGuard()
 	m.mu.Lock()
 	backend, err := m.workspaceStoreLocked()
-	if err == nil && m.deps.DispatchGuard != nil {
-		err = m.deps.DispatchGuard()
+	if err == nil {
+		err = guardErr
 	}
 	if err == nil {
 		_, err = workspaceTask(ctx, m.store, taskID, true)
@@ -145,15 +146,14 @@ func (m *Manager) mutateWorkspace(ctx context.Context, taskID string, expectedRe
 	if err != nil {
 		return workspace.Version{}, workspaceFailure(err)
 	}
+	guardErr = m.checkDispatchGuard()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if _, err = m.workspaceStoreLocked(); err != nil {
 		return workspace.Version{}, err
 	}
-	if m.deps.DispatchGuard != nil {
-		if err = m.deps.DispatchGuard(); err != nil {
-			return workspace.Version{}, err
-		}
+	if guardErr != nil {
+		return workspace.Version{}, guardErr
 	}
 	err = writeStore(m.store, ctx, "workspace-update", func(tx sessionstore.Tx) error {
 		_, err := workspaceTask(ctx, tx, taskID, true)

@@ -106,9 +106,10 @@ func (m *Manager) listWikiSpacesLocked(ctx context.Context) ([]WikiSpace, error)
 	return out, nil
 }
 func (m *Manager) CreateWikiSpace(ctx context.Context, name, kind string) (WikiSpace, error) {
+	guardErr := m.checkDispatchGuard()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if err := m.agentWritable(); err != nil {
+	if err := m.agentWritableLocked(guardErr); err != nil {
 		return WikiSpace{}, err
 	}
 	if !wikiValidText(name, 120) {
@@ -144,9 +145,10 @@ func (m *Manager) ListWikiSpaces(ctx context.Context) ([]WikiSpace, error) {
 }
 
 func (m *Manager) SetWikiSessionSpace(ctx context.Context, sessionID, spaceID string, includeGlobal bool) (WikiSpace, error) {
+	guardErr := m.checkDispatchGuard()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if err := m.agentWritable(); err != nil {
+	if err := m.agentWritableLocked(guardErr); err != nil {
 		return WikiSpace{}, err
 	}
 	session, err := readSession(ctx, m.store, sessionID)
@@ -207,9 +209,6 @@ func (m *Manager) wikiSessionSpacesLocked(ctx context.Context, sessionID string)
 }
 
 func (m *Manager) createWikiPageLocked(ctx context.Context, spaceID string, in WikiPageInput, origin string) (WikiPage, error) {
-	if err := m.agentWritable(); err != nil {
-		return WikiPage{}, err
-	}
 	in = normalizeWikiInput(in)
 	if err := validateWikiInput(in); err != nil {
 		return WikiPage{}, err
@@ -253,8 +252,12 @@ func wikiLinks(md string) []string {
 	return out
 }
 func (m *Manager) CreateWikiPage(ctx context.Context, spaceID string, in WikiPageInput) (WikiPage, error) {
+	guardErr := m.checkDispatchGuard()
 	m.mu.Lock()
 	defer m.mu.Unlock()
+	if err := m.agentWritableLocked(guardErr); err != nil {
+		return WikiPage{}, err
+	}
 	return m.createWikiPageLocked(ctx, spaceID, in, "manual")
 }
 func (m *Manager) getWikiPageLocked(ctx context.Context, id string) (WikiPage, error) {
@@ -295,8 +298,8 @@ func (m *Manager) ListWikiPages(ctx context.Context, spaceID string, includeWith
 	defer m.mu.Unlock()
 	return m.listWikiPagesLocked(ctx, spaceID, includeWithdrawn)
 }
-func (m *Manager) updateWikiPageLocked(ctx context.Context, id string, in WikiPageInput, status string) (WikiPage, error) {
-	if err := m.agentWritable(); err != nil {
+func (m *Manager) updateWikiPageLocked(ctx context.Context, id string, in WikiPageInput, status string, guardErr error) (WikiPage, error) {
+	if err := m.agentWritableLocked(guardErr); err != nil {
 		return WikiPage{}, err
 	}
 	in = normalizeWikiInput(in)
@@ -350,11 +353,13 @@ func (m *Manager) updateWikiPageLocked(ctx context.Context, id string, in WikiPa
 	return p, err
 }
 func (m *Manager) UpdateWikiPage(ctx context.Context, id string, in WikiPageInput) (WikiPage, error) {
+	guardErr := m.checkDispatchGuard()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	return m.updateWikiPageLocked(ctx, id, in, "active")
+	return m.updateWikiPageLocked(ctx, id, in, "active", guardErr)
 }
 func (m *Manager) WithdrawWikiPage(ctx context.Context, id string, expected int) (WikiPage, error) {
+	guardErr := m.checkDispatchGuard()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	p, err := m.getWikiPageLocked(ctx, id)
@@ -363,7 +368,7 @@ func (m *Manager) WithdrawWikiPage(ctx context.Context, id string, expected int)
 	}
 	in := WikiPageInput{ExpectedRevision: expected, Slug: p.Slug, Title: p.Title, Markdown: p.Markdown, Kind: p.Kind, ExpiresAt: p.ExpiresAt, Evidence: p.Evidence, Sources: p.Sources}
 	in.Tags, in.Aliases = p.Tags, p.Aliases
-	return m.updateWikiPageLocked(ctx, id, in, "withdrawn")
+	return m.updateWikiPageLocked(ctx, id, in, "withdrawn", guardErr)
 }
 
 func wikiTextScore(q, p string) float64 {
@@ -521,9 +526,10 @@ func (m *Manager) ExportWiki(ctx context.Context, spaceID string) (WikiExport, e
 	return WikiExport{Files: files}, nil
 }
 func (m *Manager) ImportWiki(ctx context.Context, spaceID string, files map[string]string) ([]WikiCandidate, error) {
+	guardErr := m.checkDispatchGuard()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if err := m.agentWritable(); err != nil {
+	if err := m.agentWritableLocked(guardErr); err != nil {
 		return nil, err
 	}
 	if len(files) == 0 || len(files) > 64 {
@@ -591,9 +597,10 @@ func (m *Manager) ListWikiCandidates(ctx context.Context, spaceID, status string
 	return out, nil
 }
 func (m *Manager) DecideWikiCandidate(ctx context.Context, id, decision string, revisions ...int) (WikiCandidate, error) {
+	guardErr := m.checkDispatchGuard()
 	m.mu.Lock()
 	defer m.mu.Unlock()
-	if err := m.agentWritable(); err != nil {
+	if err := m.agentWritableLocked(guardErr); err != nil {
 		return WikiCandidate{}, err
 	}
 	if decision != "approved" && decision != "rejected" {

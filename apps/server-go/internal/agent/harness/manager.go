@@ -266,6 +266,7 @@ func (m *Manager) availableLocked() error {
 	return nil
 }
 func (m *Manager) Info() RuntimeInfo {
+	guardErr := m.checkDispatchGuard()
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	health := m.store.Health()
@@ -296,8 +297,8 @@ func (m *Manager) Info() RuntimeInfo {
 		i.Available = i.Storage == "ready"
 	}
 	var dispatchError error
-	if !m.closed && m.deps.DispatchGuard != nil {
-		dispatchError = m.deps.DispatchGuard()
+	if !m.closed {
+		dispatchError = guardErr
 		if dispatchError != nil {
 			i.Available, i.Reason = false, dispatchError.Error()
 		}

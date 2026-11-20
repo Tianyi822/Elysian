@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"path/filepath"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -165,6 +166,45 @@ func TestProbeAccessDenyCancelAndRestartRemainNonExecuting(t *testing.T) {
 	}
 	_, err = m.DecideProbeAccess(ctx, e, p.ID, ProbeAccessDecision{RequestID: "decision-after-restart", ExpectedVersion: p.Version, ExpectedDigest: p.Digest, Decision: "allow-once"})
 	runtimeErrorCode(t, err, "probe-state-conflict")
+}
+
+func TestProbeDecisionGuardRechecksCancellation(t *testing.T) {
+	m, _ := sessionAPIManager(t)
+	servers, err := mcp.Open(filepath.Join(t.TempDir(), "mcp.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	server, err := servers.Create(mcp.Input{Name: "并发探测", Transport: "stdio", Active: true, Stdio: &mcp.ContainerInput{Image: "test@sha256:" + strings.Repeat("a", 64), Command: []string{"server"}}})
+	if err != nil {
+		t.Fatal(err)
+	}
+	e := &Extensions{Servers: servers, MCP: mcp.NewClient(nil, nil)}
+	t.Cleanup(func() { _ = e.MCP.Close(context.Background()) })
+	attachProbeRuntime(t, e, server.Stdio.Image)
+	ctx := context.Background()
+	p, err := m.RequestProbeAccess(ctx, e, server, "request")
+	if err != nil {
+		t.Fatal(err)
+	}
+	entered, release := make(chan struct{}), make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(release) })
+	m.deps.DispatchGuard = func() error { close(entered); <-release; return nil }
+	result, done := make(chan error, 1), make(chan struct{})
+	go func() {
+		defer close(done)
+		_, err := m.DecideProbeAccess(ctx, e, p.ID, ProbeAccessDecision{RequestID: "decision", ExpectedVersion: p.Version, ExpectedDigest: p.Digest, Decision: "deny"})
+		result <- err
+	}()
+	defer func() { unblock(); <-done }()
+	awaitGuard(t, m, entered)
+	if cancelled, err := m.CancelProbeAccess(ctx, p.ID, "cancel"); err != nil || cancelled.State != "cancelled" {
+		t.Fatalf("未能在查询期间取消探测：%+v %v", cancelled, err)
+	}
+	unblock()
+	runtimeErrorCode(t, <-result, "probe-state-conflict")
+	if current, err := m.ProbeAccess(ctx, p.ID); err != nil || current.State != "cancelled" || current.DecisionRequestID != "" {
+		t.Fatalf("取消后探测被重新决定：%+v %v", current, err)
+	}
 }
 
 func TestMCPRequestedAccessIsDeclarationAndCannotMixLegacyGrant(t *testing.T) {

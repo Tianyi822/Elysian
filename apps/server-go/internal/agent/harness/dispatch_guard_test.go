@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"testing"
@@ -217,6 +218,90 @@ func TestRunningGuardRejectsConcurrentCancellation(t *testing.T) {
 			got, err := s.get(context.Background(), run.ID)
 			if err != nil || got.LastSeq != cancelled.LastSeq || got.Usage != run.Usage || got.Plan != nil {
 				t.Fatalf("取消后留下了新的运行记录或计量：%+v %v", got, err)
+			}
+		})
+	}
+}
+
+func TestRequestDispatchGuardDoesNotHoldManagerLock(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		call func(*Manager, error) error
+	}{
+		{"状态", func(m *Manager, denied error) error {
+			i := m.Info()
+			if i.Available || i.Reason != denied.Error() {
+				return errors.New("状态未反映维护拒绝")
+			}
+			return denied
+		}},
+		{"回答", func(m *Manager, _ error) error {
+			_, err := m.AnswerUserInput(context.Background(), "run", "question", AnswerUserInput{RequestID: "answer"})
+			return err
+		}},
+		{"审批", func(m *Manager, _ error) error {
+			_, err := m.Decide(context.Background(), "approval", "approved")
+			return err
+		}},
+		{"授权", func(m *Manager, _ error) error {
+			_, err := m.DecideAccess(context.Background(), "approval", AccessDecision{RequestID: "decision", ExpectedRevision: 1, ExpectedDigest: "digest", Decision: "once"})
+			return err
+		}},
+		{"撤回授权", func(m *Manager, _ error) error {
+			_, err := m.RevokeSessionAuthorization(context.Background(), "session", "authorization", RevokeAuthorizationInput{RequestID: "revoke", ExpectedRevision: 1})
+			return err
+		}},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			s, _ := openRuntimeTestStore(t)
+			entered, release := make(chan struct{}), make(chan struct{})
+			unblock := sync.OnceFunc(func() { close(release) })
+			denied := &Error{Status: 503, Code: "maintenance", Message: "维护期间暂停派发"}
+			m := &Manager{store: s, deps: Deps{DispatchGuard: func() error { close(entered); <-release; return denied }}}
+			result, done := make(chan error, 1), make(chan struct{})
+			go func() { defer close(done); result <- tc.call(m, denied) }()
+			defer func() { unblock(); <-done }()
+			awaitGuard(t, m, entered)
+			unblock()
+			if err := <-result; err != denied {
+				t.Fatalf("应保留维护拒绝：%v", err)
+			}
+		})
+	}
+}
+
+func TestWorkspaceDispatchGuardRechecksVersion(t *testing.T) {
+	for _, check := range []int32{1, 2} {
+		t.Run(map[int32]string{1: "准备前", 2: "发布前"}[check], func(t *testing.T) {
+			m, _, task := workspaceManagerFixture(t)
+			ctx := context.Background()
+			entered, release := make(chan struct{}), make(chan struct{})
+			unblock := sync.OnceFunc(func() { close(release) })
+			var calls atomic.Int32
+			m.deps.DispatchGuard = func() error {
+				if calls.Add(1) == check {
+					close(entered)
+					<-release
+				}
+				return nil
+			}
+			result, done := make(chan error, 1), make(chan struct{})
+			go func() {
+				defer close(done)
+				_, err := m.WriteWorkspace(ctx, task.ID, 0, "file", strings.NewReader("过期候选"))
+				result <- err
+			}()
+			defer func() { unblock(); <-done }()
+			awaitGuard(t, m, entered)
+			newVersion, err := m.WriteWorkspace(ctx, task.ID, 0, "file", strings.NewReader("已提交"))
+			if err != nil {
+				t.Fatal(err)
+			}
+			unblock()
+			requireWorkspaceCode(t, <-result, "workspace-revision-conflict")
+			view, err := m.Workspace(ctx, task.ID, "file")
+			if err != nil || view.Version != newVersion || string(view.Content) != "已提交" {
+				t.Fatalf("过期候选覆盖已发布的版本：%+v %v", view, err)
 			}
 		})
 	}
