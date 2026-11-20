@@ -84,15 +84,10 @@ func (s *websiteService) createQueued(ctx context.Context, input createRequest, 
 	var certificate *WebsiteCertificateRef
 	if input.Access.Mode == AccessModeDomain {
 		material := CertificateMaterial{CertificatePEM: *input.Access.CertificatePEM, PrivateKeyPEM: *input.Access.PrivateKeyPEM}
-		metadata, err := ValidateWebsiteCertificate(material, domain, s.deps.trustedRoots, time.Now())
+		certificate, err = s.stageCertificate(ctx, domain, material)
 		if err != nil {
 			return mutateResult{}, err
 		}
-		ref, err := s.deps.certificates.Save(ctx, material)
-		if err != nil {
-			return mutateResult{}, err
-		}
-		certificate = &WebsiteCertificateRef{Ref: ref, Issuer: metadata.Issuer, NotAfter: metadata.NotAfter, Fingerprint256: metadata.Fingerprint256}
 		if _, cerr := s.deps.caddy.CurrentConfig(ctx); cerr != nil {
 			if rerr := s.deps.certificates.Remove(ctx, certificate.Ref); rerr != nil {
 				return mutateResult{}, rerr
@@ -168,22 +163,10 @@ func (s *websiteService) createQueued(ctx context.Context, input createRequest, 
 	caddyLoaded := false
 	runErr := func() error {
 		if domain != "" {
-			currentRaw, cerr := s.deps.caddy.CurrentConfig(ctx)
-			if cerr != nil {
-				return cerr
-			}
-			previousRaw = json.RawMessage(currentRaw)
-			if HasForeignConfig(parseJSONValue(currentRaw), expectedProxyHosts(rows), s.deps.caddy.AdminListen()) {
-				return shared.Conflict("宿主 Caddy 存在面板外的配置，拒绝覆盖")
-			}
-			sites, serr := s.sitesWithCertificates(ctx, append(append([]WebsiteRecord{}, rows...), row))
-			if serr != nil {
-				return serr
-			}
-			configBytes := BuildCaddyConfig(sites, s.deps.caddy.AdminListen())
-			appliedConfig = parseJSONValue(configBytes)
-			if lerr := s.deps.caddy.Load(ctx, configBytes); lerr != nil {
-				return lerr
+			var err error
+			previousRaw, appliedConfig, err = s.applyAccessToProxy(ctx, rows, append(append([]WebsiteRecord{}, rows...), row))
+			if err != nil {
+				return err
 			}
 			caddyLoaded = true
 		}
@@ -287,11 +270,9 @@ func (s *websiteService) Update(ctx context.Context, id string, input updateRequ
 		registered := false
 		runErr := func() error {
 			if oldRunning {
-				if err := s.deps.docker.Stop(ctx, *row.ContainerID); err != nil {
-					return err
-				}
-				stopped = true
-				if err := s.deps.docker.Start(ctx, newContainerID); err != nil {
+				var err error
+				stopped, err = s.swapContainer(ctx, *row.ContainerID, newContainerID)
+				if err != nil {
 					return err
 				}
 			}
@@ -399,15 +380,11 @@ func (s *websiteService) setAccessQueued(ctx context.Context, id string, access 
 	if access.Mode == AccessModeDomain {
 		if access.CertificatePEM != nil && *access.CertificatePEM != "" && access.PrivateKeyPEM != nil && *access.PrivateKeyPEM != "" {
 			material := CertificateMaterial{CertificatePEM: *access.CertificatePEM, PrivateKeyPEM: *access.PrivateKeyPEM}
-			metadata, err := ValidateWebsiteCertificate(material, access.Domain, s.deps.trustedRoots, time.Now())
+			certificate, err = s.stageCertificate(ctx, access.Domain, material)
 			if err != nil {
 				return mutateResult{}, err
 			}
-			stagedRef, err = s.deps.certificates.Save(ctx, material)
-			if err != nil {
-				return mutateResult{}, err
-			}
-			certificate = &WebsiteCertificateRef{Ref: stagedRef, Issuer: metadata.Issuer, NotAfter: metadata.NotAfter, Fingerprint256: metadata.Fingerprint256}
+			stagedRef = certificate.Ref
 		} else {
 			if row.Certificate == nil {
 				return mutateResult{}, shared.InvalidRequest("域名访问需要上传公开 CA 证书链和私钥")
@@ -489,24 +466,13 @@ func (s *websiteService) setAccessQueued(ctx context.Context, id string, access 
 			updated.ContainerID = stringPtr(created)
 			updated.ContainerName = stringPtr(containerName)
 			if oldRunning {
-				if err := s.deps.docker.Stop(ctx, *row.ContainerID); err != nil {
-					return err
-				}
-				oldStopped = true
-				if err := s.deps.docker.Start(ctx, created); err != nil {
+				oldStopped, err = s.swapContainer(ctx, *row.ContainerID, created)
+				if err != nil {
 					return err
 				}
 			}
 		}
 		if row.Domain != nil || domain != "" {
-			currentRaw, cerr := s.deps.caddy.CurrentConfig(ctx)
-			if cerr != nil {
-				return cerr
-			}
-			previousRaw = json.RawMessage(currentRaw)
-			if HasForeignConfig(parseJSONValue(currentRaw), expectedProxyHosts(rows), s.deps.caddy.AdminListen()) {
-				return shared.Conflict("宿主 Caddy 存在面板外的配置，拒绝覆盖")
-			}
 			projected := make([]WebsiteRecord, len(rows))
 			for i, item := range rows {
 				if item.ID == id {
@@ -515,14 +481,10 @@ func (s *websiteService) setAccessQueued(ctx context.Context, id string, access 
 					projected[i] = item
 				}
 			}
-			sites, serr := s.sitesWithCertificates(ctx, projected)
-			if serr != nil {
-				return serr
-			}
-			configBytes := BuildCaddyConfig(sites, s.deps.caddy.AdminListen())
-			nextConfig = parseJSONValue(configBytes)
-			if lerr := s.deps.caddy.Load(ctx, configBytes); lerr != nil {
-				return lerr
+			var err error
+			previousRaw, nextConfig, err = s.applyAccessToProxy(ctx, rows, projected)
+			if err != nil {
+				return err
 			}
 			caddyLoaded = true
 		}
