@@ -186,11 +186,6 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		m.mu.Unlock()
 		return context.Canceled
 	}
-	originID := ""
-	if a.pending != nil {
-		originID = a.pending.ID
-	}
-	var raw string
 	var o Operation
 	scopeClosed := false
 	var scopeCloseError error
@@ -214,315 +209,16 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 			operationErr = errors.Join(operationErr, closeErr)
 		}
 	}()
-	err = m.store.OperationInvocation(dbCtx, run.ID, originID, index, &raw)
-	if err == nil {
-		err = json.Unmarshal([]byte(raw), &o)
-	} else if errors.Is(err, sessionstore.ErrNotFound) {
-		err = nil
-		if err = toolTokenBudget(run); err == nil {
-			err = ensureResultBudget(dbCtx, m.store, run, run.Limits.ResultBytes)
-		}
-		if err != nil {
-			m.mu.Unlock()
-			return storageFailure(err)
-		}
-		o = Operation{ID: m.deps.NewID(), RunID: run.ID, TaskID: run.TaskID, ModelRequestID: originID, CallIndex: index, ModelCallID: proposal.ID, ArgumentsJSON: string(args), Capability: c, SnapshotDigest: a.run.Snapshot.Digest, Status: "planned", CreatedAt: stamp(m.deps.Now()), CallID: m.deps.NewID()}
-		o.Source = "model"
-		if workflowDriver(run) == "operation" {
-			o.Source = "workflow"
-		}
-		o.WorkflowID = run.WorkflowID
-		o.ScopeID, o.NodeID = run.ScopeID, run.NodeID
-		o.WorkflowStepID = run.WorkflowStepID
-		o.WorkflowAttempt = run.WorkflowAttempt
-		v, readErr := readWorkspaceVersion(dbCtx, m.store, run.TaskID)
-		if readErr != nil {
-			m.mu.Unlock()
-			return storageFailure(readErr)
-		}
-		o.WorkspaceRevision = v.Revision
-		if c.Source == "script" {
-			if err = m.inheritWorkspaceWikiLocked(dbCtx, run, v); err != nil {
-				m.mu.Unlock()
-				return err
-			}
-		}
-		if preparer, ok := m.deps.Catalog.(operationPreparer); ok {
-			if a.run.Snapshot.AuthorizationMode == AuthorizationOnDemand {
-				m.mu.Unlock()
-				o, err = preparer.Prepare(ctx, *a.run.Snapshot, o)
-				m.mu.Lock()
-				current, readErr := m.store.Get(dbCtx, run.ID)
-				if readErr != nil {
-					m.mu.Unlock()
-					return storageFailure(readErr)
-				}
-				if m.closed || current.CancelRequestedAt != "" || current.Status != StateRunning || ctx.Err() != nil {
-					m.mu.Unlock()
-					return context.Canceled
-				}
-			} else {
-				o, err = preparer.Prepare(ctx, *a.run.Snapshot, o)
-			}
-			if err != nil {
-				m.mu.Unlock()
-				return err
-			}
-		}
-
-		if o.Access != nil && o.Execution != nil {
-			seconds := run.Limits.CallTimeoutSeconds
-			remaining := run.Limits.RunTimeoutSeconds - int(run.ActiveMilliseconds/1000)
-			if !state.ContinuousRun(run) && remaining < seconds {
-				seconds = remaining
-			}
-			if seconds < 1 {
-				seconds = 1
-			}
-			if o.Execution.Profile.TimeoutSeconds > seconds {
-				o.Execution.Profile.TimeoutSeconds = seconds
-			}
-			o.Access.ScopeKey = accessScopeKey(o)
-			o.Access.Digest = state.AccessDigest(o)
-		}
-		o.FileChanges, err = m.prepareOperationChanges(ctx, o)
-		if err != nil {
-			m.mu.Unlock()
-			return err
-		}
-		// Resource identity is derived from the immutable capability snapshot and
-		// the exact JSON argument string before an approval can be created.
-		o.ResourceClaims, o.ResourceRules = operationResourceClaims(*a.run.Snapshot, o)
-		o.ClaimsDigest = state.DigestJSON(o.ResourceClaims)
-	} else {
-		m.storageFailedLocked()
-		m.mu.Unlock()
-		return storageFailure(err)
-	}
-	if o.SnapshotDigest != a.run.Snapshot.Digest || o.ArgumentsJSON != string(args) || o.ModelCallID != proposal.ID {
-		m.mu.Unlock()
-		return bad("operation-changed", "操作内容与原始快照不符")
-	}
-	if o.ClaimsDigest == "" {
-		if len(o.ResourceClaims) != 0 || len(o.ResourceRules) != 0 {
-			m.mu.Unlock()
-			return bad("resource-claims-changed", "操作资源声明缺少固定摘要")
-		}
-		o.ResourceClaims, o.ResourceRules = operationResourceClaims(*a.run.Snapshot, o)
-		o.ClaimsDigest = state.DigestJSON(o.ResourceClaims)
-	} else {
-		claims, refs := operationResourceClaims(*a.run.Snapshot, o)
-		storedClaims := o.ResourceClaims
-		if storedClaims == nil {
-			storedClaims = []ResourceClaim{} // Empty claims are omitted in persisted JSON.
-		}
-		if state.DigestJSON(claims) != o.ClaimsDigest || state.DigestJSON(storedClaims) != o.ClaimsDigest || state.DigestJSON(refs) != state.DigestJSON(o.ResourceRules) {
-			m.mu.Unlock()
-			return bad("resource-claims-changed", "操作资源声明与固定快照不符")
-		}
-	}
-	if o.Status == "completed" {
-		m.mu.Unlock()
-		return nil
-	}
-	if o.Status == "dispatched" || o.Status == "unknown" {
-		m.mu.Unlock()
-		return bad("outcome-unknown", "已派发操作结果未确认，禁止重复执行")
-	}
-	if err = toolTokenBudget(run); err == nil {
-		err = ensureResultBudget(dbCtx, m.store, run, run.Limits.ResultBytes)
-	}
-	if err != nil {
-		m.mu.Unlock()
-		return storageFailure(err)
-	}
-	if err = m.checkRevocations(ctx, *a.run.Snapshot, o); err != nil {
-		m.mu.Unlock()
-		_ = closeScope()
-		return err
-	}
-	if err = a.checkOperationGuardLocked(ctx, execution, o); err != nil {
+	if err := a.resolveInvocationLocked(ctx, dbCtx, execution, run, index, proposal, args, c, &o); err != nil || o.Status == "completed" {
 		m.mu.Unlock()
 		return err
 	}
-	if c.Source == "script" {
-		items, readErr := readView(ctx, m.store).OperationContext(ctx, run.TaskID)
-		if readErr != nil {
-			m.mu.Unlock()
-			return storageFailure(readErr)
-		}
-		loaded := false
-		for _, item := range items {
-			if item.Source == "skill-load" && item.Path == "SKILL.md" && item.Ref == c.Ref {
-				loaded = true
-			}
-		}
-		if a.run.Snapshot.ToolLoading == onDemandToolsV2 {
-			valid, readErr := m.effectiveSkills(ctx, run)
-			if readErr != nil {
-				m.mu.Unlock()
-				return readErr
-			}
-			loaded = false
-			for _, item := range valid {
-				if item.Item.Ref == c.Ref {
-					loaded = true
-				}
-			}
-		}
-		if !loaded {
-			m.mu.Unlock()
-			return bad("skill-not-loaded", "执行脚本前必须加载该修订的 SKILL.md")
-		}
-	}
-
-	if err = authorizeOperationScope(accessSnapshot(*a.run.Snapshot, o), o); err != nil {
+	direct, approval, err := a.consumeApprovalLocked(ctx, dbCtx, execution, run, index, &o)
+	if err != nil || (!direct && approval == nil) {
 		m.mu.Unlock()
 		return err
 	}
-
-	direct, decisionSource := operationDecision(*a.run.Snapshot, o)
-	if o.Access != nil && a.run.Snapshot.PolicyVersion != PermissionPolicyVersion {
-		direct, decisionSource = false, "human-approval"
-		if o.ApprovalID == "" {
-			denied, readErr := m.accessWasDenied(dbCtx, run, o)
-			if readErr != nil {
-				m.mu.Unlock()
-				return storageFailure(readErr)
-			}
-			if denied {
-				err = m.finishAccessDenied(dbCtx, run, o)
-				m.mu.Unlock()
-				return err
-			}
-			remembered, readErr := m.matchingAuthorization(dbCtx, run, o)
-			if readErr != nil {
-				m.mu.Unlock()
-				return readErr
-			}
-			if remembered != nil {
-				direct, decisionSource = true, "session-authorization"
-				o.Authorization = &OperationAuthorization{ID: o.ID, Digest: o.Access.Digest, Decision: "session", SessionAuthorizationID: remembered.ID, CreatedAt: stamp(m.deps.Now())}
-			}
-		}
-	}
-	if o.Access != nil && a.run.Snapshot.PolicyVersion == PermissionPolicyVersion {
-		// 已人工决定或准备失败的操作继续沿用精确审批，不因自动模式绕过拒绝或未知结果。
-		if o.ApprovalID != "" {
-			direct, decisionSource = false, "human-approval"
-		}
-		if o.ApprovalID == "" {
-			denied, readErr := m.accessWasDenied(dbCtx, run, o)
-			if readErr != nil {
-				m.mu.Unlock()
-				return readErr
-			}
-			if denied {
-				err = m.finishAccessDenied(dbCtx, run, o)
-				m.mu.Unlock()
-				return err
-			}
-		}
-	}
-
-	o.PolicyVersion = a.run.Snapshot.PolicyVersion
-	o.PermissionMode = a.run.Snapshot.PermissionMode
-	o.DecisionSource = decisionSource
-	if err = a.checkOperationGuardLocked(ctx, execution, o); err != nil {
-		m.mu.Unlock()
-		return err
-	}
-	if o.ApprovalID == "" {
-		wait, readErr := unknownResourceWait(dbCtx, m.store, o, stamp(m.deps.Now()))
-		if readErr != nil {
-			m.mu.Unlock()
-			return storageFailure(readErr)
-		}
-		if wait != nil {
-			blocked := false
-			_, err = m.store.ChangeRun(dbCtx, run.ID, "operation-blocked-before-approval", func(tx sessionstore.Tx, r *Run) error {
-				if r.CancelRequestedAt != "" || r.Status != StateRunning {
-					return context.Canceled
-				}
-				now := stamp(m.deps.Now())
-				current, err := unknownResourceWait(dbCtx, tx, o, now)
-				if err != nil || current == nil {
-					return err
-				}
-				blocked = true
-				o.Status, o.ResourceWait = StateWaitingResource, current
-				return interruptResourceWaiter(dbCtx, tx, r, o, now)
-			})
-			if err != nil {
-				m.mu.Unlock()
-				return storageFailure(err)
-			}
-			if blocked {
-				m.mu.Unlock()
-				return worker.ErrSuspended
-			}
-		}
-	}
-	if !direct && o.ApprovalID == "" {
-		var count int
-		if err = m.store.PendingApprovalCount(dbCtx, &count); err != nil {
-			m.mu.Unlock()
-			return storageFailure(err)
-		}
-		if count >= 32 {
-			m.mu.Unlock()
-			return &Error{Status: 429, Code: "approvals-full", Message: "待审批运行已达 32 个上限"}
-		}
-		o.Policy = "approval-required"
-		o.Status = StateWaitingApproval
-		o.ApprovalID = m.deps.NewID()
-		approval := Approval{Kind: "operation", WorkflowID: run.WorkflowID, WorkflowStepID: run.WorkflowStepID, WorkflowAttempt: run.WorkflowAttempt, ID: o.ApprovalID, RunID: o.RunID, OperationID: o.ID, Status: "pending", CreatedAt: o.CreatedAt, ExpiresAt: stamp(m.deps.Now().Add(24 * time.Hour)), Operation: o}
-		approval.ScopeID, approval.NodeID = run.ScopeID, run.NodeID
-		approval.Access = o.Access
-		_, err = m.store.ChangeRun(dbCtx, run.ID, "approval-intent", func(tx sessionstore.Tx, r *Run) error {
-			if err := saveOperation(dbCtx, tx, o); err != nil {
-				return err
-			}
-			if err := saveApproval(dbCtx, tx, approval); err != nil {
-				return err
-			}
-			r.Status = StateWaitingApproval
-			r.Phase = StateWaitingApproval
-			r.Resume = &RecoveryCursor{ResponseID: o.ModelRequestID, CallIndex: index}
-			return tx.Event(dbCtx, r, "approval/request", "", nil, map[string]string{"approvalId": approval.ID, "operationId": o.ID})
-		})
-		if err != nil {
-			m.storageFailedLocked()
-			m.mu.Unlock()
-			return storageFailure(err)
-		}
-		m.mu.Unlock()
-		_ = closeScope()
-		return worker.ErrSuspended
-	}
-	var approval *Approval
-	if !direct {
-		var aa Approval
-		if err = m.store.ApprovalRecord(dbCtx, o.ApprovalID, &raw); err == nil {
-			err = json.Unmarshal([]byte(raw), &aa)
-		}
-		if err != nil {
-			m.mu.Unlock()
-			return storageFailure(err)
-		}
-		if o.Access != nil && aa.Status == "denied" {
-			err = m.finishAccessDenied(dbCtx, run, o)
-			m.mu.Unlock()
-			return err
-		}
-		if aa.Status != "approved" || approvalExpired(aa, m.deps.Now()) || !state.ApprovedOperationMatches(aa.Operation, o) {
-			m.mu.Unlock()
-			return bad("approval-invalid", "审批已失效或操作发生变化")
-		}
-		approval = &aa
-		o.DecisionSource = "human-approval"
-	}
-
+	decisionSource := o.DecisionSource
 	if o.Access != nil && direct && o.Authorization == nil && a.run.Snapshot.PolicyVersion == PermissionPolicyVersion {
 		o.Authorization = &OperationAuthorization{ID: o.ID, Digest: o.Access.Digest, Decision: "once", CreatedAt: stamp(m.deps.Now())}
 		// 自动决定先落 SQLite/JSONL，镜像准备及外部派发只消费已持久化的操作授权。
@@ -559,24 +255,333 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		return storageFailure(syncErr)
 	}
 
-	if o.Access != nil {
-		if err = m.checkOperationAuthorization(dbCtx, o); err != nil {
-			m.mu.Unlock()
+	call, barrier, err := a.recordOperationDispatchLocked(ctx, dbCtx, run, index, c, &o, direct, approval)
+	if err != nil {
+		m.mu.Unlock()
+		return err
+	}
+	done := make(chan struct{})
+	execution.callDone = done
+	m.mu.Unlock()
+	defer close(done)
+	callCtx, cancel := context.WithTimeout(ctx, time.Duration(run.Limits.CallTimeoutSeconds)*time.Second)
+	defer cancel()
+	result, err := a.dispatchOperation(callCtx, execution, o, c.ReadOnly, run.Limits)
+	if err != nil {
+		return err
+	}
+	if closeErr := closeScope(); closeErr != nil {
+		result.r.Unknown = state.ExternalOperation(o) || result.r.Unknown
+		if result.e == nil {
+			result.e = closeErr
+		}
+	}
+	return a.settleOperationResult(ctx, dbCtx, execution, run, index, c, o, call, barrier, result)
+}
+
+// resolveInvocationLocked 返回时仍持有 Manager.mu，包括 Prepare 临时释放锁的路径。
+func (a *agentExecution) resolveInvocationLocked(ctx, dbCtx context.Context, execution *executionState, run Run, index int, proposal model.ToolCall, args json.RawMessage, c Capability, o *Operation) error {
+	m := a.manager
+	originID := ""
+	if a.pending != nil {
+		originID = a.pending.ID
+	}
+	var raw string
+	err := m.store.OperationInvocation(dbCtx, run.ID, originID, index, &raw)
+	if err == nil {
+		err = json.Unmarshal([]byte(raw), o)
+	} else if errors.Is(err, sessionstore.ErrNotFound) {
+		err = nil
+		if err = toolTokenBudget(run); err == nil {
+			err = ensureResultBudget(dbCtx, m.store, run, run.Limits.ResultBytes)
+		}
+		if err != nil {
+			return storageFailure(err)
+		}
+		*o = Operation{ID: m.deps.NewID(), RunID: run.ID, TaskID: run.TaskID, ModelRequestID: originID, CallIndex: index, ModelCallID: proposal.ID, ArgumentsJSON: string(args), Capability: c, SnapshotDigest: a.run.Snapshot.Digest, Status: "planned", CreatedAt: stamp(m.deps.Now()), CallID: m.deps.NewID()}
+		o.Source = "model"
+		if workflowDriver(run) == "operation" {
+			o.Source = "workflow"
+		}
+		o.WorkflowID = run.WorkflowID
+		o.ScopeID, o.NodeID = run.ScopeID, run.NodeID
+		o.WorkflowStepID = run.WorkflowStepID
+		o.WorkflowAttempt = run.WorkflowAttempt
+		v, readErr := readWorkspaceVersion(dbCtx, m.store, run.TaskID)
+		if readErr != nil {
+			return storageFailure(readErr)
+		}
+		o.WorkspaceRevision = v.Revision
+		if c.Source == "script" {
+			if err = m.inheritWorkspaceWikiLocked(dbCtx, run, v); err != nil {
+				return err
+			}
+		}
+		if preparer, ok := m.deps.Catalog.(operationPreparer); ok {
+			if a.run.Snapshot.AuthorizationMode == AuthorizationOnDemand {
+				m.mu.Unlock()
+				*o, err = preparer.Prepare(ctx, *a.run.Snapshot, *o)
+				m.mu.Lock()
+				current, readErr := m.store.Get(dbCtx, run.ID)
+				if readErr != nil {
+					return storageFailure(readErr)
+				}
+				if m.closed || current.CancelRequestedAt != "" || current.Status != StateRunning || ctx.Err() != nil {
+					return context.Canceled
+				}
+			} else {
+				*o, err = preparer.Prepare(ctx, *a.run.Snapshot, *o)
+			}
+			if err != nil {
+				return err
+			}
+		}
+
+		if o.Access != nil && o.Execution != nil {
+			seconds := run.Limits.CallTimeoutSeconds
+			remaining := run.Limits.RunTimeoutSeconds - int(run.ActiveMilliseconds/1000)
+			if !state.ContinuousRun(run) && remaining < seconds {
+				seconds = remaining
+			}
+			if seconds < 1 {
+				seconds = 1
+			}
+			if o.Execution.Profile.TimeoutSeconds > seconds {
+				o.Execution.Profile.TimeoutSeconds = seconds
+			}
+			o.Access.ScopeKey = accessScopeKey(*o)
+			o.Access.Digest = state.AccessDigest(*o)
+		}
+		o.FileChanges, err = m.prepareOperationChanges(ctx, *o)
+		if err != nil {
 			return err
+		}
+		// Resource identity is derived from the immutable capability snapshot and
+		// the exact JSON argument string before an approval can be created.
+		o.ResourceClaims, o.ResourceRules = operationResourceClaims(*a.run.Snapshot, *o)
+		o.ClaimsDigest = state.DigestJSON(o.ResourceClaims)
+	} else {
+		m.storageFailedLocked()
+		return storageFailure(err)
+	}
+	if o.SnapshotDigest != a.run.Snapshot.Digest || o.ArgumentsJSON != string(args) || o.ModelCallID != proposal.ID {
+		return bad("operation-changed", "操作内容与原始快照不符")
+	}
+	if o.ClaimsDigest == "" {
+		if len(o.ResourceClaims) != 0 || len(o.ResourceRules) != 0 {
+			return bad("resource-claims-changed", "操作资源声明缺少固定摘要")
+		}
+		o.ResourceClaims, o.ResourceRules = operationResourceClaims(*a.run.Snapshot, *o)
+		o.ClaimsDigest = state.DigestJSON(o.ResourceClaims)
+	} else {
+		claims, refs := operationResourceClaims(*a.run.Snapshot, *o)
+		storedClaims := o.ResourceClaims
+		if storedClaims == nil {
+			storedClaims = []ResourceClaim{} // Empty claims are omitted in persisted JSON.
+		}
+		if state.DigestJSON(claims) != o.ClaimsDigest || state.DigestJSON(storedClaims) != o.ClaimsDigest || state.DigestJSON(refs) != state.DigestJSON(o.ResourceRules) {
+			return bad("resource-claims-changed", "操作资源声明与固定快照不符")
+		}
+	}
+	if o.Status == "completed" {
+		return nil
+	}
+	if o.Status == "dispatched" || o.Status == "unknown" {
+		return bad("outcome-unknown", "已派发操作结果未确认，禁止重复执行")
+	}
+	if err = toolTokenBudget(run); err == nil {
+		err = ensureResultBudget(dbCtx, m.store, run, run.Limits.ResultBytes)
+	}
+	if err != nil {
+		return storageFailure(err)
+	}
+	if err = m.checkRevocations(ctx, *a.run.Snapshot, *o); err != nil {
+		return err
+	}
+	if err = a.checkOperationGuardLocked(ctx, execution, *o); err != nil {
+		return err
+	}
+	if c.Source == "script" {
+		items, readErr := readView(ctx, m.store).OperationContext(ctx, run.TaskID)
+		if readErr != nil {
+			return storageFailure(readErr)
+		}
+		loaded := false
+		for _, item := range items {
+			if item.Source == "skill-load" && item.Path == "SKILL.md" && item.Ref == c.Ref {
+				loaded = true
+			}
+		}
+		if a.run.Snapshot.ToolLoading == onDemandToolsV2 {
+			valid, readErr := m.effectiveSkills(ctx, run)
+			if readErr != nil {
+				return readErr
+			}
+			loaded = false
+			for _, item := range valid {
+				if item.Item.Ref == c.Ref {
+					loaded = true
+				}
+			}
+		}
+		if !loaded {
+			return bad("skill-not-loaded", "执行脚本前必须加载该修订的 SKILL.md")
+		}
+	}
+
+	return authorizeOperationScope(accessSnapshot(*a.run.Snapshot, *o), *o)
+}
+
+// consumeApprovalLocked 返回直行决定或已有审批。两者皆无且无错误表示已记录拒绝。
+func (a *agentExecution) consumeApprovalLocked(ctx, dbCtx context.Context, execution *executionState, run Run, index int, o *Operation) (bool, *Approval, error) {
+	m := a.manager
+	var err error
+	direct, decisionSource := operationDecision(*a.run.Snapshot, *o)
+	if o.Access != nil && a.run.Snapshot.PolicyVersion != PermissionPolicyVersion {
+		direct, decisionSource = false, "human-approval"
+		if o.ApprovalID == "" {
+			denied, readErr := m.accessWasDenied(dbCtx, run, *o)
+			if readErr != nil {
+				return false, nil, storageFailure(readErr)
+			}
+			if denied {
+				err = m.finishAccessDenied(dbCtx, run, *o)
+				return false, nil, err
+			}
+			remembered, readErr := m.matchingAuthorization(dbCtx, run, *o)
+			if readErr != nil {
+				return false, nil, readErr
+			}
+			if remembered != nil {
+				direct, decisionSource = true, "session-authorization"
+				o.Authorization = &OperationAuthorization{ID: o.ID, Digest: o.Access.Digest, Decision: "session", SessionAuthorizationID: remembered.ID, CreatedAt: stamp(m.deps.Now())}
+			}
+		}
+	}
+	if o.Access != nil && a.run.Snapshot.PolicyVersion == PermissionPolicyVersion {
+		// 已人工决定或准备失败的操作继续沿用精确审批，不因自动模式绕过拒绝或未知结果。
+		if o.ApprovalID != "" {
+			direct, decisionSource = false, "human-approval"
+		}
+		if o.ApprovalID == "" {
+			denied, readErr := m.accessWasDenied(dbCtx, run, *o)
+			if readErr != nil {
+				return false, nil, readErr
+			}
+			if denied {
+				err = m.finishAccessDenied(dbCtx, run, *o)
+				return false, nil, err
+			}
+		}
+	}
+
+	o.PolicyVersion = a.run.Snapshot.PolicyVersion
+	o.PermissionMode = a.run.Snapshot.PermissionMode
+	o.DecisionSource = decisionSource
+	if err = a.checkOperationGuardLocked(ctx, execution, *o); err != nil {
+		return false, nil, err
+	}
+	if o.ApprovalID == "" {
+		wait, readErr := unknownResourceWait(dbCtx, m.store, *o, stamp(m.deps.Now()))
+		if readErr != nil {
+			return false, nil, storageFailure(readErr)
+		}
+		if wait != nil {
+			blocked := false
+			_, err = m.store.ChangeRun(dbCtx, run.ID, "operation-blocked-before-approval", func(tx sessionstore.Tx, r *Run) error {
+				if r.CancelRequestedAt != "" || r.Status != StateRunning {
+					return context.Canceled
+				}
+				now := stamp(m.deps.Now())
+				current, err := unknownResourceWait(dbCtx, tx, *o, now)
+				if err != nil || current == nil {
+					return err
+				}
+				blocked = true
+				o.Status, o.ResourceWait = StateWaitingResource, current
+				return interruptResourceWaiter(dbCtx, tx, r, *o, now)
+			})
+			if err != nil {
+				return false, nil, storageFailure(err)
+			}
+			if blocked {
+				return false, nil, worker.ErrSuspended
+			}
+		}
+	}
+	if !direct && o.ApprovalID == "" {
+		var count int
+		if err = m.store.PendingApprovalCount(dbCtx, &count); err != nil {
+			return false, nil, storageFailure(err)
+		}
+		if count >= 32 {
+			return false, nil, &Error{Status: 429, Code: "approvals-full", Message: "待审批运行已达 32 个上限"}
+		}
+		o.Policy = "approval-required"
+		o.Status = StateWaitingApproval
+		o.ApprovalID = m.deps.NewID()
+		approval := Approval{Kind: "operation", WorkflowID: run.WorkflowID, WorkflowStepID: run.WorkflowStepID, WorkflowAttempt: run.WorkflowAttempt, ID: o.ApprovalID, RunID: o.RunID, OperationID: o.ID, Status: "pending", CreatedAt: o.CreatedAt, ExpiresAt: stamp(m.deps.Now().Add(24 * time.Hour)), Operation: *o}
+		approval.ScopeID, approval.NodeID = run.ScopeID, run.NodeID
+		approval.Access = o.Access
+		_, err = m.store.ChangeRun(dbCtx, run.ID, "approval-intent", func(tx sessionstore.Tx, r *Run) error {
+			if err := saveOperation(dbCtx, tx, *o); err != nil {
+				return err
+			}
+			if err := saveApproval(dbCtx, tx, approval); err != nil {
+				return err
+			}
+			r.Status = StateWaitingApproval
+			r.Phase = StateWaitingApproval
+			r.Resume = &RecoveryCursor{ResponseID: o.ModelRequestID, CallIndex: index}
+			return tx.Event(dbCtx, r, "approval/request", "", nil, map[string]string{"approvalId": approval.ID, "operationId": o.ID})
+		})
+		if err != nil {
+			m.storageFailedLocked()
+			return false, nil, storageFailure(err)
+		}
+		return false, nil, worker.ErrSuspended
+	}
+	var approval *Approval
+	if !direct {
+		var raw string
+		var aa Approval
+		if err = m.store.ApprovalRecord(dbCtx, o.ApprovalID, &raw); err == nil {
+			err = json.Unmarshal([]byte(raw), &aa)
+		}
+		if err != nil {
+			return false, nil, storageFailure(err)
+		}
+		if o.Access != nil && aa.Status == "denied" {
+			err = m.finishAccessDenied(dbCtx, run, *o)
+			return false, nil, err
+		}
+		if aa.Status != "approved" || approvalExpired(aa, m.deps.Now()) || !state.ApprovedOperationMatches(aa.Operation, *o) {
+			return false, nil, bad("approval-invalid", "审批已失效或操作发生变化")
+		}
+		approval = &aa
+		o.DecisionSource = "human-approval"
+	}
+	return direct, approval, nil
+}
+
+func (a *agentExecution) recordOperationDispatchLocked(ctx, dbCtx context.Context, run Run, index int, c Capability, o *Operation, direct bool, approval *Approval) (Call, ExecutionBarrier, error) {
+	m := a.manager
+	decisionSource := o.DecisionSource
+	if o.Access != nil {
+		if err := m.checkOperationAuthorization(dbCtx, *o); err != nil {
+			return Call{}, ExecutionBarrier{}, err
 		}
 		if o.Execution != nil && o.Access.Runtime != nil {
 			// Approval is durable before downloading; no user code is dispatched by preparation.
 			m.mu.Unlock()
-			prepared, prepareErr := m.prepareAuthorizedRuntime(ctx, run, o)
+			prepared, prepareErr := m.prepareAuthorizedRuntime(ctx, run, *o)
 			m.mu.Lock()
 			if prepareErr != nil {
-				m.mu.Unlock()
-				return prepareErr
+				return Call{}, ExecutionBarrier{}, prepareErr
 			}
-			o = prepared
-			if err = m.checkOperationAuthorization(dbCtx, o); err != nil {
-				m.mu.Unlock()
-				return err
+			*o = prepared
+			if err := m.checkOperationAuthorization(dbCtx, *o); err != nil {
+				return Call{}, ExecutionBarrier{}, err
 			}
 		}
 	}
@@ -585,9 +590,9 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 	barrier := ExecutionBarrier{WorkflowID: run.WorkflowID, ID: m.deps.NewID(), RunID: run.ID, OperationID: o.ID, Status: "dispatched", CreatedAt: dispatchedAt}
 	barrier.ScopeID, barrier.NodeID = run.ScopeID, run.NodeID
 	resourceWaiting := false
-	_, err = m.store.ChangeRun(dbCtx, run.ID, "operation-dispatch", func(tx sessionstore.Tx, r *Run) error {
+	_, err := m.store.ChangeRun(dbCtx, run.ID, "operation-dispatch", func(tx sessionstore.Tx, r *Run) error {
 		if state.ContinuousRun(*r) {
-			if err := validateOperationIdentity(dbCtx, tx, o); err != nil {
+			if err := validateOperationIdentity(dbCtx, tx, *o); err != nil {
 				return err
 			}
 		}
@@ -597,24 +602,24 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		if r.CancelRequestedAt != "" || r.Status != StateRunning {
 			return context.Canceled
 		}
-		acquired, acquireErr := acquireResourceLease(dbCtx, tx, o, dispatchedAt)
+		acquired, acquireErr := acquireResourceLease(dbCtx, tx, *o, dispatchedAt)
 		if acquireErr != nil {
 			return acquireErr
 		}
 		if !acquired {
 			resourceWaiting = true
 			o.Status = StateWaitingResource
-			o.ResourceWait, acquireErr = resourceWaitReason(dbCtx, tx, o, dispatchedAt)
+			o.ResourceWait, acquireErr = resourceWaitReason(dbCtx, tx, *o, dispatchedAt)
 			if acquireErr != nil {
 				return acquireErr
 			}
 			// Keep approval-bound fields intact while waiting. Legacy resource
 			// metadata is derived locally; dispatch starts only after acquisition.
-			if err := saveOperation(dbCtx, tx, o); err != nil {
+			if err := saveOperation(dbCtx, tx, *o); err != nil {
 				return err
 			}
 			if o.ResourceWait != nil && o.ResourceWait.Unknown {
-				return interruptResourceWaiter(dbCtx, tx, r, o, dispatchedAt)
+				return interruptResourceWaiter(dbCtx, tx, r, *o, dispatchedAt)
 			}
 			r.Status = StateWaitingResource
 			r.Phase = StateWaitingResource
@@ -655,10 +660,10 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		if direct {
 			o.Policy = decisionSource
 		}
-		if err := saveOperation(dbCtx, tx, o); err != nil {
+		if err := saveOperation(dbCtx, tx, *o); err != nil {
 			return err
 		}
-		if !c.ReadOnly || state.ExternalOperation(o) {
+		if !c.ReadOnly || state.ExternalOperation(*o) {
 			if err := saveBarrier(dbCtx, tx, barrier); err != nil {
 				return err
 			}
@@ -673,33 +678,29 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		if _, ok := err.(*Error); !ok {
 			m.storageFailedLocked()
 		}
-		m.mu.Unlock()
-		return err
+		return Call{}, ExecutionBarrier{}, err
 	}
 	if resourceWaiting {
-		m.mu.Unlock()
-		_ = closeScope()
-		return worker.ErrSuspended
+		return Call{}, ExecutionBarrier{}, worker.ErrSuspended
 	}
-	done := make(chan struct{})
-	execution.callDone = done
-	m.mu.Unlock()
-	defer close(done)
-	callCtx, cancel := context.WithTimeout(ctx, time.Duration(run.Limits.CallTimeoutSeconds)*time.Second)
-	defer cancel()
-	type outcome struct {
-		r CapabilityResult
-		e error
-	}
-	results := make(chan outcome, 1)
-	dispatchedOperation := o
+	return call, barrier, nil
+}
+
+type operationOutcome struct {
+	r CapabilityResult
+	e error
+}
+
+func (a *agentExecution) dispatchOperation(callCtx context.Context, execution *executionState, dispatchedOperation Operation, readOnly bool, limits Limits) (operationOutcome, error) {
+	m := a.manager
+	results := make(chan operationOutcome, 1)
 	go func() {
-		var result outcome
+		var result operationOutcome
 		defer func() {
 			if recovered := recover(); recovered != nil {
 				applog.Default().RecoveredPanic("Agent 操作派发", recovered)
 				result.e = bad("operation-failed", "操作内部错误")
-				result.r.Unknown = !c.ReadOnly || state.ExternalOperation(dispatchedOperation)
+				result.r.Unknown = !readOnly || state.ExternalOperation(dispatchedOperation)
 			}
 			if result.r.Task != nil {
 				m.rememberExecutionTask(execution, *result.r.Task)
@@ -728,21 +729,21 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 			result.e = authErr
 			return
 		}
-		result.r, result.e = m.executeRegistryOperation(authorized, *a.run.Snapshot, dispatchedOperation, run.Limits.ResultBytes)
+		result.r, result.e = m.executeRegistryOperation(authorized, *a.run.Snapshot, dispatchedOperation, limits.ResultBytes)
 	}()
-	var result outcome
+	var result operationOutcome
 	select {
 	case result = <-results:
 	case <-execution.deletedDone:
-		return context.Canceled
+		return operationOutcome{}, context.Canceled
 	case <-callCtx.Done():
-		timer := time.NewTimer(time.Duration(run.Limits.CancelGraceSeconds) * time.Second)
+		timer := time.NewTimer(time.Duration(limits.CancelGraceSeconds) * time.Second)
 		select {
 		case result = <-results:
 			timer.Stop()
 		case <-execution.deletedDone:
 			timer.Stop()
-			return context.Canceled
+			return operationOutcome{}, context.Canceled
 		case <-timer.C:
 			result.e = bad("operation-unresponsive", "操作未确认停止")
 			result.r.Unknown = true
@@ -753,14 +754,13 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 	}
 	if callCtx.Err() != nil {
 		result.e = callCtx.Err()
-		result.r.Unknown = state.ExternalOperation(o) || result.r.Unknown
+		result.r.Unknown = state.ExternalOperation(dispatchedOperation) || result.r.Unknown
 	}
-	if closeErr := closeScope(); closeErr != nil {
-		result.r.Unknown = state.ExternalOperation(o) || result.r.Unknown
-		if result.e == nil {
-			result.e = closeErr
-		}
-	}
+	return result, nil
+}
+
+func (a *agentExecution) settleOperationResult(ctx, dbCtx context.Context, execution *executionState, run Run, index int, c Capability, o Operation, call Call, barrier ExecutionBarrier, result operationOutcome) error {
+	m := a.manager
 	// 只有同一任务、同一审批基线且已发布的实体版本可以推进数据库指针。
 	if v := result.r.Workspace; v != nil && !result.r.Unknown {
 		valid := v.TaskID == run.TaskID && v.BaseRevision == o.WorkspaceRevision && v.Revision > v.BaseRevision && m.deps.Workspaces != nil
@@ -785,7 +785,7 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		o.Task = result.r.Task
 		o.PendingResult = append(json.RawMessage(nil), result.r.Value...)
 		o.Status = StateWaitingTask
-		_, err = m.store.ChangeRun(dbCtx, run.ID, "operation-task-accepted", func(tx sessionstore.Tx, r *Run) error {
+		_, err := m.store.ChangeRun(dbCtx, run.ID, "operation-task-accepted", func(tx sessionstore.Tx, r *Run) error {
 			if err := saveOperation(dbCtx, tx, o); err != nil {
 				return err
 			}
@@ -867,7 +867,7 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		// 未知结果的接受凭据也计量；保留未来核实回执所需的剩余容量。
 		call.ReservedResultBytes = max(0, run.Limits.ResultBytes-len(call.Result))
 	}
-	_, err = m.store.ChangeRun(dbCtx, run.ID, "operation-result", func(tx sessionstore.Tx, r *Run) error {
+	_, err := m.store.ChangeRun(dbCtx, run.ID, "operation-result", func(tx sessionstore.Tx, r *Run) error {
 		if r.Recovery != nil && r.Recovery.OperationID == o.ID && r.Recovery.Status == "correcting" {
 			r.Recovery.Status, r.Recovery.Message = "recovered", "只读查询重试成功，继续任务"
 			if call.Error != nil {
