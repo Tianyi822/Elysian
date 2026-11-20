@@ -639,10 +639,6 @@ func buildCreateSpec(input buildCreateSpecInput) (buildCreateSpecResult, error) 
 		}
 	}
 
-	type resolvedMount struct {
-		source        string
-		containerPath string
-	}
 	resolvedMounts := make([]resolvedMount, 0, len(createInputParsed.volumes))
 	mkdirPaths := []string{}
 	for _, volume := range createInputParsed.volumes {
@@ -690,6 +686,11 @@ func buildCreateSpec(input buildCreateSpecInput) (buildCreateSpecResult, error) 
 		return buildCreateSpecResult{}, err
 	}
 	return buildCreateSpecResult{name: name, createBody: encoded, mkdirPaths: mkdirPaths}, nil
+}
+
+type resolvedMount struct {
+	source        string
+	containerPath string
 }
 
 // encodeCreateBody 用共享 JSON 出口编码（SetEscapeHTML(false)，键序即字段声明序）。

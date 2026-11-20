@@ -85,12 +85,7 @@ func (m *Manager) wikiHybridSearchLocked(ctx context.Context, pages []WikiPage, 
 	if err != nil {
 		return text
 	}
-	type item struct {
-		page   WikiPage
-		vector []float64
-		score  float64
-	}
-	items := []item{}
+	items := []wikiEmbeddingMatch{}
 	for _, record := range rows {
 		var id, digest, raw string
 		var revision int
@@ -108,7 +103,7 @@ func (m *Manager) wikiHybridSearchLocked(ctx context.Context, pages []WikiPage, 
 		if json.Unmarshal([]byte(raw), &vector) != nil || len(vector) != profile.Dimensions {
 			continue
 		}
-		items = append(items, item{page: page, vector: vector})
+		items = append(items, wikiEmbeddingMatch{page: page, vector: vector})
 	}
 
 	if err != nil || len(items) == 0 {
@@ -188,4 +183,10 @@ func (m *Manager) wikiHybridSearchLocked(ctx context.Context, pages []WikiPage, 
 		result.Degraded, result.Reason = true, "部分页面索引未就绪，已合并 SQLite 中文双字全文结果"
 	}
 	return result
+}
+
+type wikiEmbeddingMatch struct {
+	page   WikiPage
+	vector []float64
+	score  float64
 }

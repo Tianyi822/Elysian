@@ -618,11 +618,7 @@ func (m *BuildManager) validateAndQueue(ctx context.Context, slug string, plans 
 // 联合锁，由打包阶段的 statBuildContext 自然失败收场。
 func (m *BuildManager) InterruptActive(slug, message string) {
 	m.mu.Lock()
-	type pending struct {
-		id     string
-		cancel context.CancelFunc
-	}
-	interrupted := []pending{}
+	interrupted := []buildInterruption{}
 	for id, task := range m.tasks {
 		if task.Slug != slug || !blocksBuild(task) {
 			continue
@@ -639,7 +635,7 @@ func (m *BuildManager) InterruptActive(slug, message string) {
 		updated.UpdatedAt = m.now().UTC().Format(time.RFC3339)
 		_ = taskstore.SaveAndPublish(m.ledger(), m.tasks, id, &updated, config.AtomicJSON)
 		if cancel := m.cancel[id]; cancel != nil {
-			interrupted = append(interrupted, pending{id: id, cancel: cancel})
+			interrupted = append(interrupted, buildInterruption{id: id, cancel: cancel})
 		}
 	}
 	m.mu.Unlock()
@@ -647,6 +643,11 @@ func (m *BuildManager) InterruptActive(slug, message string) {
 		_ = os.Remove(spoolTarPath(m.deps.SpoolRoot, item.id))
 		item.cancel()
 	}
+}
+
+type buildInterruption struct {
+	id     string
+	cancel context.CancelFunc
 }
 
 // Cancel 取消任务：排队中直接终态，构建中取消引擎流；已终态 409。

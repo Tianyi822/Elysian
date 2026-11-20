@@ -609,11 +609,7 @@ func (h *eventsHub) sampleOnce() {
 		}
 	}
 
-	type sampleOrSkip struct {
-		item containerSampleItem
-		skip bool
-	}
-	samples, _ := mapWithConcurrency(runningIDs, statsConcurrency, func(id string, _ int) (sampleOrSkip, error) {
+	samples, _ := mapWithConcurrency(runningIDs, statsConcurrency, func(id string, _ int) (containerSampleResult, error) {
 		response, err := h.cfg.transport.Request(context.Background(), seam.EngineRequest{
 			Method:   http.MethodGet,
 			Path:     "/containers/" + encodeEngineID(id) + "/stats",
@@ -622,21 +618,21 @@ func (h *eventsHub) sampleOnce() {
 			MaxBytes: hubJSONMaxBytes,
 		})
 		if err != nil {
-			return sampleOrSkip{skip: true}, nil
+			return containerSampleResult{skip: true}, nil
 		}
 		if response.Status < 200 || response.Status >= 300 {
-			return sampleOrSkip{skip: true}, nil
+			return containerSampleResult{skip: true}, nil
 		}
 		value, err := decodeOrderedJSON(response.Body)
 		if err != nil {
-			return sampleOrSkip{skip: true}, nil
+			return containerSampleResult{skip: true}, nil
 		}
 		cpu, cpuOK := cpuPercent(value)
 		mem, memOK := memoryMb(value)
 		if !cpuOK || !memOK {
-			return sampleOrSkip{skip: true}, nil
+			return containerSampleResult{skip: true}, nil
 		}
-		return sampleOrSkip{item: containerSampleItem{ContainerID: stripSha256Prefix(id), CPUPercent: cpu, MemMB: mem}}, nil
+		return containerSampleResult{item: containerSampleItem{ContainerID: stripSha256Prefix(id), CPUPercent: cpu, MemMB: mem}}, nil
 	})
 	valid := make([]containerSampleItem, 0, len(samples))
 	for _, sample := range samples {
@@ -648,6 +644,11 @@ func (h *eventsHub) sampleOnce() {
 	h.mu.Lock()
 	h.emitLocked("container/sample", containerSamplePayload{Samples: valid}, true)
 	h.mu.Unlock()
+}
+
+type containerSampleResult struct {
+	item containerSampleItem
+	skip bool
 }
 
 // startSampleTimerLocked 立即采一次，然后每 3s 一拍（自续定时器，可取消）。

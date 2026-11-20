@@ -136,12 +136,8 @@ func (m *Manager) AttachmentContent(ctx context.Context, id string) (string, []b
 	if m.closed {
 		return "", nil, closedError()
 	}
-	type attachment struct {
-		mimeType string
-		content  []byte
-	}
-	value, err := storeRead(ctx, m.store, "AttachmentContent", func(ctx context.Context) (attachment, error) {
-		var value attachment
+	value, err := storeRead(ctx, m.store, "AttachmentContent", func(ctx context.Context) (attachmentContent, error) {
+		var value attachmentContent
 		err := readView(ctx, m.store).AttachmentContent(ctx, id, &value.mimeType, &value.content)
 		if errors.Is(err, sessionstore.ErrNotFound) {
 			return value, bad("attachment-not-found", "附件不存在")
@@ -149,6 +145,11 @@ func (m *Manager) AttachmentContent(ctx context.Context, id string) (string, []b
 		return value, err
 	})
 	return value.mimeType, value.content, storageFailure(err)
+}
+
+type attachmentContent struct {
+	mimeType string
+	content  []byte
 }
 
 // DeleteAttachment 仅允许删除未绑定会话的附件；已随消息发送的字节属于会话历史。

@@ -134,14 +134,10 @@ func mapPortBindings(bindings *jsonObject) ([]contract.PortBindingView, error) {
 		}
 	}
 
-	type groupKey struct {
-		port     int
-		protocol string
-	}
-	groups := make([]groupKey, 0)
-	groupMap := make(map[groupKey][]rawPortBind)
+	groups := make([]portGroupKey, 0)
+	groupMap := make(map[portGroupKey][]rawPortBind)
 	for _, bind := range raw {
-		key := groupKey{port: bind.containerPort, protocol: bind.protocol}
+		key := portGroupKey{port: bind.containerPort, protocol: bind.protocol}
 		if _, seen := groupMap[key]; !seen {
 			groups = append(groups, key)
 		}
@@ -192,6 +188,11 @@ func mapPortBindings(bindings *jsonObject) ([]contract.PortBindingView, error) {
 		}
 	}
 	return result, nil
+}
+
+type portGroupKey struct {
+	port     int
+	protocol string
 }
 
 func mustGet(o *jsonObject, key string) any {

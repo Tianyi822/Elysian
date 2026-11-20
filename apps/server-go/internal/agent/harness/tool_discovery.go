@@ -83,11 +83,7 @@ func searchTools(snapshot CapabilitySnapshot, raw json.RawMessage) (CapabilityRe
 	if args.Limit != nil {
 		limit = *args.Limit
 	}
-	type candidate struct {
-		capability Capability
-		score      int
-	}
-	var candidates []candidate
+	var candidates []toolSearchCandidate
 	query := strings.ToLower(strings.TrimSpace(args.Query))
 	terms := searchTerms(query)
 	exact := false
@@ -127,7 +123,7 @@ func searchTools(snapshot CapabilitySnapshot, raw json.RawMessage) (CapabilityRe
 			}
 		}
 		if score > 0 {
-			candidates = append(candidates, candidate{c, score})
+			candidates = append(candidates, toolSearchCandidate{c, score})
 		}
 	}
 	sort.Slice(candidates, func(i, j int) bool {
@@ -159,6 +155,11 @@ func searchTools(snapshot CapabilitySnapshot, raw json.RawMessage) (CapabilityRe
 	}
 	value, err := json.Marshal(result)
 	return CapabilityResult{Value: value}, err
+}
+
+type toolSearchCandidate struct {
+	capability Capability
+	score      int
 }
 
 func discoveryReadList(c Capability) bool {

@@ -246,11 +246,7 @@ func (m *Manager) expandWorkflowV2Node(ctx context.Context, tx sessionstore.Tx, 
 	if err != nil {
 		return err
 	}
-	type child struct {
-		key, input string
-		body       WorkflowBody
-	}
-	children := []child{}
+	children := []workflowChildPlan{}
 	switch step.Kind {
 	case "parallel":
 		for _, branch := range step.Parallel.Branches {
@@ -258,7 +254,7 @@ func (m *Manager) expandWorkflowV2Node(ctx context.Context, tx sessionstore.Tx, 
 			if e != nil {
 				return e
 			}
-			children = append(children, child{branch.ID, input, branch.Body})
+			children = append(children, workflowChildPlan{branch.ID, input, branch.Body})
 		}
 	case "foreach":
 		raw, e := state.EvaluateWorkflowBinding(step.Foreach.Items, node.InputJSON, nil)
@@ -278,7 +274,7 @@ func (m *Manager) expandWorkflowV2Node(ctx context.Context, tx sessionstore.Tx, 
 			if e != nil {
 				return e
 			}
-			children = append(children, child{strconv.Itoa(i), string(encoded), step.Foreach.Body})
+			children = append(children, workflowChildPlan{strconv.Itoa(i), string(encoded), step.Foreach.Body})
 		}
 	case "subworkflow":
 		var definition *WorkflowDefinition
@@ -295,7 +291,7 @@ func (m *Manager) expandWorkflowV2Node(ctx context.Context, tx sessionstore.Tx, 
 		if err = state.ValidateWorkflowJSON(definition.InputSchemaJSON, node.InputJSON); err != nil {
 			return err
 		}
-		children = append(children, child{"subworkflow", node.InputJSON, state.DefinitionBody(*definition)})
+		children = append(children, workflowChildPlan{"subworkflow", node.InputJSON, state.DefinitionBody(*definition)})
 	default:
 		return bad("workflow-kind", "不是复合工作流步骤")
 	}
@@ -365,6 +361,11 @@ func (m *Manager) expandWorkflowV2Node(ctx context.Context, tx sessionstore.Tx, 
 		return err
 	}
 	return tx.WorkflowEvent(ctx, w, "workflow/expanded", node.ID)
+}
+
+type workflowChildPlan struct {
+	key, input string
+	body       WorkflowBody
 }
 
 func (m *Manager) queueWorkflowV2Leaf(ctx context.Context, tx sessionstore.Tx, w *WorkflowInstance, node *WorkflowNodeExecution) error {
@@ -553,18 +554,14 @@ func (m *Manager) copyWorkflowWorkspace(ctx context.Context, source workspace.Ve
 // Join keeps all parent files. A branch only publishes additions and changes in
 // a stable namespace; deletions and colliding sibling paths cannot erase data.
 func (m *Manager) joinWorkflowWorkspaces(ctx context.Context, tx sessionstore.Tx, parent workspace.Version, nodeID string, children []WorkflowScope, prepared *[]workspace.Version) error {
-	type childVersion struct {
-		scope   WorkflowScope
-		version workspace.Version
-	}
-	versions := []childVersion{}
+	versions := []workflowChildVersion{}
 	for _, child := range children {
 		version, err := readWorkspaceVersion(ctx, tx, child.TaskID)
 		if err != nil {
 			return err
 		}
 		if version.Revision > 0 {
-			versions = append(versions, childVersion{child, version})
+			versions = append(versions, workflowChildVersion{child, version})
 		}
 	}
 	if len(versions) == 0 {
@@ -673,4 +670,9 @@ func (m *Manager) joinWorkflowWorkspaces(ctx context.Context, tx sessionstore.Tx
 		return err
 	}
 	return saveWorkflowWikiArtifact(ctx, tx, "workspace", version.TaskID+":"+strconv.Itoa(version.Revision), version.TaskID, sources)
+}
+
+type workflowChildVersion struct {
+	scope   WorkflowScope
+	version workspace.Version
 }

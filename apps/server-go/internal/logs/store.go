@@ -545,14 +545,10 @@ func (s *sqliteStore) sweepLocked(table string, policy logRetentionPolicy, now t
 	if err != nil {
 		return emptySweep(0), err
 	}
-	type idBytes struct {
-		id    int64
-		bytes int64
-	}
-	var all []idBytes
+	var all []logRowSize
 	var total int64
 	for rows.Next() {
-		var row idBytes
+		var row logRowSize
 		if err := rows.Scan(&row.id, &row.bytes); err != nil {
 			_ = rows.Close()
 			return emptySweep(0), err
@@ -599,6 +595,11 @@ func (s *sqliteStore) sweepLocked(table string, policy logRetentionPolicy, now t
 		TotalBytes:    totalBytes,
 		TrimmedBySize: deletedBySize > 0,
 	}, nil
+}
+
+type logRowSize struct {
+	id    int64
+	bytes int64
 }
 
 // sumBytes 表内字节合计。
