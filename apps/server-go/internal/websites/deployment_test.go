@@ -181,7 +181,8 @@ func TestInterruptedTasksAreDurable(t *testing.T) {
 	root, source, logs := t.TempDir(), t.TempDir(), t.TempDir()
 	id := newDeploymentID()
 	task := deploymentTask{ID: id, State: "building", CreatedAt: time.Now().UTC().Format(time.RFC3339), Name: "app"}
-	if e := writeDeploymentJSON(filepath.Join(root, id+".json"), task); e != nil {
+	discovered := filepath.Join(root, "found.json")
+	if e := writeDeploymentJSON(discovered, task); e != nil {
 		t.Fatal(e)
 	}
 	m := newDeploymentManager(NewWebsiteService(serviceDeps{registry: NewMemoryWebsiteRegistry()}), deploymentEngine{limits: defaultDeploymentLimits()}, root, source, logs)
@@ -193,6 +194,47 @@ func TestInterruptedTasksAreDurable(t *testing.T) {
 	if actual.State != "interrupted" || !strings.Contains(actual.Error, "未自动重新发布") {
 		t.Fatalf("中断事实错误：%+v", actual)
 	}
+	want, err := json.Marshal(actual)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if raw, err := os.ReadFile(discovered); err != nil || !bytes.Equal(raw, want) {
+		t.Fatalf("中断回执应以紧凑 JSON 回写发现路径：%s，%v", raw, err)
+	}
+	if _, err := os.Stat(filepath.Join(root, id+".json")); !os.IsNotExist(err) {
+		t.Fatalf("恢复不应另写 ID 路径：%v", err)
+	}
+}
+
+func TestDeploymentCleanupKeepsTasksAtRetentionBoundary(t *testing.T) {
+	root, source, logs := t.TempDir(), t.TempDir(), t.TempDir()
+	synctest.Test(t, func(t *testing.T) {
+		created := time.Now().Add(-30 * 24 * time.Hour).UTC().Format(time.RFC3339)
+		boundary := deploymentTask{ID: newDeploymentID(), State: "succeeded", CreatedAt: created}
+		badTime := deploymentTask{ID: newDeploymentID(), State: "succeeded", CreatedAt: "invalid"}
+		waiting := deploymentTask{ID: newDeploymentID(), State: "awaiting-config", CreatedAt: created}
+		for _, task := range []deploymentTask{boundary, badTime, waiting} {
+			if err := writeDeploymentJSON(filepath.Join(root, task.ID+".json"), task); err != nil {
+				t.Fatal(err)
+			}
+		}
+		m := newDeploymentManager(NewWebsiteService(serviceDeps{registry: NewMemoryWebsiteRegistry()}), deploymentEngine{limits: defaultDeploymentLimits()}, root, source, logs)
+		defer m.Close(context.Background())
+		if _, err := m.getTask(boundary.ID); err != nil {
+			t.Fatalf("恰好 30 天的部署任务仍应保留：%v", err)
+		}
+		if _, err := os.Stat(filepath.Join(root, badTime.ID+".json")); !os.IsNotExist(err) {
+			t.Fatalf("坏创建时间的终态任务按原口径清理：%v", err)
+		}
+		time.Sleep(time.Second)
+		m.cleanup()
+		if _, err := os.Stat(filepath.Join(root, boundary.ID+".json")); !os.IsNotExist(err) {
+			t.Fatalf("超过 30 天的部署任务应清理：%v", err)
+		}
+		if _, err := m.getTask(waiting.ID); err != nil {
+			t.Fatalf("等待配置的任务不按创建时间清理：%v", err)
+		}
+	})
 }
 
 func TestWebsiteCloseStopsDeploymentCleanupWithoutCancellingTasks(t *testing.T) {

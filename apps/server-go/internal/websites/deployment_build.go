@@ -12,8 +12,6 @@ import (
 	"strings"
 )
 
-var regexpDeploymentID = regexp.MustCompile(`^[a-f0-9-]{36}$`)
-
 func newDeploymentID() string { return randomUUID() }
 func candidateFor(s sourceRecord, id string) (projectCandidate, error) {
 	if s.Report != nil {

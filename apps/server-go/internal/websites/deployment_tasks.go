@@ -121,10 +121,9 @@ func (m *deploymentManager) submit(ctx context.Context, in deploymentInput) (dep
 			return deploymentTask{}, shared.Conflict("项目已有部署任务")
 		}
 	}
-	if err = writeDeploymentJSON(filepath.Join(m.root, id+".json"), &t); err != nil {
+	if err = m.publishTaskLocked(id, &t); err != nil {
 		return deploymentTask{}, err
 	}
-	m.tasks[id] = &t
 	ctx, cancel := context.WithCancel(context.Background())
 	m.cancel[id] = cancel
 	go m.execute(ctx, id)

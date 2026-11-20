@@ -228,13 +228,12 @@ func mountDeploymentRoutes(r chi.Router, m *deploymentManager) {
 		updated.State = "queued"
 		updated.Error = ""
 		updated.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-		err = writeDeploymentJSON(filepath.Join(m.root, id+".json"), &updated)
+		err = m.publishTaskLocked(id, &updated)
 		if err != nil {
 			m.mu.Unlock()
 			middleware.WriteError(w, err)
 			return
 		}
-		m.tasks[id] = &updated
 		ctx, cancel := context.WithCancel(context.Background())
 		m.cancel[id] = cancel
 		m.mu.Unlock()
@@ -297,7 +296,7 @@ func (m *deploymentManager) rollbackRequest(ctx context.Context, id, requestID, 
 	m.mu.Lock()
 	m.cancel[taskID] = cancelTask
 	m.tasks[taskID] = &t
-	err = writeDeploymentJSON(filepath.Join(m.root, taskID+".json"), &t)
+	err = writeDeploymentJSON(m.ledger().Path(taskID), &t)
 	m.mu.Unlock()
 	if err != nil {
 		m.service.inProgress.remove(id)

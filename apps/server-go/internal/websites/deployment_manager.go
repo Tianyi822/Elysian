@@ -19,6 +19,7 @@ import (
 	"elysian/server/internal/seam"
 	"elysian/server/internal/shared"
 	"elysian/server/internal/tasklog"
+	"elysian/server/internal/taskstore"
 )
 
 type deploymentManager struct {
@@ -67,7 +68,7 @@ func newDeploymentManager(s *websiteService, e deploymentEngine, root, sourceRoo
 			m.sources[src.ID] = &src
 		}
 	}
-	files, _ = filepath.Glob(filepath.Join(root, "*.json"))
+	files, _ = m.ledger().Glob()
 	for _, f := range files {
 		var t deploymentTask
 		if json.Unmarshal([]byte(smallText(f)), &t) == nil && safeDeploymentID(t.ID) {
@@ -159,7 +160,14 @@ func productionDeploymentManager(s *websiteService, engine deploymentEngine) *de
 	engine.limits = limits
 	return newDeploymentManager(s, engine, filepath.Join(paths.StateDir, "website-deployments"), filepath.Join(paths.TmpDir, "website-sources"), filepath.Join(paths.LogsDir, "website-deployments"))
 }
-func safeDeploymentID(id string) bool { return regexpDeploymentID.MatchString(id) }
+func safeDeploymentID(id string) bool { return taskstore.ValidUUIDShape(id) }
+
+func (m *deploymentManager) ledger() taskstore.Dir { return taskstore.Dir(m.root) }
+
+func (m *deploymentManager) publishTaskLocked(id string, t *deploymentTask) error {
+	return taskstore.SaveAndPublish(m.ledger(), m.tasks, id, t, writeDeploymentJSON)
+}
+
 func writeDeploymentJSON(path string, v any) error {
 	return atomicfile.WriteJSON(path, v, atomicfile.JSONOptions{
 		WriteOptions: atomicfile.WriteOptions{TempPattern: ".write-*"},
@@ -183,7 +191,7 @@ func (m *deploymentManager) cleanup() {
 				t.State = "failed"
 				t.Stage = "来源保留期已到期"
 				t.Error = "临时来源保留 24 小时，请重新上传或拉取"
-				_ = writeDeploymentJSON(filepath.Join(m.root, t.ID+".json"), t)
+				_ = writeDeploymentJSON(m.ledger().Path(t.ID), t)
 				_ = os.RemoveAll(filepath.Join(m.sourceRoot, t.ID+"-output"))
 			}
 			if t.SourceID == id && activeDeployment(t.State) {
@@ -196,10 +204,10 @@ func (m *deploymentManager) cleanup() {
 		}
 	}
 	for id, t := range m.tasks {
-		created, _ := time.Parse(time.RFC3339, t.CreatedAt)
-		if !activeDeployment(t.State) && t.State != "awaiting-config" && created.Add(30*24*time.Hour).Before(now) {
+		deadline, _ := taskstore.RetentionDeadline(t.CreatedAt)
+		if !activeDeployment(t.State) && t.State != "awaiting-config" && deadline.Before(now) {
 			delete(m.tasks, id)
-			_ = os.Remove(filepath.Join(m.root, id+".json"))
+			_ = m.ledger().Remove(id)
 			_ = os.Remove(filepath.Join(m.logRoot, id+".log"))
 		}
 	}
@@ -407,11 +415,7 @@ func (m *deploymentManager) mutate(id string, fn func(*deploymentTask)) error {
 	_ = json.Unmarshal(b, &updated)
 	fn(&updated)
 	updated.UpdatedAt = time.Now().UTC().Format(time.RFC3339)
-	if err := writeDeploymentJSON(filepath.Join(m.root, id+".json"), &updated); err != nil {
-		return err
-	}
-	m.tasks[id] = &updated
-	return nil
+	return m.publishTaskLocked(id, &updated)
 }
 func (m *deploymentManager) getTask(id string) (deploymentTask, error) {
 	m.mu.Lock()
