@@ -115,86 +115,69 @@ func errExitStatus(code int) error {
 	return fmt.Errorf("exit status %d", code)
 }
 
-// fakeChpasswdProc 用内存管道模拟 chpasswd 子进程。
+type chpasswdTestInput struct {
+	received strings.Builder
+	writeErr error
+	closeErr error
+	closed   bool
+}
+
+func (i *chpasswdTestInput) Write(p []byte) (int, error) {
+	if i.writeErr != nil {
+		return 0, i.writeErr
+	}
+	return i.received.Write(p)
+}
+
+func (i *chpasswdTestInput) Close() error {
+	i.closed = true
+	return i.closeErr
+}
+
 type fakeChpasswdProc struct {
-	stdin     io.WriteCloser
-	closeRead func()
-	stdout    io.ReadCloser
-	stderr    io.ReadCloser
-	stderrIn  io.WriteCloser
-	exitCode  int
-	waitErr   error
-	closed    bool
+	stdin    io.WriteCloser
+	stderr   io.Writer
+	detail   string
+	exitCode int
+	waited   bool
 }
 
 func (p *fakeChpasswdProc) Stdin() io.WriteCloser { return p.stdin }
-func (p *fakeChpasswdProc) Stdout() io.Reader     { return p.stdout }
-func (p *fakeChpasswdProc) Stderr() io.Reader     { return p.stderr }
 func (p *fakeChpasswdProc) Wait() error {
-	p.closed = true
-	return p.waitErr
+	p.waited = true
+	if p.detail != "" {
+		_, _ = io.WriteString(p.stderr, p.detail)
+	}
+	if p.exitCode != 0 {
+		return errExitStatus(p.exitCode)
+	}
+	return nil
 }
 func (p *fakeChpasswdProc) ExitCode() int { return p.exitCode }
 
-// newFakeChpasswdProc 构造带管道的 fake 子进程；stderrText 在管道建立后写入。
-func newFakeChpasswdProc(t *testing.T, exitCode int, stderrText string, brokenStdin bool) *fakeChpasswdProc {
-	t.Helper()
-	stdinReader, stdinWriter := io.Pipe()
-	stdoutReader, _ := io.Pipe()
-	stderrReader, stderrWriter := io.Pipe()
-	var waitErr error
-	if exitCode != 0 {
-		waitErr = errExitStatus(exitCode)
-	}
-	proc := &fakeChpasswdProc{
-		stdin:     stdinWriter,
-		closeRead: func() { stdinReader.Close() },
-		stdout:    stdoutReader,
-		stderr:    stderrReader,
-		stderrIn:  stderrWriter,
-		exitCode:  exitCode,
-		waitErr:   waitErr,
-	}
-	if brokenStdin {
-		// 模拟 chpasswd 读 stdin 前退出：关掉读端，后续 Write 得 EPIPE。
-		stdinReader.Close()
-		return proc
-	}
-	// 正常路径：把 stdin 读出来丢掉，避免写端阻塞。
-	go func() { _, _ = io.Copy(io.Discard, stdinReader) }()
-	if exitCode != 0 && stderrText != "" {
-		go func() {
-			_, _ = stderrWriter.Write([]byte(stderrText))
-			stderrWriter.Close()
-		}()
-	} else {
-		go stderrWriter.Close()
-	}
-	return proc
-}
-
 func TestRunChpasswdViaStdin正常路径(t *testing.T) {
-	var spawned *fakeChpasswdProc
-	spawn := func() (chpasswdChild, error) {
-		spawned = newFakeChpasswdProc(t, 0, "", false)
-		return spawned, nil
-	}
+	stdin := &chpasswdTestInput{}
+	proc := &fakeChpasswdProc{stdin: stdin}
+	spawn := func(io.Writer) (chpasswdChild, error) { return proc, nil }
 	if _, err := runChpasswdViaStdin(spawn, "root:新密码"); err != nil {
 		t.Fatalf("正常路径应成功：%v", err)
+	}
+	if stdin.received.String() != "root:新密码" || !stdin.closed || !proc.waited {
+		t.Fatal("正常路径应逐字写入 stdin，关闭输入并回收进程")
 	}
 }
 
 func TestRunChpasswdViaStdin非零退出(t *testing.T) {
-	spawn := func() (chpasswdChild, error) {
-		return newFakeChpasswdProc(t, 1, "chpasswd: 密码过期信息更新失败\n", false), nil
+	spawn := func(stderr io.Writer) (chpasswdChild, error) {
+		return &fakeChpasswdProc{stdin: &chpasswdTestInput{}, stderr: stderr, detail: "chpasswd: 密码过期信息更新失败\n", exitCode: 1}, nil
 	}
 	_, err := runChpasswdViaStdin(spawn, "root:x")
 	if err == nil || err.Error() != "chpasswd: 密码过期信息更新失败" {
 		t.Errorf("非零退出应取 stderr trim：%v", err)
 	}
 
-	spawn = func() (chpasswdChild, error) {
-		return newFakeChpasswdProc(t, 1, "", false), nil
+	spawn = func(io.Writer) (chpasswdChild, error) {
+		return &fakeChpasswdProc{stdin: &chpasswdTestInput{}, exitCode: 1}, nil
 	}
 	_, err = runChpasswdViaStdin(spawn, "root:x")
 	if err == nil || err.Error() != "chpasswd 退出码 1" {
@@ -203,17 +186,29 @@ func TestRunChpasswdViaStdin非零退出(t *testing.T) {
 }
 
 func TestRunChpasswdViaStdin管道破裂(t *testing.T) {
-	spawn := func() (chpasswdChild, error) {
-		return newFakeChpasswdProc(t, 1, "", true), nil
-	}
+	stdin := &chpasswdTestInput{writeErr: io.ErrClosedPipe}
+	proc := &fakeChpasswdProc{stdin: stdin, exitCode: 1}
+	spawn := func(io.Writer) (chpasswdChild, error) { return proc, nil }
 	_, err := runChpasswdViaStdin(spawn, "root:x")
-	if err == nil {
-		t.Errorf("stdin 写失败（EPIPE）应带回错误，不得打崩进程")
+	if !errors.Is(err, io.ErrClosedPipe) {
+		t.Errorf("stdin 写失败应原样返回：%v", err)
+	}
+	if !stdin.closed || !proc.waited {
+		t.Error("stdin 写失败后仍须关闭输入并回收已启动的进程")
+	}
+}
+
+func TestRunChpasswdViaStdin关闭错误(t *testing.T) {
+	stdin := &chpasswdTestInput{closeErr: io.ErrClosedPipe}
+	proc := &fakeChpasswdProc{stdin: stdin, exitCode: 1}
+	spawn := func(io.Writer) (chpasswdChild, error) { return proc, nil }
+	if _, err := runChpasswdViaStdin(spawn, "root:x"); !errors.Is(err, io.ErrClosedPipe) || !proc.waited {
+		t.Fatalf("stdin 关闭失败应原样返回，并回收进程：%v", err)
 	}
 }
 
 func TestRunChpasswdViaStdin管道未建立(t *testing.T) {
-	spawn := func() (chpasswdChild, error) {
+	spawn := func(io.Writer) (chpasswdChild, error) {
 		return &fakeChpasswdProc{}, nil
 	}
 	_, err := runChpasswdViaStdin(spawn, "root:x")
@@ -223,9 +218,31 @@ func TestRunChpasswdViaStdin管道未建立(t *testing.T) {
 }
 
 func TestRunChpasswdViaStdin启动失败(t *testing.T) {
-	spawn := func() (chpasswdChild, error) { return nil, errors.New("spawn 失败") }
+	spawn := func(io.Writer) (chpasswdChild, error) { return nil, errors.New("spawn 失败") }
 	if _, err := runChpasswdViaStdin(spawn, "root:x"); err == nil || err.Error() != "spawn 失败" {
 		t.Errorf("spawn 失败应原样带回：%v", err)
+	}
+}
+
+func TestSpawnChpasswdPipeDiscardsStdoutAndCollectsStderr(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("PATH", dir)
+	const child = `#!/bin/sh
+IFS= read -r line || [ "$line" = "fixture:input" ] || exit 7
+[ "$line" = "fixture:input" ] || exit 7
+i=0
+while [ "$i" -lt 2048 ]; do
+	printf '%s\n' 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789'
+	i=$((i+1))
+done
+printf '%s\n' '测试 stderr' >&2
+exit 3
+`
+	if err := os.WriteFile(filepath.Join(dir, "chpasswd"), []byte(child), 0700); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := runChpasswdViaStdin(spawnChpasswdPipe, "fixture:input"); err == nil || err.Error() != "测试 stderr" {
+		t.Fatalf("应丢弃 stdout 并保留完整 stderr：%v", err)
 	}
 }
 

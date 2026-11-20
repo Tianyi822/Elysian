@@ -345,14 +345,10 @@ func isSymbolicLink(path string) (bool, error) {
 
 // ---------- chpasswd（凭据只走 stdin，密码不进命令行参数） ----------
 
-// chpasswdChild chpasswd 子进程的最小形状：三路管道与等待结果。
+// chpasswdChild chpasswd 子进程的输入与等待结果。
 type chpasswdChild interface {
 	// Stdin 标准输入写端；nil 表示管道未建立。
 	Stdin() io.WriteCloser
-	// Stdout 标准输出读端；nil 表示管道未建立。
-	Stdout() io.Reader
-	// Stderr 标准错误读端；nil 表示管道未建立。
-	Stderr() io.Reader
 	// Wait 等待退出；非 nil 表示非零退出或等待失败。
 	Wait() error
 	// ExitCode 退出码；被信号杀死（JS close 事件的 code=null）返回 -1。
@@ -360,39 +356,32 @@ type chpasswdChild interface {
 }
 
 // spawnChpasswdLike 启动 chpasswd 子进程；启动失败（如可执行文件不存在）返回错误。
-type spawnChpasswdLike func() (chpasswdChild, error)
+type spawnChpasswdLike func(stderr io.Writer) (chpasswdChild, error)
 
 // runChpasswdViaStdin chpasswd 凭据只走 stdin：spawn 后把 `账号:密码` 写进标准
 // 输入，密码不进命令行。stdin 写失败（EPIPE 等，chpasswd 在读 stdin 前退出时）
 // 同步返回错误（TS 侧是异步事件接住，行为等价：错误带回、不打崩进程）；退出码
 // 非 0 时错误信息取 stderr trim，无 stderr 回退 `chpasswd 退出码 <code>`（被信号
-// 杀死记 unknown）；stdio 未建立 → 中文错误。
+// 杀死记 unknown）；输入管道未建立 → 中文错误。
 func runChpasswdViaStdin(spawnChpasswd spawnChpasswdLike, input string) (string, error) {
-	child, spawnErr := spawnChpasswd()
+	var stderr bytes.Buffer
+	child, spawnErr := spawnChpasswd(&stderr)
 	if spawnErr != nil {
 		return "", spawnErr
 	}
-	stdin, stdout, stderrPipe := child.Stdin(), child.Stdout(), child.Stderr()
-	if stdin == nil || stdout == nil || stderrPipe == nil {
+	stdin := child.Stdin()
+	if stdin == nil {
 		return "", errors.New("chpasswd 子进程的标准管道未建立")
 	}
-	var stderr bytes.Buffer
-	drained := make(chan struct{})
-	go func() {
-		_, _ = io.Copy(&stderr, stderrPipe)
-		close(drained)
-	}()
-	go func() {
-		_, _ = io.Copy(io.Discard, stdout)
-	}()
-	if _, err := io.WriteString(stdin, input); err != nil {
-		return "", err
-	}
-	if err := stdin.Close(); err != nil {
-		return "", err
-	}
+	_, writeErr := io.WriteString(stdin, input)
+	closeErr := stdin.Close()
 	waitErr := child.Wait()
-	<-drained
+	if writeErr != nil {
+		return "", writeErr
+	}
+	if closeErr != nil {
+		return "", closeErr
+	}
 	if waitErr == nil {
 		return "", nil
 	}
@@ -412,18 +401,10 @@ type execChpasswdChild struct {
 	ctx    context.Context
 	cancel context.CancelFunc
 	stdin  io.WriteCloser
-	stdout io.ReadCloser
-	stderr io.ReadCloser
 }
 
 // Stdin 标准输入写端。
 func (c *execChpasswdChild) Stdin() io.WriteCloser { return c.stdin }
-
-// Stdout 标准输出读端。
-func (c *execChpasswdChild) Stdout() io.Reader { return c.stdout }
-
-// Stderr 标准错误读端。
-func (c *execChpasswdChild) Stderr() io.Reader { return c.stderr }
 
 // Wait 等待退出。
 func (c *execChpasswdChild) Wait() error {
@@ -439,9 +420,10 @@ func (c *execChpasswdChild) ExitCode() int {
 	return c.cmd.ProcessState.ExitCode()
 }
 
-// spawnChpasswdPipe 真实 spawn 接线：stdio 三路 pipe。
-func spawnChpasswdPipe() (chpasswdChild, error) {
+// spawnChpasswdPipe 只建输入管道；stdout 默认丢弃，Wait 等待 stderr 收集完成。
+func spawnChpasswdPipe(stderr io.Writer) (chpasswdChild, error) {
 	cmd, ctx, cancel := shared.SystemCommand(context.Background(), "chpasswd")
+	cmd.Stderr = stderr
 	started := false
 	defer func() {
 		if !started {
@@ -452,19 +434,11 @@ func spawnChpasswdPipe() (chpasswdChild, error) {
 	if err != nil {
 		return nil, err
 	}
-	stdout, err := cmd.StdoutPipe()
-	if err != nil {
-		return nil, err
-	}
-	stderr, err := cmd.StderrPipe()
-	if err != nil {
-		return nil, err
-	}
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
 	started = true
-	return &execChpasswdChild{cmd: cmd, ctx: ctx, cancel: cancel, stdin: stdin, stdout: stdout, stderr: stderr}, nil
+	return &execChpasswdChild{cmd: cmd, ctx: ctx, cancel: cancel, stdin: stdin}, nil
 }
 
 // ---------- 真实接线 ----------
