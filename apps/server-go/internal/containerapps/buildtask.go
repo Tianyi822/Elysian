@@ -497,12 +497,17 @@ func (m *BuildManager) Submit(ctx context.Context, workspaceDir, slug string, in
 	if err != nil {
 		return BuildTask{}, false, err
 	}
+	return m.validateAndQueue(ctx, slug, plans, archive)
+}
+
+// validateAndQueue 在工作区锁内执行；引擎回查不持有任务锁。
+func (m *BuildManager) validateAndQueue(ctx context.Context, slug string, plans []buildServicePlan, archive BuildTaskInput) (BuildTask, bool, error) {
 	archiveJSON, err := json.Marshal(archive)
 	if err != nil {
 		return BuildTask{}, false, err
 	}
 	m.mu.Lock()
-	if existingID, ok := m.requestIndex[input.RequestID]; ok {
+	if existingID, ok := m.requestIndex[archive.RequestID]; ok {
 		existing, found := m.snapshotLocked(existingID)
 		m.mu.Unlock()
 		if found {
@@ -539,8 +544,8 @@ func (m *BuildManager) Submit(ctx context.Context, workspaceDir, slug string, in
 	task := BuildTask{
 		ID:             taskID,
 		Slug:           slug,
-		Mode:           input.Mode,
-		RequestID:      input.RequestID,
+		Mode:           archive.Mode,
+		RequestID:      archive.RequestID,
 		State:          BuildStateQueued,
 		Stage:          buildStageQueued,
 		CreatedAt:      now.UTC().Format(time.RFC3339),
@@ -553,7 +558,7 @@ func (m *BuildManager) Submit(ctx context.Context, workspaceDir, slug string, in
 	m.mu.Lock()
 	// 无锁引擎往返（占用回查）期间可能有并发提交插队：插入登记前在锁内重查两不变量，
 	// 破坏时直接返回，不插入任何登记（不把引擎往返搬进锁内，避免持锁做 IO）。
-	if existingID, ok := m.requestIndex[input.RequestID]; ok {
+	if existingID, ok := m.requestIndex[archive.RequestID]; ok {
 		existing, found := m.snapshotLocked(existingID)
 		if found {
 			existingJSON, marshalErr := json.Marshal(existing.Input)
@@ -585,15 +590,15 @@ func (m *BuildManager) Submit(ctx context.Context, workspaceDir, slug string, in
 		return BuildTask{}, false, errors.New("任务标识冲突，请重试")
 	}
 	m.tasks[taskID] = &task
-	m.requestIndex[input.RequestID] = taskID
+	m.requestIndex[archive.RequestID] = taskID
 	m.cancel[taskID] = cancel
 	err = config.AtomicJSON(m.ledger().Path(taskID), &task)
 	if err != nil {
 		// 落盘失败在持锁段内回滚内存登记：否则 queued 残留会让 HasActive 恒真、
 		// DELETE 与后续 Submit 恒 409 且 worker 从未启动，只能重启解脱。
 		delete(m.tasks, taskID)
-		if m.requestIndex[input.RequestID] == taskID {
-			delete(m.requestIndex, input.RequestID)
+		if m.requestIndex[archive.RequestID] == taskID {
+			delete(m.requestIndex, archive.RequestID)
 		}
 		delete(m.cancel, taskID)
 		m.mu.Unlock()
@@ -601,7 +606,7 @@ func (m *BuildManager) Submit(ctx context.Context, workspaceDir, slug string, in
 		return BuildTask{}, false, err
 	}
 	m.mu.Unlock()
-	m.log(taskID, fmt.Sprintf("已提交构建任务：%s（requestId %s）", taskID, input.RequestID))
+	m.log(taskID, fmt.Sprintf("已提交构建任务：%s（requestId %s）", taskID, archive.RequestID))
 	go m.run(parent, taskID)
 	copied := task
 	copied.Results = []BuildResult{}
