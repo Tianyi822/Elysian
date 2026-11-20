@@ -187,7 +187,7 @@ func (a *AgentFacade) Write(ctx context.Context, slug, path, content, expectedDi
 	if !AgentReadablePath(path) || !validWorkspaceDigest(expectedDigest) {
 		return nil, shared.InvalidRequest("Agent 文件变更需要非秘密路径与有效内容快照")
 	}
-	release, err := a.handler.lockEditable(ctx, slug)
+	release, err := a.handler.workspace().lockEditable(ctx, slug)
 	if err != nil {
 		return nil, err
 	}
@@ -231,7 +231,7 @@ func (a *AgentFacade) Remove(ctx context.Context, slug, expectedDigest string) e
 	if !validWorkspaceDigest(expectedDigest) {
 		return shared.InvalidRequest("删除工作区需要有效内容快照")
 	}
-	release, err := a.handler.lockEditable(ctx, slug)
+	release, err := a.handler.workspace().lockEditable(ctx, slug)
 	if err != nil {
 		return err
 	}

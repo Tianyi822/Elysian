@@ -3,7 +3,6 @@ package containerapps
 import (
 	"context"
 	"errors"
-	"io"
 	"net/http"
 	"time"
 
@@ -61,6 +60,10 @@ type Handler struct {
 	Logs seam.Logs
 	// Builds 构建任务机；nil 视同引擎不可用（装配防御）。
 	Builds *BuildManager
+}
+
+func (h Handler) workspace() workspaceService {
+	return workspaceService{registry: h.Registry, builds: h.Builds}
 }
 
 // Router 构造容器工作区的 chi 路由。挂载点 /api/container-apps，
@@ -164,44 +167,18 @@ func (h Handler) create(w http.ResponseWriter, r *http.Request) {
 
 func (h Handler) remove(w http.ResponseWriter, r *http.Request) {
 	slug := chi.URLParam(r, "slug")
-	release, lockErr := h.lockEditable(r.Context(), slug)
+	workspace := h.workspace()
+	release, lockErr := workspace.lockEditable(r.Context(), slug)
 	if lockErr != nil {
 		writeError(w, lockErr)
 		return
 	}
 	defer release()
-	// 工作区有进行中的构建任务时拒绝删除：任务还引用着目录里的上下文。
-	if h.Builds != nil && h.Builds.HasActive(slug) {
-		shared.SendError(w, http.StatusConflict, "工作区有进行中的构建任务，请先取消或等待完成")
-		return
-	}
-	if err := h.Registry.Delete(slug); err != nil {
+	if err := workspace.removeLocked(slug); err != nil {
 		writeError(w, err)
 		return
 	}
-	// 删除成功后清残留活跃任务：并发窗口内已开跑的任务直接落 failed 终态并停流，
-	// 窗口内更晚创建的任务由打包阶段自然失败，不做联合锁。
-	if h.Builds != nil {
-		h.Builds.InterruptActive(slug, workspaceDeletedMessage)
-	}
 	w.WriteHeader(http.StatusNoContent)
-}
-
-// workspaceDir 解析 slug 并给出其绝对目录，同时校验 path 参数。
-func (h Handler) workspaceDir(r *http.Request) (string, string, error) {
-	slug := chi.URLParam(r, "slug")
-	if err := ValidateSlug(slug); err != nil {
-		return "", "", badRequest(err)
-	}
-	dir, err := h.Registry.Directory(slug)
-	if err != nil {
-		return "", "", err
-	}
-	rel, err := NormalizeRelative(r.URL.Query().Get("path"))
-	if err != nil {
-		return "", "", badRequest(err)
-	}
-	return dir, rel, nil
 }
 
 func (h Handler) listFiles(w http.ResponseWriter, r *http.Request) {
@@ -219,13 +196,15 @@ func (h Handler) listFiles(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handler) uploadFile(w http.ResponseWriter, r *http.Request) {
-	release, lockErr := h.lockEditable(r.Context(), chi.URLParam(r, "slug"))
+	slug := chi.URLParam(r, "slug")
+	workspace := h.workspace()
+	release, lockErr := workspace.lockEditable(r.Context(), slug)
 	if lockErr != nil {
 		writeError(w, lockErr)
 		return
 	}
 	defer release()
-	dir, rel, err := h.workspaceDir(r)
+	dir, rel, err := workspace.resolvePath(slug, r.URL.Query().Get("path"))
 	if err != nil {
 		writeError(w, err)
 		return
@@ -244,13 +223,15 @@ func (h Handler) uploadFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handler) deleteFile(w http.ResponseWriter, r *http.Request) {
-	release, lockErr := h.lockEditable(r.Context(), chi.URLParam(r, "slug"))
+	slug := chi.URLParam(r, "slug")
+	workspace := h.workspace()
+	release, lockErr := workspace.lockEditable(r.Context(), slug)
 	if lockErr != nil {
 		writeError(w, lockErr)
 		return
 	}
 	defer release()
-	dir, rel, err := h.workspaceDir(r)
+	dir, rel, err := workspace.resolvePath(slug, r.URL.Query().Get("path"))
 	if err != nil {
 		writeError(w, err)
 		return
@@ -263,7 +244,7 @@ func (h Handler) deleteFile(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handler) readContent(w http.ResponseWriter, r *http.Request) {
-	dir, rel, err := h.workspaceDir(r)
+	dir, rel, err := h.workspace().resolvePath(chi.URLParam(r, "slug"), r.URL.Query().Get("path"))
 	if err != nil {
 		writeError(w, err)
 		return
@@ -277,13 +258,15 @@ func (h Handler) readContent(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handler) writeContent(w http.ResponseWriter, r *http.Request) {
-	release, lockErr := h.lockEditable(r.Context(), chi.URLParam(r, "slug"))
+	slug := chi.URLParam(r, "slug")
+	workspace := h.workspace()
+	release, lockErr := workspace.lockEditable(r.Context(), slug)
 	if lockErr != nil {
 		writeError(w, lockErr)
 		return
 	}
 	defer release()
-	dir, rel, err := h.workspaceDir(r)
+	dir, rel, err := workspace.resolvePath(slug, r.URL.Query().Get("path"))
 	if err != nil {
 		writeError(w, err)
 		return
@@ -292,16 +275,7 @@ func (h Handler) writeContent(w http.ResponseWriter, r *http.Request) {
 		writeError(w, &TextTypeError{})
 		return
 	}
-	body, err := io.ReadAll(io.LimitReader(r.Body, maxTextBytes+1))
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	if int64(len(body)) > maxTextBytes {
-		writeError(w, &TooLargeError{Limit: maxTextBytes})
-		return
-	}
-	entry, err := WriteContent(dir, rel, string(body))
+	entry, err := writeWorkspaceText(dir, rel, r.Body)
 	if err != nil {
 		writeError(w, err)
 		return
@@ -309,49 +283,13 @@ func (h Handler) writeContent(w http.ResponseWriter, r *http.Request) {
 	shared.SendJSON(w, http.StatusOK, entry)
 }
 
-func (h Handler) lockEditable(ctx context.Context, slug string) (func(), error) {
-	release, err := h.Registry.LockWorkspace(ctx, slug)
-	if err != nil {
-		return nil, err
-	}
-	if h.Builds != nil && h.Builds.HasActive(slug) {
-		release()
-		return nil, shared.Conflict("工作区有进行中的构建任务，请先取消或等待完成")
-	}
-	return release, nil
-}
-
 func (h Handler) checkCompose(w http.ResponseWriter, r *http.Request) {
-	dir, rel, err := h.workspaceDir(r)
+	result, err := h.workspace().checkCompose(chi.URLParam(r, "slug"), r.URL.Query().Get("path"))
 	if err != nil {
 		writeError(w, err)
-		return
-	}
-	content, _, err := ReadContent(dir, rel)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	result, err := CheckCompose(dir, rel, content)
-	if err != nil {
-		writeError(w, badRequest(err))
 		return
 	}
 	shared.SendJSON(w, http.StatusOK, result)
-}
-
-// badRequest 把输入校验类错误统一成 400，避免用户写错路径却收到 500；带状态码的
-// 错误（文件不存在等）原样透传，由 writeError 映射。
-func badRequest(err error) error {
-	if err == nil {
-		return nil
-	}
-	var invalid *shared.InvalidRequestError
-	var fileNotFound *FileNotFoundError
-	if errors.As(err, &invalid) || errors.As(err, &fileNotFound) {
-		return err
-	}
-	return shared.InvalidRequest(err.Error())
 }
 
 // TextTypeError 内容编辑的 Content-Type 不符；映射 415。

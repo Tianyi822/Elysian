@@ -28,7 +28,7 @@ func TestBuildStreamLossKeepsWorkspaceAndImageReservations(t *testing.T) {
 	if err != nil || status.Terminal {
 		t.Fatalf("agent released stream loss barrier: %+v %v", status, err)
 	}
-	if release, err := env.handler.lockEditable(context.Background(), "uncertain"); err == nil {
+	if release, err := env.handler.workspace().lockEditable(context.Background(), "uncertain"); err == nil {
 		release()
 		t.Fatal("unconfirmed build allowed workspace edits")
 	}
