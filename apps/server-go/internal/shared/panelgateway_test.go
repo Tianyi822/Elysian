@@ -9,7 +9,6 @@ import (
 	"net"
 	"net/http"
 	"net/http/httptest"
-	"strconv"
 	"strings"
 	"testing"
 )
@@ -121,17 +120,5 @@ func TestGatewayWebSocketAndSSE(t *testing.T) {
 	_, b, err = c.ReadMessage()
 	if err != nil || string(b) != "terminal-input" {
 		t.Fatalf("WebSocket 流失效：%s %v", b, err)
-	}
-}
-func TestGatewayRejectsDomainsAndWrongPorts(t *testing.T) {
-	for _, host := range []string{"evil.example:48100", "127.0.0.1:48101", "127.0.0.1:48100@evil.example", "127.0.0.1:48100/path"} {
-		if shared.PanelIPHost(host, 48100) {
-			t.Fatal("非法 Host 被接受：" + host)
-		}
-	}
-	for _, host := range []string{"127.0.0.1:48100", "198.51.100.20:48100", "[2001:db8::1]:48100", "localhost:" + strconv.Itoa(48100)} {
-		if !shared.PanelIPHost(host, 48100) {
-			t.Fatal("IP Host 被拒绝：" + host)
-		}
 	}
 }

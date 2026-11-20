@@ -58,7 +58,7 @@ func (w Worker) install() string {
 	if w.Install != "" {
 		return w.Install
 	}
-	return InstallRoot
+	return installRoot
 }
 func (w Worker) phase(r *taskRecord, phase string) error {
 	r.Phase = phase
@@ -88,7 +88,7 @@ func (w Worker) Run(ctx context.Context, id string) (retErr error) {
 		return err
 	}
 	defer func() {
-		if !r.ResourceFinalizer && !Active(r.State) && r.State != "recovery-failed" && !r.resourcesPending() && r.Worker != "" {
+		if !r.ResourceFinalizer && !taskActive(r.State) && r.State != "recovery-failed" && !r.resourcesPending() && r.Worker != "" {
 			_ = os.Remove(r.Worker)
 		}
 	}()
@@ -98,7 +98,7 @@ func (w Worker) Run(ctx context.Context, id string) (retErr error) {
 			retErr = w.finishFailure(&r, fmt.Errorf("维护进程异常退出：%v", p))
 		}
 	}()
-	if !Active(r.State) {
+	if !taskActive(r.State) {
 		return nil
 	}
 	// HTTP 响应有机会到达浏览器，任务已持久化，不依赖请求生命周期。
@@ -242,7 +242,7 @@ func (w Worker) execute(ctx context.Context, r *taskRecord) error {
 			return err
 		}
 		downloadCtx, cancelDownload := context.WithTimeout(ctx, releaseDownloadTimeout)
-		downloadCtx = withDownloadProgress(downloadCtx, func(value DownloadProgress) error {
+		downloadCtx = withDownloadProgress(downloadCtx, func(value downloadProgress) error {
 			r.Download = &value
 			r.UpdatedAt = value.UpdatedAt
 			return w.Store.lock(func() error { return w.Store.save(*r) })
@@ -474,7 +474,7 @@ func (w Worker) Recover(ctx context.Context) error {
 		return err
 	}
 	for _, r := range rows {
-		if !Active(r.State) && r.State != "recovery-failed" {
+		if !taskActive(r.State) && r.State != "recovery-failed" {
 			continue
 		}
 		if r.Committed {

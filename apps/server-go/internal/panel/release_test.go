@@ -43,7 +43,7 @@ func releaseArchive(t *testing.T, sha, arch string, change func(map[string][]byt
 		t.Fatal(err)
 	}
 	sum := sha256.Sum256(binary)
-	manifest := releaseManifest{Schema: "elysian-release/v1", Repository: Repository, Commit: sha, OS: "linux", Arch: arch, Files: map[string]string{"elysian": hex.EncodeToString(sum[:]), "platform-helper": hex.EncodeToString(sum[:])}}
+	manifest := releaseManifest{Schema: "elysian-release/v1", Repository: panelRepository, Commit: sha, OS: "linux", Arch: arch, Files: map[string]string{"elysian": hex.EncodeToString(sum[:]), "platform-helper": hex.EncodeToString(sum[:])}}
 	script := []byte("#!/usr/bin/env bash\nexit 0\n")
 	scriptSum := sha256.Sum256(script)
 	for _, name := range releaseScripts {
@@ -80,7 +80,7 @@ func releaseSourceFixture(t *testing.T, sha string, body []byte, change func(*re
 	t.Helper()
 	requests := []string{}
 	sum := sha256.Sum256(body)
-	asset := releaseAsset{Name: "elysian-linux-" + runtime.GOARCH + ".tar.gz", URL: "https://github.com/" + Repository + "/releases/download/build-" + sha + "/elysian-linux-" + runtime.GOARCH + ".tar.gz", Digest: "sha256:" + hex.EncodeToString(sum[:]), Size: int64(len(body)), State: "uploaded"}
+	asset := releaseAsset{Name: "elysian-linux-" + runtime.GOARCH + ".tar.gz", URL: "https://github.com/" + panelRepository + "/releases/download/build-" + sha + "/elysian-linux-" + runtime.GOARCH + ".tar.gz", Digest: "sha256:" + hex.EncodeToString(sum[:]), Size: int64(len(body)), State: "uploaded"}
 	if change != nil {
 		change(&asset)
 	}
@@ -100,8 +100,8 @@ func TestPrecompiledDownloadVerifiesAndStagesPinnedRelease(t *testing.T) {
 	sha := strings.Repeat("a", 40)
 	source, requests := releaseSourceFixture(t, sha, releaseArchive(t, sha, runtime.GOARCH, nil), nil)
 	directory := filepath.Join(t.TempDir(), "download")
-	var progress []DownloadProgress
-	ctx := withDownloadProgress(context.Background(), func(value DownloadProgress) error {
+	var progress []downloadProgress
+	ctx := withDownloadProgress(context.Background(), func(value downloadProgress) error {
 		progress = append(progress, value)
 		return nil
 	})
@@ -255,7 +255,7 @@ func TestPrecompiledPreflightRejectsLegacyStopAuthorizationAndLowMemory(t *testi
 	w, r, h := resourceFixture(t)
 	m := Manager{Store: w.Store, Host: h, Ports: r.OldPorts, Enabled: true}
 	input := submitInput{Source: SourceGitHub, Channel: ChannelRelease, ReleaseTag: "v1.2.0", TargetCommit: r.TargetCommit}
-	if err := config.AtomicJSON(w.Store.updateCheckPath(input.Channel, input.Source), Update{Repository: Repository, Source: input.Source, Channel: input.Channel, ReleaseTag: input.ReleaseTag, Available: true, TargetCommit: input.TargetCommit}); err != nil {
+	if err := config.AtomicJSON(w.Store.updateCheckPath(input.Channel, input.Source), Update{Repository: panelRepository, Source: input.Source, Channel: input.Channel, ReleaseTag: input.ReleaseTag, Available: true, TargetCommit: input.TargetCommit}); err != nil {
 		t.Fatal(err)
 	}
 	h.available = 64 << 20

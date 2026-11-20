@@ -76,7 +76,7 @@ func (c *fileRuntimeCatalogCache) Load() (runtimeCatalogReport, bool) {
 						continue
 					}
 					if isText {
-						entry["version"] = NormalizeWebsiteJavaReleaseVersion(version)
+						entry["version"] = normalizeWebsiteJavaReleaseVersion(version)
 					}
 					migrated = append(migrated, entry)
 				}
@@ -84,7 +84,7 @@ func (c *fileRuntimeCatalogCache) Load() (runtimeCatalogReport, bool) {
 			}
 		}
 	}
-	report, err := ParseWebsiteRuntimeCatalogReport(cached)
+	report, err := parseWebsiteRuntimeCatalogReport(cached)
 	if err != nil {
 		return runtimeCatalogReport{}, false
 	}

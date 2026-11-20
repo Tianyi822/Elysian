@@ -14,8 +14,8 @@ import (
 )
 
 func TestDownloadProgressThrottlesAndPreservesFinalBytes(t *testing.T) {
-	var values []DownloadProgress
-	p := releaseProgressWriter{writer: io.Discard, value: DownloadProgress{TotalBytes: 10}, started: time.Now(), report: func(value DownloadProgress) error {
+	var values []downloadProgress
+	p := releaseProgressWriter{writer: io.Discard, value: downloadProgress{TotalBytes: 10}, started: time.Now(), report: func(value downloadProgress) error {
 		values = append(values, value)
 		return nil
 	}}
@@ -46,7 +46,7 @@ func TestDownloadProgressThrottlesAndPreservesFinalBytes(t *testing.T) {
 	if values[len(values)-1].CompletedBytes != 10 || values[len(values)-1].BytesPerSecond != 0 {
 		t.Fatal("最终字节或校验阶段速率错误")
 	}
-	p.report = func(DownloadProgress) error { return errors.New("fixture persistence failure") }
+	p.report = func(downloadProgress) error { return errors.New("fixture persistence failure") }
 	if err := p.publish("ready", true); err == nil {
 		t.Fatal("进度保存失败被忽略")
 	}
@@ -62,8 +62,8 @@ func TestReleaseDownloadTimeoutReportsActualBytes(t *testing.T) {
 	defer server.Close()
 	ctx, cancel := context.WithTimeout(context.Background(), 100*time.Millisecond)
 	defer cancel()
-	var last DownloadProgress
-	ctx = withDownloadProgress(ctx, func(value DownloadProgress) error { last = value; return nil })
+	var last downloadProgress
+	ctx = withDownloadProgress(ctx, func(value downloadProgress) error { last = value; return nil })
 	err := downloadRelease(ctx, server.Client(), "GitHub", releaseAsset{Name: "archive.tar.gz", URL: server.URL, Size: 100}, strings.Repeat("a", 40), filepath.Join(t.TempDir(), "download"))
 	if err == nil || !strings.Contains(err.Error(), "下载超时") || !strings.Contains(err.Error(), "4 / 100 字节") || strings.Contains(err.Error(), "SHA256") {
 		t.Fatalf("超时被误报为摘要损坏：%v", err)
@@ -116,7 +116,7 @@ func (s progressTestSource) Download(ctx context.Context, _, _ string) error {
 	if !ok {
 		return errors.New("下载进度未绑定到任务")
 	}
-	value := DownloadProgress{FileName: "fixture.tar.gz", Status: "downloading", CompletedBytes: 12, TotalBytes: 100, UpdatedAt: time.Now().UTC()}
+	value := downloadProgress{FileName: "fixture.tar.gz", Status: "downloading", CompletedBytes: 12, TotalBytes: 100, UpdatedAt: time.Now().UTC()}
 	if err := report(value); err != nil {
 		return err
 	}

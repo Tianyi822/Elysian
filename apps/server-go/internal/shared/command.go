@@ -8,12 +8,12 @@ import (
 	"time"
 )
 
-const SystemCommandTimeout = 30 * time.Second
+const systemCommandTimeout = 30 * time.Second
 
 // SystemCommand 限制系统操作的执行时间；取消时也结束继承管道的子进程。
 // 调用方必须在 Run/Wait 后调用 cancel，密码等敏感参数不进入错误消息。
 func SystemCommand(parent context.Context, name string, args ...string) (*exec.Cmd, context.Context, context.CancelFunc) {
-	ctx, cancel := context.WithTimeout(parent, SystemCommandTimeout)
+	ctx, cancel := context.WithTimeout(parent, systemCommandTimeout)
 	cmd := exec.CommandContext(ctx, name, args...)
 	cmd.SysProcAttr = &syscall.SysProcAttr{Setpgid: true}
 	cmd.Cancel = func() error { return syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL) }

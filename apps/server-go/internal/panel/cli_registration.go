@@ -29,12 +29,12 @@ func (m Manager) withCLIStatus(r taskRecord) taskRecord {
 	var j cliJournal
 	if raw, err := os.ReadFile(m.Store.cliJournalPath(r.ID)); err == nil {
 		if json.Unmarshal(raw, &j) == nil {
-			r.CLIRegistration = &CLIRegistration{Status: j.State, Error: j.Error}
+			r.CLIRegistration = &cliRegistration{Status: j.State, Error: j.Error}
 		} else {
-			r.CLIRegistration = &CLIRegistration{Status: "failed", Error: "CLI 注册日志损坏，请检查维护目录"}
+			r.CLIRegistration = &cliRegistration{Status: "failed", Error: "CLI 注册日志损坏，请检查维护目录"}
 		}
 	} else if os.IsNotExist(err) {
-		r.CLIRegistration = &CLIRegistration{Status: "pending"}
+		r.CLIRegistration = &cliRegistration{Status: "pending"}
 	}
 	return r
 }
@@ -111,7 +111,7 @@ func (m Manager) registerCommittedCLI(ctx context.Context, retryID string) (bool
 			return err
 		}
 		for _, r := range rows {
-			if Active(r.State) || r.State == "recovery-failed" {
+			if taskActive(r.State) || r.State == "recovery-failed" {
 				return nil
 			}
 		}
@@ -148,7 +148,7 @@ func (m Manager) registerCommittedCLI(ctx context.Context, retryID string) (bool
 			if ctx.Err() != nil {
 				return ctx.Err()
 			}
-			row.CLIRegistration = &CLIRegistration{Status: "failed", Error: cause.Error()}
+			row.CLIRegistration = &cliRegistration{Status: "failed", Error: cause.Error()}
 			if saveErr := m.Store.lock(func() error { return m.Store.save(row) }); saveErr != nil {
 				return saveErr
 			}

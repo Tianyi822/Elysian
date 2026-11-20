@@ -59,7 +59,7 @@ func (s GitHubSource) artifact(ctx context.Context, sha string) (releaseAsset, e
 		return empty, fmt.Errorf("预编译更新仅支持 Linux amd64／arm64 和完整提交")
 	}
 	tag := "build-" + sha
-	response, err := s.get(ctx, s.api()+"/repos/"+Repository+"/releases/tags/"+tag)
+	response, err := s.get(ctx, s.api()+"/repos/"+panelRepository+"/releases/tags/"+tag)
 	if err != nil {
 		return empty, fmt.Errorf("目标提交的 GitHub 预编译安装包尚未就绪或不可达，请稍后重新检查：%w", err)
 	}
@@ -77,7 +77,7 @@ func (s GitHubSource) artifact(ctx context.Context, sha string) (releaseAsset, e
 		if asset.Name != name {
 			continue
 		}
-		expected := "https://github.com/" + Repository + "/releases/download/" + tag + "/" + name
+		expected := "https://github.com/" + panelRepository + "/releases/download/" + tag + "/" + name
 		if asset.URL != expected || asset.State != "uploaded" || asset.Size <= 0 || asset.Size > maxReleaseArchive || !validReleaseDigest(asset.Digest) {
 			return empty, fmt.Errorf("GitHub 安装包地址、大小或 SHA256 摘要无效")
 		}
@@ -125,7 +125,7 @@ func downloadRelease(ctx context.Context, client *http.Client, source string, as
 	}
 	defer os.Remove(archive.Name())
 	defer archive.Close()
-	progress := &releaseProgressWriter{value: DownloadProgress{FileName: asset.Name, TotalBytes: asset.Size}, started: time.Now()}
+	progress := &releaseProgressWriter{value: downloadProgress{FileName: asset.Name, TotalBytes: asset.Size}, started: time.Now()}
 	progress.report, _ = ctx.Value(downloadProgressKey{}).(downloadReporter)
 	if err = progress.publish("downloading", true); err != nil {
 		return err
@@ -204,7 +204,7 @@ func validateRelease(directory, sha string) error {
 		return fmt.Errorf("安装包缺少有效发布清单")
 	}
 	var manifest releaseManifest
-	if err = json.Unmarshal(data, &manifest); err != nil || manifest.Schema != "elysian-release/v1" || manifest.Repository != Repository || manifest.Commit != sha || manifest.OS != "linux" || manifest.Arch != runtime.GOARCH {
+	if err = json.Unmarshal(data, &manifest); err != nil || manifest.Schema != "elysian-release/v1" || manifest.Repository != panelRepository || manifest.Commit != sha || manifest.OS != "linux" || manifest.Arch != runtime.GOARCH {
 		return fmt.Errorf("安装包提交、平台或架构与已检查目标不一致")
 	}
 	machine := elf.EM_X86_64
@@ -273,7 +273,7 @@ func (h SystemHost) PrepareRelease(ctx context.Context, directory, sha, id strin
 	if err := ctx.Err(); err != nil {
 		return "", err
 	}
-	candidate, err := stageRelease(directory, InstallRoot, sha, id)
+	candidate, err := stageRelease(directory, installRoot, sha, id)
 	if err == nil {
 		h.Store.appendLog(id, "预编译安装包校验完成；服务器无需 Go／Bun 编译\n")
 	}

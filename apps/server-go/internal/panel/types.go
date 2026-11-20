@@ -7,9 +7,9 @@ import (
 	"time"
 )
 
-const Repository = "Tianyi822/Elysian"
-const InstallRoot = "/opt/elysian"
-const ServiceName = "elysian"
+const panelRepository = "Tianyi822/Elysian"
+const installRoot = "/opt/elysian"
+const serviceName = "elysian"
 
 // 构建脚本经 -ldflags 注入，导出的源码无需 Git 工作树。
 var Commit = "unknown"
@@ -68,15 +68,15 @@ const (
 	WorkerUnknown WorkerStatus = "unknown"
 )
 
-type CLIRegistration struct {
+type cliRegistration struct {
 	Status string `json:"status"`
 	Error  string `json:"error,omitempty"`
 }
 
 type Task struct {
-	Download        *DownloadProgress   `json:"download,omitempty"`
+	Download        *downloadProgress   `json:"download,omitempty"`
 	FailedPhase     string              `json:"failedPhase,omitempty"`
-	CLIRegistration *CLIRegistration    `json:"cliRegistration,omitempty"`
+	CLIRegistration *cliRegistration    `json:"cliRegistration,omitempty"`
 	ID              string              `json:"id"`
 	Kind            string              `json:"kind"`
 	State           string              `json:"state"`
@@ -96,8 +96,8 @@ type Task struct {
 	WorkerStatus WorkerStatus `json:"workerStatus,omitempty"`
 }
 
-// DownloadProgress 仅表示当前安装包的真实传输量，不表示整个维护任务的完成比例。
-type DownloadProgress struct {
+// downloadProgress 仅表示当前安装包的真实传输量，不表示整个维护任务的完成比例。
+type downloadProgress struct {
 	FileName       string    `json:"fileName"`
 	Status         string    `json:"status"` // downloading / verifying / ready
 	CompletedBytes int64     `json:"completedBytes"`
@@ -131,7 +131,7 @@ type taskRecord struct {
 	ResourceFinalizer bool             `json:"resourceFinalizer,omitempty"`
 }
 
-func Active(state string) bool { return state == "queued" || state == "running" }
+func taskActive(state string) bool { return state == "queued" || state == "running" }
 
 type Update struct {
 	Channel       UpdateChannel `json:"channel"`

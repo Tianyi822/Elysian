@@ -96,9 +96,9 @@ func TestReadAgentRuntimeValidation(t *testing.T) {
 			if err := os.WriteFile(path, []byte(tc.raw), 0600); err != nil {
 				t.Fatal(err)
 			}
-			_, err := ReadAgentRuntime(path)
+			_, err := readAgentRuntime(path)
 			if (err == nil) != tc.valid {
-				t.Fatalf("ReadAgentRuntime(%s) = %v", tc.name, err)
+				t.Fatalf("readAgentRuntime(%s) = %v", tc.name, err)
 			}
 		})
 	}

@@ -28,18 +28,18 @@ func TestReleaseResolvesTagAndPinsDownloadAndHistory(t *testing.T) {
 					t.Error("缺少 GitHub 请求头")
 				}
 				switch r.URL.Path {
-				case "/repos/" + Repository + "/releases/latest":
+				case "/repos/" + panelRepository + "/releases/latest":
 					// target_commitish 可以是正在变化的分支，不能用于构建目标。
 					_ = json.NewEncoder(w).Encode(map[string]any{"tag_name": "v1.2.0", "name": "正式版本", "draft": false, "prerelease": false, "target_commitish": "main"})
-				case "/repos/" + Repository + "/git/ref/tags/v1.2.0":
+				case "/repos/" + panelRepository + "/git/ref/tags/v1.2.0":
 					kind, target := "commit", sha
 					if annotated {
 						kind, target = "tag", tagSHA
 					}
 					_ = json.NewEncoder(w).Encode(map[string]any{"object": map[string]string{"type": kind, "sha": target}})
-				case "/repos/" + Repository + "/git/tags/" + tagSHA:
+				case "/repos/" + panelRepository + "/git/tags/" + tagSHA:
 					_ = json.NewEncoder(w).Encode(map[string]any{"object": map[string]string{"type": "commit", "sha": sha}})
-				case "/repos/" + Repository + "/commits":
+				case "/repos/" + panelRepository + "/commits":
 					historyRef = r.URL.Query().Get("sha")
 					_, _ = w.Write([]byte(`[]`))
 				default:
@@ -82,10 +82,10 @@ func TestReleaseEmptyAndUpstreamErrorsNeverFallBackToBranch(t *testing.T) {
 		t.Run(tc.name, func(t *testing.T) {
 			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 				switch r.URL.Path {
-				case "/repos/" + Repository + "/releases/latest":
+				case "/repos/" + panelRepository + "/releases/latest":
 					w.WriteHeader(tc.status)
 					_, _ = w.Write([]byte(tc.body))
-				case "/repos/" + Repository:
+				case "/repos/" + panelRepository:
 					w.WriteHeader(tc.repoStatus)
 					_, _ = w.Write([]byte(`{"default_branch":"main"}`))
 				default:
@@ -158,7 +158,7 @@ type channelSource struct {
 
 func (s *channelSource) Check(_ context.Context, channel UpdateChannel) (Update, error) {
 	s.checked = append(s.checked, channel)
-	result := Update{Repository: Repository, Channel: channel, TargetCommit: strings.Repeat("f", 40), Available: true}
+	result := Update{Repository: panelRepository, Channel: channel, TargetCommit: strings.Repeat("f", 40), Available: true}
 	if channel == ChannelRelease {
 		result.ReleaseTag = "v1.2.0"
 	} else {
@@ -346,7 +346,7 @@ func TestLegacyCommitRequestReconcilesButCannotCreateNewTask(t *testing.T) {
 	if err := os.Remove(worker.Store.taskPath(original.ID)); err != nil {
 		t.Fatal(err)
 	}
-	if err := config.AtomicJSON(worker.Store.updateCheckPath(ChannelCommit, SourceGitHub), Update{Repository: Repository, Channel: ChannelCommit, Source: SourceGitHub, Available: true, TargetCommit: original.TargetCommit}); err != nil {
+	if err := config.AtomicJSON(worker.Store.updateCheckPath(ChannelCommit, SourceGitHub), Update{Repository: panelRepository, Channel: ChannelCommit, Source: SourceGitHub, Available: true, TargetCommit: original.TargetCommit}); err != nil {
 		t.Fatal(err)
 	}
 	input.RequestID = "new-legacy-request"

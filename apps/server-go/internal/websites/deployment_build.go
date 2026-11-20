@@ -84,7 +84,7 @@ func (m *deploymentManager) validateConfig(ctx context.Context, src sourceRecord
 	runtime := ""
 	build := ""
 	if c.Kind == KindHTML || (cfg.Target == "static" && src.Mode == "artifact") {
-		runtime = WEBSITE_HTML_IMAGE
+		runtime = websiteHTMLImage
 		return c, build, runtime, nil
 	}
 	catalog, err := m.service.RuntimeCatalog(ctx)
@@ -92,9 +92,9 @@ func (m *deploymentManager) validateConfig(ctx context.Context, src sourceRecord
 		return c, "", "", err
 	}
 	if cfg.Target == "static" {
-		runtime = WEBSITE_HTML_IMAGE
+		runtime = websiteHTMLImage
 	} else {
-		ref := WebsiteRuntimeImageRef(c.Kind, stringPtr(cfg.RuntimeVersion), &catalog.Catalog)
+		ref := websiteRuntimeImageRef(c.Kind, stringPtr(cfg.RuntimeVersion), &catalog.Catalog)
 		if ref == nil {
 			return c, "", "", errors.New("运行时版本不在正式目录中，请刷新")
 		}
@@ -107,7 +107,7 @@ func (m *deploymentManager) validateConfig(ctx context.Context, src sourceRecord
 		return c, "", "", errors.New("运行时版本不满足项目声明的 Node 版本要求，请调整")
 	}
 	if src.Mode == "source" {
-		ref := WebsiteRuntimeImageRef(c.Kind, stringPtr(cfg.BuildVersion), &catalog.Catalog)
+		ref := websiteRuntimeImageRef(c.Kind, stringPtr(cfg.BuildVersion), &catalog.Catalog)
 		if ref == nil {
 			return c, "", "", errors.New("构建版本不在正式目录中，请刷新")
 		}

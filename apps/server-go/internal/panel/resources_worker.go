@@ -270,7 +270,7 @@ func (w Worker) Finalize(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
-	if Active(r.State) || r.State == "recovery-failed" || r.resourcesPending() {
+	if taskActive(r.State) || r.State == "recovery-failed" || r.resourcesPending() {
 		if r.Committed {
 			if err = w.restoreResources(ctx, &r, true); err != nil {
 				r.State = "recovery-failed"
@@ -286,7 +286,7 @@ func (w Worker) Finalize(ctx context.Context, id string) error {
 			err = w.finishFailure(&r, fmt.Errorf("维护执行进程已结束，已尝试恢复原版本与本次停止的业务"))
 		}
 	}
-	if !Active(r.State) && r.State != "recovery-failed" && !r.resourcesPending() && r.Worker == filepath.Join(w.Store.tasksDir(), id+".worker") {
+	if !taskActive(r.State) && r.State != "recovery-failed" && !r.resourcesPending() && r.Worker == filepath.Join(w.Store.tasksDir(), id+".worker") {
 		if e := os.RemoveAll(filepath.Join("/var/tmp/elysian-build", id)); e != nil {
 			return e
 		}

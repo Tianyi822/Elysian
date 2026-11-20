@@ -106,7 +106,7 @@ func TestGiteeCheckCannotAuthorizeGitHubUpdate(t *testing.T) {
 	worker, record, host := setupWorker(t, "update")
 	manager := Manager{Store: worker.Store, Host: host, Enabled: true}
 	input := submitInput{Source: SourceGitHub, Channel: ChannelCommit, TargetCommit: record.TargetCommit}
-	u := Update{Repository: Repository, Source: SourceGitee, Channel: ChannelCommit, Available: true, TargetCommit: record.TargetCommit}
+	u := Update{Repository: panelRepository, Source: SourceGitee, Channel: ChannelCommit, Available: true, TargetCommit: record.TargetCommit}
 	if err := config.AtomicJSON(worker.Store.updateCheckPath(input.Channel, input.Source), u); err != nil {
 		t.Fatal(err)
 	}

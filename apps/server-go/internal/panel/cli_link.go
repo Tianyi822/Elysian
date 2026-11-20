@@ -13,7 +13,7 @@ import (
 )
 
 // DefaultCLIBin 是全局 ely 命令的受管落点：安装脚本注册的符号链接（指向
-// <InstallRoot>/current/elysian）与维护事务的补注册共用同一路径与同一归属语义
+// <installRoot>/current/elysian）与维护事务的补注册共用同一路径与同一归属语义
 // （scripts/install.sh 的 cli_link_owned）。
 const DefaultCLIBin = "/usr/local/bin/ely"
 
@@ -177,7 +177,7 @@ func (w Worker) ensureCLILink(ctx context.Context, r *taskRecord) error {
 	if !j.Missing && j.Original != target {
 		r.CLIRelinkedFrom = j.Original
 	}
-	r.CLIRegistration = &CLIRegistration{Status: "pending"}
+	r.CLIRegistration = &cliRegistration{Status: "pending"}
 	if err = w.Store.lock(func() error { return w.Store.save(*r) }); err != nil {
 		return err
 	}
@@ -188,7 +188,7 @@ func (w Worker) ensureCLILink(ctx context.Context, r *taskRecord) error {
 		j.State = "failed"
 		j.Error = cause.Error()
 		_ = config.AtomicJSON(w.Store.cliJournalPath(r.ID), j)
-		r.CLIRegistration = &CLIRegistration{Status: "failed", Error: cause.Error()}
+		r.CLIRegistration = &cliRegistration{Status: "failed", Error: cause.Error()}
 		_ = w.Store.lock(func() error { return w.Store.save(*r) })
 		return cause
 	}
@@ -221,7 +221,7 @@ func (w Worker) ensureCLILink(ctx context.Context, r *taskRecord) error {
 	if err = config.AtomicJSON(w.Store.cliJournalPath(r.ID), j); err != nil {
 		return fail(err)
 	}
-	r.CLIRegistration = &CLIRegistration{Status: "succeeded"}
+	r.CLIRegistration = &cliRegistration{Status: "succeeded"}
 	if err = w.Store.lock(func() error { return w.Store.save(*r) }); err != nil {
 		return fail(err)
 	}

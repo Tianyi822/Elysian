@@ -7,7 +7,7 @@ import (
 )
 
 type downloadProgressKey struct{}
-type downloadReporter func(DownloadProgress) error
+type downloadReporter func(downloadProgress) error
 
 // 回调由下载器同步调用；worker 独占执行锁，进度与事务字段共用同一份记录。
 func withDownloadProgress(ctx context.Context, report downloadReporter) context.Context {
@@ -17,7 +17,7 @@ func withDownloadProgress(ctx context.Context, report downloadReporter) context.
 type releaseProgressWriter struct {
 	writer        io.Writer
 	report        downloadReporter
-	value         DownloadProgress
+	value         downloadProgress
 	started, last time.Time
 }
 

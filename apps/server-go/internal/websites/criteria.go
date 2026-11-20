@@ -11,14 +11,14 @@ import (
 // 契约判据纯函数（packages/foundation/contracts/src/websites/websites.ts 的 Go 版，
 // 暂居域内；上移 internal/contract 事项登记 gaps）。错误消息是 API 契约，逐字照抄。
 
-// WEBSITE_HTML_IMAGE HTML 使用固定的 Docker 官方 Nginx 镜像。
-const WEBSITE_HTML_IMAGE = "nginx:1.30.4-alpine3.24"
+// websiteHTMLImage HTML 使用固定的 Docker 官方 Nginx 镜像。
+const websiteHTMLImage = "nginx:1.30.4-alpine3.24"
 
-// WEBSITE_PROJECT_NAME_MAX_LENGTH 项目名上限（UTF-16 code unit 数）。
-const WEBSITE_PROJECT_NAME_MAX_LENGTH = 64
+// websiteProjectNameMaxLength 项目名上限（UTF-16 code unit 数）。
+const websiteProjectNameMaxLength = 64
 
-// WEBSITE_DOMAIN_MAX_LENGTH 域名总长上限（ASCII 形态，与 DNS 全名一致）。
-const WEBSITE_DOMAIN_MAX_LENGTH = 253
+// websiteDomainMaxLength 域名总长上限（ASCII 形态，与 DNS 全名一致）。
+const websiteDomainMaxLength = 253
 
 var (
 	// 项目名禁用字符：/ \ : 与 C0+DEL 控制字符（冒号与斜杠一样是引擎 bind 字符串的分隔符）。
@@ -44,12 +44,12 @@ var (
 	pythonFirstLine     = regexp.MustCompile(`^Python (3\.\d+)\.0$`)
 )
 
-// IsValidWebsiteProjectName 项目名判据：去空白后 1–64 字符（UTF-16 口径），且不含
+// isValidWebsiteProjectName 项目名判据：去空白后 1–64 字符（UTF-16 口径），且不含
 // `/`、`\`、`:` 与控制字符，不得为 `.` 或 `..`。名称是站点目录路径段的唯一来源。
-func IsValidWebsiteProjectName(name string) bool {
+func isValidWebsiteProjectName(name string) bool {
 	trimmed := strings.TrimSpace(name)
 	length := utf16Length(trimmed)
-	if length == 0 || length > WEBSITE_PROJECT_NAME_MAX_LENGTH {
+	if length == 0 || length > websiteProjectNameMaxLength {
 		return false
 	}
 	if trimmed == "." || trimmed == ".." {
@@ -58,16 +58,16 @@ func IsValidWebsiteProjectName(name string) bool {
 	return !websiteProjectNameForbidden.MatchString(trimmed)
 }
 
-// IsValidWebsitePort 端口判据：1–65535 的整数（JSON 数值以 float64 到达）。
-func IsValidWebsitePort(port float64) bool {
+// isValidWebsitePort 端口判据：1–65535 的整数（JSON 数值以 float64 到达）。
+func isValidWebsitePort(port float64) bool {
 	return port == math.Trunc(port) && port >= 1 && port <= 65535
 }
 
-// IsValidWebsiteDomain 域名判据：RFC 1123 形态——每标签 `[a-zA-Z0-9]([a-zA-Z0-9-]*
+// isValidWebsiteDomain 域名判据：RFC 1123 形态——每标签 `[a-zA-Z0-9]([a-zA-Z0-9-]*
 // [a-zA-Z0-9])?`、总长不超过 253、至少两级标签；IP 字面量显式拒绝。
-func IsValidWebsiteDomain(domain string) bool {
+func isValidWebsiteDomain(domain string) bool {
 	trimmed := strings.TrimSpace(domain)
-	if trimmed == "" || utf16Length(trimmed) > WEBSITE_DOMAIN_MAX_LENGTH {
+	if trimmed == "" || utf16Length(trimmed) > websiteDomainMaxLength {
 		return false
 	}
 	if websiteDomainIPLiteral.MatchString(trimmed) {
@@ -85,18 +85,18 @@ func IsValidWebsiteDomain(domain string) bool {
 	return true
 }
 
-// IsWebsiteRuntimeReleaseVersion 正式版判据：java 接受 8uXXX-bNNN 与 1~4 段+构建号，
+// isWebsiteRuntimeReleaseVersion 正式版判据：java 接受 8uXXX-bNNN 与 1~4 段+构建号，
 // 其余接受 X.Y.Z；预发布与浮动 tag 一律拒绝。
-func IsWebsiteRuntimeReleaseVersion(kind string, version string) bool {
+func isWebsiteRuntimeReleaseVersion(kind string, version string) bool {
 	if kind == KindJava {
 		return javaReleasePattern.MatchString(version)
 	}
 	return simpleRelease.MatchString(version)
 }
 
-// NormalizeWebsiteJavaReleaseVersion Java 初始 GA 的省略零分量展开为完整版本
+// normalizeWebsiteJavaReleaseVersion Java 初始 GA 的省略零分量展开为完整版本
 // （17+35 → 17.0.0+35），正式构建号保持原样。
-func NormalizeWebsiteJavaReleaseVersion(version string) string {
+func normalizeWebsiteJavaReleaseVersion(version string) string {
 	match := javaNormalize.FindStringSubmatch(version)
 	if match == nil {
 		return version
@@ -108,11 +108,11 @@ func NormalizeWebsiteJavaReleaseVersion(version string) string {
 	return strings.Join(parts, ".") + "+" + match[2]
 }
 
-// WebsiteRuntimeImageRef version 必须落在正式版本目录内，否则返回 nil；HTML 返回
+// websiteRuntimeImageRef version 必须落在正式版本目录内，否则返回 nil；HTML 返回
 // 固定镜像。建容器与删除时的镜像核对都从这里取引用，用户无法指定任意镜像。
-func WebsiteRuntimeImageRef(kind string, version *string, catalog *runtimeCatalog) *string {
+func websiteRuntimeImageRef(kind string, version *string, catalog *runtimeCatalog) *string {
 	if kind == KindHTML {
-		return stringPtr(WEBSITE_HTML_IMAGE)
+		return stringPtr(websiteHTMLImage)
 	}
 	if version == nil || catalog == nil {
 		return nil
@@ -125,10 +125,10 @@ func WebsiteRuntimeImageRef(kind string, version *string, catalog *runtimeCatalo
 	return nil
 }
 
-// WebsiteDefaultDeployCommand 面板为站点容器配置的启动命令（创建时生成、固化进登记，
+// websiteDefaultDeployCommand 面板为站点容器配置的启动命令（创建时生成、固化进登记，
 // 如实反映容器 Cmd）：与前端契约保持同一规则。java/node/go/python 需要用户填写，
 // 返回 nil。
-func WebsiteDefaultDeployCommand(kind string) *string {
+func websiteDefaultDeployCommand(kind string) *string {
 	if kind == KindHTML {
 		return stringPtr("nginx -g daemon off;")
 	}
@@ -157,9 +157,9 @@ func catalogEntriesFor(catalog *runtimeCatalog, kind string) []catalogEntry {
 // errInvalidRuntimeCatalogResponse 传输与缓存共同校验的唯一错误消息。
 var errInvalidRuntimeCatalogResponse = errors.New("正式运行时版本目录响应无效")
 
-// ParseWebsiteRuntimeCatalogReport 传输与缓存的共同校验出口：拒绝预发布、浮动镜像和
+// parseWebsiteRuntimeCatalogReport 传输与缓存的共同校验出口：拒绝预发布、浮动镜像和
 // 版本／镜像不匹配。输入是 JSON 解析后的任意值。
-func ParseWebsiteRuntimeCatalogReport(value any) (runtimeCatalogReport, error) {
+func parseWebsiteRuntimeCatalogReport(value any) (runtimeCatalogReport, error) {
 	row, ok := value.(map[string]any)
 	if !ok {
 		return runtimeCatalogReport{}, errInvalidRuntimeCatalogResponse
@@ -219,7 +219,7 @@ func parseCatalogEntry(kind string, item any) (catalogEntry, error) {
 		return catalogEntry{}, errInvalidRuntimeCatalogResponse
 	}
 	version, ok := entry["version"].(string)
-	if !ok || !IsWebsiteRuntimeReleaseVersion(kind, version) {
+	if !ok || !isWebsiteRuntimeReleaseVersion(kind, version) {
 		return catalogEntry{}, errInvalidRuntimeCatalogResponse
 	}
 	image, ok := entry["image"].(string)
@@ -239,7 +239,7 @@ func parseCatalogEntry(kind string, item any) (catalogEntry, error) {
 		if match == nil {
 			return catalogEntry{}, errInvalidRuntimeCatalogResponse
 		}
-		exact := NormalizeWebsiteJavaReleaseVersion(strings.Replace(match[1], "_", "+", 1))
+		exact := normalizeWebsiteJavaReleaseVersion(strings.Replace(match[1], "_", "+", 1))
 		if version != exact {
 			return catalogEntry{}, errInvalidRuntimeCatalogResponse
 		}

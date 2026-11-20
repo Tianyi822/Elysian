@@ -50,7 +50,7 @@ func (h SystemHost) ObserveResources(ctx context.Context) (resourceObservation, 
 		out.Load[i] = v
 	}
 	diskObserved := false
-	for _, path := range []string{"/var/tmp", InstallRoot, h.Store.Root} {
+	for _, path := range []string{"/var/tmp", installRoot, h.Store.Root} {
 		for {
 			if _, e := os.Stat(path); e == nil {
 				break
@@ -380,7 +380,7 @@ func (h SystemHost) ResourceCandidates(ctx context.Context) ([]resourceTarget, e
 		if !resourceServicePattern.MatchString(unit) {
 			return nil, fmt.Errorf("服务清单格式无法核实")
 		}
-		if unit == ServiceName+".service" || seen[unit] {
+		if unit == serviceName+".service" || seen[unit] {
 			continue
 		}
 		seen[unit] = true
@@ -508,7 +508,7 @@ func (h SystemHost) SetResourceRunning(ctx context.Context, target resourceTarge
 
 func (h SystemHost) SupportsResourceFinalizer() bool { return true }
 func (h SystemHost) PrepareResourceRecovery(ctx context.Context, id, worker string) error {
-	return h.prepareResourceRecoveryAt(ctx, id, worker, filepath.Join(InstallRoot, "maintenance"))
+	return h.prepareResourceRecoveryAt(ctx, id, worker, filepath.Join(installRoot, "maintenance"))
 }
 func (h SystemHost) prepareResourceRecoveryAt(ctx context.Context, id, worker, maintenance string) error {
 	if !idPattern.MatchString(id) || worker != filepath.Join(h.Store.tasksDir(), id+".worker") {

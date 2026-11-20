@@ -72,7 +72,7 @@ func (s GitHubSource) get(ctx context.Context, endpoint string) (*http.Response,
 // defaultBranch 解析仓库的默认分支，不写死分支名；仅用于区分「仓库可访问但没有
 // 正式发版」与「仓库不可访问」的空状态判定。
 func (s GitHubSource) defaultBranch(ctx context.Context) (string, error) {
-	r, err := s.get(ctx, s.api()+"/repos/"+Repository)
+	r, err := s.get(ctx, s.api()+"/repos/"+panelRepository)
 	if err != nil {
 		return "", err
 	}
@@ -91,7 +91,7 @@ func firstLine(message string) string { return strings.SplitN(message, "\n", 2)[
 
 func (s GitHubSource) Check(ctx context.Context, channel UpdateChannel) (Update, error) {
 	channel = normalizeChannel(channel)
-	u := Update{Repository: Repository, CurrentCommit: Commit, Channel: channel, Source: SourceGitHub}
+	u := Update{Repository: panelRepository, CurrentCommit: Commit, Channel: channel, Source: SourceGitHub}
 	if !validChannel(channel) {
 		return u, fmt.Errorf("更新策略无效")
 	}
@@ -133,7 +133,7 @@ func (s GitHubSource) History(ctx context.Context, channel UpdateChannel, limit 
 	if limit < 1 || limit > 100 {
 		limit = 30
 	}
-	endpoint := s.api() + "/repos/" + Repository + "/commits?sha=" + url.QueryEscape(ref) + "&per_page=" + strconv.Itoa(limit)
+	endpoint := s.api() + "/repos/" + panelRepository + "/commits?sha=" + url.QueryEscape(ref) + "&per_page=" + strconv.Itoa(limit)
 	r, err := s.get(ctx, endpoint)
 	if err != nil {
 		return nil, err
@@ -171,7 +171,7 @@ type githubRelease struct {
 // 使用 GitHub 标记的 latest 正式发版，不按标签字典序排序，也不把 target_commitish 当作版本。
 func (s GitHubSource) latestRelease(ctx context.Context) (githubRelease, error) {
 	var release githubRelease
-	r, err := s.get(ctx, s.api()+"/repos/"+Repository+"/releases/latest")
+	r, err := s.get(ctx, s.api()+"/repos/"+panelRepository+"/releases/latest")
 	if errors.Is(err, errGitHubNotFound) {
 		// 仓库可访问但没有正式发版属于空状态；私有或不存在的仓库仍报告错误。
 		if _, repoErr := s.defaultBranch(ctx); repoErr != nil {
@@ -194,7 +194,7 @@ func (s GitHubSource) latestRelease(ctx context.Context) (githubRelease, error) 
 
 // 精确读取 tags 引用，兼容轻量标签和附注标签，最终只接受完整 commit SHA。
 func (s GitHubSource) tagCommit(ctx context.Context, tag string) (string, error) {
-	endpoint := s.api() + "/repos/" + Repository + "/git/ref/tags/" + url.PathEscape(tag)
+	endpoint := s.api() + "/repos/" + panelRepository + "/git/ref/tags/" + url.PathEscape(tag)
 	for depth := 0; depth < 8; depth++ {
 		r, err := s.get(ctx, endpoint)
 		if err != nil {
@@ -215,7 +215,7 @@ func (s GitHubSource) tagCommit(ctx context.Context, tag string) (string, error)
 		case "commit":
 			return result.Object.SHA, nil
 		case "tag":
-			endpoint = s.api() + "/repos/" + Repository + "/git/tags/" + result.Object.SHA
+			endpoint = s.api() + "/repos/" + panelRepository + "/git/tags/" + result.Object.SHA
 		default:
 			return "", fmt.Errorf("发版标签未指向提交")
 		}

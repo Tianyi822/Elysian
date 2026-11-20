@@ -28,7 +28,7 @@ type SystemHost struct {
 
 func (h SystemHost) Available() bool {
 	_, err := os.Stat("/run/systemd/system")
-	st, e := os.Stat(filepath.Join(InstallRoot, "maintenance", "elysian"))
+	st, e := os.Stat(filepath.Join(installRoot, "maintenance", "elysian"))
 	return os.Geteuid() == 0 && err == nil && e == nil && st.Mode().IsRegular() && st.Mode().Perm()&0100 != 0
 }
 
@@ -104,7 +104,7 @@ func parseWorkerStatus(out string) WorkerStatus {
 	return WorkerUnknown
 }
 func (h SystemHost) Stop(ctx context.Context) error {
-	_, err := h.command(ctx, "systemctl", "stop", ServiceName)
+	_, err := h.command(ctx, "systemctl", "stop", serviceName)
 	if err != nil {
 		return err
 	}
@@ -112,7 +112,7 @@ func (h SystemHost) Stop(ctx context.Context) error {
 	return h.recoverAgentExecution(ctx)
 }
 func (h SystemHost) Start(ctx context.Context) error {
-	_, err := h.command(ctx, "systemctl", "start", ServiceName)
+	_, err := h.command(ctx, "systemctl", "start", serviceName)
 	return err
 }
 
@@ -150,7 +150,7 @@ func (h SystemHost) Preflight(ctx context.Context, old, next config.PanelNetwork
 			}
 		}
 	}
-	pid, err := h.command(ctx, "systemctl", "show", "--property=MainPID", "--value", ServiceName)
+	pid, err := h.command(ctx, "systemctl", "show", "--property=MainPID", "--value", serviceName)
 	if err != nil {
 		if !h.MissingServiceOK {
 			return err

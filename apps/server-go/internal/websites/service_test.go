@@ -429,7 +429,7 @@ func TestCreateStoppedContainersAndLogs(t *testing.T) {
 	foundImage := false
 	started := false
 	for _, call := range f.docker.snapshotCalls() {
-		if call == "image:"+WEBSITE_HTML_IMAGE {
+		if call == "image:"+websiteHTMLImage {
 			foundImage = true
 		}
 		if strings.HasPrefix(call, "start:") {

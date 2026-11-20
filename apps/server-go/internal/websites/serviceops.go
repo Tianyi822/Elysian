@@ -27,13 +27,13 @@ func (s *websiteService) Create(ctx context.Context, input createRequest) (mutat
 	// 镜像，不查目录（离线时 HTML 创建不受影响）。
 	var imageRef *string
 	if input.Kind == KindHTML {
-		imageRef = stringPtr(WEBSITE_HTML_IMAGE)
+		imageRef = stringPtr(websiteHTMLImage)
 	} else {
 		report, err := s.deps.runtimeCatalog.Get(ctx)
 		if err != nil {
 			return mutateResult{}, err
 		}
-		imageRef = WebsiteRuntimeImageRef(input.Kind, input.RuntimeVersion, &report.Catalog)
+		imageRef = websiteRuntimeImageRef(input.Kind, input.RuntimeVersion, &report.Catalog)
 	}
 	if imageRef == nil {
 		return mutateResult{}, shared.InvalidRequest("运行时版本不在正式可选目录内，请刷新版本目录")

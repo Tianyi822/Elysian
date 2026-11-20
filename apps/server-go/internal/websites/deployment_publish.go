@@ -362,10 +362,10 @@ func (m *deploymentManager) ready(ctx context.Context, row WebsiteRecord, taskID
 	if runtimeRecordKind(row) == KindHTML {
 		port = 80
 	}
-	if err := m.engine.pull(ctx, WEBSITE_HTML_IMAGE); err != nil {
+	if err := m.engine.pull(ctx, websiteHTMLImage); err != nil {
 		return err
 	}
-	body := map[string]any{"Image": WEBSITE_HTML_IMAGE, "User": "65532:65532", "Cmd": []string{"sh", "-c", fmt.Sprintf("addr=$(ip -4 -o addr show dev eth0 | awk '{print $4}' | cut -d/ -f1); for i in $(seq 1 60); do if nc -w 1 $addr %d </dev/null; then exit 0; fi; sleep 1; done; exit 1", port)}, "Entrypoint": []string{}, "Labels": map[string]string{"elysian.managed": "true", "elysian.website.probe": "true", "elysian.website.deployment-owner": m.engine.owner}, "HostConfig": map[string]any{"NetworkMode": "container:" + stringOrEmpty(row.ContainerID), "CapDrop": []string{"ALL"}, "SecurityOpt": []string{"no-new-privileges:true"}, "Memory": 64 << 20, "PidsLimit": 64}}
+	body := map[string]any{"Image": websiteHTMLImage, "User": "65532:65532", "Cmd": []string{"sh", "-c", fmt.Sprintf("addr=$(ip -4 -o addr show dev eth0 | awk '{print $4}' | cut -d/ -f1); for i in $(seq 1 60); do if nc -w 1 $addr %d </dev/null; then exit 0; fi; sleep 1; done; exit 1", port)}, "Entrypoint": []string{}, "Labels": map[string]string{"elysian.managed": "true", "elysian.website.probe": "true", "elysian.website.deployment-owner": m.engine.owner}, "HostConfig": map[string]any{"NetworkMode": "container:" + stringOrEmpty(row.ContainerID), "CapDrop": []string{"ALL"}, "SecurityOpt": []string{"no-new-privileges:true"}, "Memory": 64 << 20, "PidsLimit": 64}}
 	out, err := m.engine.json(ctx, "POST", "/containers/create", body)
 	if err != nil {
 		return err

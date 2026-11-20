@@ -49,7 +49,7 @@ func newFakeTransport() *fakeTransport {
 				"Id":   testContainerID,
 				"Name": "/" + testSiteContainerName,
 				"Config": map[string]any{
-					"Image": WEBSITE_HTML_IMAGE,
+					"Image": websiteHTMLImage,
 					"Labels": map[string]any{
 						"elysian.managed":         "true",
 						"elysian.website":         "true",
@@ -115,7 +115,7 @@ func TestDockerCreateDomainHTML(t *testing.T) {
 	transport := newFakeTransport()
 	docker := newTestDocker(transport)
 	_, err := docker.Create(context.Background(), containerCreateInput{
-		ImageRef: WEBSITE_HTML_IMAGE, Kind: KindHTML, Version: "html", ProjectID: "p", Port: 8088,
+		ImageRef: websiteHTMLImage, Kind: KindHTML, Version: "html", ProjectID: "p", Port: 8088,
 		BindSource: "/srv/wwwroot/site", ContainerName: testSiteContainerName, AccessMode: AccessModeDomain,
 		Command: nil,
 	})
@@ -147,7 +147,7 @@ func TestDockerCreateDomainHTML(t *testing.T) {
 	}
 	result, err := docker.RemoveManaged(context.Background(), containerIdentity{
 		ContainerID: testContainerID, ContainerName: testSiteContainerName, ProjectID: "p",
-		Kind: KindHTML, Version: "html", ImageRef: WEBSITE_HTML_IMAGE, RootDir: "/srv/wwwroot/site",
+		Kind: KindHTML, Version: "html", ImageRef: websiteHTMLImage, RootDir: "/srv/wwwroot/site",
 	})
 	if err != nil || result != "removed" {
 		t.Fatalf("五重核对应通过并删除，得到 %s %v", result, err)
@@ -245,7 +245,7 @@ func TestDockerRemoveManagedSelfProtection(t *testing.T) {
 		ProjectID:       "p",
 		Kind:            KindHTML,
 		Version:         "html",
-		ImageRef:        WEBSITE_HTML_IMAGE,
+		ImageRef:        websiteHTMLImage,
 		RootDir:         "/srv/wwwroot/site",
 		SelfContainerID: testContainerID,
 	})

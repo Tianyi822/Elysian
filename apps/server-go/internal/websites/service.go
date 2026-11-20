@@ -110,7 +110,7 @@ func validateWebsiteAccessRequest(input any) (accessInput, error) {
 		return accessInput{}, shared.InvalidRequest("请选择访问方式")
 	}
 	domain, _ := row["domain"].(string)
-	if !IsValidWebsiteDomain(domain) {
+	if !isValidWebsiteDomain(domain) {
 		return accessInput{}, shared.InvalidRequest("域名无效")
 	}
 	certificatePem, hasCert := row["certificatePem"]
@@ -179,11 +179,11 @@ func validateWebsiteCreateRequest(input any) (createRequest, error) {
 		return createRequest{}, shared.InvalidRequest("项目类型无效")
 	}
 	name, _ := row["name"].(string)
-	if !IsValidWebsiteProjectName(name) {
+	if !isValidWebsiteProjectName(name) {
 		return createRequest{}, shared.InvalidRequest("项目名称需为 1-64 个字符，且不能包含路径分隔符或控制字符")
 	}
 	portValue, ok := row["port"].(float64)
-	if !ok || !IsValidWebsitePort(portValue) {
+	if !ok || !isValidWebsitePort(portValue) {
 		return createRequest{}, shared.InvalidRequest("端口需为 1-65535 的整数")
 	}
 	port := int(portValue)
@@ -193,7 +193,7 @@ func validateWebsiteCreateRequest(input any) (createRequest, error) {
 		if !ok || strings.TrimSpace(runtimeVersion) == "" {
 			return createRequest{}, shared.InvalidRequest("请选择运行时版本")
 		}
-		if !IsWebsiteRuntimeReleaseVersion(kind, runtimeVersion) {
+		if !isWebsiteRuntimeReleaseVersion(kind, runtimeVersion) {
 			return createRequest{}, shared.InvalidRequest("请选择正式运行时版本")
 		}
 		request.RuntimeVersion = stringPtr(runtimeVersion)
@@ -208,7 +208,7 @@ func validateWebsiteCreateRequest(input any) (createRequest, error) {
 	}
 	request.Access = access
 	if kind == KindHTML {
-		request.Command = *WebsiteDefaultDeployCommand(KindHTML)
+		request.Command = *websiteDefaultDeployCommand(KindHTML)
 	} else {
 		command, err := trimmed(row["command"], "启动命令", 2048)
 		if err != nil {

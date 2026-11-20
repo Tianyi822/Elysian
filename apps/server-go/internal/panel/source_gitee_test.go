@@ -31,7 +31,7 @@ func giteeFixture(t *testing.T, change func(*releaseIndex, map[string]releaseAss
 	sha := strings.Repeat("a", 40)
 	body := releaseArchive(t, sha, runtime.GOARCH, nil)
 	sum := sha256.Sum256(body)
-	index := releaseIndex{Schema: releaseIndexSchema, Repository: Repository, Commit: sha, OS: "linux", Artifacts: map[string]indexedArtifact{}}
+	index := releaseIndex{Schema: releaseIndexSchema, Repository: panelRepository, Commit: sha, OS: "linux", Artifacts: map[string]indexedArtifact{}}
 	assets := map[string]releaseAsset{}
 	base := "https://gitee.com/" + GiteeRepository + "/releases/download/v1.2.0/"
 	for _, arch := range []string{"amd64", "arm64"} {

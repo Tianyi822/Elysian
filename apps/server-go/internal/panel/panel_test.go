@@ -346,9 +346,9 @@ func TestGitHubLegacyCommitChannelFollowsFormalRelease(t *testing.T) {
 	sha := strings.Repeat("b", 40)
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/repos/" + Repository + "/releases/latest":
+		case "/repos/" + panelRepository + "/releases/latest":
 			_, _ = w.Write([]byte(`{"tag_name":"v1.0.0","name":"正式版","draft":false,"prerelease":false}`))
-		case "/repos/" + Repository + "/git/ref/tags/v1.0.0":
+		case "/repos/" + panelRepository + "/git/ref/tags/v1.0.0":
 			_, _ = w.Write([]byte(`{"object":{"type":"commit","sha":"` + sha + `"}}`))
 		default:
 			t.Errorf("不应查询预发布：%s", r.URL.Path)
@@ -366,11 +366,11 @@ func TestGitHubHistoryListsDefaultBranchCommits(t *testing.T) {
 	var gotSha, gotLimit string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		switch r.URL.Path {
-		case "/repos/" + Repository + "/releases/latest":
+		case "/repos/" + panelRepository + "/releases/latest":
 			_, _ = w.Write([]byte(`{"tag_name":"v1","draft":false,"prerelease":false}`))
-		case "/repos/" + Repository + "/git/ref/tags/v1":
+		case "/repos/" + panelRepository + "/git/ref/tags/v1":
 			_, _ = w.Write([]byte(`{"object":{"type":"commit","sha":"` + sha + `"}}`))
-		case "/repos/" + Repository + "/commits":
+		case "/repos/" + panelRepository + "/commits":
 			gotSha, gotLimit = r.URL.Query().Get("sha"), r.URL.Query().Get("per_page")
 			_, _ = w.Write([]byte(`[{"sha":"` + sha + `","commit":{"message":"标题\n正文不展示","author":{"date":"2026-10-04T08:00:00Z"}}}]`))
 		default:

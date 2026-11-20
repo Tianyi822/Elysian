@@ -58,7 +58,7 @@ func (m *deploymentManager) submit(ctx context.Context, in deploymentInput) (dep
 			in.Config.ToolVersion = map[string]string{"maven": "3.9.11", "gradle": "8.14.3", "pnpm": "10.17.1", "yarn": "1.22.22", "bun": "1.2.22", "uv": "0.8.22", "poetry": "2.2.1"}[c.Tool]
 		}
 	}
-	if !IsValidWebsiteProjectName(in.Name) || in.Port < 1 || in.Port > 65535 {
+	if !isValidWebsiteProjectName(in.Name) || in.Port < 1 || in.Port > 65535 {
 		return deploymentTask{}, shared.InvalidRequest("项目名称或端口无效")
 	}
 	if in.Access.Mode != "direct" && in.Access.Mode != "domain" {
@@ -267,7 +267,7 @@ func (m *deploymentManager) execute(parent context.Context, id string) {
 		m.fail(id, err, ctx.Err() == context.Canceled)
 		return
 	}
-	if err = m.engine.pull(ctx, WEBSITE_HTML_IMAGE); err != nil {
+	if err = m.engine.pull(ctx, websiteHTMLImage); err != nil {
 		m.fail(id, err, ctx.Err() == context.Canceled)
 		return
 	}

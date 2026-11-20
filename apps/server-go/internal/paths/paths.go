@@ -26,8 +26,8 @@ var (
 	DataDir = filepath.Join(ElysianHome, "data")
 	// LogsDir 日志：面板托管的 sshd 定向日志。
 	LogsDir = filepath.Join(ElysianHome, "logs")
-	// PlatformLogsDir 平台日志根：面板自己写、自己管的运行日志与操作日志（不含 sshd.log）。
-	PlatformLogsDir = filepath.Join(LogsDir, "platform")
+	// platformLogsDir 平台日志根：面板自己写、自己管的运行日志与操作日志（不含 sshd.log）。
+	platformLogsDir = filepath.Join(LogsDir, "platform")
 	// StateDir 状态：面板自己记录的事实时间戳（启停、密码重置）。
 	StateDir = filepath.Join(ElysianHome, "state")
 	// BackupsDir 备份：写系统文件前的应用侧备份（如 before.rules）。
@@ -36,8 +36,8 @@ var (
 	TmpDir = filepath.Join(ElysianHome, "tmp")
 	// ConfigDir 配置：面板自管的配置文件（凭据、数据库与网站登记）。
 	ConfigDir = filepath.Join(ElysianHome, "config")
-	// AgentConfigDir Agent 独立配置目录。
-	AgentConfigDir = filepath.Join(ConfigDir, "agent")
+	// agentConfigDir Agent 独立配置目录。
+	agentConfigDir = filepath.Join(ConfigDir, "agent")
 )
 
 // ElysianPaths ~/.Elysian 下的具体文件路径表（TS 侧 ELYSIAN_PATHS 的等价物）。
@@ -91,17 +91,17 @@ func buildPaths() ElysianPaths {
 		FirewallSqlite:         filepath.Join(DataDir, "firewall.sqlite"),
 		LogsSqlite:             filepath.Join(DataDir, "logs.sqlite"),
 		HarnessSqlite:          filepath.Join(DataDir, "harness.sqlite"),
-		AgentModels:            filepath.Join(AgentConfigDir, "models.json"),
-		AgentSkills:            filepath.Join(AgentConfigDir, "skills.json"),
-		AgentMCPServers:        filepath.Join(AgentConfigDir, "mcp-servers.json"),
-		AgentExecution:         filepath.Join(AgentConfigDir, "execution.json"),
-		AgentEmbeddings:        filepath.Join(AgentConfigDir, "embeddings.json"),
-		AgentRuntime:           filepath.Join(AgentConfigDir, "runtime.json"),
+		AgentModels:            filepath.Join(agentConfigDir, "models.json"),
+		AgentSkills:            filepath.Join(agentConfigDir, "skills.json"),
+		AgentMCPServers:        filepath.Join(agentConfigDir, "mcp-servers.json"),
+		AgentExecution:         filepath.Join(agentConfigDir, "execution.json"),
+		AgentEmbeddings:        filepath.Join(agentConfigDir, "embeddings.json"),
+		AgentRuntime:           filepath.Join(agentConfigDir, "runtime.json"),
 		SkillPackages:          filepath.Join(DataDir, "skills"),
 		AgentWorkspaces:        filepath.Join(DataDir, "agent-workspaces"),
 		SshdLog:                filepath.Join(LogsDir, "sshd.log"),
 		PanelPasswordAudit:     filepath.Join(LogsDir, "panel-password-audit.jsonl"),
-		PlatformLogsDir:        PlatformLogsDir,
+		PlatformLogsDir:        platformLogsDir,
 		SshChangedAt:           filepath.Join(StateDir, "ssh-changed-at"),
 		SshRootPasswordResetAt: filepath.Join(StateDir, "ssh-root-password-reset-at"),
 		PanelCredentials:       filepath.Join(ConfigDir, "panel-credentials.json"),

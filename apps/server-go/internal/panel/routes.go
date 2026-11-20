@@ -76,7 +76,7 @@ func probeWorker(ctx context.Context, host Host, id string) WorkerStatus {
 }
 
 func (m Manager) Info() (Info, error) {
-	i := Info{UpdateDelivery: PrecompiledDelivery, Ports: m.Ports, Commit: Commit, BuildTime: BuildTime, Repository: Repository, Available: m.Enabled && m.Host.Available()}
+	i := Info{UpdateDelivery: PrecompiledDelivery, Ports: m.Ports, Commit: Commit, BuildTime: BuildTime, Repository: panelRepository, Available: m.Enabled && m.Host.Available()}
 	if _, ok := m.Host.(resourceHost); ok {
 		i.ResourcePreflightVersion = 1
 	}
@@ -92,13 +92,13 @@ func (m Manager) Info() (Info, error) {
 		i.LastTask = &task
 	}
 	for _, row := range rows {
-		if Active(row.State) {
+		if taskActive(row.State) {
 			supervised := m.superviseActive(row)
 			if i.LastTask != nil && i.LastTask.ID == supervised.ID {
 				task := supervised.Task
 				i.LastTask = &task
 			}
-			if Active(supervised.State) || supervised.State == "recovery-failed" {
+			if taskActive(supervised.State) || supervised.State == "recovery-failed" {
 				i.ActiveTask = &supervised.Task
 				break
 			}
@@ -116,7 +116,7 @@ func (m Manager) Info() (Info, error) {
 // 转终态必须同时确认单元退出、worker 锁空闲和最新记录超时。锁顺序与 worker
 // 及启动恢复一致：worker.lock 在前，store.lock 在后；未知状态保持维护保护。
 func (m Manager) superviseActive(row taskRecord) taskRecord {
-	if !Active(row.State) || !m.Enabled || !m.Host.Available() {
+	if !taskActive(row.State) || !m.Enabled || !m.Host.Available() {
 		return row
 	}
 	if time.Since(row.UpdatedAt) < workerProbeAfter {
@@ -140,7 +140,7 @@ func (m Manager) superviseActive(row taskRecord) taskRecord {
 			return err
 		}
 		row = fresh
-		if !Active(fresh.State) {
+		if !taskActive(fresh.State) {
 			return nil
 		}
 		if time.Since(fresh.UpdatedAt) < workerStaleAfter {
@@ -293,7 +293,7 @@ func (m Manager) Submit(ctx context.Context, kind string, input submitInput, ori
 				return shared.InvalidRequest("更新来源无效，请选择 GitHub 或 Gitee")
 			}
 			for _, row := range rows {
-				if Active(row.State) || row.State == "recovery-failed" {
+				if taskActive(row.State) || row.State == "recovery-failed" {
 					return &shared.InvalidRequestError{Status: 409, Message: "面板维护任务尚未完成，请等待或处理恢复错误"}
 				}
 			}

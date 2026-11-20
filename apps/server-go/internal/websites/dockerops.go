@@ -105,7 +105,7 @@ func isValidSiteContainerName(name string) bool {
 	return siteContainerNamePattern.MatchString(name)
 }
 
-// WebsiteContainerCmd 站点容器启动命令的 argv 形：由契约的 WebsiteDefaultDeployCommand
+// WebsiteContainerCmd 站点容器启动命令的 argv 形：由契约的 websiteDefaultDeployCommand
 // （显示字符串的单一事实来源）推导——node 的脚本参数含空格，不能按空白切分，手写
 // shell 风格切词（支持单/双引号与反斜杠转义，单引号内不转义），不经 shell。
 func WebsiteContainerCmd(kind string, command *string) ([]string, error) {
@@ -399,7 +399,7 @@ func (d *websiteDocker) Create(ctx context.Context, input containerCreateInput) 
 	}
 	command := input.Command
 	if command == nil {
-		command = WebsiteDefaultDeployCommand(input.Kind)
+		command = websiteDefaultDeployCommand(input.Kind)
 	}
 	cmd, err := WebsiteContainerCmd(input.Kind, command)
 	if err != nil {

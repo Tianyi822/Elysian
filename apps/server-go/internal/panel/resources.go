@@ -116,7 +116,7 @@ func validateResourcePlan(plan *ResourcePlan) error {
 func (m Manager) checkedUpdate(input submitInput) error {
 	var u Update
 	b, err := os.ReadFile(m.Store.updateCheckPath(input.Channel, input.Source))
-	if err != nil || json.Unmarshal(b, &u) != nil || u.Repository != Repository || normalizeChannel(u.Channel) != input.Channel || normalizeSource(u.Source) != input.Source || !u.Available || !commitPattern.MatchString(input.TargetCommit) || u.TargetCommit != input.TargetCommit || u.ReleaseTag != input.ReleaseTag || (input.Channel == ChannelRelease && u.ReleaseTag == "") {
+	if err != nil || json.Unmarshal(b, &u) != nil || u.Repository != panelRepository || normalizeChannel(u.Channel) != input.Channel || normalizeSource(u.Source) != input.Source || !u.Available || !commitPattern.MatchString(input.TargetCommit) || u.TargetCommit != input.TargetCommit || u.ReleaseTag != input.ReleaseTag || (input.Channel == ChannelRelease && u.ReleaseTag == "") {
 		return shared.InvalidRequest("请先检查更新，再提交已检查的目标版本")
 	}
 	return nil

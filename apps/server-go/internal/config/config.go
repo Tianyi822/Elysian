@@ -82,7 +82,7 @@ type Config struct {
 	// 避免判定中途文件系统变化。
 	dockerEnvFile bool
 	// Agent runtime.json 在装配时只读一次，随后所有 Run 共用这一快照。
-	agentRuntime       AgentRuntime
+	agentRuntime       agentRuntimeConfig
 	agentRuntimeLoaded bool
 }
 
@@ -112,7 +112,7 @@ func (c *Config) LoadAgentRuntime(filename string) error {
 	if c.agentRuntimeLoaded {
 		return nil
 	}
-	runtime, err := ReadAgentRuntime(filename)
+	runtime, err := readAgentRuntime(filename)
 	if err != nil {
 		return err
 	}
@@ -124,7 +124,7 @@ func (c *Config) LoadAgentRuntime(filename string) error {
 // AgentConcurrency 返回已加载的 Worker 池并发；手工构造的零值配置默认 2。
 func (c *Config) AgentConcurrency() int {
 	if !c.agentRuntimeLoaded {
-		return DefaultAgentRuntime().Concurrency
+		return defaultAgentRuntime().Concurrency
 	}
 	return c.agentRuntime.Concurrency
 }

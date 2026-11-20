@@ -335,7 +335,7 @@ func CheckInstall(ctx context.Context, store Store, host Host, ports config.Pane
 		return err
 	}
 	for _, row := range rows {
-		if Active(row.State) || row.State == "recovery-failed" {
+		if taskActive(row.State) || row.State == "recovery-failed" {
 			return fmt.Errorf("维护任务尚未结束，请先完成或恢复任务")
 		}
 	}

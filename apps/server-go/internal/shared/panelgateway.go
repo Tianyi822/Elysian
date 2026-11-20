@@ -41,7 +41,7 @@ func NewPanelGateway(backend http.Handler, frontendPort, backendPort int) (http.
 	}, FlushInterval: -1}
 	securityProxy := boundedSecurityProxy(proxy, 65*time.Second)
 	public := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if !PanelIPHost(r.Host, frontendPort) {
+		if !panelIPHost(r.Host, frontendPort) {
 			SendError(w, 403, "面板仅允许通过 IP 地址或本机地址访问")
 			return
 		}
@@ -68,7 +68,7 @@ func boundedSecurityProxy(proxy http.Handler, timeout time.Duration) http.Handle
 	return http.TimeoutHandler(proxy, timeout, `{"error":"安全请求超时，操作结果尚未确认，请重新读取状态"}`)
 }
 
-func PanelIPHost(host string, port int) bool {
+func panelIPHost(host string, port int) bool {
 	u, err := url.Parse("http://" + host)
 	if err != nil || u.User != nil || u.Host != host {
 		return false
@@ -85,7 +85,7 @@ func PanelIPHost(host string, port int) bool {
 
 func TrustedPanelHost(r *http.Request) bool {
 	info, ok := r.Context().Value(panelRequestKey{}).(panelRequestInfo)
-	return ok && PanelIPHost(r.Host, info.FrontendPort)
+	return ok && panelIPHost(r.Host, info.FrontendPort)
 }
 
 func PanelPeerAddress(r *http.Request) string {

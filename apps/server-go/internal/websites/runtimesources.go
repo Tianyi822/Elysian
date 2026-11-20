@@ -431,7 +431,7 @@ func FetchWebsiteRuntimeCatalog(ctx context.Context, fetcher sourceFetcher, asOf
 			}
 		}
 		if tag != "" {
-			add(KindJava, NormalizeWebsiteJavaReleaseVersion(version), tag)
+			add(KindJava, normalizeWebsiteJavaReleaseVersion(version), tag)
 		}
 	}
 

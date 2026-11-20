@@ -217,7 +217,7 @@ func (s GiteeSource) ready(ctx context.Context, tag, sha string) (map[string]rel
 	if err = s.json(ctx, marker.URL, &index, 64<<10); err != nil {
 		return nil, index, err
 	}
-	if index.Schema != releaseIndexSchema || index.Repository != Repository || index.Commit != sha || index.OS != "linux" || len(index.Artifacts) != 2 {
+	if index.Schema != releaseIndexSchema || index.Repository != panelRepository || index.Commit != sha || index.OS != "linux" || len(index.Artifacts) != 2 {
 		return nil, index, errors.New("Gitee 发布索引身份无效")
 	}
 	for _, arch := range []string{"amd64", "arm64"} {
@@ -247,7 +247,7 @@ func (s GiteeSource) VerifyArtifact(ctx context.Context, sha string) error {
 }
 func (s GiteeSource) Check(ctx context.Context, channel UpdateChannel) (Update, error) {
 	channel = normalizeChannel(channel)
-	u := Update{Repository: Repository, CurrentCommit: Commit, Channel: channel, Source: SourceGitee}
+	u := Update{Repository: panelRepository, CurrentCommit: Commit, Channel: channel, Source: SourceGitee}
 	if !validChannel(channel) {
 		return u, errors.New("更新策略无效")
 	}
