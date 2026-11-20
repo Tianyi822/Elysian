@@ -168,6 +168,68 @@ func TestBuildResourcePreparationStopsOnlyConfirmedUntilEnough(t *testing.T) {
 		t.Fatalf("未恢复：%v %+v", h.actions, r)
 	}
 }
+
+type resourceCheckAfterChange struct {
+	*resourceTestHost
+	cause error
+}
+
+func (h resourceCheckAfterChange) InspectResource(ctx context.Context, target resourceTarget) (resourceState, error) {
+	state, err := h.resourceTestHost.InspectResource(ctx, target)
+	if err != nil || len(h.actions) == 0 {
+		return state, err
+	}
+	if h.cause != nil {
+		return resourceState{}, h.cause
+	}
+	state.Running = !state.Running
+	return state, nil
+}
+
+func TestResourceConfirmationPreservesCauseAndRecord(t *testing.T) {
+	for _, action := range []string{"停止", "恢复"} {
+		for _, result := range []string{"检查失败", "状态不符"} {
+			t.Run(action+"/"+result, func(t *testing.T) {
+				var cause error
+				if result == "检查失败" {
+					cause = context.DeadlineExceeded
+				}
+				w, r, h := resourceFixture(t)
+				w.Host = resourceCheckAfterChange{resourceTestHost: h, cause: cause}
+				ctx := context.Background()
+				var got error
+				var want string
+				if action == "停止" {
+					got = w.prepareBuildResources(ctx, &r)
+					want = "停止 业务服务 后未能确认停止状态："
+				} else {
+					target := h.targets[0]
+					state := h.states[target.ID]
+					state.Running = false
+					h.states[target.ID] = state
+					r.ResourceStops = []resourceStop{{Target: target, Generation: state.Generation, Stopped: true}}
+					got = w.restoreResources(ctx, &r, false)
+					want = "恢复 业务服务 后运行状态未确认："
+				}
+				if cause != nil {
+					want += cause.Error()
+					if !errors.Is(got, cause) {
+						t.Errorf("状态核对错误未保留原始原因：%v", got)
+					}
+				} else {
+					want += "<nil>"
+				}
+				if got == nil || got.Error() != want {
+					t.Errorf("错误文案变化：got %v, want %s", got, want)
+				}
+				if len(r.ResourceStops) != 1 || r.ResourceStops[0].Restored || r.ResourceStops[0].Stopped != (action == "恢复") {
+					t.Fatalf("没有确认的资源状态不能写成已确认：%+v", r.ResourceStops)
+				}
+			})
+		}
+	}
+}
+
 func TestLowMemoryWithoutConfirmedPlanNeverStopsBusiness(t *testing.T) {
 	w, r, h := resourceFixture(t)
 	r.ResourcePlan = nil

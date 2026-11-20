@@ -99,8 +99,11 @@ func (w Worker) prepareBuildResources(ctx context.Context, r *taskRecord) error 
 			return fmt.Errorf("停止 %s 的结果未确认：%w", target.Name, err)
 		}
 		state, err = host.InspectResource(ctx, target)
-		if err != nil || state.Running {
-			return fmt.Errorf("停止 %s 后未能确认停止状态：%v", target.Name, err)
+		if err != nil {
+			return fmt.Errorf("停止 %s 后未能确认停止状态：%w", target.Name, err)
+		}
+		if state.Running {
+			return fmt.Errorf("停止 %s 后未能确认停止状态：<nil>", target.Name)
 		}
 		r.ResourceStops[index].Stopped = true
 		r.ResourceStops[index].Generation = state.Generation
@@ -217,8 +220,12 @@ func (w Worker) restoreResources(ctx context.Context, r *taskRecord, startPanel 
 				continue
 			}
 			state, err = host.InspectResource(ctx, stop.Target)
-			if err != nil || !state.Running {
-				result = errors.Join(result, fmt.Errorf("恢复 %s 后运行状态未确认：%v", stop.Target.Name, err))
+			if err != nil {
+				result = errors.Join(result, fmt.Errorf("恢复 %s 后运行状态未确认：%w", stop.Target.Name, err))
+				continue
+			}
+			if !state.Running {
+				result = errors.Join(result, fmt.Errorf("恢复 %s 后运行状态未确认：<nil>", stop.Target.Name))
 				continue
 			}
 		}
