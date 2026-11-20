@@ -123,24 +123,24 @@ func NewRuntimeCatalogService(fetch func(ctx context.Context) (runtimeCatalog, e
 	return &catalogService{fetch: fetch, now: now, cache: cache, ttl: ttl}
 }
 
-// catalogResult 在飞行抓取的共享结果（并发 Get 全部读到同一份）。
-type catalogResult struct {
+// catalogFlight 持有本次抓取的结果，关闭 done 后所有等待者读取同一份。
+type catalogFlight struct {
+	done   chan struct{}
 	report runtimeCatalogReport
 	err    error
 }
 
 // catalogService 懒初始化 + TTL 缓存 + 在飞行合并。
 type catalogService struct {
-	fetch     func(ctx context.Context) (runtimeCatalog, error)
-	now       func() time.Time
-	cache     catalogCache
-	ttl       time.Duration
-	mu        sync.Mutex
-	init      chan struct{} // 首次 Get 时懒加载缓存
-	current   *runtimeCatalogReport
-	next      time.Time
-	flight    chan struct{}  // 在飞行抓取完成信号（close 广播给全部等待者）
-	flightRes *catalogResult // flight 完成后可读
+	fetch   func(ctx context.Context) (runtimeCatalog, error)
+	now     func() time.Time
+	cache   catalogCache
+	ttl     time.Duration
+	mu      sync.Mutex
+	init    chan struct{} // 首次 Get 时懒加载缓存
+	current *runtimeCatalogReport
+	next    time.Time
+	flight  *catalogFlight
 }
 
 // initialize 读缓存一次：缓存 fetchedAt <= now 才采用，nextRefreshAt = fetchedAt+ttl；
@@ -216,10 +216,12 @@ func (s *catalogService) refresh() (runtimeCatalogReport, error) {
 	return stale, nil
 }
 
-// Get 缓存未过期直接返回；过期且无在飞行则发起 refresh（并发合并：同一在飞行抓取，
-// 结果经 close 广播给全部等待者——TS 同一 inFlight Promise 的等价物）。
+// Get 缓存未过期直接返回；过期则合并刷新。请求取消只结束当前等待，不取消共享工作。
 // 初始化完成先于新鲜度判定（对齐 TS await initialized 的次序，缓存命中不发请求）。
 func (s *catalogService) Get(ctx context.Context) (runtimeCatalogReport, error) {
+	if err := ctx.Err(); err != nil {
+		return runtimeCatalogReport{}, err
+	}
 	s.mu.Lock()
 	if s.init == nil {
 		s.init = make(chan struct{})
@@ -227,37 +229,42 @@ func (s *catalogService) Get(ctx context.Context) (runtimeCatalogReport, error) 
 	}
 	init := s.init
 	s.mu.Unlock()
-	<-init
+	select {
+	case <-ctx.Done():
+		return runtimeCatalogReport{}, ctx.Err()
+	case <-init:
+	}
 
 	s.mu.Lock()
+	if err := ctx.Err(); err != nil {
+		s.mu.Unlock()
+		return runtimeCatalogReport{}, err
+	}
 	if s.current != nil && s.now().Before(s.next) {
 		current := s.current
 		s.mu.Unlock()
 		return *current, nil
 	}
 	if s.flight == nil {
-		s.flight = make(chan struct{})
-		s.flightRes = nil
-		flight := s.flight
+		flight := &catalogFlight{done: make(chan struct{})}
+		s.flight = flight
 		go func() {
-			report, err := s.refresh()
+			flight.report, flight.err = s.refresh()
 			s.mu.Lock()
-			s.flightRes = &catalogResult{report: report, err: err}
 			s.flight = nil
+			close(flight.done)
 			s.mu.Unlock()
-			// 先落结果再广播：唤醒的等待者读 flightRes；新 Get 按已更新的
-			// current/next 判定走缓存或重试（对齐 TS inFlight finally 清理）。
-			close(flight)
 		}()
 	}
 	flight := s.flight
 	s.mu.Unlock()
-	<-flight
-	s.mu.Lock()
-	result := s.flightRes
-	s.mu.Unlock()
-	if result == nil {
-		return runtimeCatalogReport{}, fmt.Errorf("官方版本目录获取失败")
+	select {
+	case <-ctx.Done():
+		return runtimeCatalogReport{}, ctx.Err()
+	case <-flight.done:
+		if err := ctx.Err(); err != nil {
+			return runtimeCatalogReport{}, err
+		}
+		return flight.report, flight.err
 	}
-	return result.report, result.err
 }

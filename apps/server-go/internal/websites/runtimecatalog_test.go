@@ -8,6 +8,7 @@ import (
 	"strings"
 	"sync"
 	"testing"
+	"testing/synctest"
 	"time"
 )
 
@@ -36,6 +37,73 @@ func (c *fakeCatalogCache) Save(report runtimeCatalogReport) error {
 	}
 	c.saved = append(c.saved, report)
 	return nil
+}
+
+type catalogCacheWithLoad struct {
+	fakeCatalogCache
+	load func()
+}
+
+func (c *catalogCacheWithLoad) Load() (runtimeCatalogReport, bool) {
+	c.load()
+	return runtimeCatalogReport{}, false
+}
+
+func TestCatalogCancelledWaiterDoesNotCancelSharedWork(t *testing.T) {
+	for _, phase := range []string{"初始化", "刷新"} {
+		t.Run(phase, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				started, release := make(chan struct{}), make(chan struct{})
+				pause := func() {
+					close(started)
+					<-release
+				}
+				var cache catalogCache
+				if phase == "初始化" {
+					cache = &catalogCacheWithLoad{load: pause}
+				}
+				fetches := 0
+				service := NewRuntimeCatalogService(func(ctx context.Context) (runtimeCatalog, error) {
+					fetches++
+					if phase == "刷新" && fetches == 1 {
+						pause()
+					}
+					return runtimeReportFixture().Catalog, ctx.Err()
+				}, nil, cache, 0)
+				ctx, cancel := context.WithCancel(context.Background())
+				defer cancel()
+				cancelled := make(chan error, 1)
+				go func() {
+					_, err := service.Get(ctx)
+					cancelled <- err
+				}()
+				<-started
+				live := make(chan error, 1)
+				go func() {
+					_, err := service.Get(context.Background())
+					live <- err
+				}()
+				synctest.Wait()
+				cancel()
+				synctest.Wait()
+				select {
+				case err := <-cancelled:
+					if !errors.Is(err, context.Canceled) {
+						t.Errorf("已取消的请求应返回取消错误：%v", err)
+					}
+				default:
+					t.Error("请求取消后仍在等待共享目录")
+				}
+				close(release)
+				if err := <-live; err != nil {
+					t.Fatalf("其它请求应继续取得目录：%v", err)
+				}
+				if fetches != 1 {
+					t.Fatalf("取消一个请求不应重抓共享目录：%d", fetches)
+				}
+			})
+		})
+	}
 }
 
 func TestCatalogCacheMigratesJavaShortcuts(t *testing.T) {
