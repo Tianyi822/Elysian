@@ -204,6 +204,8 @@ func FetchWebsiteRuntimeCatalog(ctx context.Context, fetcher sourceFetcher, asOf
 	if fetcher == nil {
 		fetcher = &http.Client{}
 	}
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	catalog := runtimeCatalog{}
 	tagsByKind := map[string]map[string]struct{}{}
 	var (
@@ -222,6 +224,7 @@ func FetchWebsiteRuntimeCatalog(ctx context.Context, fetcher sourceFetcher, asOf
 		defer mu.Unlock()
 		if firstErr == nil {
 			firstErr = err
+			cancel()
 		}
 	}
 	run := func(fn func() error) {

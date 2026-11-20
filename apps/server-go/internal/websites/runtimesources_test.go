@@ -7,6 +7,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"testing/synctest"
 )
 
 // 官方源抓取（websiteRuntimeSources.test.ts 2 例的 Go 对等，全假件 fetcher）。
@@ -19,6 +20,52 @@ type fakeSource struct {
 func (s *fakeSource) Do(req *http.Request) (*http.Response, error) {
 	status, header, body := s.handler(req.URL.String())
 	return &http.Response{StatusCode: status, Header: header, Body: io.NopCloser(strings.NewReader(body))}, nil
+}
+
+type runtimeSourceFunc func(*http.Request) (*http.Response, error)
+
+func (f runtimeSourceFunc) Do(req *http.Request) (*http.Response, error) { return f(req) }
+
+func TestFetchWebsiteRuntimeCatalogCancelsSiblingSourcesAfterFirstFailure(t *testing.T) {
+	synctest.Test(t, func(t *testing.T) {
+		ctx, cancel := context.WithCancel(context.Background())
+		defer cancel()
+		siblingStarted, siblingStopped := make(chan struct{}), make(chan struct{})
+		fallback := officialSources()
+		fetcher := runtimeSourceFunc(func(req *http.Request) (*http.Response, error) {
+			switch req.URL.Hostname() {
+			case "nodejs.org":
+				<-siblingStarted
+				return nil, io.ErrUnexpectedEOF
+			case "go.dev":
+				close(siblingStarted)
+				<-req.Context().Done()
+				close(siblingStopped)
+				return nil, req.Context().Err()
+			default:
+				return fallback.Do(req)
+			}
+		})
+		done := make(chan error, 1)
+		go func() {
+			_, err := FetchWebsiteRuntimeCatalog(ctx, fetcher, "2026-09-30")
+			done <- err
+		}()
+		synctest.Wait()
+		select {
+		case err := <-done:
+			if err == nil || err.Error() != "无法连接官方版本来源：nodejs.org" {
+				t.Errorf("后续取消不得替换原首个来源错误：%v", err)
+			}
+		default:
+			t.Error("首个来源失败后仍在等待其余来源")
+		}
+		select {
+		case <-siblingStopped:
+		default:
+			t.Error("目录返回前应取消并收回在途读取")
+		}
+	})
 }
 
 func officialSources() *fakeSource {
