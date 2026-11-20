@@ -1,13 +1,11 @@
 package database
 
 import (
-	"crypto/rand"
-	"encoding/hex"
-	"fmt"
 	"os"
 	"syscall"
 
 	"elysian/server/internal/atomicfile"
+	"elysian/server/internal/shared/randomid"
 )
 
 // 登记文件的公共读写纪律（databaseRegistry.ts 与 sqliteService.ts 同构）：
@@ -18,27 +16,7 @@ func isNoEntry(err error) bool {
 	return err != nil && os.IsNotExist(err)
 }
 
-// newUUID 生成小写 UUID v4（TS crypto.randomUUID 等价物）。
-func newUUID() string {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		// crypto/rand 失败属于系统级故障：直接 panic 由 recover 兜底为 500。
-		panic(fmt.Sprintf("无法生成随机 ID：%v", err))
-	}
-	b[6] = (b[6] & 0x0f) | 0x40
-	b[8] = (b[8] & 0x3f) | 0x80
-	buf := make([]byte, 36)
-	hex.Encode(buf[0:8], b[0:4])
-	buf[8] = '-'
-	hex.Encode(buf[9:13], b[4:6])
-	buf[13] = '-'
-	hex.Encode(buf[14:18], b[6:8])
-	buf[18] = '-'
-	hex.Encode(buf[19:23], b[8:10])
-	buf[23] = '-'
-	hex.Encode(buf[24:36], b[10:16])
-	return string(buf)
-}
+func newUUID() string { return randomid.UUIDv4() }
 
 func statRegistryFile(info os.FileInfo) bool {
 	uid := uint32(os.Getuid())

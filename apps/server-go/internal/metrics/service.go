@@ -2,7 +2,6 @@ package metrics
 
 import (
 	"context"
-	"crypto/rand"
 	"errors"
 	"fmt"
 	"log"
@@ -11,6 +10,7 @@ import (
 	"time"
 
 	"elysian/server/internal/shared"
+	"elysian/server/internal/shared/randomid"
 )
 
 // 采样与事件流节拍常量（mockEventsPlugin.ts 等价物）：5 秒一拍、15 秒心跳、
@@ -177,7 +177,7 @@ type sampleHub struct {
 func newSampleHub(now func() time.Time) *sampleHub {
 	return &sampleHub{
 		now:         now,
-		bootID:      randomBootID(),
+		bootID:      randomid.UUIDv4(),
 		subscribers: make(map[chan string]struct{}),
 	}
 }
@@ -242,26 +242,4 @@ func (h *sampleHub) subscribe(lastEventID string) (<-chan string, func(), error)
 			close(sub)
 		})
 	}, nil
-}
-
-// randomBootID 进程随机 UUID（crypto/rand v4 形态；失败以时间兜底保证区分度）。
-func randomBootID() string {
-	var b [16]byte
-	if _, err := rand.Read(b[:]); err != nil {
-		now := time.Now().UnixNano()
-		for i := 0; i < 16; i++ {
-			b[i] = byte(now >> (uint(i%8) * 8))
-		}
-	}
-	b[6] = (b[6] & 0x0f) | 0x40
-	b[8] = (b[8] & 0x3f) | 0x80
-	const hexDigits = "0123456789abcdef"
-	out := make([]byte, 0, 36)
-	for i, v := range b {
-		if i == 4 || i == 6 || i == 8 || i == 10 {
-			out = append(out, '-')
-		}
-		out = append(out, hexDigits[v>>4], hexDigits[v&0x0f])
-	}
-	return string(out)
 }

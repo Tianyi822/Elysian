@@ -1,9 +1,7 @@
 package auth
 
 import (
-	"crypto/rand"
 	"errors"
-	"fmt"
 	"io/fs"
 	"os"
 	"syscall"
@@ -11,6 +9,7 @@ import (
 
 	"elysian/server/internal/atomicfile"
 	"elysian/server/internal/jscompat"
+	"elysian/server/internal/shared/randomid"
 )
 
 // 面板数据文件的读写纪律（auth 域私有公共件，credentialsStore/sessionStore 共用）：
@@ -46,20 +45,8 @@ func statTrusted(fi os.FileInfo, maxBytes int64) bool {
 func writeFileAtomic(path string, data []byte) error {
 	return atomicfile.WriteFile(path, data, atomicfile.WriteOptions{
 		CreateParent: true,
-		TempSuffix:   func() string { return "." + randomUUID() + ".tmp" },
+		TempSuffix:   func() string { return "." + randomid.UUIDv4() + ".tmp" },
 	})
-}
-
-// randomUUID 生成 UUIDv4 形随机串（临时文件后缀用；唯一性足够，非安全边界）。
-func randomUUID() string {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		// crypto/rand 失败属进程级故障：panic 优于写出可预测的临时文件名。
-		panic(fmt.Sprintf("系统随机源不可用：%v", err))
-	}
-	b[6] = (b[6] & 0x0f) | 0x40
-	b[8] = (b[8] & 0x3f) | 0x80
-	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
 }
 
 // isoNowMillis 返回当前 UTC 毫秒时间；凭据写入层负责将 epoch 严格推进，避免同毫秒变更复用旧会话。

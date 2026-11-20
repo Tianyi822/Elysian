@@ -3,7 +3,6 @@ package containerapps
 import (
 	"bytes"
 	"context"
-	"crypto/rand"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -21,6 +20,7 @@ import (
 	"elysian/server/internal/paths"
 	"elysian/server/internal/seam"
 	"elysian/server/internal/shared"
+	"elysian/server/internal/shared/randomid"
 	"elysian/server/internal/tasklog"
 )
 
@@ -80,18 +80,6 @@ var buildIDPattern = regexp.MustCompile(`^[a-f0-9-]{36}$`)
 var buildTagPattern = regexp.MustCompile(`^\d{8}-\d{6}-[0-9a-f]{4}$`)
 
 var errBuildTaskTerminal = errors.New("构建任务已结束")
-
-// randomBuildID 生成 uuid 形状任务标识。
-func randomBuildID() string {
-	b := make([]byte, 16)
-	if _, err := rand.Read(b); err != nil {
-		// crypto/rand 失败属进程级故障：panic 优于写出可预测的标识。
-		panic(fmt.Sprintf("系统随机源不可用：%v", err))
-	}
-	b[6] = (b[6] & 0x0f) | 0x40
-	b[8] = (b[8] & 0x3f) | 0x80
-	return fmt.Sprintf("%x-%x-%x-%x-%x", b[0:4], b[4:6], b[6:8], b[8:10], b[10:16])
-}
 
 func safeBuildID(id string) bool { return buildIDPattern.MatchString(id) }
 
@@ -264,7 +252,7 @@ func newBuildManager(deps BuildDeps, limits BuildLimits) *BuildManager {
 		deps.Now = time.Now
 	}
 	if deps.NewID == nil {
-		deps.NewID = randomBuildID
+		deps.NewID = randomid.UUIDv4
 	}
 	if deps.StateRoot == "" {
 		deps.StateRoot = filepath.Join(paths.StateDir, buildDirName)

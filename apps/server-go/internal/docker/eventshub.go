@@ -2,7 +2,6 @@ package docker
 
 import (
 	"context"
-	crand "crypto/rand"
 	"errors"
 	"net/http"
 	"net/url"
@@ -12,6 +11,7 @@ import (
 	"elysian/server/internal/contract"
 	"elysian/server/internal/seam"
 	"elysian/server/internal/shared"
+	"elysian/server/internal/shared/randomid"
 )
 
 // SSE 事件 hub（dockerEventsHub.ts 逐字移植）：Engine events 流 + 3s 采样 + 重放
@@ -94,7 +94,7 @@ func newEventsHub(cfg eventsHubConfig) *eventsHub {
 		}
 	}
 	if cfg.bootID == "" {
-		cfg.bootID = randomBootID()
+		cfg.bootID = randomid.UUIDv4()
 	}
 	return &eventsHub{
 		cfg:                cfg,
@@ -688,32 +688,4 @@ func (h *eventsHub) stopHubLocked() {
 		h.imageResyncCancel()
 		h.imageResyncCancel = nil
 	}
-}
-
-// randomBootID 进程随机 UUID（crypto/rand v4 形态）。
-func randomBootID() string {
-	return randomUUIDv4()
-}
-
-// randomUUIDv4 生成标准 v4 UUID 字符串。
-func randomUUIDv4() string {
-	var b [16]byte
-	if _, err := crand.Read(b[:]); err != nil {
-		// crypto/rand 失败极罕见：以时间兜底，保证 bootId 仍有区分度。
-		now := time.Now().UnixNano()
-		for i := 0; i < 16; i++ {
-			b[i] = byte(now >> (uint(i%8) * 8))
-		}
-	}
-	b[6] = (b[6] & 0x0f) | 0x40
-	b[8] = (b[8] & 0x3f) | 0x80
-	const hexDigits = "0123456789abcdef"
-	out := make([]byte, 0, 36)
-	for i, v := range b {
-		if i == 4 || i == 6 || i == 8 || i == 10 {
-			out = append(out, '-')
-		}
-		out = append(out, hexDigits[v>>4], hexDigits[v&0x0f])
-	}
-	return string(out)
 }

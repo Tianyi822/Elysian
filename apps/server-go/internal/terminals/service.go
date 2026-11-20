@@ -8,6 +8,7 @@ import (
 
 	"elysian/server/internal/applog"
 	"elysian/server/internal/seam"
+	"elysian/server/internal/shared/randomid"
 )
 
 type disposeCause int
@@ -68,7 +69,7 @@ func (s *service) tryOpen(events sessionEvents) sessionHandle {
 		return nil
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	sess := &session{id: newSessionUUID(), host: s.host, identityFn: s.identityFn, shell: s.shell, events: events, clk: s.clk, ctx: ctx, cancel: cancel, input: make(chan []byte, 256)}
+	sess := &session{id: randomid.UUIDv4(), host: s.host, identityFn: s.identityFn, shell: s.shell, events: events, clk: s.clk, ctx: ctx, cancel: cancel, input: make(chan []byte, 256)}
 	sess.credit = sync.NewCond(&sess.mu)
 	sess.onEnded = func() { s.mu.Lock(); delete(s.sessions, sess.id); s.mu.Unlock() }
 	s.sessions[sess.id] = sess
