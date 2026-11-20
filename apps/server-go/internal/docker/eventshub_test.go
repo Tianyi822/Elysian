@@ -5,6 +5,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"elysian/server/internal/seam"
@@ -56,6 +57,79 @@ func TestHubFirstSubscribeStartsStreamAndResampleStopsOnUnsubscribe(t *testing.T
 	time.Sleep(30 * time.Millisecond)
 	if calls := streamCalls.Load(); calls != 2 {
 		t.Fatalf("重订阅再开流：%d", calls)
+	}
+}
+
+func TestHubLastUnsubscribeDoesNotReconnect(t *testing.T) {
+	for _, tc := range []struct {
+		name              string
+		reconnectInFlight bool
+	}{
+		{name: "停流后旧流返回"},
+		{name: "重连计时器已经触发", reconnectInFlight: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			synctest.Test(t, func(t *testing.T) {
+				engine := newFakeEngine(func(engineCall) (int, string, bool) { return 200, "[]", true })
+				disconnect := make(chan struct{})
+				engine.streamFn = func(ctx context.Context, _ engineCall, _ func([]byte)) (seam.EngineResponse, error) {
+					select {
+					case <-disconnect:
+						return seam.EngineResponse{}, context.DeadlineExceeded
+					case <-ctx.Done():
+						return seam.EngineResponse{}, ctx.Err()
+					}
+				}
+				hub, clock := newHubWithClock(engine)
+				var reconnect func()
+				if tc.reconnectInFlight {
+					schedule := hub.cfg.schedule
+					hub.cfg.schedule = func(fn func(), ms int) func() {
+						if ms == backoffInitialMs {
+							reconnect = fn
+							// 已触发的 AfterFunc 无法被 Stop 撤销。
+							return func() {}
+						}
+						return schedule(fn, ms)
+					}
+				}
+				defer func() {
+					hub.mu.Lock()
+					hub.stopHubLocked()
+					hub.mu.Unlock()
+				}()
+				subscriber := &captureSubscriber{}
+				unsubscribe, err := hub.Subscribe(hubHandlers{onEvent: subscriber.onEvent, onStatus: subscriber.onStatus})
+				if err != nil {
+					t.Fatal(err)
+				}
+				synctest.Wait()
+				if tc.reconnectInFlight {
+					close(disconnect)
+					synctest.Wait()
+					if reconnect == nil {
+						t.Fatal("有订阅者时断流未安排重连")
+					}
+				}
+				unsubscribe()
+				synctest.Wait()
+				if tc.reconnectInFlight {
+					reconnect()
+				} else {
+					clock.Advance(backoffInitialMs)
+				}
+				synctest.Wait()
+				streams := 0
+				for _, call := range engine.Requests() {
+					if call.Path == "/events" {
+						streams++
+					}
+				}
+				if streams != 1 {
+					t.Fatalf("最后退订后不应重新请求 /events，实际请求 %d 次", streams)
+				}
+			})
+		})
 	}
 }
 

@@ -482,8 +482,9 @@ func (h *eventsHub) onDockerLine(line string) {
 	h.mu.Unlock()
 }
 
-// stopDockerStreamLocked 停 Engine events 流。
+// stopDockerStreamLocked 停 Engine events 流，使旧流及其重连回调失效。
 func (h *eventsHub) stopDockerStreamLocked() {
+	h.streamGen++
 	if h.streamCancel != nil {
 		h.streamCancel()
 		h.streamCancel = nil
@@ -497,11 +498,15 @@ func (h *eventsHub) scheduleReconnectLocked() {
 		h.reconnectCancel()
 	}
 	h.setConnectingLocked()
+	gen := h.streamGen
 	h.reconnectCancel = h.cfg.schedule(func() {
 		h.mu.Lock()
+		defer h.mu.Unlock()
+		if h.streamGen != gen {
+			return
+		}
 		h.reconnectCancel = nil
 		h.startDockerStreamLocked()
-		h.mu.Unlock()
 	}, h.backoffMs)
 	h.backoffMs *= 2
 	if h.backoffMs > backoffMaxMs {
@@ -513,7 +518,6 @@ func (h *eventsHub) scheduleReconnectLocked() {
 func (h *eventsHub) startDockerStreamLocked() {
 	h.stopDockerStreamLocked()
 
-	h.streamGen++
 	gen := h.streamGen
 	ctx, cancel := context.WithCancel(context.Background())
 	h.streamCancel = cancel
