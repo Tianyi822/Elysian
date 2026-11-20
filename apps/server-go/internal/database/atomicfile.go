@@ -5,8 +5,9 @@ import (
 	"encoding/hex"
 	"fmt"
 	"os"
-	"path/filepath"
 	"syscall"
+
+	"elysian/server/internal/atomicfile"
 )
 
 // 登记文件的公共读写纪律（databaseRegistry.ts 与 sqliteService.ts 同构）：
@@ -58,33 +59,10 @@ func nlinkOf(info os.FileInfo) int {
 // writeFileAtomic 临时文件 + fsync + rename 的原子替换写；目录按 0700 递归建。
 // TS 版同构：wx 0600 开临时文件、写完 sync、rename 失败时清理临时文件。
 func writeFileAtomic(path string, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	temporary := path + "." + newUUID() + ".tmp"
-	f, err := os.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return err
-	}
-	if _, err := f.Write(data); err != nil {
-		f.Close()
-		os.Remove(temporary)
-		return err
-	}
-	if err := f.Sync(); err != nil {
-		f.Close()
-		os.Remove(temporary)
-		return err
-	}
-	if err := f.Close(); err != nil {
-		os.Remove(temporary)
-		return err
-	}
-	if err := os.Rename(temporary, path); err != nil {
-		os.Remove(temporary)
-		return err
-	}
-	return nil
+	return atomicfile.WriteFile(path, data, atomicfile.WriteOptions{
+		CreateParent: true,
+		TempSuffix:   func() string { return "." + newUUID() + ".tmp" },
+	})
 }
 
 // openNoFollow 以 O_NOFOLLOW 只读打开；符号链接与权限问题原样上抛。

@@ -6,9 +6,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
-	"path/filepath"
 	"sync"
 	"syscall"
+
+	"elysian/server/internal/atomicfile"
 )
 
 // agentServiceCredentialRecord 是一个 service-v1 容器的登记事实；凭据值只落本文件，
@@ -95,11 +96,13 @@ func (s *agentCredentialStore) save(record agentServiceCredentialRecord) error {
 	if !replaced {
 		records = append(records, record)
 	}
-	raw, err := json.MarshalIndent(records, "", "  ")
-	if err != nil {
-		return err
-	}
-	return writeFileAtomicDocker(s.path, raw)
+	return atomicfile.WriteJSON(s.path, records, atomicfile.JSONOptions{
+		WriteOptions: atomicfile.WriteOptions{
+			CreateParent: true,
+			TempSuffix:   func() string { return fmt.Sprintf(".%d.tmp", os.Getpid()) },
+		},
+		Indent: "  ",
+	})
 }
 
 // generateAgentSecret 生成 24 随机字节的十六进制凭据；失败属系统级故障直接 panic。
@@ -109,37 +112,4 @@ func generateAgentSecret() string {
 		panic(fmt.Sprintf("无法生成随机凭据：%v", err))
 	}
 	return hex.EncodeToString(buffer[:])
-}
-
-// writeFileAtomicDocker 与 internal/database/atomicfile.go 的 writeFileAtomic 同构；
-// docker 域不依赖 database 包，故自带一份。
-func writeFileAtomicDocker(path string, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	temporary := path + "." + fmt.Sprintf("%d", os.Getpid()) + ".tmp"
-	// O_EXCL 拒绝已存在的临时名（含符号链接预置），杜绝 O_TRUNC 穿透链接改写任意文件。
-	file, err := os.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return err
-	}
-	if _, err := file.Write(data); err != nil {
-		file.Close()
-		os.Remove(temporary)
-		return err
-	}
-	if err := file.Sync(); err != nil {
-		file.Close()
-		os.Remove(temporary)
-		return err
-	}
-	if err := file.Close(); err != nil {
-		os.Remove(temporary)
-		return err
-	}
-	if err := os.Rename(temporary, path); err != nil {
-		os.Remove(temporary)
-		return err
-	}
-	return nil
 }

@@ -7,8 +7,7 @@ import (
 	"testing"
 )
 
-// 跨域 import 禁卫（go-plan §4.3）：域包只能 import 标准库、选型库与公共层六包
-// （config/paths/seam/contract/shared/middleware），禁止 import 任何其它域包；
+// 跨域 import 禁卫（go-plan §4.3）：域包只能 import 标准库、选型库与登记的公共层包，禁止 import 任何其它域包；
 // 公共层禁止 import 任何域包。internal/app 是唯一允许 import 全部域包的位置。
 // 任何绕过（含 internal/<域>/<域>2 变体目录）都算违规。
 func TestNoCrossDomainImports(t *testing.T) {
@@ -27,6 +26,7 @@ func TestNoCrossDomainImports(t *testing.T) {
 		"elysian/server/internal/websites":      true,
 	}
 	publicLayer := map[string]bool{
+		"elysian/server/internal/atomicfile": true,
 		"elysian/server/internal/config":     true,
 		"elysian/server/internal/paths":      true,
 		"elysian/server/internal/seam":       true,

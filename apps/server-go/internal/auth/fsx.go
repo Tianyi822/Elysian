@@ -6,9 +6,10 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
-	"path/filepath"
 	"syscall"
 	"time"
+
+	"elysian/server/internal/atomicfile"
 )
 
 // 面板数据文件的读写纪律（auth 域私有公共件，credentialsStore/sessionStore 共用）：
@@ -51,33 +52,10 @@ func statTrusted(fi os.FileInfo, maxBytes int64) bool {
 // writeFileAtomic 原子写：mkdir（recursive、0700）→ 写 `<path>.<uuid>.tmp`（独占、0600）
 // → fsync → rename 原子替换；rename 失败清理临时文件并返回错误。
 func writeFileAtomic(path string, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
-		return err
-	}
-	temporary := path + "." + randomUUID() + ".tmp"
-	file, err := os.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return err
-	}
-	if _, err := file.Write(data); err != nil {
-		_ = file.Close()
-		_ = os.Remove(temporary)
-		return err
-	}
-	if err := file.Sync(); err != nil {
-		_ = file.Close()
-		_ = os.Remove(temporary)
-		return err
-	}
-	if err := file.Close(); err != nil {
-		_ = os.Remove(temporary)
-		return err
-	}
-	if err := os.Rename(temporary, path); err != nil {
-		_ = os.Remove(temporary)
-		return err
-	}
-	return nil
+	return atomicfile.WriteFile(path, data, atomicfile.WriteOptions{
+		CreateParent: true,
+		TempSuffix:   func() string { return "." + randomUUID() + ".tmp" },
+	})
 }
 
 // randomUUID 生成 UUIDv4 形随机串（临时文件后缀用；唯一性足够，非安全边界）。

@@ -6,6 +6,8 @@ import (
 	"os"
 	"path/filepath"
 	"sync"
+
+	"elysian/server/internal/atomicfile"
 )
 
 /*
@@ -116,30 +118,9 @@ func (r *fileWebsiteRegistry) write(rows []WebsiteRecord) error {
 	if err != nil {
 		return err
 	}
-	temporary := r.path + "." + randomUUID() + ".tmp"
-	handle, err := os.OpenFile(temporary, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
-	if err != nil {
-		return err
-	}
-	if _, err := handle.Write(data); err != nil {
-		_ = handle.Close()
-		_ = os.Remove(temporary)
-		return err
-	}
-	if err := handle.Sync(); err != nil {
-		_ = handle.Close()
-		_ = os.Remove(temporary)
-		return err
-	}
-	if err := handle.Close(); err != nil {
-		_ = os.Remove(temporary)
-		return err
-	}
-	if err := os.Rename(temporary, r.path); err != nil {
-		_ = os.Remove(temporary)
-		return err
-	}
-	return nil
+	return atomicfile.WriteFile(r.path, data, atomicfile.WriteOptions{
+		TempSuffix: func() string { return "." + randomUUID() + ".tmp" },
+	})
 }
 
 func (r *fileWebsiteRegistry) List(context.Context) ([]WebsiteRecord, error) {

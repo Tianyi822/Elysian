@@ -14,6 +14,7 @@ import (
 	"sync"
 	"time"
 
+	"elysian/server/internal/atomicfile"
 	"elysian/server/internal/paths"
 	"elysian/server/internal/seam"
 	"elysian/server/internal/shared"
@@ -159,30 +160,9 @@ func productionDeploymentManager(s *websiteService, engine deploymentEngine) *de
 }
 func safeDeploymentID(id string) bool { return regexpDeploymentID.MatchString(id) }
 func writeDeploymentJSON(path string, v any) error {
-	b, e := json.Marshal(v)
-	if e != nil {
-		return e
-	}
-	f, e := os.CreateTemp(filepath.Dir(path), ".write-*")
-	if e != nil {
-		return e
-	}
-	tmp := f.Name()
-	defer os.Remove(tmp)
-	if e = f.Chmod(0600); e == nil {
-		_, e = f.Write(b)
-	}
-	if e == nil {
-		e = f.Sync()
-	}
-	ce := f.Close()
-	if e != nil {
-		return e
-	}
-	if ce != nil {
-		return ce
-	}
-	return os.Rename(tmp, path)
+	return atomicfile.WriteJSON(path, v, atomicfile.JSONOptions{
+		WriteOptions: atomicfile.WriteOptions{TempPattern: ".write-*"},
+	})
 }
 func (m *deploymentManager) sourceDir(id string) string {
 	return filepath.Join(m.sourceRoot, id, "content")
