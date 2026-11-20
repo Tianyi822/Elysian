@@ -5,6 +5,7 @@
 package app
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -266,7 +267,10 @@ func Test容器门禁域非容器环境整片503文案(t *testing.T) {
 func Test日志片无关容器边界读端点与404文案(t *testing.T) {
 	// 日志片与容器边界无关：真实打开（临时目录，不碰 ~/.Elysian），读端点照常 200。
 	svc := logs.OpenService(filepath.Join(t.TempDir(), "logs.sqlite"), nil)
+	t.Cleanup(func() { _ = svc.Close() })
 	handler := newAssemblyHandler(t, svc, auth.Deps{Enabled: false})
+	runtime := handler.(*Runtime)
+	t.Cleanup(func() { _ = runtime.Close(context.Background()) })
 
 	rec := httptest.NewRecorder()
 	handler.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/logs/runtime", nil))
@@ -293,6 +297,38 @@ func Test日志片无关容器边界读端点与404文案(t *testing.T) {
 	}
 	if rec.Body.String() != `{"error":"未知日志端点：GET /nowhere"}` {
 		t.Errorf("响应体 = %q", rec.Body.String())
+	}
+	if err := runtime.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	rec = httptest.NewRecorder()
+	logs.NewRouter(logs.Deps{Service: svc}).ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/runtime", nil))
+	if rec.Code != http.StatusOK {
+		t.Fatalf("关闭 Runtime 不得关闭由外部注入的日志库：%d %s", rec.Code, rec.Body)
+	}
+}
+
+func TestRuntimeClosesOwnedLogs(t *testing.T) {
+	dir := t.TempDir()
+	previous := paths.Default
+	paths.Default.LogsSqlite = filepath.Join(dir, "logs.sqlite")
+	paths.Default.PlatformLogsDir = filepath.Join(dir, "platform")
+	t.Cleanup(func() { paths.Default = previous })
+	runtime := newAssemblyHandler(t, nil, auth.Deps{Enabled: false}).(*Runtime)
+	t.Cleanup(func() { _ = runtime.Close(context.Background()) })
+	readLogs := func() *httptest.ResponseRecorder {
+		rec := httptest.NewRecorder()
+		runtime.ServeHTTP(rec, httptest.NewRequest(http.MethodGet, "/api/logs/runtime", nil))
+		return rec
+	}
+	if rec := readLogs(); rec.Code != http.StatusOK {
+		t.Fatalf("Runtime 自开的日志库应可查询：%d %s", rec.Code, rec.Body)
+	}
+	if err := runtime.Close(context.Background()); err != nil {
+		t.Fatal(err)
+	}
+	if rec := readLogs(); rec.Code != http.StatusInternalServerError {
+		t.Fatalf("Runtime 关闭后自开的日志库仍可查询：%d %s", rec.Code, rec.Body)
 	}
 }
 

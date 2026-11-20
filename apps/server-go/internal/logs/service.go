@@ -76,9 +76,13 @@ type sweepCall struct {
 
 // Service 编排层服务。
 type Service struct {
-	store      logStore
-	now        func() time.Time
-	startTimer func(onTick func(), interval time.Duration)
+	store     logStore
+	now       func() time.Time
+	newTicker func(time.Duration) (<-chan time.Time, func())
+	stop      chan struct{}
+	workers   sync.WaitGroup
+	closeOnce sync.Once
+	closeErr  error
 
 	stateMu     sync.Mutex
 	sweepState  map[string]sweepStateEntry
@@ -87,19 +91,23 @@ type Service struct {
 	maintenance map[string]*sync.Mutex
 }
 
-// NewService 构造服务；now 为 nil 用 time.Now，startTimer 为 nil 用默认 ticker。
-func NewService(store logStore, now func() time.Time, startTimer func(onTick func(), interval time.Duration)) *Service {
+// NewService 构造服务；now 为 nil 用 time.Now，newTicker 为 nil 用标准 ticker。
+func NewService(store logStore, now func() time.Time, newTicker func(time.Duration) (<-chan time.Time, func())) *Service {
 	if now == nil {
 		now = time.Now
 	}
-	if startTimer == nil {
-		startTimer = defaultStartTimer
+	if newTicker == nil {
+		newTicker = func(interval time.Duration) (<-chan time.Time, func()) {
+			ticker := time.NewTicker(interval)
+			return ticker.C, ticker.Stop
+		}
 	}
 	categories := []string{categoryRuntime, categoryOperation, categoryLogin}
 	svc := &Service{
 		store:       store,
 		now:         now,
-		startTimer:  startTimer,
+		newTicker:   newTicker,
+		stop:        make(chan struct{}),
 		sweepState:  map[string]sweepStateEntry{},
 		pending:     map[string]*sweepCall{},
 		timerFired:  map[string]bool{},
@@ -112,16 +120,33 @@ func NewService(store logStore, now func() time.Time, startTimer func(onTick fun
 	return svc
 }
 
-// defaultStartTimer 惰性注册的巡检定时器：goroutine + ticker，不阻塞进程退出
-// （TS setInterval + unref 的 Go 对应物）。
-func defaultStartTimer(onTick func(), interval time.Duration) {
+func (s *Service) startSweepTimerLocked(category string) {
+	ticks, stopTicker := s.newTicker(logSweepInterval)
+	s.workers.Add(1)
 	go func() {
-		ticker := time.NewTicker(interval)
-		defer ticker.Stop()
-		for range ticker.C {
-			onTick()
+		defer s.workers.Done()
+		defer stopTicker()
+		for {
+			select {
+			case <-s.stop:
+				return
+			case <-ticks:
+				s.RunSweep(category, sweepReasonTimer)
+			}
 		}
 	}()
+}
+
+// Close 停止定时器并等待在途巡检，再关闭日志库。调用方负责先停止日志业务调用。
+func (s *Service) Close() error {
+	s.closeOnce.Do(func() {
+		s.stateMu.Lock()
+		close(s.stop)
+		s.stateMu.Unlock()
+		s.workers.Wait()
+		s.closeErr = s.store.Close()
+	})
+	return s.closeErr
 }
 
 // storage 类别维度的存储统计（sweep 字段取该类别进程内状态）。
@@ -255,9 +280,15 @@ func (s *Service) sweepLocked(category string, reason sweepReason) sweepResult {
 }
 
 // RunSweep 触发巡检：同类别在途直接复用同一结果；定时器每类别只在第一次触发时注册。
-// （生产现状：除 clear 内部的 after-clear 外无调用方，定时器因此不会启动——照抄 TS 行为。）
+// 清空操作的 after-clear 巡检不通过此入口，不启动定时器。
 func (s *Service) RunSweep(category string, reason sweepReason) sweepResult {
 	s.stateMu.Lock()
+	select {
+	case <-s.stop:
+		s.stateMu.Unlock()
+		return sweepResult{}
+	default:
+	}
 	if call := s.pending[category]; call != nil {
 		s.stateMu.Unlock()
 		<-call.done
@@ -265,10 +296,11 @@ func (s *Service) RunSweep(category string, reason sweepReason) sweepResult {
 	}
 	call := &sweepCall{done: make(chan struct{})}
 	s.pending[category] = call
+	s.workers.Add(1)
+	defer s.workers.Done()
 	if !s.timerFired[category] {
 		s.timerFired[category] = true
-		interval := logSweepInterval
-		s.startTimer(func() { s.RunSweep(category, sweepReasonTimer) }, interval)
+		s.startSweepTimerLocked(category)
 	}
 	s.stateMu.Unlock()
 
@@ -398,10 +430,10 @@ func derefString(v *string, fallback string) string {
 	return *v
 }
 
-// OpenService 打开+建表+启动分片导入，产出服务（go-plan §3.8 冻结签名）。
+// OpenService 打开日志库并导入分片，调用方持有服务的关闭权。
 // 打开或导入失败时内部降级为不可用实现（查询「日志数据库不可用」→ 500、写入只计
 // failedWrites）并落 stderr 诊断，永不向装配返回错误——对齐 logsHostDeps 的降级语义。
-func OpenService(dbPath string, now func() time.Time) seam.Logs {
+func OpenService(dbPath string, now func() time.Time) *Service {
 	if now == nil {
 		now = time.Now
 	}

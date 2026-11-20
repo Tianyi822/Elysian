@@ -175,6 +175,11 @@ func run() (runErr error) {
 
 	// 启动序列第一步：打开日志（建表 + 分片导入；打开失败内部降级为不可用实现）。
 	appLogs := logs.OpenService(paths.Default.LogsSqlite, nil)
+	defer func() {
+		if err := appLogs.Close(); err != nil {
+			runErr = errors.Join(runErr, fmt.Errorf("关闭日志服务失败：%w", err))
+		}
+	}()
 
 	// 启动序列第二步：首启凭据保障（dev 开启只打警告行；否则凭据缺失时生成随机
 	// 初始密码，横幅打 stdout）。created 时补一条不含明文的 lifecycle 运行日志。

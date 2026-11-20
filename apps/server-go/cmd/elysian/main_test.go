@@ -6,7 +6,46 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"elysian/server/internal/paths"
 )
+
+func TestStartupFailureClosesLogs(t *testing.T) {
+	dir := t.TempDir()
+	blocker := filepath.Join(dir, "blocked-config")
+	if err := os.WriteFile(blocker, nil, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	prevArgs, prevPaths, prevLogs := os.Args, paths.Default, paths.LogsDir
+	t.Cleanup(func() { os.Args, paths.Default, paths.LogsDir = prevArgs, prevPaths, prevLogs })
+	os.Args = []string{"elysian"}
+	paths.LogsDir = filepath.Join(dir, "logs")
+	paths.Default.PlatformLogsDir = filepath.Join(paths.LogsDir, "platform")
+	paths.Default.LogsSqlite = filepath.Join(dir, "logs.sqlite")
+	paths.Default.PanelCredentials = filepath.Join(blocker, "credentials.json")
+	t.Setenv("ELYSIAN_DOCKER", "0")
+	t.Setenv("ELYSIAN_BARE_METAL", "0")
+	t.Setenv("ELYSIAN_AUTH_DEV", "0")
+	if err := run(); err == nil || !strings.Contains(err.Error(), "首启凭据保障失败") {
+		t.Fatalf("应在日志库打开后因凭据路径不可用而退出：%v", err)
+	}
+	if _, err := os.Stat(paths.Default.LogsSqlite); err != nil {
+		t.Fatalf("启动失败前未打开真实日志库：%v", err)
+	}
+	const fdDir = "/proc/self/fd"
+	fds, err := os.ReadDir(fdDir)
+	if errors.Is(err, os.ErrNotExist) {
+		t.Skip("检查打开的 SQLite 文件描述符需要 procfs")
+	}
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, fd := range fds {
+		if target, err := os.Readlink(filepath.Join(fdDir, fd.Name())); err == nil && target == paths.Default.LogsSqlite {
+			t.Fatal("启动失败后仍持有日志 SQLite 文件描述符")
+		}
+	}
+}
 
 func TestAgentWorkerSubcommandBypassesServerAssembly(t *testing.T) {
 	input, err := os.Create(filepath.Join(t.TempDir(), "input"))

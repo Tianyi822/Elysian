@@ -18,9 +18,9 @@ func fixedClock(t time.Time) func() time.Time { return func() time.Time { return
 func TestOpenServiceDegradation(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "data", "logs.sqlite")
 	svc := OpenService(dbPath, fixedClock(time.Date(2026, 9, 23, 0, 0, 2, 0, time.UTC)))
+	t.Cleanup(func() { _ = svc.Close() })
 	svc.Runtime("info", "server.lifecycle", "Elysian 服务已启动：http://127.0.0.1:48101")
-	full := svc.(ServiceAPI)
-	report, err := full.RuntimeLog(logListQuery{})
+	report, err := svc.RuntimeLog(logListQuery{})
 	if err != nil {
 		t.Fatalf("打开成功的服务应可查询：%v", err)
 	}
@@ -41,8 +41,8 @@ func TestOpenServiceDegradation(t *testing.T) {
 		t.Fatalf("建占位文件失败：%v", err)
 	}
 	degraded := OpenService(filepath.Join(blocker, "data", "logs.sqlite"), nil)
-	degradedFull := degraded.(ServiceAPI)
-	if _, err := degradedFull.RuntimeLog(logListQuery{}); err == nil || err.Error() != unavailableMessage {
+	t.Cleanup(func() { _ = degraded.Close() })
+	if _, err := degraded.RuntimeLog(logListQuery{}); err == nil || err.Error() != unavailableMessage {
 		t.Errorf("降级服务查询应回不可用：%v", err)
 	}
 	// 降级写入只计数、不上抛。
@@ -229,6 +229,7 @@ func TestServiceClearOnlyOwnCategory(t *testing.T) {
 // runSweep 更新 lastSweepAt、留痕文案逐字锚定（logsService.test.ts ⑨）。
 func TestServiceRunSweepMessages(t *testing.T) {
 	svc, store := newTestService()
+	t.Cleanup(func() { _ = svc.Close() })
 	store.sweepResults[categoryRuntime] = logSweepResult{
 		DeletedByAge: 1, DeletedBySize: 1, FreedBytes: 2048, TotalBytes: 512, TrimmedBySize: true,
 	}
@@ -270,6 +271,7 @@ func TestServiceRunSweepMessages(t *testing.T) {
 		Failed: 1, TotalBytes: 128 * 1024 * 1024,
 	}
 	svc2 := NewService(store2, fixedClock(time.Date(2026, 9, 23, 0, 0, 2, 0, time.UTC)), nil)
+	t.Cleanup(func() { _ = svc2.Close() })
 	svc2.RunSweep(categoryOperation, sweepReasonManual)
 	messages := []string{}
 	for _, row := range store2.runtimeRowsOf() {
@@ -297,15 +299,16 @@ func TestServiceTimerRegisteredOncePerCategory(t *testing.T) {
 		category string
 		interval time.Duration
 	}{}
-	svc := NewService(store, fixedClock(time.Date(2026, 9, 23, 0, 0, 2, 0, time.UTC)), func(onTick func(), interval time.Duration) {
+	svc := NewService(store, fixedClock(time.Date(2026, 9, 23, 0, 0, 2, 0, time.UTC)), func(interval time.Duration) (<-chan time.Time, func()) {
 		mu.Lock()
 		defer mu.Unlock()
 		registrations = append(registrations, struct {
 			category string
 			interval time.Duration
 		}{category: "captured-at-call", interval: interval})
-		// 不真正触发 tick。
+		return nil, func() {} // 不真正触发 tick。
 	})
+	t.Cleanup(func() { _ = svc.Close() })
 
 	svc.RunSweep(categoryRuntime, sweepReasonManual)
 	svc.RunSweep(categoryRuntime, sweepReasonManual)
@@ -336,7 +339,8 @@ func TestServiceSweepMergeAndClearMutex(t *testing.T) {
 	store.sweepResults[categoryRuntime] = logSweepResult{DeletedByAge: 3, FreedBytes: 4096}
 	gate := make(chan struct{})
 	store.sweepBlock = gate
-	svc := NewService(store, fixedClock(time.Date(2026, 9, 23, 0, 0, 2, 0, time.UTC)), func(onTick func(), interval time.Duration) {})
+	svc := NewService(store, fixedClock(time.Date(2026, 9, 23, 0, 0, 2, 0, time.UTC)), nil)
+	t.Cleanup(func() { _ = svc.Close() })
 
 	results := make([]sweepResult, 2)
 	var wg sync.WaitGroup

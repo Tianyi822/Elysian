@@ -72,7 +72,7 @@ import (
 // 「首启凭据运行日志」与「服务已启动」两条 lifecycle 日志必须与审计中间件、
 // 各域写进同一个日志服务实例（TS 侧 index.ts 即把 logs.service 传进 createApp）；
 // 若装配层自开一份，同库双连接、启动日志与运行日志分家。nil 时装配层按缺省路径
-// 自行打开（tests 以假件注入，不碰磁盘）。
+// 自行打开并关闭；非 nil 的注入实例仍由调用方管理。
 func New(cfg *config.Config, appLogs seam.Logs) (*Runtime, error) {
 	return newAssembly(cfg, appLogs, auth.Deps{
 		// 生产恒开启鉴权；dev 固定账号与 Cookie Secure 由 env 快照注入。
@@ -86,15 +86,24 @@ func New(cfg *config.Config, appLogs seam.Logs) (*Runtime, error) {
 // CookieSecure，测试可注 Enabled=false 或内存 store）。共享实例在装配期创建一次：
 // 会话撤销表穿 auth 片（触发端）与 terminals 片（登记端），会话 store 穿
 // RequireSession 与 auth 片——漏穿只有静默缺断连/滑动丢失，没有测试会红。
-func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, factories ...harnessFactory) (*Runtime, error) {
+func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, factories ...harnessFactory) (_ *Runtime, resultErr error) {
 	if cfg.Mode() != config.ModeLocalDemo {
 		if err := cfg.LoadAgentRuntime(paths.Default.AgentRuntime); err != nil {
 			return nil, err
 		}
 	}
+	var ownedLogs *logs.Service
 	if appLogs == nil {
 		// 生产便利路径：按缺省路径打开（打开失败内部降级为不可用实现，不返回错误）。
-		appLogs = logs.OpenService(paths.Default.LogsSqlite, nil)
+		ownedLogs = logs.OpenService(paths.Default.LogsSqlite, nil)
+		appLogs = ownedLogs
+		defer func() {
+			if resultErr != nil {
+				if err := ownedLogs.Close(); err != nil {
+					applog.Default().Printf("装配失败后关闭日志服务：%v", err)
+				}
+			}
+		}()
 	}
 
 	// 会话撤销表：auth 路由触发撤销，聊天流鉴权与 terminals 的 WS 登记 closer，
@@ -278,6 +287,9 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 		Warn:  func(message string) { applog.Default().Printf("server.metrics: %s", message) },
 	})
 	runtime.closeFuncs = append(runtime.closeFuncs, metricsService.Close)
+	if ownedLogs != nil {
+		runtime.closeFuncs = append(runtime.closeFuncs, func(context.Context) error { return ownedLogs.Close() })
+	}
 
 	r := chi.NewRouter()
 	r.Use(middleware.RequestID)
