@@ -509,6 +509,14 @@ func (s *store) reconcileRecordOwner(owner recordOwner, verifyAll bool) error {
 	}
 	if !appending {
 		if _, err := reader.ReadByte(); err == nil {
+			// 清理事务可能在选中归属之后移除了 outbox，文件由下一轮清理删除。
+			var purged bool
+			if err := s.db.QueryRow("SELECT EXISTS(SELECT 1 FROM agent_record_cleanup WHERE owner_kind=? AND owner_id=?)", owner.kind, owner.id).Scan(&purged); err != nil {
+				return err
+			}
+			if purged {
+				return nil
+			}
 			return recordIntegrity("记录文件含有数据库外的额外内容")
 		} else if !errors.Is(err, io.EOF) {
 			return err

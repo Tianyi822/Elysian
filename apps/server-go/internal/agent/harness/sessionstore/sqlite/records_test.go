@@ -57,6 +57,51 @@ func readRecordLines(t *testing.T, s *store, owner recordOwner) ([]recordLine, [
 	return lines, b
 }
 
+func TestRecordReconcileAfterSelectedOwnerIsPurged(t *testing.T) {
+	s, _ := openRuntimeTestStore(t)
+	run := createRuntimeTestRun(t, s, "purge-after-selection", runtimeStoreTestTime)
+	owner := recordOwner{"batch-run", run.ID}
+	_, before := readRecordLines(t, s, owner)
+	path, err := s.recordPath(owner)
+	if err != nil {
+		t.Fatal(err)
+	}
+	owners, err := s.recordOwners("SELECT DISTINCT owner_kind,owner_id FROM agent_record_outbox")
+	if err != nil || len(owners) != 1 || owners[0] != owner {
+		t.Fatalf("未选中待核对的记录：%v %v", owners, err)
+	}
+	// 清理事务在 worker 选中归属之后、读取 outbox 之前提交。
+	ctx := context.Background()
+	tx, err := s.db.BeginTx(ctx, nil)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer tx.Rollback()
+	if err := purgeRecordOwner(ctx, tx, owner); err != nil {
+		t.Fatal(err)
+	}
+	if err := tx.Commit(); err != nil {
+		t.Fatal(err)
+	}
+	if err := s.reconcileRecordOwner(owners[0], false); err != nil {
+		t.Fatalf("已提交的清理不应被判为记录完整性故障：%v", err)
+	}
+	if after, err := os.ReadFile(path); err != nil || !bytes.Equal(after, before) {
+		t.Fatalf("未由清理循环处理的文件不应改写：%v", err)
+	}
+	if err := s.reconcileRecords(false); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := os.Lstat(path); !errors.Is(err, os.ErrNotExist) {
+		t.Fatalf("记录文件没有清理：%v", err)
+	}
+	for _, table := range []string{"agent_record_cleanup", "agent_record_watermarks"} {
+		if n := runtimeStoreCount(t, s, table); n != 0 {
+			t.Fatalf("%s 留下 %d 项清理后的状态", table, n)
+		}
+	}
+}
+
 func TestAgentRecordsTransactionalMessagesAndFacts(t *testing.T) {
 	s, _ := openRuntimeTestStore(t)
 	ctx := context.Background()
