@@ -562,15 +562,9 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 				slot.process = nil
 				m.setWorkerStateLocked(slot, "unavailable")
 				m.mu.Unlock()
-				closeCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
-				_ = p.Close(closeCtx)
-				stop()
-				timer := time.NewTimer(time.Second)
-				select {
-				case <-m.ctx.Done():
-					timer.Stop()
+				_ = closeWorkerProcess(p)
+				if !m.waitWorkerRetry(time.Second) {
 					return
-				case <-timer.C:
 				}
 				continue
 			default:
@@ -579,29 +573,15 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 		// 即使持续有队列，也要在两个任务之间执行到期清理。
 		select {
 		case <-sweep.C:
-			m.mu.Lock()
-			if err := m.sweep(m.ctx); err != nil && m.ctx.Err() == nil {
-				m.storageFailedLocked()
-			}
-			m.mu.Unlock()
+			m.sweepWorkerQueue()
 			continue
 		default:
 		}
 		if p == nil {
-			m.mu.Lock()
-			m.setWorkerStateLocked(slot, "starting")
-			m.mu.Unlock()
-			proc, err := m.deps.Spawn(m.ctx)
+			proc, err := m.spawnWorker(slot)
 			if err != nil {
-				m.mu.Lock()
-				m.setWorkerStateLocked(slot, "unavailable")
-				m.mu.Unlock()
-				timer := time.NewTimer(backoff)
-				select {
-				case <-m.ctx.Done():
-					timer.Stop()
+				if !m.waitWorkerRetry(backoff) {
 					return
-				case <-timer.C:
 				}
 				backoff *= 2
 				if backoff > 30*time.Second {
@@ -609,20 +589,12 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 				}
 				continue
 			}
-			m.mu.Lock()
-			slot.process = proc
-			m.setWorkerStateLocked(slot, "ready")
-			m.mu.Unlock()
 			p = proc
 			backoff = time.Second
 		}
 		if err := m.checkDispatchGuard(); err != nil {
-			timer := time.NewTimer(time.Second)
-			select {
-			case <-m.ctx.Done():
-				timer.Stop()
+			if !m.waitWorkerRetry(time.Second) {
 				return
-			case <-timer.C:
 			}
 			continue
 		}
@@ -654,18 +626,8 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 		}
 		if len(ids) == 0 {
 			m.mu.Unlock()
-			select {
-			case <-m.ctx.Done():
+			if !m.waitWorkerQueue(approvalTick.C, processDone(p), sweep.C) {
 				return
-			case <-m.wake:
-			case <-approvalTick.C:
-			case <-processDone(p):
-			case <-sweep.C:
-				m.mu.Lock()
-				if err = m.sweep(m.ctx); err != nil && m.ctx.Err() == nil {
-					m.storageFailedLocked()
-				}
-				m.mu.Unlock()
 			}
 			continue
 		}
@@ -700,11 +662,9 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 		}
 		if r.ID == "" {
 			m.mu.Unlock()
-			select {
-			case <-m.ctx.Done():
+			// 有队列却无可领取任务时不监听进程退出和清理时钟。
+			if !m.waitWorkerQueue(approvalTick.C, nil, nil) {
 				return
-			case <-m.wake:
-			case <-approvalTick.C:
 			}
 			continue
 		}
@@ -791,199 +751,262 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 		m.refreshLegacyLocked()
 		m.signal()
 		m.mu.Unlock()
-		if workflowDriver(r) == "agent" {
-			agent := &agentExecution{manager: m, run: r}
+		m.runWorkerExecution(slot, p, runCtx, cancel, r, execution, activeStart)
+	}
+}
+
+func closeWorkerProcess(p worker.Process) error {
+	closeCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
+	err := p.Close(closeCtx)
+	stop()
+	return err
+}
+
+func (m *Manager) spawnWorker(slot *workerSlot) (worker.Process, error) {
+	m.mu.Lock()
+	m.setWorkerStateLocked(slot, "starting")
+	m.mu.Unlock()
+	proc, err := m.deps.Spawn(m.ctx)
+	m.mu.Lock()
+	if err != nil {
+		m.setWorkerStateLocked(slot, "unavailable")
+	} else {
+		slot.process = proc
+		m.setWorkerStateLocked(slot, "ready")
+	}
+	m.mu.Unlock()
+	return proc, err
+}
+
+func (m *Manager) waitWorkerRetry(delay time.Duration) bool {
+	timer := time.NewTimer(delay)
+	select {
+	case <-m.ctx.Done():
+		timer.Stop()
+		return false
+	case <-timer.C:
+		return true
+	}
+}
+
+func (m *Manager) sweepWorkerQueue() {
+	m.mu.Lock()
+	if err := m.sweep(m.ctx); err != nil && m.ctx.Err() == nil {
+		m.storageFailedLocked()
+	}
+	m.mu.Unlock()
+}
+
+func (m *Manager) waitWorkerQueue(approvals <-chan time.Time, exited <-chan struct{}, sweep <-chan time.Time) bool {
+	select {
+	case <-m.ctx.Done():
+		return false
+	case <-m.wake:
+	case <-approvals:
+	case <-exited:
+	case <-sweep:
+		m.sweepWorkerQueue()
+	}
+	return true
+}
+
+func (m *Manager) runWorkerExecution(slot *workerSlot, p worker.Process, runCtx context.Context, cancel context.CancelFunc, r Run, execution *executionState, activeStart time.Time) {
+	var err error
+	if workflowDriver(r) == "agent" {
+		agent := &agentExecution{manager: m, run: r}
+		m.mu.Lock()
+		execution.agent = agent
+		m.mu.Unlock()
+		err = p.(worker.AgentProcess).RunAgent(runCtx, r.ID, agent)
+	} else if r.WorkflowID != "" {
+		err = m.executeWorkflowStep(runCtx, r)
+	} else {
+		steps := make([]worker.Step, len(r.Task.Steps))
+		for i, step := range r.Task.Steps {
+			args, _ := json.Marshal(step.Args)
+			steps[i] = worker.Step{Tool: step.Tool, Args: args}
+		}
+		err = p.Run(runCtx, r.ID, steps, func(ctx context.Context, index int, name string, args json.RawMessage) (json.RawMessage, error) {
+			return m.invoke(ctx, r, index, name, args)
+		})
+	}
+	if err != nil && !errors.Is(err, worker.ErrSuspended) && execution.agent != nil {
+		execution.agent.summarizeFailure(runCtx, err)
+	}
+	ctxErr := runCtx.Err()
+	cancel()
+	// 子进程退出不能证明父工具已退出。先关闭本次运行的新调用入口，再等待
+	// 已登记的调用完成持久化或明确报告不协作，才允许释放唯一执行槽。
+	m.mu.Lock()
+	execution.finishing = true
+	m.refreshLegacyLocked()
+	callDone := execution.callDone
+	m.mu.Unlock()
+	if callDone != nil {
+		timer := time.NewTimer(time.Duration(r.Limits.CancelGraceSeconds+1) * time.Second)
+		select {
+		case <-callDone:
+			timer.Stop()
+		case <-execution.deletedDone:
+			timer.Stop()
+		case <-timer.C:
 			m.mu.Lock()
-			execution.agent = agent
+			m.executionUnresponsiveLocked(execution, "工具未确认停止，任务派发已暂停，请重启面板后检查")
 			m.mu.Unlock()
-			err = p.(worker.AgentProcess).RunAgent(runCtx, r.ID, agent)
-		} else if r.WorkflowID != "" {
-			err = m.executeWorkflowStep(runCtx, r)
-		} else {
-			steps := make([]worker.Step, len(r.Task.Steps))
-			for i, step := range r.Task.Steps {
-				args, _ := json.Marshal(step.Args)
-				steps[i] = worker.Step{Tool: step.Tool, Args: args}
-			}
-			err = p.Run(runCtx, r.ID, steps, func(ctx context.Context, index int, name string, args json.RawMessage) (json.RawMessage, error) {
-				return m.invoke(ctx, r, index, name, args)
-			})
-		}
-		if err != nil && !errors.Is(err, worker.ErrSuspended) && execution.agent != nil {
-			execution.agent.summarizeFailure(runCtx, err)
-		}
-		ctxErr := runCtx.Err()
-		cancel()
-		// 子进程退出不能证明父工具已退出。先关闭本次运行的新调用入口，再等待
-		// 已登记的调用完成持久化或明确报告不协作，才允许释放唯一执行槽。
-		m.mu.Lock()
-		execution.finishing = true
-		m.refreshLegacyLocked()
-		callDone := execution.callDone
-		m.mu.Unlock()
-		if callDone != nil {
-			timer := time.NewTimer(time.Duration(r.Limits.CancelGraceSeconds+1) * time.Second)
-			select {
-			case <-callDone:
-				timer.Stop()
-			case <-execution.deletedDone:
-				timer.Stop()
-			case <-timer.C:
-				m.mu.Lock()
-				m.executionUnresponsiveLocked(execution, "工具未确认停止，任务派发已暂停，请重启面板后检查")
-				m.mu.Unlock()
-			}
-		}
-		// 关闭与挂起同时发生时，真实 Worker 可能优先返回 context.Canceled。
-		// 只有父侧调用已完成检查且 Worker 已确认回收，才能依据持久审批边界保留暂停。
-		stoppedDuringShutdown := false
-		if m.ctx.Err() != nil && errors.Is(err, context.Canceled) {
-			closeCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
-			stoppedDuringShutdown = p.Close(closeCtx) == nil
-			stop()
-			if stoppedDuringShutdown {
-				m.mu.Lock()
-				slot.process = nil
-				m.setWorkerStateLocked(slot, "stopped")
-				m.mu.Unlock()
-			}
-		}
-		m.mu.Lock()
-		var interrupted *worker.InterruptedError
-		if !m.storageError && !execution.deleted {
-			_, e := m.store.ChangeRun(context.Background(), r.ID, "active-time", func(tx sessionstore.Tx, current *Run) error {
-				elapsed := m.deps.Now().Sub(activeStart)
-				if err := m.workflowSettleTime(context.Background(), tx, current, elapsed); err != nil {
-					return err
-				}
-				current.ActiveMilliseconds += elapsed.Milliseconds()
-				return saveRun(context.Background(), tx, current)
-			})
-			if e != nil {
-				m.storageFailedLocked()
-			}
-		}
-		if !m.storageError && !execution.deleted {
-			current, getErr := readView(context.Background(), m.store).Get(context.Background(), r.ID)
-			if getErr != nil {
-				m.storageFailedLocked()
-			} else {
-				if hstate.ContinuousRun(current) && !hstate.Terminal(current.Status) && !current.PolicyFrozen && current.CancelRequestedAt == "" && current.SupersededByRunID == "" && !execution.unresponsive && (m.ctx.Err() != nil || execution.maintenance || errors.As(err, &interrupted)) {
-					var recoverErr error
-					_, recoverErr = m.store.ChangeRun(context.Background(), current.ID, "continuous-worker-checkpoint", func(tx sessionstore.Tx, r *Run) error {
-						if hstate.Terminal(r.Status) || r.PolicyFrozen || r.CancelRequestedAt != "" || r.SupersededByRunID != "" {
-							return nil
-						}
-						unknown, e := unsettledRun(context.Background(), tx, r.ID)
-						if e != nil {
-							return e
-						}
-						if unknown {
-							return nil
-						}
-						if m.ctx.Err() == nil && !execution.maintenance && errors.As(err, &interrupted) {
-							if r.WorkerProgress != r.Usage.Calls {
-								r.WorkerRestarts = 0
-								r.WorkerProgress = r.Usage.Calls
-							}
-							if r.WorkerRestarts >= 3 {
-								return bad("no-progress", "执行进程已连续恢复三次，仍未取得新的工具执行事实；已保留检查点并停止重复重启，请检查进程故障后继续")
-							}
-							r.WorkerRestarts++
-						}
-						if e := interruptModelRequests(context.Background(), tx, r.ID, m.deps.Now()); e != nil {
-							return e
-						}
-						r.Status, r.Phase = StateQueued, "recovering"
-						return tx.Event(context.Background(), r, "recovery/worker-checkpoint", "", nil, nil)
-					})
-					if recoverErr == nil {
-						latest, e := readView(context.Background(), m.store).Get(context.Background(), current.ID)
-						if e == nil && latest.Status == StateQueued {
-							m.mu.Unlock()
-							closeCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
-							closeErr := p.Close(closeCtx)
-							stop()
-							m.mu.Lock()
-							if closeErr != nil {
-								m.executionUnresponsiveLocked(execution, "执行进程未确认回收，已停止派发以保护原检查点")
-								m.finishLocked(r.ID, StateInterrupted, "worker-stop-unconfirmed", "执行进程未确认回收，检查点已保存，须先核实原进程")
-								m.mu.Unlock()
-								continue
-							}
-							delete(m.executions, r.ID)
-							m.refreshLegacyLocked()
-							m.signal()
-							slot.process = nil
-							m.setWorkerStateLocked(slot, "starting")
-							m.mu.Unlock()
-							continue
-						}
-					}
-					if recoverErr != nil {
-						var failure *Error
-						if errors.As(recoverErr, &failure) {
-							err = recoverErr
-						} else {
-							m.storageFailedLocked()
-						}
-					}
-				}
-				state, reason, message := StateSucceeded, "completed", ""
-				if (current.Status == StateWaitingInput || current.Status == StateWaitingApproval || current.Status == StateWaitingResource || current.Status == StateWaitingTask || current.Status == StateWaitingRecovery || current.Status == StateWaitingModel || current.Status == StateWaitingStorage || current.Status == StateQueued || current.Status == StateRecoveryRequired) && (errors.Is(err, worker.ErrSuspended) || stoppedDuringShutdown) && current.CancelRequestedAt == "" && !execution.unresponsive && !execution.maintenance {
-					delete(m.executions, r.ID)
-					m.refreshLegacyLocked()
-					m.signal()
-					m.mu.Unlock()
-					continue
-				}
-				switch {
-				case execution.unresponsive:
-					state, reason, message = StateInterrupted, "tool-unresponsive", "工具未确认停止，运行结果未确认"
-					if current.SessionID != "" {
-						reason, message = "operation-unresponsive", "模型或工具未确认停止，运行结果未确认"
-					}
-				case current.CancelRequestedAt != "":
-					state, reason = StateCancelled, "cancelled"
-				case execution.maintenance || updateMaintenanceError(err):
-					state, reason, message = StateInterrupted, "panel-update", "面板更新中断了任务，进度已保存，请在更新结束后手动继续"
-				case m.ctx.Err() != nil:
-					state, reason, message = StateInterrupted, "panel-stopped", "面板停止中断了运行，未自动重跑"
-				case errors.Is(ctxErr, context.DeadlineExceeded):
-					state, reason, message = StateFailed, "run-timeout", "运行超过总时间限制"
-				case errors.As(err, &interrupted):
-					state, reason, message = StateInterrupted, "worker-lost", "Worker 中断，未自动重跑"
-				case err != nil:
-					state, reason, message = StateFailed, "tool-failed", "工具执行失败，后续步骤已停止"
-					var cause *Error
-					if errors.As(err, &cause) {
-						reason, message = cause.Code, cause.Message
-					}
-					if reason == "outcome-unknown" || reason == "no-progress" {
-						state = StateInterrupted
-					}
-				}
-				m.finishLocked(r.ID, state, reason, message)
-			}
-		}
-		if !execution.unresponsive || execution.deleted {
-			delete(m.executions, r.ID)
-			m.refreshLegacyLocked()
-			m.signal()
-		}
-		// 取消、协议中断与关闭后的进程不复用；工具业务错误可继续下一任务。
-		recycle := ctxErr != nil || errors.As(err, &interrupted) || m.blocked != ""
-		if recycle {
-			slot.process = nil
-			m.setWorkerStateLocked(slot, "starting")
-		}
-		m.mu.Unlock()
-		if recycle {
-			closeCtx, stop := context.WithTimeout(context.Background(), 5*time.Second)
-			_ = p.Close(closeCtx)
-			stop()
 		}
 	}
+	// 关闭与挂起同时发生时，真实 Worker 可能优先返回 context.Canceled。
+	// 只有父侧调用已完成检查且 Worker 已确认回收，才能依据持久审批边界保留暂停。
+	stoppedDuringShutdown := false
+	if m.ctx.Err() != nil && errors.Is(err, context.Canceled) {
+		stoppedDuringShutdown = closeWorkerProcess(p) == nil
+		if stoppedDuringShutdown {
+			m.mu.Lock()
+			slot.process = nil
+			m.setWorkerStateLocked(slot, "stopped")
+			m.mu.Unlock()
+		}
+	}
+	m.mu.Lock()
+	var interrupted *worker.InterruptedError
+	if !m.storageError && !execution.deleted {
+		_, e := m.store.ChangeRun(context.Background(), r.ID, "active-time", func(tx sessionstore.Tx, current *Run) error {
+			elapsed := m.deps.Now().Sub(activeStart)
+			if err := m.workflowSettleTime(context.Background(), tx, current, elapsed); err != nil {
+				return err
+			}
+			current.ActiveMilliseconds += elapsed.Milliseconds()
+			return saveRun(context.Background(), tx, current)
+		})
+		if e != nil {
+			m.storageFailedLocked()
+		}
+	}
+	if !m.storageError && !execution.deleted {
+		current, getErr := readView(context.Background(), m.store).Get(context.Background(), r.ID)
+		if getErr != nil {
+			m.storageFailedLocked()
+		} else {
+			if hstate.ContinuousRun(current) && !hstate.Terminal(current.Status) && !current.PolicyFrozen && current.CancelRequestedAt == "" && current.SupersededByRunID == "" && !execution.unresponsive && (m.ctx.Err() != nil || execution.maintenance || errors.As(err, &interrupted)) {
+				handled, recoverErr := m.recoverWorkerCheckpointLocked(slot, p, current, execution, err)
+				if handled {
+					m.mu.Unlock()
+					return
+				}
+				if recoverErr != nil {
+					var failure *Error
+					if errors.As(recoverErr, &failure) {
+						err = recoverErr
+					} else {
+						m.storageFailedLocked()
+					}
+				}
+			}
+			state, reason, message := StateSucceeded, "completed", ""
+			if (current.Status == StateWaitingInput || current.Status == StateWaitingApproval || current.Status == StateWaitingResource || current.Status == StateWaitingTask || current.Status == StateWaitingRecovery || current.Status == StateWaitingModel || current.Status == StateWaitingStorage || current.Status == StateQueued || current.Status == StateRecoveryRequired) && (errors.Is(err, worker.ErrSuspended) || stoppedDuringShutdown) && current.CancelRequestedAt == "" && !execution.unresponsive && !execution.maintenance {
+				delete(m.executions, r.ID)
+				m.refreshLegacyLocked()
+				m.signal()
+				m.mu.Unlock()
+				return
+			}
+			switch {
+			case execution.unresponsive:
+				state, reason, message = StateInterrupted, "tool-unresponsive", "工具未确认停止，运行结果未确认"
+				if current.SessionID != "" {
+					reason, message = "operation-unresponsive", "模型或工具未确认停止，运行结果未确认"
+				}
+			case current.CancelRequestedAt != "":
+				state, reason = StateCancelled, "cancelled"
+			case execution.maintenance || updateMaintenanceError(err):
+				state, reason, message = StateInterrupted, "panel-update", "面板更新中断了任务，进度已保存，请在更新结束后手动继续"
+			case m.ctx.Err() != nil:
+				state, reason, message = StateInterrupted, "panel-stopped", "面板停止中断了运行，未自动重跑"
+			case errors.Is(ctxErr, context.DeadlineExceeded):
+				state, reason, message = StateFailed, "run-timeout", "运行超过总时间限制"
+			case errors.As(err, &interrupted):
+				state, reason, message = StateInterrupted, "worker-lost", "Worker 中断，未自动重跑"
+			case err != nil:
+				state, reason, message = StateFailed, "tool-failed", "工具执行失败，后续步骤已停止"
+				var cause *Error
+				if errors.As(err, &cause) {
+					reason, message = cause.Code, cause.Message
+				}
+				if reason == "outcome-unknown" || reason == "no-progress" {
+					state = StateInterrupted
+				}
+			}
+			m.finishLocked(r.ID, state, reason, message)
+		}
+	}
+	if !execution.unresponsive || execution.deleted {
+		delete(m.executions, r.ID)
+		m.refreshLegacyLocked()
+		m.signal()
+	}
+	// 取消、协议中断与关闭后的进程不复用；工具业务错误可继续下一任务。
+	recycle := ctxErr != nil || errors.As(err, &interrupted) || m.blocked != ""
+	if recycle {
+		slot.process = nil
+		m.setWorkerStateLocked(slot, "starting")
+	}
+	m.mu.Unlock()
+	if recycle {
+		_ = closeWorkerProcess(p)
+	}
+}
+
+// recoverWorkerCheckpointLocked 返回是否已处理本次收尾；等待进程关闭时临时释放锁。
+func (m *Manager) recoverWorkerCheckpointLocked(slot *workerSlot, p worker.Process, current Run, execution *executionState, err error) (bool, error) {
+	var interrupted *worker.InterruptedError
+	_, recoverErr := m.store.ChangeRun(context.Background(), current.ID, "continuous-worker-checkpoint", func(tx sessionstore.Tx, r *Run) error {
+		if hstate.Terminal(r.Status) || r.PolicyFrozen || r.CancelRequestedAt != "" || r.SupersededByRunID != "" {
+			return nil
+		}
+		unknown, e := unsettledRun(context.Background(), tx, r.ID)
+		if e != nil {
+			return e
+		}
+		if unknown {
+			return nil
+		}
+		if m.ctx.Err() == nil && !execution.maintenance && errors.As(err, &interrupted) {
+			if r.WorkerProgress != r.Usage.Calls {
+				r.WorkerRestarts = 0
+				r.WorkerProgress = r.Usage.Calls
+			}
+			if r.WorkerRestarts >= 3 {
+				return bad("no-progress", "执行进程已连续恢复三次，仍未取得新的工具执行事实；已保留检查点并停止重复重启，请检查进程故障后继续")
+			}
+			r.WorkerRestarts++
+		}
+		if e := interruptModelRequests(context.Background(), tx, r.ID, m.deps.Now()); e != nil {
+			return e
+		}
+		r.Status, r.Phase = StateQueued, "recovering"
+		return tx.Event(context.Background(), r, "recovery/worker-checkpoint", "", nil, nil)
+	})
+	if recoverErr != nil {
+		return false, recoverErr
+	}
+	latest, e := readView(context.Background(), m.store).Get(context.Background(), current.ID)
+	if e != nil || latest.Status != StateQueued {
+		return false, nil
+	}
+	m.mu.Unlock()
+	closeErr := closeWorkerProcess(p)
+	m.mu.Lock()
+	if closeErr != nil {
+		m.executionUnresponsiveLocked(execution, "执行进程未确认回收，已停止派发以保护原检查点")
+		m.finishLocked(execution.runID, StateInterrupted, "worker-stop-unconfirmed", "执行进程未确认回收，检查点已保存，须先核实原进程")
+		return true, nil
+	}
+	delete(m.executions, execution.runID)
+	m.refreshLegacyLocked()
+	m.signal()
+	slot.process = nil
+	m.setWorkerStateLocked(slot, "starting")
+	return true, nil
 }
 
 func processDone(p worker.Process) <-chan struct{} {
