@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"os"
 	"strconv"
 
 	"elysian/server/internal/agent/harness/sessionstore"
@@ -532,16 +531,8 @@ func (m *Manager) joinWorkflowV2Node(ctx context.Context, tx sessionstore.Tx, w 
 	return true, tx.WorkflowEvent(ctx, w, "workflow/joined", node.ID)
 }
 
-func workflowArchiveFile() (*os.File, func(), error) {
-	f, err := os.CreateTemp("", "elysian-workflow-*.tar")
-	if err != nil {
-		return nil, nil, err
-	}
-	return f, func() { _ = f.Close(); _ = os.Remove(f.Name()) }, nil
-}
-
 func (m *Manager) copyWorkflowWorkspace(ctx context.Context, source workspace.Version, target string) (workspace.Version, error) {
-	f, cleanup, err := workflowArchiveFile()
+	f, cleanup, err := workspaceArchiveFile("elysian-workflow-*.tar")
 	if err != nil {
 		return workspace.Version{}, err
 	}
@@ -598,14 +589,14 @@ func (m *Manager) joinWorkflowWorkspaces(ctx context.Context, tx sessionstore.Tx
 	for _, file := range parentFiles.Files {
 		baseline[file.Path] = file.Digest
 	}
-	output, cleanup, err := workflowArchiveFile()
+	output, cleanup, err := workspaceArchiveFile("elysian-workflow-*.tar")
 	if err != nil {
 		return err
 	}
 	defer cleanup()
 	tw := tar.NewWriter(output)
 	appendFiles := func(version workspace.Version, prefix string, include map[string]bool) error {
-		f, done, e := workflowArchiveFile()
+		f, done, e := workspaceArchiveFile("elysian-workflow-*.tar")
 		if e != nil {
 			return e
 		}

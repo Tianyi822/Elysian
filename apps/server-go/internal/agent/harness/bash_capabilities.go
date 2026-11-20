@@ -3,9 +3,7 @@ package harness
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"io"
-	"os"
 	"strings"
 	"unicode/utf8"
 
@@ -168,42 +166,10 @@ func (e *Extensions) executeBash(ctx context.Context, o Operation) (CapabilityRe
 	if err := json.Unmarshal([]byte(o.ArgumentsJSON), &input); err != nil {
 		return result, bad("invalid-bash", "Bash 参数无效")
 	}
-	workRead, workWrite := io.Pipe()
-	defer workRead.Close()
-	go func() {
-		_, err := e.Workspaces.Export(ctx, o.TaskID, o.WorkspaceRevision, workWrite)
-		_ = workWrite.CloseWithError(err)
-	}()
-	out, err := os.CreateTemp("", "elysian-workspace-*.tar")
-	if err != nil {
-		return result, bad("workspace-storage", "无法准备工作区导出")
-	}
-	defer os.Remove(out.Name())
-	defer out.Close()
-	var value execution.ScriptResult
-	if isBashScript(o.Capability) {
-		value, err = e.Executor.RunWorkspaceScript(ctx, execution.WorkspaceScriptRequest{ID: o.DispatchID, Profile: o.Execution.Profile, Grant: o.Execution.Grant, ScriptPath: input.Path, Args: input.Args, WorkspaceArchive: workRead, WorkspaceOutput: out})
-	} else {
-		value, err = e.Executor.RunCommand(ctx, execution.CommandRequest{ID: o.DispatchID, Profile: o.Execution.Profile, Grant: o.Execution.Grant, Command: input.Command, WorkspaceArchive: workRead, WorkspaceOutput: out})
-	}
-	if err != nil {
-		var ee *execution.Error
-		if errors.As(err, &ee) {
-			result.Unknown = ee.OutcomeUnknown
+	return e.withWorkspaceArchive(ctx, o, func(in io.Reader, out io.Writer) (execution.ScriptResult, error) {
+		if isBashScript(o.Capability) {
+			return e.Executor.RunWorkspaceScript(ctx, execution.WorkspaceScriptRequest{ID: o.DispatchID, Profile: o.Execution.Profile, Grant: o.Execution.Grant, ScriptPath: input.Path, Args: input.Args, WorkspaceArchive: in, WorkspaceOutput: out})
 		}
-		return result, err
-	}
-	if _, err = out.Seek(0, io.SeekStart); err != nil {
-		return result, bad("workspace-storage", "无法读取已确认的工作区导出")
-	}
-	version, err := e.Workspaces.PrepareImport(ctx, o.TaskID, o.WorkspaceRevision, out)
-	if err != nil {
-		return result, err
-	}
-	result.Workspace = &version
-	result.Value, _ = json.Marshal(value)
-	if value.ExitCode != 0 {
-		result.BusinessError = &Failure{Code: "bash-exit", Message: "Bash 以非零退出码结束，已确认的文件变化仍保存"}
-	}
-	return result, nil
+		return e.Executor.RunCommand(ctx, execution.CommandRequest{ID: o.DispatchID, Profile: o.Execution.Profile, Grant: o.Execution.Grant, Command: input.Command, WorkspaceArchive: in, WorkspaceOutput: out})
+	}, Failure{Code: "bash-exit", Message: "Bash 以非零退出码结束，已确认的文件变化仍保存"})
 }

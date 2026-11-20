@@ -8,7 +8,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"os"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -690,37 +689,7 @@ func (e *Extensions) executeScript(ctx context.Context, o Operation) (Capability
 		failure = errors.Join(failure, tw.Close())
 		_ = skillWrite.CloseWithError(failure)
 	}()
-	workRead, workWrite := io.Pipe()
-	defer workRead.Close()
-	go func() {
-		_, err := e.Workspaces.Export(ctx, o.TaskID, o.WorkspaceRevision, workWrite)
-		_ = workWrite.CloseWithError(err)
-	}()
-	out, err := os.CreateTemp("", "elysian-workspace-*.tar")
-	if err != nil {
-		return result, bad("workspace-storage", "无法准备工作区导出")
-	}
-	defer os.Remove(out.Name())
-	defer out.Close()
-	value, err := e.Executor.RunScript(ctx, execution.ScriptRequest{ID: o.DispatchID, Profile: o.Execution.Profile, Grant: o.Execution.Grant, ScriptPath: args.Path, Args: args.Args, SkillArchive: skillRead, WorkspaceArchive: workRead, WorkspaceOutput: out})
-	if err != nil {
-		var ee *execution.Error
-		if errors.As(err, &ee) {
-			result.Unknown = ee.OutcomeUnknown
-		}
-		return result, err
-	}
-	if _, err = out.Seek(0, io.SeekStart); err != nil {
-		return result, bad("workspace-storage", "无法读取已确认的工作区导出")
-	}
-	v, err := e.Workspaces.PrepareImport(ctx, o.TaskID, o.WorkspaceRevision, out)
-	if err != nil {
-		return result, err
-	}
-	result.Workspace = &v
-	result.Value, _ = json.Marshal(value)
-	if value.ExitCode != 0 {
-		result.BusinessError = &Failure{Code: "script-exit", Message: "脚本以非零退出码结束，已确认的文件变化仍保存"}
-	}
-	return result, nil
+	return e.withWorkspaceArchive(ctx, o, func(in io.Reader, out io.Writer) (execution.ScriptResult, error) {
+		return e.Executor.RunScript(ctx, execution.ScriptRequest{ID: o.DispatchID, Profile: o.Execution.Profile, Grant: o.Execution.Grant, ScriptPath: args.Path, Args: args.Args, SkillArchive: skillRead, WorkspaceArchive: in, WorkspaceOutput: out})
+	}, Failure{Code: "script-exit", Message: "脚本以非零退出码结束，已确认的文件变化仍保存"})
 }
