@@ -10,7 +10,7 @@ import (
 	"testing"
 )
 
-// domains 与 internal/app/guards_test.go:15-28 的十二域映射保持一致。
+// domains 与 internal/app/guards_test.go 的域映射保持一致。
 var domains = []string{
 	"elysian/server/internal/panel",
 	"elysian/server/internal/auth",
@@ -24,6 +24,7 @@ var domains = []string{
 	"elysian/server/internal/containerapps",
 	"elysian/server/internal/database",
 	"elysian/server/internal/websites",
+	"elysian/server/internal/metrics",
 }
 
 // moduleRoot 由本文件位置回溯到 apps/server-go。

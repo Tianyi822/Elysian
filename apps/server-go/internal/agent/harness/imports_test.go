@@ -34,7 +34,7 @@ func harnessPackageDependencies(t *testing.T, name string) harnessPackageInfo {
 }
 
 func harnessDomainDependency(name string) bool {
-	for _, domain := range []string{"panel", "auth", "logs", "platform", "firewall", "security", "files", "terminals", "docker", "containerapps", "database", "websites"} {
+	for _, domain := range []string{"panel", "auth", "logs", "platform", "firewall", "security", "files", "terminals", "docker", "containerapps", "database", "websites", "metrics"} {
 		prefix := "elysian/server/internal/" + domain
 		if name == prefix || strings.HasPrefix(name, prefix+"/") {
 			return true

@@ -24,13 +24,16 @@ func TestNoCrossDomainImports(t *testing.T) {
 		"elysian/server/internal/containerapps": true,
 		"elysian/server/internal/database":      true,
 		"elysian/server/internal/websites":      true,
+		"elysian/server/internal/metrics":       true,
 	}
 	publicLayer := map[string]bool{
+		"elysian/server/internal/applog":          true,
 		"elysian/server/internal/atomicfile":      true,
 		"elysian/server/internal/config":          true,
 		"elysian/server/internal/paths":           true,
 		"elysian/server/internal/seam":            true,
 		"elysian/server/internal/contract":        true,
+		"elysian/server/internal/gateway":         true,
 		"elysian/server/internal/jscompat":        true,
 		"elysian/server/internal/shared":          true,
 		"elysian/server/internal/middleware":      true,
