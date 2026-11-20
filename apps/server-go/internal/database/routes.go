@@ -91,19 +91,19 @@ func newRouter(deps routerDeps) chi.Router {
 	r.Use(middleware.SameOriginGuard())
 	rt := &router{deps: deps}
 
-	r.Get("/", rt.handle(rt.list))
-	r.Post("/", rt.handle(rt.create))
-	r.Get("/sqlite", rt.handle(rt.sqliteList))
-	r.Post("/sqlite", rt.handle(rt.sqliteCreate))
-	r.Post("/sqlite/import", rt.handle(rt.sqliteImport))
-	r.Get("/sqlite/{id}/download", rt.handle(rt.sqliteDownload))
-	r.Delete("/sqlite/{id}", rt.handle(rt.sqliteRemove))
-	r.Post("/sqlite/{id}/reconcile", rt.handle(rt.sqliteReconcile))
-	r.Delete("/sqlite/{id}/registration", rt.handle(rt.sqliteForget))
-	r.Post("/{id}/reveal", rt.handle(rt.reveal))
-	r.Delete("/{id}/container", rt.handle(rt.removeContainer))
-	r.Post("/{id}/reconcile", rt.handle(rt.reconcile))
-	r.Delete("/{id}/registration", rt.handle(rt.forget))
+	r.Get("/", middleware.HandleError(rt.list))
+	r.Post("/", middleware.HandleError(rt.create))
+	r.Get("/sqlite", middleware.HandleError(rt.sqliteList))
+	r.Post("/sqlite", middleware.HandleError(rt.sqliteCreate))
+	r.Post("/sqlite/import", middleware.HandleError(rt.sqliteImport))
+	r.Get("/sqlite/{id}/download", middleware.HandleError(rt.sqliteDownload))
+	r.Delete("/sqlite/{id}", middleware.HandleError(rt.sqliteRemove))
+	r.Post("/sqlite/{id}/reconcile", middleware.HandleError(rt.sqliteReconcile))
+	r.Delete("/sqlite/{id}/registration", middleware.HandleError(rt.sqliteForget))
+	r.Post("/{id}/reveal", middleware.HandleError(rt.reveal))
+	r.Delete("/{id}/container", middleware.HandleError(rt.removeContainer))
+	r.Post("/{id}/reconcile", middleware.HandleError(rt.reconcile))
+	r.Delete("/{id}/registration", middleware.HandleError(rt.forget))
 
 	// 未知路径与方法回落纯文本 404（对齐 Hono 缺省 404；正文不承诺逐字、前端不消费）。
 	r.NotFound(func(w http.ResponseWriter, _ *http.Request) {
@@ -113,15 +113,6 @@ func newRouter(deps routerDeps) chi.Router {
 		http.Error(w, "404 Not Found", http.StatusNotFound)
 	})
 	return r
-}
-
-// handle 把返回错误的 handler 接到统一错误映射。
-func (rt *router) handle(fn func(w http.ResponseWriter, r *http.Request) error) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if err := fn(w, r); err != nil {
-			middleware.WriteError(w, err)
-		}
-	}
 }
 
 // requireService 容器端点的可用性守卫。

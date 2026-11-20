@@ -53,6 +53,15 @@ func WriteError(w http.ResponseWriter, err error) {
 	}
 }
 
+// HandleError 将端点返回的错误接入统一响应映射。
+func HandleError(endpoint func(http.ResponseWriter, *http.Request) error) http.HandlerFunc {
+	return func(w http.ResponseWriter, r *http.Request) {
+		if err := endpoint(w, r); err != nil {
+			WriteError(w, err)
+		}
+	}
+}
+
 // Unavailable 写出固定的 503 回执；判定条件与挂载位置由各域负责。
 func Unavailable(message string) http.HandlerFunc {
 	return func(w http.ResponseWriter, _ *http.Request) {

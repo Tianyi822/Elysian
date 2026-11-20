@@ -157,275 +157,263 @@ func newRouterWithService(svc Service) chi.Router {
 	// 同源守卫先于读体：跨源写请求在解析任何请求体之前就被拒绝（未知路径同样先过守卫）。
 	r.Use(middleware.SameOriginGuard())
 
-	r.Get("/", func(w http.ResponseWriter, req *http.Request) {
+	r.Get("/", middleware.HandleError(func(w http.ResponseWriter, req *http.Request) error {
 		toggles, err := svc.Toggles()
 		if err != nil {
-			middleware.WriteError(w, err)
-			return
+			return err
 		}
 		rules, err := svc.List()
 		if err != nil {
-			middleware.WriteError(w, err)
-			return
+			return err
 		}
 		shared.SendJSON(w, http.StatusOK, rootBody{Toggles: toggles, Rules: rules})
-	})
+		return nil
+	}))
 
-	r.Put("/toggles", func(w http.ResponseWriter, req *http.Request) {
-		body, ok := readJSONBody(w, req)
-		if !ok {
-			return
+	r.Put("/toggles", middleware.HandleError(func(w http.ResponseWriter, req *http.Request) error {
+		body, err := middleware.ReadJSONBody(w, req, 0)
+		if err != nil {
+			return err
 		}
 		toggles, err := parseToggles(body)
 		if err != nil {
-			middleware.WriteError(w, err)
-			return
+			return err
 		}
 		result, err := svc.SetToggles(toggles)
 		if err != nil {
-			middleware.WriteError(w, err)
-			return
+			return err
 		}
 		shared.SendJSON(w, http.StatusOK, togglesBody{Toggles: result})
-	})
+		return nil
+	}))
 
-	r.Post("/rules", func(w http.ResponseWriter, req *http.Request) {
-		body, ok := readJSONBody(w, req)
-		if !ok {
-			return
+	r.Post("/rules", middleware.HandleError(func(w http.ResponseWriter, req *http.Request) error {
+		body, err := middleware.ReadJSONBody(w, req, 0)
+		if err != nil {
+			return err
 		}
 		input, err := parseRuleInput(body)
 		if err != nil {
-			middleware.WriteError(w, err)
-			return
+			return err
 		}
 		rule, err := svc.Create(input)
 		if err != nil {
-			middleware.WriteError(w, err)
-			return
+			return err
 		}
 		shared.SendJSON(w, http.StatusOK, ruleBody{Rule: rule})
-	})
+		return nil
+	}))
 
-	r.Put("/rules/{id}", func(w http.ResponseWriter, req *http.Request) {
-		body, ok := readJSONBody(w, req)
-		if !ok {
-			return
+	r.Put("/rules/{id}", middleware.HandleError(func(w http.ResponseWriter, req *http.Request) error {
+		body, err := middleware.ReadJSONBody(w, req, 0)
+		if err != nil {
+			return err
 		}
 		input, err := parseRuleInput(body)
 		if err != nil {
-			middleware.WriteError(w, err)
-			return
+			return err
 		}
 		rule, err := svc.Update(chi.URLParam(req, "id"), input)
 		if err != nil {
-			middleware.WriteError(w, err)
-			return
+			return err
 		}
 		shared.SendJSON(w, http.StatusOK, ruleBody{Rule: rule})
-	})
+		return nil
+	}))
 
-	r.Delete("/rules/{id}", func(w http.ResponseWriter, req *http.Request) {
+	r.Delete("/rules/{id}", middleware.HandleError(func(w http.ResponseWriter, req *http.Request) error {
 		if err := svc.Remove(chi.URLParam(req, "id")); err != nil {
-			middleware.WriteError(w, err)
-			return
+			return err
 		}
 		shared.SendJSON(w, http.StatusOK, okBody{OK: true})
-	})
+		return nil
+	}))
 
-	r.Put("/rules/{id}/scan", func(w http.ResponseWriter, req *http.Request) {
-		body, ok := readJSONBody(w, req)
-		if !ok {
-			return
+	r.Put("/rules/{id}/scan", middleware.HandleError(func(w http.ResponseWriter, req *http.Request) error {
+		body, err := middleware.ReadJSONBody(w, req, 0)
+		if err != nil {
+			return err
 		}
 		row, _ := bodyRow(body)
 		enabled, ok := row["enabled"].(bool)
 		if !ok {
-			middleware.WriteError(w, shared.InvalidRequest("开关值无效"))
-			return
+			return shared.InvalidRequest("开关值无效")
 		}
 		scan, err := svc.SetRuleScanProtection(chi.URLParam(req, "id"), enabled)
 		if err != nil {
-			middleware.WriteError(w, err)
-			return
+			return err
 		}
 		shared.SendJSON(w, http.StatusOK, scan)
-	})
+		return nil
+	}))
 
 	// 不读请求体（无 415/413/空体校验），但仍过同源守卫（POST 非 GET）。
-	r.Post("/sync", func(w http.ResponseWriter, _ *http.Request) {
+	r.Post("/sync", middleware.HandleError(func(w http.ResponseWriter, _ *http.Request) error {
 		total, err := svc.SyncFromSystem()
 		if err != nil {
-			middleware.WriteError(w, err)
-			return
+			return err
 		}
 		shared.SendJSON(w, http.StatusOK, totalBody{Total: total})
-	})
+		return nil
+	}))
 
 	// IP 规则（纯来源封禁）。
-	r.Get("/ip-rules", func(w http.ResponseWriter, _ *http.Request) {
+	r.Get("/ip-rules", middleware.HandleError(func(w http.ResponseWriter, _ *http.Request) error {
 		rules, err := svc.ListIpRules()
 		if err != nil {
-			middleware.WriteError(w, err)
-			return
+			return err
 		}
 		shared.SendJSON(w, http.StatusOK, rulesListBody{Rules: rules})
-	})
-	r.Post("/ip-rules", func(w http.ResponseWriter, req *http.Request) {
-		body, ok := readJSONBody(w, req)
-		if !ok {
-			return
+		return nil
+	}))
+	r.Post("/ip-rules", middleware.HandleError(func(w http.ResponseWriter, req *http.Request) error {
+		body, err := middleware.ReadJSONBody(w, req, 0)
+		if err != nil {
+			return err
 		}
 		input, err := parseIpRuleInput(body)
 		if err != nil {
-			middleware.WriteError(w, err)
-			return
+			return err
 		}
 		rule, err := svc.CreateIpRule(input)
 		if err != nil {
-			middleware.WriteError(w, err)
-			return
+			return err
 		}
 		shared.SendJSON(w, http.StatusOK, ipRuleBody{Rule: rule})
-	})
-	r.Put("/ip-rules/{id}", func(w http.ResponseWriter, req *http.Request) {
-		body, ok := readJSONBody(w, req)
-		if !ok {
-			return
+		return nil
+	}))
+	r.Put("/ip-rules/{id}", middleware.HandleError(func(w http.ResponseWriter, req *http.Request) error {
+		body, err := middleware.ReadJSONBody(w, req, 0)
+		if err != nil {
+			return err
 		}
 		input, err := parseIpRuleInput(body)
 		if err != nil {
-			middleware.WriteError(w, err)
-			return
+			return err
 		}
 		rule, err := svc.UpdateIpRule(chi.URLParam(req, "id"), input)
 		if err != nil {
-			middleware.WriteError(w, err)
-			return
+			return err
 		}
 		shared.SendJSON(w, http.StatusOK, ipRuleBody{Rule: rule})
-	})
-	r.Delete("/ip-rules/{id}", func(w http.ResponseWriter, req *http.Request) {
+		return nil
+	}))
+	r.Delete("/ip-rules/{id}", middleware.HandleError(func(w http.ResponseWriter, req *http.Request) error {
 		if err := svc.RemoveIpRule(chi.URLParam(req, "id")); err != nil {
-			middleware.WriteError(w, err)
-			return
+			return err
 		}
 		shared.SendJSON(w, http.StatusOK, okBody{OK: true})
-	})
+		return nil
+	}))
 
 	// 端口转发（DNAT）。
-	r.Get("/forwards", func(w http.ResponseWriter, _ *http.Request) {
+	r.Get("/forwards", middleware.HandleError(func(w http.ResponseWriter, _ *http.Request) error {
 		rules, err := svc.ListForwards()
 		if err != nil {
-			middleware.WriteError(w, err)
-			return
+			return err
 		}
 		shared.SendJSON(w, http.StatusOK, forwardsListBody{Rules: rules})
-	})
-	r.Post("/forwards", func(w http.ResponseWriter, req *http.Request) {
-		body, ok := readJSONBody(w, req)
-		if !ok {
-			return
+		return nil
+	}))
+	r.Post("/forwards", middleware.HandleError(func(w http.ResponseWriter, req *http.Request) error {
+		body, err := middleware.ReadJSONBody(w, req, 0)
+		if err != nil {
+			return err
 		}
 		input, err := parseForwardInput(body)
 		if err != nil {
-			middleware.WriteError(w, err)
-			return
+			return err
 		}
 		rule, err := svc.CreateForward(input)
 		if err != nil {
-			middleware.WriteError(w, err)
-			return
+			return err
 		}
 		shared.SendJSON(w, http.StatusOK, forwardBody{Rule: rule})
-	})
-	r.Put("/forwards/{id}", func(w http.ResponseWriter, req *http.Request) {
-		body, ok := readJSONBody(w, req)
-		if !ok {
-			return
+		return nil
+	}))
+	r.Put("/forwards/{id}", middleware.HandleError(func(w http.ResponseWriter, req *http.Request) error {
+		body, err := middleware.ReadJSONBody(w, req, 0)
+		if err != nil {
+			return err
 		}
 		input, err := parseForwardInput(body)
 		if err != nil {
-			middleware.WriteError(w, err)
-			return
+			return err
 		}
 		rule, err := svc.UpdateForward(chi.URLParam(req, "id"), input)
 		if err != nil {
-			middleware.WriteError(w, err)
-			return
+			return err
 		}
 		shared.SendJSON(w, http.StatusOK, forwardBody{Rule: rule})
-	})
-	r.Delete("/forwards/{id}", func(w http.ResponseWriter, req *http.Request) {
+		return nil
+	}))
+	r.Delete("/forwards/{id}", middleware.HandleError(func(w http.ResponseWriter, req *http.Request) error {
 		if err := svc.RemoveForward(chi.URLParam(req, "id")); err != nil {
-			middleware.WriteError(w, err)
-			return
+			return err
 		}
 		shared.SendJSON(w, http.StatusOK, okBody{OK: true})
-	})
+		return nil
+	}))
 
 	// 防扫描：与规则同源的真实实现（内核 xt_recent 双名单 jail + iptables 计数）。
-	r.Get("/scan", func(w http.ResponseWriter, _ *http.Request) {
+	r.Get("/scan", middleware.HandleError(func(w http.ResponseWriter, _ *http.Request) error {
 		scan, err := svc.ScanProtection()
 		if err != nil {
-			middleware.WriteError(w, err)
-			return
+			return err
 		}
 		shared.SendJSON(w, http.StatusOK, scan)
-	})
-	r.Post("/scan/toggle", func(w http.ResponseWriter, req *http.Request) {
-		body, ok := readJSONBody(w, req)
-		if !ok {
-			return
+		return nil
+	}))
+	r.Post("/scan/toggle", middleware.HandleError(func(w http.ResponseWriter, req *http.Request) error {
+		body, err := middleware.ReadJSONBody(w, req, 0)
+		if err != nil {
+			return err
 		}
 		row, _ := bodyRow(body)
 		enabled, ok := row["enabled"].(bool)
 		if !ok {
-			middleware.WriteError(w, shared.InvalidRequest("开关值无效"))
-			return
+			return shared.InvalidRequest("开关值无效")
 		}
 		scan, err := svc.SetScanProtection(enabled)
 		if err != nil {
-			middleware.WriteError(w, err)
-			return
+			return err
 		}
 		shared.SendJSON(w, http.StatusOK, scan)
-	})
-	r.Put("/scan/config", func(w http.ResponseWriter, req *http.Request) {
-		body, ok := readJSONBody(w, req)
-		if !ok {
-			return
+		return nil
+	}))
+	r.Put("/scan/config", middleware.HandleError(func(w http.ResponseWriter, req *http.Request) error {
+		body, err := middleware.ReadJSONBody(w, req, 0)
+		if err != nil {
+			return err
 		}
 		config, err := parseScanConfigBody(body)
 		if err != nil {
-			middleware.WriteError(w, err)
-			return
+			return err
 		}
 		scan, err := svc.SetScanConfig(config)
 		if err != nil {
-			middleware.WriteError(w, err)
-			return
+			return err
 		}
 		shared.SendJSON(w, http.StatusOK, scan)
-	})
-	r.Post("/scan/unblock", func(w http.ResponseWriter, req *http.Request) {
-		body, ok := readJSONBody(w, req)
-		if !ok {
-			return
+		return nil
+	}))
+	r.Post("/scan/unblock", middleware.HandleError(func(w http.ResponseWriter, req *http.Request) error {
+		body, err := middleware.ReadJSONBody(w, req, 0)
+		if err != nil {
+			return err
 		}
 		row, _ := bodyRow(body)
 		ip, ok := row["ip"].(string)
 		if !ok || strings.TrimSpace(ip) == "" {
-			middleware.WriteError(w, shared.InvalidRequest("IP 无效"))
-			return
+			return shared.InvalidRequest("IP 无效")
 		}
 		scan, err := svc.UnblockIp(strings.TrimSpace(ip))
 		if err != nil {
-			middleware.WriteError(w, err)
-			return
+			return err
 		}
 		shared.SendJSON(w, http.StatusOK, scan)
-	})
+		return nil
+	}))
 
 	// 未知端点兜底：剥掉挂载前缀后与「未知防火墙端点：METHOD path」逐字一致
 	//（path 为相对路径，剥空归一 /）。方法已注册路径不匹配时同样走这条兜底，
@@ -441,16 +429,6 @@ func newRouterWithService(svc Service) chi.Router {
 	r.MethodNotAllowed(notFound)
 
 	return r
-}
-
-// readJSONBody 读体守卫的薄封装：守卫错误已按状态码写出，回 false 表示响应已发。
-func readJSONBody(w http.ResponseWriter, req *http.Request) (any, bool) {
-	body, err := middleware.ReadJSONBody(w, req, 0)
-	if err != nil {
-		middleware.WriteError(w, err)
-		return nil, false
-	}
-	return body, true
 }
 
 // ---------- 请求体宽松解析（宽进：结构校验交给 service 的中文报错） ----------

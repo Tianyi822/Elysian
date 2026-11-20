@@ -139,17 +139,6 @@ func sessionCookie(value string, maxAgeSeconds int, secure bool) string {
 	return cookie
 }
 
-// handle 把「返回 error 的 handler」接入统一错误映射（等价 TS app.onError +
-// endpointErrorHandler）：EndpointGuardError/InvalidRequestError 按自带 Status 回 4xx，
-// 其余一切错误一律 500 原文回显。
-func handle(h func(w http.ResponseWriter, r *http.Request) error) http.HandlerFunc {
-	return func(w http.ResponseWriter, r *http.Request) {
-		if err := h(w, r); err != nil {
-			middleware.WriteError(w, err)
-		}
-	}
-}
-
 // okBody {"ok":true}。
 type okBody struct {
 	OK bool `json:"ok"`
@@ -266,7 +255,7 @@ func NewRouter(deps Deps) chi.Router {
 	r := chi.NewRouter()
 	r.Use(middleware.SameOriginGuard())
 
-	r.Post("/login", handle(func(w http.ResponseWriter, r *http.Request) error {
+	r.Post("/login", middleware.HandleError(func(w http.ResponseWriter, r *http.Request) error {
 		if !resolved.enabled {
 			shared.SendJSON(w, http.StatusOK, okBody{OK: true})
 			return nil
@@ -332,7 +321,7 @@ func NewRouter(deps Deps) chi.Router {
 		return nil
 	}))
 
-	r.Post("/logout", handle(func(w http.ResponseWriter, r *http.Request) error {
+	r.Post("/logout", middleware.HandleError(func(w http.ResponseWriter, r *http.Request) error {
 		// 幂等：鉴权豁免清单内，无有效会话同样可达；无论如何清浏览器侧 Cookie。
 		if resolved.enabled {
 			if sessionID, ok := seam.ParseSessionCookie(r.Header.Get("Cookie")); ok {
@@ -350,7 +339,7 @@ func NewRouter(deps Deps) chi.Router {
 		return nil
 	}))
 
-	r.Get("/session", handle(func(w http.ResponseWriter, r *http.Request) error {
+	r.Get("/session", middleware.HandleError(func(w http.ResponseWriter, r *http.Request) error {
 		w.Header().Set("Cache-Control", "no-store")
 		// 演示语义：恒已登录，且不回答回跳——面板本身没有鉴权时充当跳转器毫无意义。
 		if !resolved.enabled {
@@ -420,7 +409,7 @@ func NewRouter(deps Deps) chi.Router {
 	}))
 
 	// —— 设置页端点（RequireSession 覆盖之下，豁免清单不含任何一条）——
-	r.Post("/username", handle(func(w http.ResponseWriter, r *http.Request) error {
+	r.Post("/username", middleware.HandleError(func(w http.ResponseWriter, r *http.Request) error {
 		if !resolved.enabled {
 			return shared.Unavailable(AuthDisabledMessage)
 		}
@@ -465,7 +454,7 @@ func NewRouter(deps Deps) chi.Router {
 		return nil
 	}))
 
-	r.Post("/password", handle(func(w http.ResponseWriter, r *http.Request) error {
+	r.Post("/password", middleware.HandleError(func(w http.ResponseWriter, r *http.Request) error {
 		// 先于读体：演示语义下写凭据文件会凭空造出真凭据，也不读体（该分支不落改密
 		// 审计——没有任何改密尝试被解析）。
 		if !resolved.enabled {
@@ -530,7 +519,7 @@ func NewRouter(deps Deps) chi.Router {
 		return nil
 	}))
 
-	r.Get("/sessions", handle(func(w http.ResponseWriter, r *http.Request) error {
+	r.Get("/sessions", middleware.HandleError(func(w http.ResponseWriter, r *http.Request) error {
 		if !resolved.enabled {
 			return shared.Unavailable(AuthDisabledMessage)
 		}
@@ -554,7 +543,7 @@ func NewRouter(deps Deps) chi.Router {
 		return nil
 	}))
 
-	r.Post("/sessions/logout-others", handle(func(w http.ResponseWriter, r *http.Request) error {
+	r.Post("/sessions/logout-others", middleware.HandleError(func(w http.ResponseWriter, r *http.Request) error {
 		if !resolved.enabled {
 			return shared.Unavailable(AuthDisabledMessage)
 		}
