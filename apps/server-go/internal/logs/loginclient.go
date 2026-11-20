@@ -4,7 +4,7 @@ import (
 	"net"
 	"net/http"
 
-	"elysian/server/internal/shared"
+	"elysian/server/internal/gateway"
 	"strings"
 )
 
@@ -40,7 +40,7 @@ func PeerAddressFromRequest(r *http.Request) string {
 	if r == nil || r.RemoteAddr == "" {
 		return unknownAddress
 	}
-	host, _, err := net.SplitHostPort(shared.PanelPeerAddress(r))
+	host, _, err := net.SplitHostPort(gateway.PanelPeerAddress(r))
 	if err != nil {
 		return unknownAddress
 	}

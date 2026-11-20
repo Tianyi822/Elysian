@@ -5,6 +5,7 @@ import (
 	"net/url"
 	"strings"
 
+	"elysian/server/internal/gateway"
 	"elysian/server/internal/shared"
 )
 
@@ -45,7 +46,7 @@ func sameOriginStrict(r *http.Request) bool {
 	if !strings.EqualFold(originURL.Host, host) {
 		return false
 	}
-	return isAllowedHostname(host) || (originURL.Scheme == "http" && shared.TrustedPanelHost(r))
+	return isAllowedHostname(host) || (originURL.Scheme == "http" && gateway.TrustedPanelHost(r))
 }
 
 // isAllowedHostname 从 Host 头取 hostname（去端口、IPv6 保留方括号、大小写归一）；

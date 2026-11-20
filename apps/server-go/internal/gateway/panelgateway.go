@@ -1,4 +1,5 @@
-package shared
+// Package gateway 管理面板双入口代理与可信请求来源。
+package gateway
 
 import (
 	"context"
@@ -12,6 +13,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"elysian/server/internal/shared"
 )
 
 type panelRequestKey struct{}
@@ -42,7 +45,7 @@ func NewPanelGateway(backend http.Handler, frontendPort, backendPort int) (http.
 	securityProxy := boundedSecurityProxy(proxy, 65*time.Second)
 	public := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if !panelIPHost(r.Host, frontendPort) {
-			SendError(w, 403, "面板仅允许通过 IP 地址或本机地址访问")
+			shared.SendError(w, 403, "面板仅允许通过 IP 地址或本机地址访问")
 			return
 		}
 		if r.URL.Path == "/api/security" || strings.HasPrefix(r.URL.Path, "/api/security/") {

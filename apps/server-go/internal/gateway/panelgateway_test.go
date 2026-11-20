@@ -1,16 +1,18 @@
-package shared_test
+package gateway_test
 
 import (
-	"elysian/server/internal/middleware"
-	"elysian/server/internal/shared"
 	"fmt"
-	"github.com/gorilla/websocket"
 	"io"
 	"net"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"testing"
+
+	"github.com/gorilla/websocket"
+
+	"elysian/server/internal/gateway"
+	"elysian/server/internal/middleware"
 )
 
 func gatewayServers(t *testing.T, handler http.Handler) (*httptest.Server, *httptest.Server) {
@@ -19,7 +21,7 @@ func gatewayServers(t *testing.T, handler http.Handler) (*httptest.Server, *http
 	front := httptest.NewUnstartedServer(handler)
 	backPort := back.Listener.Addr().(*net.TCPAddr).Port
 	frontPort := front.Listener.Addr().(*net.TCPAddr).Port
-	public, private, err := shared.NewPanelGateway(handler, frontPort, backPort)
+	public, private, err := gateway.NewPanelGateway(handler, frontPort, backPort)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -38,7 +40,7 @@ func TestGatewayPreservesUploadCookieAndAuthenticatedPeer(t *testing.T) {
 			return
 		}
 		b, _ := io.ReadAll(r.Body)
-		_, _ = fmt.Fprintf(w, "%s|%s|%t|%s", b, r.Header.Get("Cookie"), shared.TrustedPanelHost(r), shared.PanelPeerAddress(r))
+		_, _ = fmt.Fprintf(w, "%s|%s|%t|%s", b, r.Header.Get("Cookie"), gateway.TrustedPanelHost(r), gateway.PanelPeerAddress(r))
 	})
 	front, back := gatewayServers(t, handler)
 	req, _ := http.NewRequest("POST", front.URL+"/api/test", strings.NewReader("upload-content"))

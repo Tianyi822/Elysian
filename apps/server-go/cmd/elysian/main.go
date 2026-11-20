@@ -34,10 +34,10 @@ import (
 	"elysian/server/internal/cli"
 	"elysian/server/internal/config"
 	"elysian/server/internal/database"
+	"elysian/server/internal/gateway"
 	"elysian/server/internal/logs"
 	"elysian/server/internal/panel"
 	"elysian/server/internal/paths"
-	"elysian/server/internal/shared"
 )
 
 // shutdownTimeout 优雅关闭时限：存量请求收尾，超时强制退出。
@@ -218,7 +218,7 @@ func run() (runErr error) {
 	var publicServer *http.Server
 	var publicListener net.Listener
 	if cfg.BareMetal {
-		public, private, err := shared.NewPanelGateway(handler, cfg.PanelPorts().FrontendPort, cfg.PanelPorts().BackendPort)
+		public, private, err := gateway.NewPanelGateway(handler, cfg.PanelPorts().FrontendPort, cfg.PanelPorts().BackendPort)
 		if err != nil {
 			listener.Close()
 			return err

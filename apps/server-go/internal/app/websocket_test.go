@@ -14,6 +14,7 @@ import (
 
 	"elysian/server/internal/auth"
 	"elysian/server/internal/config"
+	"elysian/server/internal/gateway"
 	"elysian/server/internal/middleware"
 	"elysian/server/internal/seam"
 	"elysian/server/internal/shared"
@@ -53,7 +54,7 @@ func TestAssemblyPreservesAuthenticatedWebSocket(t *testing.T) {
 
 	back := httptest.NewUnstartedServer(runtime)
 	front := httptest.NewUnstartedServer(runtime)
-	public, private, err := shared.NewPanelGateway(runtime, front.Listener.Addr().(*net.TCPAddr).Port, back.Listener.Addr().(*net.TCPAddr).Port)
+	public, private, err := gateway.NewPanelGateway(runtime, front.Listener.Addr().(*net.TCPAddr).Port, back.Listener.Addr().(*net.TCPAddr).Port)
 	if err != nil {
 		t.Fatal(err)
 	}
