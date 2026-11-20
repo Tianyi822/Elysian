@@ -1,6 +1,7 @@
 package containerapps
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -1130,7 +1131,9 @@ func TestRecoveryMarksInterrupted(t *testing.T) {
 		Input:   BuildTaskInput{Mode: buildModeDockerfile, RequestID: "aaaaaaaa-1111-2222-3333-444444444444"},
 		Results: []BuildResult{},
 	}
-	if err := writeBuildTaskJSON(filepath.Join(stateRoot, building.ID+".json"), &building); err != nil {
+	// 老账本按文档 ID 建索引，但恢复写回实际发现的文件。
+	discovered := filepath.Join(stateRoot, "found.json")
+	if err := writeBuildTaskJSON(discovered, &building); err != nil {
 		t.Fatal(err)
 	}
 	spool := spoolTarPath(spoolRoot, building.ID)
@@ -1139,9 +1142,18 @@ func TestRecoveryMarksInterrupted(t *testing.T) {
 	}
 	done := building
 	done.ID = "22222222-2222-2222-2222-222222222222"
+	done.RequestID = "invalid-request-id"
 	done.State = BuildStateSucceeded
 	done.Stage = "构建成功"
 	if err := writeBuildTaskJSON(filepath.Join(stateRoot, done.ID+".json"), &done); err != nil {
+		t.Fatal(err)
+	}
+	invalid := done
+	invalid.ID = "../invalid"
+	if err := writeBuildTaskJSON(filepath.Join(stateRoot, "invalid.json"), &invalid); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(stateRoot, "broken.json"), []byte("{"), 0600); err != nil {
 		t.Fatal(err)
 	}
 
@@ -1161,6 +1173,24 @@ func TestRecoveryMarksInterrupted(t *testing.T) {
 	}
 	if recovered.State != BuildStateInterrupted || recovered.Stage != buildStageUnconfirmed || !recovered.MayStillRun || !manager.HasActive("a") {
 		t.Fatalf("活跃任务应标 interrupted：%+v", recovered)
+	}
+	recovered.Results = []BuildResult{} // Get 的副本会把空切片规整为 nil。
+	want, err := json.MarshalIndent(&recovered, "", "  ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	raw, err := os.ReadFile(discovered)
+	if err != nil || !bytes.Equal(raw, append(want, '\n')) {
+		t.Fatalf("恢复没有按原格式回写发现路径：%s，%v", raw, err)
+	}
+	if _, err := os.Stat(filepath.Join(stateRoot, building.ID+".json")); !os.IsNotExist(err) {
+		t.Fatalf("恢复不应另写 ID 路径：%v", err)
+	}
+	manager.mu.Lock()
+	tasks, requests, indexed := len(manager.tasks), len(manager.requestIndex), manager.requestIndex[building.RequestID]
+	manager.mu.Unlock()
+	if tasks != 2 || requests != 1 || indexed != building.ID {
+		t.Fatalf("恢复索引不符：%d 个任务，%d 个请求，有效请求指向 %q", tasks, requests, indexed)
 	}
 	if _, err = os.Stat(spool); !os.IsNotExist(err) {
 		t.Fatal("恢复时应清 spool")
@@ -1186,10 +1216,11 @@ func TestCleanupExpiredRemovesOldTerminalTasks(t *testing.T) {
 	if err := os.MkdirAll(stateRoot, 0700); err != nil {
 		t.Fatal(err)
 	}
+	clock := fixedBuildClock()
 	old := BuildTask{
 		ID: "11111111-1111-1111-1111-111111111111", Slug: "a", Mode: buildModeDockerfile,
 		State: BuildStateSucceeded, Stage: "构建成功",
-		CreatedAt: "2025-09-01T00:00:00Z", UpdatedAt: "2025-09-01T00:01:00Z",
+		CreatedAt: clock.Add(-30 * 24 * time.Hour).Format(time.RFC3339), UpdatedAt: "2025-09-01T00:01:00Z",
 		Input: BuildTaskInput{Mode: buildModeDockerfile, RequestID: "aaaaaaaa-1111-2222-3333-444444444444"}, Results: []BuildResult{},
 	}
 	if err := writeBuildTaskJSON(filepath.Join(stateRoot, old.ID+".json"), &old); err != nil {
@@ -1201,7 +1232,14 @@ func TestCleanupExpiredRemovesOldTerminalTasks(t *testing.T) {
 	if err := os.WriteFile(filepath.Join(stateDir, "logs", old.ID+".log"), []byte("x"), 0600); err != nil {
 		t.Fatal(err)
 	}
-	clock := time.Date(2026, 10, 4, 7, 30, 0, 0, time.UTC)
+	badTime, stillRunning := old, old
+	badTime.ID, badTime.CreatedAt = "22222222-2222-2222-2222-222222222222", "invalid"
+	stillRunning.ID, stillRunning.DispatchStatus = "33333333-3333-3333-3333-333333333333", buildDispatchStarted
+	for _, kept := range []BuildTask{badTime, stillRunning} {
+		if err := writeBuildTaskJSON(filepath.Join(stateRoot, kept.ID+".json"), &kept); err != nil {
+			t.Fatal(err)
+		}
+	}
 	manager := newBuildManager(BuildDeps{
 		Engine:    newFakeBuildEngine(),
 		Registry:  &Registry{MountRoot: testDir(t)},
@@ -1212,10 +1250,55 @@ func TestCleanupExpiredRemovesOldTerminalTasks(t *testing.T) {
 	}, defaultBuildLimits())
 	t.Cleanup(func() { _ = manager.Close(context.Background()) })
 	if _, err := manager.Get("a", old.ID); err == nil {
-		t.Fatal("31 天前的终态任务应被清理")
+		t.Fatal("恰好 30 天的终态任务应被清理")
 	}
 	if _, err := os.Stat(filepath.Join(stateRoot, old.ID+".json")); !os.IsNotExist(err) {
 		t.Fatal("任务 JSON 应删除")
+	}
+	if _, err := os.Stat(manager.LogPath(old.ID)); !os.IsNotExist(err) {
+		t.Fatalf("过期任务日志应删除：%v", err)
+	}
+	for _, kept := range []BuildTask{badTime, stillRunning} {
+		if _, err := manager.Get("a", kept.ID); err != nil {
+			t.Fatalf("不应清理 %s：%v", kept.ID, err)
+		}
+	}
+}
+
+func TestBuildMutationDoesNotPublishOnWriteFailure(t *testing.T) {
+	root := t.TempDir()
+	task := BuildTask{
+		ID: "11111111-1111-1111-1111-111111111111", Slug: "a",
+		State: BuildStateInterrupted, MayStillRun: true, DispatchStatus: buildDispatchStarted,
+		CreatedAt: fixedBuildClock().Format(time.RFC3339),
+		Results:   []BuildResult{{Target: "original"}},
+	}
+	path := filepath.Join(root, task.ID+".json")
+	if err := writeBuildTaskJSON(path, &task); err != nil {
+		t.Fatal(err)
+	}
+	m := newBuildManager(BuildDeps{StateRoot: root, LogRoot: t.TempDir(), SpoolRoot: t.TempDir(), Now: fixedBuildClock}, defaultBuildLimits())
+	t.Cleanup(func() { _ = m.Close(context.Background()) })
+	want, err := m.Get(task.Slug, task.ID)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Remove(path); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Mkdir(path, 0700); err != nil {
+		t.Fatal(err)
+	}
+	err = m.mutate(task.ID, func(updated *BuildTask) {
+		updated.State = BuildStateSucceeded
+		updated.Results[0].Target = "unpublished"
+	})
+	if err == nil {
+		t.Fatal("账本路径是目录，写入应失败")
+	}
+	got, err := m.Get(task.Slug, task.ID)
+	if err != nil || got.State != want.State || got.Results[0] != want.Results[0] {
+		t.Fatalf("写失败不应发布状态或修改结果切片：%+v，%v", got, err)
 	}
 }
 

@@ -22,6 +22,7 @@ import (
 	"elysian/server/internal/shared"
 	"elysian/server/internal/shared/randomid"
 	"elysian/server/internal/tasklog"
+	"elysian/server/internal/taskstore"
 )
 
 // 容器工作区的镜像构建任务机（ADR-0021）：任务状态机 + worker 通道 + 取消 +
@@ -73,15 +74,12 @@ const (
 	defaultBuildLogBytes int64 = 2 << 20
 )
 
-// buildIDPattern 任务与请求标识的 uuid 形状（同 websites safeDeploymentID 语义）。
-var buildIDPattern = regexp.MustCompile(`^[a-f0-9-]{36}$`)
-
 // buildTagPattern 产物 tag 的钉死形状。
 var buildTagPattern = regexp.MustCompile(`^\d{8}-\d{6}-[0-9a-f]{4}$`)
 
 var errBuildTaskTerminal = errors.New("构建任务已结束")
 
-func safeBuildID(id string) bool { return buildIDPattern.MatchString(id) }
+func safeBuildID(id string) bool { return taskstore.ValidUUIDShape(id) }
 
 // buildTagFor 拼产物 tag：UTC yyyyMMdd-HHmmss + 任务 id 前 4 字符（时间取注入时钟）。
 func buildTagFor(now time.Time, taskID string) string {
@@ -285,7 +283,7 @@ func newBuildManager(deps BuildDeps, limits BuildLimits) *BuildManager {
 	}
 	// 启动恢复：glob 任务 JSON，活跃状态一律改 interrupted 并清 spool（不自动重跑，
 	// 重试只经用户显式提交新任务）。
-	files, _ := filepath.Glob(filepath.Join(deps.StateRoot, "*.json"))
+	files, _ := m.ledger().Glob()
 	for _, file := range files {
 		raw, err := os.ReadFile(file)
 		if err != nil {
@@ -358,10 +356,7 @@ func (m *BuildManager) Close(ctx context.Context) error {
 // now 取注入时钟的当前时间。
 func (m *BuildManager) now() time.Time { return m.deps.Now() }
 
-// taskPath 任务 JSON 路径。
-func (m *BuildManager) taskPath(taskID string) string {
-	return filepath.Join(m.deps.StateRoot, taskID+".json")
-}
+func (m *BuildManager) ledger() taskstore.Dir { return taskstore.Dir(m.deps.StateRoot) }
 
 // LogPath 任务日志路径（日志端点读文件用）。
 func (m *BuildManager) LogPath(taskID string) string {
@@ -377,15 +372,15 @@ func (m *BuildManager) cleanupExpired() {
 		if blocksBuild(task) {
 			continue
 		}
-		created, err := time.Parse(time.RFC3339, task.CreatedAt)
-		if err != nil || created.Add(30*24*time.Hour).After(current) {
+		deadline, err := taskstore.RetentionDeadline(task.CreatedAt)
+		if err != nil || deadline.After(current) {
 			continue
 		}
 		delete(m.tasks, id)
 		if task.RequestID != "" && m.requestIndex[task.RequestID] == id {
 			delete(m.requestIndex, task.RequestID)
 		}
-		_ = os.Remove(m.taskPath(id))
+		_ = m.ledger().Remove(id)
 		_ = os.Remove(m.LogPath(id))
 		_ = os.Remove(spoolTarPath(m.deps.SpoolRoot, id))
 		delete(m.logTrackers, id)
@@ -441,11 +436,7 @@ func (m *BuildManager) mutate(taskID string, fn func(*BuildTask)) error {
 	updated.Results = append([]BuildResult(nil), task.Results...)
 	fn(&updated)
 	updated.UpdatedAt = m.now().UTC().Format(time.RFC3339)
-	if err := config.AtomicJSON(m.taskPath(taskID), &updated); err != nil {
-		return err
-	}
-	m.tasks[taskID] = &updated
-	return nil
+	return taskstore.SaveAndPublish(m.ledger(), m.tasks, taskID, &updated, config.AtomicJSON)
 }
 
 // snapshotTask 取任务副本（响应用，不暴露内部指针）。
@@ -674,7 +665,7 @@ func (m *BuildManager) Submit(ctx context.Context, workspaceDir, slug string, in
 	m.tasks[taskID] = &task
 	m.requestIndex[input.RequestID] = taskID
 	m.cancel[taskID] = cancel
-	err = config.AtomicJSON(m.taskPath(taskID), &task)
+	err = config.AtomicJSON(m.ledger().Path(taskID), &task)
 	if err != nil {
 		// 落盘失败在持锁段内回滚内存登记：否则 queued 残留会让 HasActive 恒真、
 		// DELETE 与后续 Submit 恒 409 且 worker 从未启动，只能重启解脱。
@@ -719,9 +710,7 @@ func (m *BuildManager) InterruptActive(slug, message string) {
 			updated.Error += "；" + buildStageUnconfirmed
 		}
 		updated.UpdatedAt = m.now().UTC().Format(time.RFC3339)
-		if err := config.AtomicJSON(m.taskPath(id), &updated); err == nil {
-			m.tasks[id] = &updated
-		}
+		_ = taskstore.SaveAndPublish(m.ledger(), m.tasks, id, &updated, config.AtomicJSON)
 		if cancel := m.cancel[id]; cancel != nil {
 			interrupted = append(interrupted, pending{id: id, cancel: cancel})
 		}

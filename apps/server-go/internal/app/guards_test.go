@@ -35,6 +35,7 @@ func TestNoCrossDomainImports(t *testing.T) {
 		"elysian/server/internal/shared":          true,
 		"elysian/server/internal/middleware":      true,
 		"elysian/server/internal/tasklog":         true,
+		"elysian/server/internal/taskstore":       true,
 		"elysian/server/internal/shared/randomid": true,
 	}
 
