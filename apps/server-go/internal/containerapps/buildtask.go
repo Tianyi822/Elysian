@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -22,6 +21,7 @@ import (
 	"elysian/server/internal/paths"
 	"elysian/server/internal/seam"
 	"elysian/server/internal/shared"
+	"elysian/server/internal/tasklog"
 )
 
 // 容器工作区的镜像构建任务机（ADR-0021）：任务状态机 + worker 通道 + 取消 +
@@ -435,12 +435,7 @@ func (m *BuildManager) log(taskID, text string) {
 
 // appendLog 追加写日志文件（调用方持锁）。
 func (m *BuildManager) appendLog(taskID, text string) {
-	file, err := os.OpenFile(m.LogPath(taskID), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
-	if err != nil {
-		return
-	}
-	_, _ = io.WriteString(file, text)
-	_ = file.Close()
+	_ = tasklog.Append(m.LogPath(taskID), text, 0)
 }
 
 // mutate 拷贝、改、落盘、替换（状态逐变化落盘；Results 深拷贝防共享底座）。

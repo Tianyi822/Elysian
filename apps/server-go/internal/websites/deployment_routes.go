@@ -1,13 +1,11 @@
 package websites
 
 import (
-	"bufio"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"net/url"
 	"os"
@@ -17,6 +15,7 @@ import (
 
 	"elysian/server/internal/middleware"
 	"elysian/server/internal/shared"
+	"elysian/server/internal/tasklog"
 	"github.com/go-chi/chi/v5"
 )
 
@@ -168,41 +167,12 @@ func mountDeploymentRoutes(r chi.Router, m *deploymentManager) {
 			shared.SendError(w, 400, "日志偏移无效")
 			return
 		}
-		f, err := os.Open(filepath.Join(m.logRoot, id+".log"))
-		lines := []string{}
-		next, total := offset, int64(0)
-		if err == nil {
-			defer f.Close()
-			info, e := f.Stat()
-			if e != nil {
-				middleware.WriteError(w, e)
-				return
-			}
-			total = info.Size()
-			if offset > total {
-				offset = total
-			}
-			next = offset
-			if _, err = f.Seek(offset, 0); err != nil {
-				middleware.WriteError(w, err)
-				return
-			}
-			reader := bufio.NewReader(io.LimitReader(f, 64<<10))
-			for {
-				line, e := reader.ReadString('\n')
-				if line != "" {
-					lines = append(lines, line)
-					next += int64(len(line))
-				}
-				if e != nil {
-					break
-				}
-			}
-		} else if !os.IsNotExist(err) {
+		page, err := tasklog.ReadPage(filepath.Join(m.logRoot, id+".log"), offset, 64<<10, tasklog.RawLines)
+		if err != nil {
 			middleware.WriteError(w, err)
 			return
 		}
-		shared.SendJSON(w, 200, map[string]any{"lines": lines, "next": next, "total": total})
+		shared.SendJSON(w, 200, page)
 	})
 	r.Post("/deployments/{taskId}/cancel", func(w http.ResponseWriter, r *http.Request) {
 		id := chi.URLParam(r, "taskId")

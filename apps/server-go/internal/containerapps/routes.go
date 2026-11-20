@@ -1,13 +1,11 @@
 package containerapps
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
-	"os"
 	"strconv"
 	"strings"
 	"time"
@@ -17,6 +15,7 @@ import (
 	"elysian/server/internal/middleware"
 	"elysian/server/internal/seam"
 	"elysian/server/internal/shared"
+	"elysian/server/internal/tasklog"
 )
 
 // maxCreateBodyBytes 建工作区与构建请求的 JSON 体上限：远小于读体守卫的缺省值即可。
@@ -551,64 +550,12 @@ func (h Handler) getBuildLogs(w http.ResponseWriter, r *http.Request) {
 		shared.SendError(w, http.StatusBadRequest, "日志偏移无效")
 		return
 	}
-	file, err := os.Open(h.Builds.LogPath(taskID))
-	lines := []string{}
-	next, total := offset, int64(0)
-	if err == nil {
-		defer file.Close()
-		info, statErr := file.Stat()
-		if statErr != nil {
-			writeError(w, statErr)
-			return
-		}
-		total = info.Size()
-		if offset > total {
-			offset = total
-		}
-		next = offset
-		if _, err = file.Seek(offset, 0); err != nil {
-			writeError(w, err)
-			return
-		}
-		reader := bufio.NewReader(io.LimitReader(file, buildLogsMaxBytes))
-		lastRaw := ""
-		windowRead := int64(0)
-		sawNewline := false
-		for {
-			line, readErr := reader.ReadString('\n')
-			if line != "" {
-				// 行内容剥掉行尾换行再入列表（next 仍按原始字节累加），对齐 mock 侧
-				// 按最后换行切分的口径。
-				lines = append(lines, strings.TrimSuffix(strings.TrimSuffix(line, "\n"), "\r"))
-				next += int64(len(line))
-				windowRead += int64(len(line))
-				lastRaw = line
-				if strings.HasSuffix(line, "\n") {
-					sawNewline = true
-				}
-			}
-			if readErr != nil {
-				break
-			}
-		}
-		// 半行退回的三种形态分口径处理（与 mock 侧 getAppBuildLogs 的 lastNewline<0
-		// 分支同口径）：
-		//   窗口内出现过换行、末行被截在中间 → 退回该半行，next 回行首，下次重读；
-		//   窗口内一个换行都没有且读满窗口（单行超过 64 KiB，log() 单行上限 128 KiB
-		//   允许发生）→ 照样下发该段并把 next 推进到窗口尾，否则 next 永不前进、
-		//   分页死循环；
-		//   文件尾部尚未收换行的半行（未读满窗口即 EOF）→ 退回等待任务补齐换行。
-		if lastRaw != "" && !strings.HasSuffix(lastRaw, "\n") {
-			if sawNewline || windowRead < buildLogsMaxBytes {
-				lines = lines[:len(lines)-1]
-				next -= int64(len(lastRaw))
-			}
-		}
-	} else if !os.IsNotExist(err) {
+	page, err := tasklog.ReadPage(h.Builds.LogPath(taskID), offset, buildLogsMaxBytes, tasklog.CompleteLines)
+	if err != nil {
 		writeError(w, err)
 		return
 	}
-	shared.SendJSON(w, http.StatusOK, map[string]any{"lines": lines, "next": next, "total": total})
+	shared.SendJSON(w, http.StatusOK, page)
 }
 
 // cancelBuild POST /{slug}/builds/{taskId}/cancel：取消活跃任务（排队中直接终态，

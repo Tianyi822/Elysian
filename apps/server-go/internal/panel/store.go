@@ -15,6 +15,7 @@ import (
 	"elysian/server/internal/agent/harness/sessionstore"
 	"elysian/server/internal/config"
 	"elysian/server/internal/shared"
+	"elysian/server/internal/tasklog"
 )
 
 var idPattern = regexp.MustCompile(`^[a-f0-9]{32}$`)
@@ -178,18 +179,5 @@ func newID() (string, error) {
 
 // appendLog 限制持久化输出；超过上限仍排空进程输出，避免卡住构建进程。
 func (s Store) appendLog(id, text string) {
-	f, err := os.OpenFile(s.logPath(id), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
-	if err != nil {
-		return
-	}
-	defer f.Close()
-	st, err := f.Stat()
-	if err != nil || st.Size() >= 2*1024*1024 {
-		return
-	}
-	remaining := 2*1024*1024 - st.Size()
-	if int64(len(text)) > remaining {
-		text = text[:remaining]
-	}
-	_, _ = f.WriteString(text)
+	_ = tasklog.Append(s.logPath(id), text, 2<<20)
 }

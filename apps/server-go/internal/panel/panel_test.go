@@ -735,3 +735,22 @@ func TestLogPaginationPreservesChineseAcrossBoundary(t *testing.T) {
 		t.Fatalf("分页损坏中文文本：%d/%d", len(combined), len(original))
 	}
 }
+
+func TestLogAppendKeepsOriginalByteLimit(t *testing.T) {
+	const limit = 2 << 20
+	store := Store{Root: t.TempDir()}
+	if err := os.MkdirAll(store.tasksDir(), 0o700); err != nil {
+		t.Fatal(err)
+	}
+	const id = "fixture"
+	path := store.logPath(id)
+	base := strings.Repeat("a", limit-3)
+	if err := os.WriteFile(path, []byte(base), 0o600); err != nil {
+		t.Fatal(err)
+	}
+	store.appendLog(id, "12345")
+	store.appendLog(id, "ignored")
+	if data, err := os.ReadFile(path); err != nil || string(data) != base+"123" {
+		t.Fatalf("日志应截断到原字节上限，读取 %d 字节，错误 %v", len(data), err)
+	}
+}

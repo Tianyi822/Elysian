@@ -18,6 +18,7 @@ import (
 	"elysian/server/internal/paths"
 	"elysian/server/internal/seam"
 	"elysian/server/internal/shared"
+	"elysian/server/internal/tasklog"
 )
 
 type deploymentManager struct {
@@ -447,11 +448,7 @@ func (m *deploymentManager) removeTaskContainer(taskID, container string) error 
 	})
 }
 func (m *deploymentManager) log(id, text string) {
-	f, e := os.OpenFile(filepath.Join(m.logRoot, id+".log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
-	if e == nil {
-		_, _ = io.WriteString(f, text+"\n")
-		_ = f.Close()
-	}
+	_ = tasklog.Append(filepath.Join(m.logRoot, id+".log"), text+"\n", 0)
 }
 
 // 仅清理本安装标识的一次性容器，覆盖创建容器后尚未落任务检查点的重启窗口。

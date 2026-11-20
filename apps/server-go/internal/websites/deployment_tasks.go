@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"elysian/server/internal/shared"
+	"elysian/server/internal/tasklog"
 )
 
 func (m *deploymentManager) submit(ctx context.Context, in deploymentInput) (deploymentTask, error) {
@@ -202,7 +203,7 @@ func (m *deploymentManager) execute(parent context.Context, id string) {
 							err = m.stageTool(ctx, c, container, id, t.Config)
 						}
 						if err == nil {
-							f, e := os.OpenFile(filepath.Join(m.logRoot, id+".log"), os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600)
+							f, e := tasklog.OpenAppend(filepath.Join(m.logRoot, id+".log"))
 							if e != nil {
 								err = e
 							} else {

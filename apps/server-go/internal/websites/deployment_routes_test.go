@@ -93,6 +93,39 @@ func TestDeploymentSourceAndResumeRoutes(t *testing.T) {
 	}
 }
 
+func TestDeploymentLogPagingContract(t *testing.T) {
+	const id = "deployment"
+	m := &deploymentManager{logRoot: t.TempDir(), tasks: map[string]*deploymentTask{id: {ID: id}}}
+	router := chi.NewRouter()
+	mountDeploymentRoutes(router, m)
+	path := filepath.Join(m.logRoot, id+".log")
+	for _, tc := range []struct {
+		name   string
+		offset string
+		text   string
+		want   string
+	}{
+		{"尚无日志", "12", "", `{"lines":[],"next":12,"total":0}`},
+		{"保留 CRLF 与末尾半行", "0", "甲\r\n乙", `{"lines":["甲\r\n","乙"],"next":8,"total":8}`},
+		{"越过文件尾部", "12", "甲\n", `{"lines":[],"next":4,"total":4}`},
+		{"非数字偏移沿用零", "bad", "甲\n", `{"lines":["甲\n"],"next":4,"total":4}`},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			if tc.text != "" {
+				if err := os.WriteFile(path, []byte(tc.text), 0o600); err != nil {
+					t.Fatal(err)
+				}
+			}
+			request := httptest.NewRequest("GET", "/deployments/"+id+"/logs?offset="+tc.offset, nil)
+			response := httptest.NewRecorder()
+			router.ServeHTTP(response, request)
+			if response.Code != 200 || response.Body.String() != tc.want {
+				t.Fatalf("响应 = %d %s；期望 200 %s", response.Code, response.Body, tc.want)
+			}
+		})
+	}
+}
+
 func TestDeploymentProjectStatusResponses(t *testing.T) {
 	f := fixture(t, nil, nil, nil, nil)
 	m := newDeploymentManager(f.service, deploymentEngine{limits: defaultDeploymentLimits()}, t.TempDir(), t.TempDir(), t.TempDir())

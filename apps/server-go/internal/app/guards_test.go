@@ -33,6 +33,7 @@ func TestNoCrossDomainImports(t *testing.T) {
 		"elysian/server/internal/contract":   true,
 		"elysian/server/internal/shared":     true,
 		"elysian/server/internal/middleware": true,
+		"elysian/server/internal/tasklog":    true,
 	}
 
 	pkgs, err := goList("elysian/server/internal/...")
