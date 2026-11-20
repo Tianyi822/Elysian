@@ -12,10 +12,9 @@ import (
 	"sync"
 	"testing"
 
-	"github.com/go-chi/chi/v5"
-
 	"elysian/server/internal/middleware"
 	"elysian/server/internal/shared"
+	"elysian/server/internal/testutil"
 )
 
 // ---------- fake service ----------
@@ -163,25 +162,17 @@ func doReq(parent http.Handler, method, path, body string, crossOrigin bool) *ht
 	if body != "" && req.Header.Get("Content-Type") == "" {
 		req.Header.Set("Content-Type", "application/json")
 	}
-	rec := httptest.NewRecorder()
-	parent.ServeHTTP(rec, req)
-	return rec
+	return testutil.Do(parent, req)
 }
 
 // mountSsh 把 SSH 片挂到父路由（对齐 app.ts 的 Mount 形态）。
 func mountSsh(deps Deps) http.Handler {
-	parent := chi.NewRouter()
-	parent.Use(middleware.StripTailSlash)
-	parent.Mount(shared.SshMount, NewSshRouter(deps))
-	return parent
+	return testutil.MountAt(shared.SshMount, NewSshRouter(deps))
 }
 
 // mountUsers 同上（用户片）。
 func mountUsers(deps Deps) http.Handler {
-	parent := chi.NewRouter()
-	parent.Use(middleware.StripTailSlash)
-	parent.Mount(shared.UsersMount, NewUsersRouter(deps))
-	return parent
+	return testutil.MountAt(shared.UsersMount, NewUsersRouter(deps))
 }
 
 func bodyOf(rec *httptest.ResponseRecorder) string {

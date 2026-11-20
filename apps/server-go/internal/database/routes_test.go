@@ -15,6 +15,7 @@ import (
 
 	"elysian/server/internal/middleware"
 	"elysian/server/internal/shared"
+	"elysian/server/internal/testutil"
 )
 
 // databaseRoutes.test.ts 对等测试：HTTP 守卫链、容器列表与 SQLite 分流、确认守卫。
@@ -121,20 +122,22 @@ func newRouterFixture(service Service, sqlite SqliteService) chi.Router {
 	return newRouter(routerDeps{available: true, service: service, sqlite: sqlite})
 }
 
+const routeTestHost = "localhost:48100"
+
 func sameOriginHeaders() map[string]string {
-	return map[string]string{"Host": "localhost:48100", "Origin": "http://localhost:48100", "Content-Type": "application/json"}
+	headers := testutil.SameOriginHeaders(routeTestHost)
+	headers["Content-Type"] = "application/json"
+	return headers
 }
 
 func doRequest(t *testing.T, router chi.Router, method, target string, headers map[string]string, body []byte) *httptest.ResponseRecorder {
 	t.Helper()
 	request := httptest.NewRequest(method, target, bytes.NewReader(body))
-	request.Host = "localhost:48100"
+	request.Host = routeTestHost
 	for key, value := range headers {
 		request.Header.Set(key, value)
 	}
-	recorder := httptest.NewRecorder()
-	router.ServeHTTP(recorder, request)
-	return recorder
+	return testutil.Do(router, request)
 }
 
 func TestListReturnsContainerRowsOnly(t *testing.T) {

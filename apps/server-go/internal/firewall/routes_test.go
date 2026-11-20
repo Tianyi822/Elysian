@@ -9,10 +9,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/go-chi/chi/v5"
-
-	"elysian/server/internal/middleware"
 	"elysian/server/internal/shared"
+	"elysian/server/internal/testutil"
 )
 
 // firewallRoutes.test.ts 的对等测试：fake service 经挂载后的路由器驱动（chi 父应用
@@ -220,10 +218,7 @@ func (f *fakeService) SyncFromSystem() (int, error) {
 // mountApp 与 app 装配同构的父应用：剥尾斜杠 + 挂载 + 统一错误映射（错误映射在
 // 域路由器内部）。
 func mountApp(deps Deps) http.Handler {
-	parent := chi.NewRouter()
-	parent.Use(middleware.StripTailSlash)
-	parent.Mount(shared.FirewallMount, NewRouter(deps))
-	return parent
+	return testutil.MountAt(shared.FirewallMount, NewRouter(deps))
 }
 
 // requestOf 构造发往挂载后端点的请求；默认同源合法头（Origin 与 Host 一致）。
@@ -246,13 +241,9 @@ func jsonRequest(method, path string, body any) *http.Request {
 
 func doJSON(t *testing.T, handler http.Handler, req *http.Request) (int, map[string]any) {
 	t.Helper()
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
 	var body map[string]any
-	if err := json.Unmarshal(rec.Body.Bytes(), &body); err != nil {
-		t.Fatalf("响应不是 JSON：%q", rec.Body.String())
-	}
-	return rec.Code, body
+	code := testutil.DoJSON(t, handler, req, &body)
+	return code, body
 }
 
 func TestRouterUnavailable503(t *testing.T) {

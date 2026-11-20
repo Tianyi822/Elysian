@@ -12,14 +12,11 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"net/http/httptest"
 	"strings"
 	"testing"
 
-	"github.com/go-chi/chi/v5"
-
-	"elysian/server/internal/middleware"
 	"elysian/server/internal/shared"
+	"elysian/server/internal/testutil"
 )
 
 var sampleEntry = fileEntry{
@@ -158,17 +155,13 @@ func jsonBody(t *testing.T, payload string) *string {
 // doRequest 在给定 handler 上发请求并回状态码与响应体。
 func doRequest(t *testing.T, handler http.Handler, req *http.Request) (int, string) {
 	t.Helper()
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
+	rec := testutil.Do(handler, req)
 	return rec.Code, rec.Body.String()
 }
 
 // mountedFiles 复刻 app.ts 的挂载形态：全局剥尾斜杠中间件 + FilesMount 挂载。
 func mountedFiles(deps Deps) http.Handler {
-	parent := chi.NewRouter()
-	parent.Use(middleware.StripTailSlash)
-	parent.Mount(shared.FilesMount, NewRouter(deps))
-	return parent
+	return testutil.MountAt(shared.FilesMount, NewRouter(deps))
 }
 
 func requireJSONError(t *testing.T, body, want string) {

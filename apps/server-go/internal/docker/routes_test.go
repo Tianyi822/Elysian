@@ -2,6 +2,7 @@ package docker
 
 import (
 	"context"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -11,6 +12,7 @@ import (
 
 	"elysian/server/internal/seam"
 	"elysian/server/internal/shared"
+	"elysian/server/internal/testutil"
 )
 
 // routes 对等测试（dockerRoutes.test.ts 锚点：两段 503、透传、同源、404 剥前缀、
@@ -72,21 +74,15 @@ func readyRouter(statusOverride ...string) (chiRouter, *fakeEngine) {
 type chiRouter = http.Handler
 
 func doGet(router http.Handler, target string, headers map[string]string) *httptest.ResponseRecorder {
-	request := httptest.NewRequest(http.MethodGet, target, nil)
-	for key, value := range headers {
-		if key == "Host" {
-			request.Host = value
-			continue
-		}
-		request.Header.Set(key, value)
-	}
-	recorder := httptest.NewRecorder()
-	router.ServeHTTP(recorder, request)
-	return recorder
+	return doRouteRequest(router, http.MethodGet, target, nil, headers)
 }
 
 func doWrite(router http.Handler, method, target, body string, headers map[string]string) *httptest.ResponseRecorder {
-	request := httptest.NewRequest(method, target, strings.NewReader(body))
+	return doRouteRequest(router, method, target, strings.NewReader(body), headers)
+}
+
+func doRouteRequest(router http.Handler, method, target string, body io.Reader, headers map[string]string) *httptest.ResponseRecorder {
+	request := httptest.NewRequest(method, target, body)
 	for key, value := range headers {
 		if key == "Host" {
 			request.Host = value
@@ -94,16 +90,11 @@ func doWrite(router http.Handler, method, target, body string, headers map[strin
 		}
 		request.Header.Set(key, value)
 	}
-	recorder := httptest.NewRecorder()
-	router.ServeHTTP(recorder, request)
-	return recorder
+	return testutil.Do(router, request)
 }
 
 func sameOriginHeaders() map[string]string {
-	return map[string]string{
-		"Origin": "http://127.0.0.1:48101",
-		"Host":   "127.0.0.1:48101",
-	}
+	return testutil.SameOriginHeaders("127.0.0.1:48101")
 }
 
 func TestRoutesBoth503Gates(t *testing.T) {

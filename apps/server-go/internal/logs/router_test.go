@@ -9,20 +9,15 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-chi/chi/v5"
-
-	"elysian/server/internal/middleware"
 	"elysian/server/internal/seam"
 	"elysian/server/internal/shared"
+	"elysian/server/internal/testutil"
 )
 
 // newLogsApp 与装配同构的父应用：StripTailSlash + 挂载日志片（尾部斜杠语义由全局
 // 中间件承担，对齐 Hono strict:false）。
 func newLogsApp(svc seam.Logs) http.Handler {
-	parent := chi.NewRouter()
-	parent.Use(middleware.StripTailSlash)
-	parent.Mount(shared.LogsMount, NewRouter(Deps{Service: svc}))
-	return parent
+	return testutil.MountAt(shared.LogsMount, NewRouter(Deps{Service: svc}))
 }
 
 // newTestRouterService 真实服务 + 内存 store + 固定时钟。
@@ -51,9 +46,7 @@ func doRequest(t *testing.T, app http.Handler, method, target, body, contentType
 	if origin != "" {
 		req.Header.Set("Origin", origin)
 	}
-	rec := httptest.NewRecorder()
-	app.ServeHTTP(rec, req)
-	return rec
+	return testutil.Do(app, req)
 }
 
 // jsonBodyOf 解析 JSON 响应体。
