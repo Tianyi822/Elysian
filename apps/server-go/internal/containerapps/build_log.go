@@ -2,9 +2,14 @@ package containerapps
 
 import (
 	"path/filepath"
+	"strconv"
 
+	"elysian/server/internal/shared"
 	"elysian/server/internal/tasklog"
 )
+
+// buildLogsMaxBytes 构建日志单次响应上限（与 websites 部署日志同档）。
+const buildLogsMaxBytes int64 = 64 << 10
 
 // buildLogTracker 单任务日志写入记账（总量截断用）。
 type buildLogTracker struct {
@@ -12,9 +17,21 @@ type buildLogTracker struct {
 	truncated bool
 }
 
-// LogPath 任务日志路径（日志端点读文件用）。
+// LogPath 返回任务日志路径。
 func (m *BuildManager) LogPath(taskID string) string {
 	return filepath.Join(m.deps.LogRoot, taskID+".log")
+}
+
+// ReadLogWindow 先确认任务归属，再读取从指定字节偏移开始的日志窗口。
+func (m *BuildManager) ReadLogWindow(slug, taskID, offsetText string) (tasklog.Page, error) {
+	if _, err := m.Get(slug, taskID); err != nil {
+		return tasklog.Page{}, err
+	}
+	offset, err := strconv.ParseInt(offsetText, 10, 64)
+	if err != nil || offset < 0 {
+		return tasklog.Page{}, shared.InvalidRequest("日志偏移无效")
+	}
+	return tasklog.ReadPage(m.LogPath(taskID), offset, buildLogsMaxBytes, tasklog.CompleteLines)
 }
 
 // log 写一行任务日志：单行截 128 KiB，总量超限后丢弃后续行并只记一次截断提示。

@@ -201,6 +201,11 @@ func TestBuildRoutesSubmitListLogsCancel(t *testing.T) {
 	if badOffset.Code != http.StatusBadRequest || !strings.Contains(badOffset.Body.String(), "日志偏移无效") {
 		t.Fatalf("负 offset 应 400：%d %s", badOffset.Code, badOffset.Body.String())
 	}
+	env.createApp(t, "other", "FROM alpine:3\n")
+	wrongWorkspace := do(t, env.handler, http.MethodGet, "/other/builds/"+task.ID+"/logs?offset=-1", "", nil)
+	if wrongWorkspace.Code != http.StatusNotFound || !strings.Contains(wrongWorkspace.Body.String(), "构建任务不存在") {
+		t.Fatalf("应在检查 offset 前核对任务归属：%d %s", wrongWorkspace.Code, wrongWorkspace.Body.String())
+	}
 
 	// 终态取消 409。
 	cancelled := do(t, env.handler, http.MethodPost, "/flow/builds/"+task.ID+"/cancel", "", nil)

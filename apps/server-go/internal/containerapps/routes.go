@@ -5,7 +5,6 @@ import (
 	"errors"
 	"io"
 	"net/http"
-	"strconv"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -13,14 +12,10 @@ import (
 	"elysian/server/internal/middleware"
 	"elysian/server/internal/seam"
 	"elysian/server/internal/shared"
-	"elysian/server/internal/tasklog"
 )
 
 // maxCreateBodyBytes 建工作区与构建请求的 JSON 体上限：远小于读体守卫的缺省值即可。
 const maxCreateBodyBytes int64 = 8 * 1024
-
-// buildLogsMaxBytes 构建日志单次响应上限（与 websites 部署日志同档）。
-const buildLogsMaxBytes int64 = 64 << 10
 
 // notReadyBuildMsg 引擎不可用时六个构建端点整组 503 的固定文案（与 docker 域
 // notReadyPrefix 同句）；文件端点不受影响。
@@ -509,17 +504,7 @@ func (h Handler) getBuildLogs(w http.ResponseWriter, r *http.Request) {
 	if !ok {
 		return
 	}
-	taskID := chi.URLParam(r, "taskId")
-	if _, err := h.Builds.Get(slug, taskID); err != nil {
-		writeError(w, err)
-		return
-	}
-	offset, err := strconv.ParseInt(r.URL.Query().Get("offset"), 10, 64)
-	if err != nil || offset < 0 {
-		shared.SendError(w, http.StatusBadRequest, "日志偏移无效")
-		return
-	}
-	page, err := tasklog.ReadPage(h.Builds.LogPath(taskID), offset, buildLogsMaxBytes, tasklog.CompleteLines)
+	page, err := h.Builds.ReadLogWindow(slug, chi.URLParam(r, "taskId"), r.URL.Query().Get("offset"))
 	if err != nil {
 		writeError(w, err)
 		return
