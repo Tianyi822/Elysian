@@ -140,7 +140,7 @@ func (d *dockerAPI) inspect(ctx context.Context, id string) (map[string]any, err
 		return nil, err
 	}
 	if response.Status == 404 {
-		return nil, &shared.InvalidRequestError{Status: 404, Message: "数据库容器已不存在"}
+		return nil, shared.NotFound("数据库容器已不存在")
 	}
 	if response.Status != 200 {
 		return nil, errors.New("读取数据库容器失败")
@@ -176,7 +176,7 @@ func (d *dockerAPI) assertEngine(ctx context.Context, id, engine, versionTag str
 		return nil, err
 	}
 	if !inspectRunning(info) {
-		return nil, &shared.InvalidRequestError{Status: 409, Message: "数据库容器未运行"}
+		return nil, shared.Conflict("数据库容器未运行")
 	}
 	ref := inspectImageRef(info)
 	index := strings.LastIndex(ref, ":")
@@ -199,7 +199,7 @@ func (d *dockerAPI) assertEngine(ctx context.Context, id, engine, versionTag str
 		}
 	}
 	if !matchedImage || (ref != "" && !exactRef && !shaRefPattern.MatchString(strings.ToLower(ref))) {
-		return nil, &shared.InvalidRequestError{Status: 409, Message: "容器镜像与所选引擎或版本不一致"}
+		return nil, shared.Conflict("容器镜像与所选引擎或版本不一致")
 	}
 	return info, nil
 }
@@ -333,7 +333,7 @@ func (d *dockerAPI) create(ctx context.Context, input createInput) (createResult
 		}
 	}
 	if !found {
-		return createResult{}, &shared.InvalidRequestError{Status: 409, Message: "指定版本的数据库镜像尚未拉取"}
+		return createResult{}, shared.Conflict("指定版本的数据库镜像尚未拉取")
 	}
 	volumeName := "elysian-db-" + newUUID()
 	network := networkDBSharedName
@@ -472,7 +472,7 @@ func (d *dockerAPI) removeManaged(ctx context.Context, containerID, volumeName, 
 		info = nil
 	}
 	if !managedVolumeNamePattern.MatchString(volumeName) {
-		return &shared.InvalidRequestError{Status: 409, Message: "数据库持久卷名称无效"}
+		return shared.Conflict("数据库持久卷名称无效")
 	}
 	volume, err := d.request(ctx, "GET", "/volumes/"+url.PathEscape(volumeName), nil, nil)
 	if err != nil {
@@ -492,7 +492,7 @@ func (d *dockerAPI) removeManaged(ctx context.Context, containerID, volumeName, 
 	if volume.Status != 200 || managedLabel != "true" ||
 		(engineLabel != "" && engineLabel != engine) ||
 		(versionLabel != "" && versionLabel != versionTag) {
-		return &shared.InvalidRequestError{Status: 409, Message: "数据库持久卷身份核对失败"}
+		return shared.Conflict("数据库持久卷身份核对失败")
 	}
 	if info == nil {
 		removedVolume, err := d.request(ctx, "DELETE", "/volumes/"+url.PathEscape(volumeName), nil, nil)
@@ -526,7 +526,7 @@ func (d *dockerAPI) removeManaged(ctx context.Context, containerID, volumeName, 
 	}
 	if labelValues[0] != "true" || labelValues[1] != "true" || labelValues[2] != engine ||
 		labelValues[3] != versionTag || labelValues[4] != volumeName || !imageOK {
-		return &shared.InvalidRequestError{Status: 409, Message: "容器或持久卷不属于面板管理的数据库"}
+		return shared.Conflict("容器或持久卷不属于面板管理的数据库")
 	}
 	mounted := false
 	if mounts, ok := field(info, "Mounts").([]any); ok {
@@ -541,7 +541,7 @@ func (d *dockerAPI) removeManaged(ctx context.Context, containerID, volumeName, 
 		}
 	}
 	if !mounted {
-		return &shared.InvalidRequestError{Status: 409, Message: "容器没有挂载登记的数据库持久卷"}
+		return shared.Conflict("容器没有挂载登记的数据库持久卷")
 	}
 	if inspectRunning(info) {
 		query := url.Values{}

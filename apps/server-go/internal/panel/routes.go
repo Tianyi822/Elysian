@@ -237,7 +237,7 @@ func (m Manager) Submit(ctx context.Context, kind string, input submitInput, ori
 	var result Task
 	channelOmitted := input.Channel == ""
 	if !m.Enabled || !m.Host.Available() {
-		return result, &shared.InvalidRequestError{Status: 503, Message: "仅支持 systemd 安装版，请先使用安装脚本完成维护能力引导"}
+		return result, shared.Unavailable("仅支持 systemd 安装版，请先使用安装脚本完成维护能力引导")
 	}
 	if !requestPattern.MatchString(input.RequestID) {
 		return result, shared.InvalidRequest("提交编号无效")
@@ -292,7 +292,7 @@ func (m Manager) Submit(ctx context.Context, kind string, input submitInput, ori
 			}
 			for _, row := range rows {
 				if taskActive(row.State) || row.State == "recovery-failed" {
-					return &shared.InvalidRequestError{Status: 409, Message: "面板维护任务尚未完成，请等待或处理恢复错误"}
+					return shared.Conflict("面板维护任务尚未完成，请等待或处理恢复错误")
 				}
 			}
 			if kind == "update" {

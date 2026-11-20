@@ -314,7 +314,7 @@ func (h Handler) lockEditable(ctx context.Context, slug string) (func(), error) 
 	}
 	if h.Builds != nil && h.Builds.HasActive(slug) {
 		release()
-		return nil, &shared.InvalidRequestError{Status: http.StatusConflict, Message: "工作区有进行中的构建任务，请先取消或等待完成"}
+		return nil, shared.Conflict("工作区有进行中的构建任务，请先取消或等待完成")
 	}
 	return release, nil
 }

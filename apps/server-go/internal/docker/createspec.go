@@ -592,7 +592,7 @@ func buildCreateSpec(input buildCreateSpecInput) (buildCreateSpecResult, error) 
 		}
 		for _, container := range input.containers {
 			if container.name == name {
-				return buildCreateSpecResult{}, &shared.InvalidRequestError{Status: 409, Message: "容器名称已存在：" + name}
+				return buildCreateSpecResult{}, shared.Conflict("容器名称已存在：" + name)
 			}
 		}
 	} else {
@@ -603,7 +603,7 @@ func buildCreateSpec(input buildCreateSpecInput) (buildCreateSpecResult, error) 
 		name = autoContainerName(existing, selectedImage.name)
 		for _, container := range input.containers {
 			if container.name == name {
-				return buildCreateSpecResult{}, &shared.InvalidRequestError{Status: 409, Message: "容器名称已存在：" + name}
+				return buildCreateSpecResult{}, shared.Conflict("容器名称已存在：" + name)
 			}
 		}
 	}

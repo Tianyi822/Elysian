@@ -156,7 +156,7 @@ func (s *databaseService) rowsByContainer(id string) ([]databaseRecord, error) {
 	}
 	sort.Slice(result, func(i, j int) bool { return result[i].ID < result[j].ID })
 	if len(result) == 0 {
-		return nil, &shared.InvalidRequestError{Status: 404, Message: "数据库不存在"}
+		return nil, shared.NotFound("数据库不存在")
 	}
 	return result, nil
 }
@@ -473,7 +473,7 @@ func (s *databaseService) Create(ctx context.Context, input createRequest) (crea
 	s.mu.Lock()
 	if s.inProgress[key] {
 		s.mu.Unlock()
-		return createResponse{}, &shared.InvalidRequestError{Status: 409, Message: "相同数据库正在创建"}
+		return createResponse{}, shared.Conflict("相同数据库正在创建")
 	}
 	s.inProgress[key] = true
 	s.mu.Unlock()
@@ -494,7 +494,7 @@ func (s *databaseService) create(ctx context.Context, input createRequest) (crea
 	}
 	for _, row := range rows {
 		if row.ContainerName == input.ContainerName {
-			return createResponse{}, &shared.InvalidRequestError{Status: 409, Message: "数据库容器已登记"}
+			return createResponse{}, shared.Conflict("数据库容器已登记")
 		}
 	}
 	if err := s.checkContainerMutation(ctx, "", input.ContainerName); err != nil {
@@ -578,7 +578,7 @@ func (s *databaseService) Reveal(ctx context.Context, id string) (databaseSecret
 			return row.Admin, nil
 		}
 	}
-	return databaseSecret{}, &shared.InvalidRequestError{Status: 409, Message: "没有已保存的管理员凭据"}
+	return databaseSecret{}, shared.Conflict("没有已保存的管理员凭据")
 }
 
 // Reconcile 重新核对容器事实：存在、运行中、镜像与引擎/版本匹配、专属卷挂载；
@@ -599,7 +599,7 @@ func (s *databaseService) Reconcile(ctx context.Context, id string) (containerIn
 		return containerInstance{}, err
 	}
 	if anchor.VolumeName != "" && !inspectVolumeMounted(info, anchor.VolumeName) {
-		return containerInstance{}, &shared.InvalidRequestError{Status: 409, Message: "容器没有挂载登记的数据库持久卷"}
+		return containerInstance{}, shared.Conflict("容器没有挂载登记的数据库持久卷")
 	}
 	for _, row := range rows {
 		if row.State != stateActive {
@@ -632,7 +632,7 @@ func (s *databaseService) Forget(ctx context.Context, id string) error {
 		return err
 	}
 	if _, err := s.deps.docker.inspect(ctx, id); err == nil {
-		return &shared.InvalidRequestError{Status: 409, Message: "数据库容器仍然存在，请先删除容器及数据"}
+		return shared.Conflict("数据库容器仍然存在，请先删除容器及数据")
 	} else {
 		var invalid *shared.InvalidRequestError
 		if !errors.As(err, &invalid) || invalid.Status != 404 {

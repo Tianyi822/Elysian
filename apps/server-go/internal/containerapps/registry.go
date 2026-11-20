@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"net/http"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -158,10 +157,7 @@ func (r *Registry) Create(slug, displayName string, now time.Time) (Record, erro
 	// 把别人的目录当成面板工作区删掉。让用户先自己在宿主上处理。
 	// 这是请求与磁盘现状冲突，回 409 而不是 500 服务端故障。
 	if _, statErr := os.Stat(dir); statErr == nil {
-		return Record{}, &shared.InvalidRequestError{
-			Status:  http.StatusConflict,
-			Message: fmt.Sprintf("目录 %s 已存在但不属于面板工作区，请先在服务器上确认它再新建同名工作区", dir),
-		}
+		return Record{}, shared.Conflict(fmt.Sprintf("目录 %s 已存在但不属于面板工作区，请先在服务器上确认它再新建同名工作区", dir))
 	} else if !errors.Is(statErr, os.ErrNotExist) {
 		return Record{}, statErr
 	}

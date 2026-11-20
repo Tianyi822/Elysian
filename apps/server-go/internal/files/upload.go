@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io"
-	"net/http"
 	"os"
 	"path/filepath"
 	"sync"
@@ -90,7 +89,7 @@ func (m *uploadManager) Close() {
 }
 
 func uploadConflict() error {
-	return &shared.InvalidRequestError{Status: http.StatusConflict, Message: "上传目标或校验已变化，请重新检查并确认"}
+	return shared.Conflict("上传目标或校验已变化，请重新检查并确认")
 }
 
 func uploadRandomID() (string, error) {
@@ -193,7 +192,7 @@ func (m *uploadManager) Check(ctx context.Context, session, dirPath, name string
 		return uploadCheckResult{}, shared.InvalidRequest("上传文件大小无效")
 	}
 	if size > m.maxBytes {
-		return uploadCheckResult{}, &shared.InvalidRequestError{Status: 413, Message: "单文件上传大小不能超过 10 GiB"}
+		return uploadCheckResult{}, shared.TooLarge("单文件上传大小不能超过 10 GiB")
 	}
 	dirPath, err := m.validateTarget(dirPath, name)
 	if err != nil {
@@ -228,7 +227,7 @@ func (m *uploadManager) Check(ctx context.Context, session, dirPath, name string
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	if m.closed {
-		return uploadCheckResult{}, &shared.InvalidRequestError{Status: 503, Message: "文件传输已关闭"}
+		return uploadCheckResult{}, shared.Unavailable("文件传输已关闭")
 	}
 	for key, old := range m.tokens {
 		if !old.expires.After(now) {

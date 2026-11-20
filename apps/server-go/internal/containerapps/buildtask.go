@@ -518,7 +518,7 @@ func (m *BuildManager) Get(slug, taskID string) (BuildTask, error) {
 	task := m.tasks[taskID]
 	m.mu.Unlock()
 	if task == nil || task.Slug != slug {
-		return BuildTask{}, &shared.InvalidRequestError{Status: http.StatusNotFound, Message: "构建任务不存在：" + taskID}
+		return BuildTask{}, shared.NotFound("构建任务不存在：" + taskID)
 	}
 	copied := *task
 	copied.Results = append([]BuildResult(nil), task.Results...)
@@ -586,7 +586,7 @@ func (m *BuildManager) Submit(ctx context.Context, workspaceDir, slug string, in
 			return BuildTask{}, false, err
 		}
 		if digest != input.ExpectedDigest {
-			return BuildTask{}, false, &shared.InvalidRequestError{Status: http.StatusConflict, Message: "工作区内容已变化，请重新预览并审批"}
+			return BuildTask{}, false, shared.Conflict("工作区内容已变化，请重新预览并审批")
 		}
 	}
 	if !safeBuildID(input.RequestID) {
@@ -615,11 +615,11 @@ func (m *BuildManager) Submit(ctx context.Context, workspaceDir, slug string, in
 	for _, task := range m.tasks {
 		if task.MayStillRun && !activeBuild(task.State) {
 			m.mu.Unlock()
-			return BuildTask{}, false, &shared.InvalidRequestError{Status: http.StatusConflict, Message: buildStageUnconfirmed}
+			return BuildTask{}, false, shared.Conflict(buildStageUnconfirmed)
 		}
 		if task.Slug == slug && blocksBuild(task) {
 			m.mu.Unlock()
-			return BuildTask{}, false, &shared.InvalidRequestError{Status: http.StatusConflict, Message: "工作区已有进行中的构建任务"}
+			return BuildTask{}, false, shared.Conflict("工作区已有进行中的构建任务")
 		}
 	}
 	m.mu.Unlock()
@@ -630,7 +630,7 @@ func (m *BuildManager) Submit(ctx context.Context, workspaceDir, slug string, in
 			return BuildTask{}, false, occErr
 		}
 		if occupied {
-			return BuildTask{}, false, &shared.InvalidRequestError{Status: http.StatusConflict, Message: fmt.Sprintf("镜像 %s 已被非面板构建的镜像占用，请换一个目标名或先删除该镜像", plan.Repository)}
+			return BuildTask{}, false, shared.Conflict(fmt.Sprintf("镜像 %s 已被非面板构建的镜像占用，请换一个目标名或先删除该镜像", plan.Repository))
 		}
 	}
 	now := m.now()
@@ -670,12 +670,12 @@ func (m *BuildManager) Submit(ctx context.Context, workspaceDir, slug string, in
 		if existing.MayStillRun && !activeBuild(existing.State) {
 			m.mu.Unlock()
 			cancel()
-			return BuildTask{}, false, &shared.InvalidRequestError{Status: http.StatusConflict, Message: buildStageUnconfirmed}
+			return BuildTask{}, false, shared.Conflict(buildStageUnconfirmed)
 		}
 		if existing.Slug == slug && blocksBuild(existing) {
 			m.mu.Unlock()
 			cancel()
-			return BuildTask{}, false, &shared.InvalidRequestError{Status: http.StatusConflict, Message: "工作区已有进行中的构建任务"}
+			return BuildTask{}, false, shared.Conflict("工作区已有进行中的构建任务")
 		}
 	}
 	if _, exists := m.tasks[taskID]; exists {
@@ -752,10 +752,10 @@ func (m *BuildManager) Cancel(slug, taskID string) error {
 	cancel := m.cancel[taskID]
 	m.mu.Unlock()
 	if task == nil || task.Slug != slug {
-		return &shared.InvalidRequestError{Status: http.StatusNotFound, Message: "构建任务不存在：" + taskID}
+		return shared.NotFound("构建任务不存在：" + taskID)
 	}
 	if !activeBuild(task.State) {
-		return &shared.InvalidRequestError{Status: http.StatusConflict, Message: "构建已结束，无法取消"}
+		return shared.Conflict("构建已结束，无法取消")
 	}
 	if cancel != nil {
 		cancel()

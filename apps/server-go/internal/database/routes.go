@@ -133,7 +133,7 @@ func (rt *router) handle(fn func(w http.ResponseWriter, r *http.Request) error) 
 // requireService 容器端点的可用性守卫。
 func (rt *router) requireService() (Service, error) {
 	if rt.deps.service == nil {
-		return nil, &shared.InvalidRequestError{Status: http.StatusServiceUnavailable, Message: "容器数据库服务不可用"}
+		return nil, shared.Unavailable("容器数据库服务不可用")
 	}
 	return rt.deps.service, nil
 }
@@ -141,7 +141,7 @@ func (rt *router) requireService() (Service, error) {
 // requireSqlite SQLite 端点的可用性守卫。
 func (rt *router) requireSqlite() (SqliteService, error) {
 	if rt.deps.sqlite == nil {
-		return nil, &shared.InvalidRequestError{Status: http.StatusServiceUnavailable, Message: "SQLite 服务不可用"}
+		return nil, shared.Unavailable("SQLite 服务不可用")
 	}
 	return rt.deps.sqlite, nil
 }

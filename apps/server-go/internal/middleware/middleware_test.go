@@ -281,6 +281,24 @@ func TestWriteErrorMapping(t *testing.T) {
 	})
 }
 
+func TestFixedStatusBusinessErrors(t *testing.T) {
+	for _, tc := range []struct {
+		status int
+		err    *shared.InvalidRequestError
+	}{
+		{404, shared.NotFound("资源不存在")},
+		{409, shared.Conflict("资源正忙")},
+		{413, shared.TooLarge("文件过大")},
+		{503, shared.Unavailable("服务不可用")},
+	} {
+		rec := httptest.NewRecorder()
+		WriteError(rec, tc.err)
+		if rec.Code != tc.status || rec.Body.String() != `{"error":"`+tc.err.Message+`"}` {
+			t.Errorf("状态 %d 与回执不匹配：%d %s", tc.status, rec.Code, rec.Body.String())
+		}
+	}
+}
+
 func TestEndpointErrorHandlerRecoversPanic(t *testing.T) {
 	boom := http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		panic(shared.InvalidRequest("炸了"))

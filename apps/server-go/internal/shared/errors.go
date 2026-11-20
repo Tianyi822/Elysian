@@ -27,3 +27,19 @@ func (e *EndpointGuardError) Error() string { return e.Message }
 func InvalidRequest(message string) *InvalidRequestError {
 	return &InvalidRequestError{Status: 400, Message: message}
 }
+
+func NotFound(message string) *InvalidRequestError {
+	return &InvalidRequestError{Status: 404, Message: message}
+}
+
+func Conflict(message string) *InvalidRequestError {
+	return &InvalidRequestError{Status: 409, Message: message}
+}
+
+func TooLarge(message string) *InvalidRequestError {
+	return &InvalidRequestError{Status: 413, Message: message}
+}
+
+func Unavailable(message string) *InvalidRequestError {
+	return &InvalidRequestError{Status: 503, Message: message}
+}

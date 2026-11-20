@@ -202,10 +202,7 @@ func (s *catalogService) refresh() (runtimeCatalogReport, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if s.current == nil {
-		return runtimeCatalogReport{}, &shared.InvalidRequestError{
-			Status:  503,
-			Message: fmt.Sprintf("无法获取正式运行时版本：%s", detail),
-		}
+		return runtimeCatalogReport{}, shared.Unavailable(fmt.Sprintf("无法获取正式运行时版本：%s", detail))
 	}
 	stale := *s.current
 	stale.Stale = true

@@ -321,7 +321,7 @@ func (a *AgentFacade) CheckContainerMutation(ctx context.Context, id, name, ownR
 		}
 		if id != "" && task.Target == id || name != "" && task.Target == "name:"+name {
 			a.operationMu.Unlock()
-			return &shared.InvalidRequestError{Status: 409, Message: "此容器有进行中或结果未确认的操作，请先核实实际状态"}
+			return shared.Conflict("此容器有进行中或结果未确认的操作，请先核实实际状态")
 		}
 		needsName = needsName || strings.HasPrefix(task.Target, "name:")
 	}

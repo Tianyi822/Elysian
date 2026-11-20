@@ -124,7 +124,7 @@ func (m Manager) checkedUpdate(input submitInput) error {
 func (m Manager) PreflightUpdate(ctx context.Context, input submitInput) (ResourcePreflight, error) {
 	var out ResourcePreflight
 	if !m.Enabled || !m.Host.Available() {
-		return out, &shared.InvalidRequestError{Status: 503, Message: "仅支持 systemd 安装版"}
+		return out, shared.Unavailable("仅支持 systemd 安装版")
 	}
 	input.Source, input.Channel = normalizeSource(input.Source), normalizeChannel(input.Channel)
 	if !validSource(input.Source) {
@@ -138,7 +138,7 @@ func (m Manager) PreflightUpdate(ctx context.Context, input submitInput) (Resour
 	}
 	host, ok := m.Host.(resourceHost)
 	if !ok {
-		return out, &shared.InvalidRequestError{Status: 503, Message: "资源预检不可用"}
+		return out, shared.Unavailable("资源预检不可用")
 	}
 	ctx, cancel := context.WithTimeout(ctx, 20*time.Second)
 	defer cancel()

@@ -41,7 +41,7 @@ func (s *websiteService) Create(ctx context.Context, input createRequest) (mutat
 	// 全局串行化全部创建：名称（跨类型全局唯一）与域名的查重都是跨 await 的
 	// check-then-act，按 kind+name 分键会让并发同名/同域创建双双通过查重。
 	if !s.inProgress.acquire(createMutexKey) {
-		return mutateResult{}, &shared.InvalidRequestError{Status: 409, Message: "网站项目正在创建，请稍后再试"}
+		return mutateResult{}, shared.Conflict("网站项目正在创建，请稍后再试")
 	}
 	defer s.inProgress.remove(createMutexKey)
 
@@ -63,7 +63,7 @@ func (s *websiteService) createQueued(ctx context.Context, input createRequest, 
 	}
 	for _, row := range rows {
 		if row.Name == input.Name {
-			return mutateResult{}, &shared.InvalidRequestError{Status: 409, Message: fmt.Sprintf("项目已存在：%s", input.Name)}
+			return mutateResult{}, shared.Conflict(fmt.Sprintf("项目已存在：%s", input.Name))
 		}
 	}
 	domain := ""
@@ -73,7 +73,7 @@ func (s *websiteService) createQueued(ctx context.Context, input createRequest, 
 	if domain != "" {
 		for _, row := range rows {
 			if row.Domain != nil && *row.Domain == domain {
-				return mutateResult{}, &shared.InvalidRequestError{Status: 409, Message: fmt.Sprintf("域名已被绑定：%s", domain)}
+				return mutateResult{}, shared.Conflict(fmt.Sprintf("域名已被绑定：%s", domain))
 			}
 		}
 	}
@@ -174,7 +174,7 @@ func (s *websiteService) createQueued(ctx context.Context, input createRequest, 
 			}
 			previousRaw = json.RawMessage(currentRaw)
 			if HasForeignConfig(parseJSONValue(currentRaw), expectedProxyHosts(rows), s.deps.caddy.AdminListen()) {
-				return &shared.InvalidRequestError{Status: 409, Message: "宿主 Caddy 存在面板外的配置，拒绝覆盖"}
+				return shared.Conflict("宿主 Caddy 存在面板外的配置，拒绝覆盖")
 			}
 			sites, serr := s.sitesWithCertificates(ctx, append(append([]WebsiteRecord{}, rows...), row))
 			if serr != nil {
@@ -231,7 +231,7 @@ func (s *websiteService) createQueued(ctx context.Context, input createRequest, 
 // 记录回写，会静默回滚并发启停刚翻转的 enabled。
 func (s *websiteService) Update(ctx context.Context, id string, input updateRequest) (websiteProject, error) {
 	if !s.inProgress.acquire(id) {
-		return websiteProject{}, &shared.InvalidRequestError{Status: 409, Message: "项目正在执行其他操作"}
+		return websiteProject{}, shared.Conflict("项目正在执行其他操作")
 	}
 	defer s.inProgress.remove(id)
 
@@ -258,7 +258,7 @@ func (s *websiteService) Update(ctx context.Context, id string, input updateRequ
 			return websiteProject{}, err
 		}
 		if row.ContainerID == nil || row.ImageRef == nil {
-			return websiteProject{}, &shared.InvalidRequestError{Status: 409, Message: "站点容器不存在，请删除项目后重建"}
+			return websiteProject{}, shared.Conflict("站点容器不存在，请删除项目后重建")
 		}
 		oldRunning := false
 		info, err := s.deps.docker.Inspect(ctx, *row.ContainerID)
@@ -351,7 +351,7 @@ func (s *websiteService) Update(ctx context.Context, id string, input updateRequ
 // 队列内执行。
 func (s *websiteService) SetAccess(ctx context.Context, id string, access accessInput) (mutateResult, error) {
 	if !s.inProgress.acquire(createMutexKey, id) {
-		return mutateResult{}, &shared.InvalidRequestError{Status: 409, Message: "项目正在执行其他操作"}
+		return mutateResult{}, shared.Conflict("项目正在执行其他操作")
 	}
 	defer func() {
 		s.inProgress.remove(id)
@@ -381,7 +381,7 @@ func (s *websiteService) setAccessQueued(ctx context.Context, id string, access 
 		}
 	}
 	if row == nil {
-		return mutateResult{}, &shared.InvalidRequestError{Status: 404, Message: fmt.Sprintf("未找到项目 %s", id)}
+		return mutateResult{}, shared.NotFound(fmt.Sprintf("未找到项目 %s", id))
 	}
 	domain := ""
 	if access.Mode == AccessModeDomain {
@@ -390,7 +390,7 @@ func (s *websiteService) setAccessQueued(ctx context.Context, id string, access 
 	if domain != "" {
 		for _, item := range rows {
 			if item.ID != id && item.Domain != nil && *item.Domain == domain {
-				return mutateResult{}, &shared.InvalidRequestError{Status: 409, Message: fmt.Sprintf("域名已被绑定：%s", domain)}
+				return mutateResult{}, shared.Conflict(fmt.Sprintf("域名已被绑定：%s", domain))
 			}
 		}
 	}
@@ -465,7 +465,7 @@ func (s *websiteService) setAccessQueued(ctx context.Context, id string, access 
 		}
 		if changingMode {
 			if row.ImageRef == nil || row.ContainerID == nil {
-				return &shared.InvalidRequestError{Status: 409, Message: "站点容器不存在，请删除项目后重建"}
+				return shared.Conflict("站点容器不存在，请删除项目后重建")
 			}
 			if err := s.deps.docker.EnsureImage(ctx, *row.ImageRef); err != nil {
 				return err
@@ -505,7 +505,7 @@ func (s *websiteService) setAccessQueued(ctx context.Context, id string, access 
 			}
 			previousRaw = json.RawMessage(currentRaw)
 			if HasForeignConfig(parseJSONValue(currentRaw), expectedProxyHosts(rows), s.deps.caddy.AdminListen()) {
-				return &shared.InvalidRequestError{Status: 409, Message: "宿主 Caddy 存在面板外的配置，拒绝覆盖"}
+				return shared.Conflict("宿主 Caddy 存在面板外的配置，拒绝覆盖")
 			}
 			projected := make([]WebsiteRecord, len(rows))
 			for i, item := range rows {
@@ -618,7 +618,7 @@ func (s *websiteService) SetRunning(ctx context.Context, id string, running bool
 // expectedContainerID 为空时按项目当前登记执行；dispatched 表示已调用引擎变更。
 func (s *websiteService) containerLifecycle(ctx context.Context, id, expectedContainerID, action string) (project websiteProject, dispatched bool, err error) {
 	if !s.inProgress.acquire(id) {
-		return project, false, &shared.InvalidRequestError{Status: 409, Message: "项目正在执行其他操作"}
+		return project, false, shared.Conflict("项目正在执行其他操作")
 	}
 	defer s.inProgress.remove(id)
 
@@ -627,10 +627,10 @@ func (s *websiteService) containerLifecycle(ctx context.Context, id, expectedCon
 		return project, false, err
 	}
 	if row.ContainerID == nil {
-		return project, false, &shared.InvalidRequestError{Status: 409, Message: "站点没有容器"}
+		return project, false, shared.Conflict("站点没有容器")
 	}
 	if expectedContainerID != "" && *row.ContainerID != expectedContainerID {
-		return project, false, &shared.InvalidRequestError{Status: 409, Message: "网站登记的容器已变化，请回读实际状态"}
+		return project, false, shared.Conflict("网站登记的容器已变化，请回读实际状态")
 	}
 	if err := s.assertRecordContainer(ctx, row); err != nil {
 		return project, false, err
@@ -644,7 +644,7 @@ func (s *websiteService) containerLifecycle(ctx context.Context, id, expectedCon
 	if err != nil {
 		var invalid *shared.InvalidRequestError
 		if errors.As(err, &invalid) && invalid.Status == 404 {
-			return project, true, &shared.InvalidRequestError{Status: 404, Message: "站点容器已不存在，请删除站点后重建"}
+			return project, true, shared.NotFound("站点容器已不存在，请删除站点后重建")
 		}
 		return project, true, err
 	}
@@ -659,13 +659,13 @@ func (s *websiteService) Logs(ctx context.Context, id string) ([]string, error) 
 		return nil, err
 	}
 	if row.ContainerID == nil {
-		return nil, &shared.InvalidRequestError{Status: 409, Message: "站点没有容器"}
+		return nil, shared.Conflict("站点没有容器")
 	}
 	lines, err := s.deps.docker.Logs(ctx, *row.ContainerID)
 	if err != nil {
 		var invalid *shared.InvalidRequestError
 		if errors.As(err, &invalid) && invalid.Status == 404 {
-			return nil, &shared.InvalidRequestError{Status: 404, Message: "站点容器已不存在，请删除站点后重建"}
+			return nil, shared.NotFound("站点容器已不存在，请删除站点后重建")
 		}
 		return nil, err
 	}
@@ -678,7 +678,7 @@ func (s *websiteService) Logs(ctx context.Context, id string) ([]string, error) 
 // 同样最后抛。
 func (s *websiteService) Remove(ctx context.Context, id string) error {
 	if !s.inProgress.acquire(createMutexKey, id) {
-		return &shared.InvalidRequestError{Status: 409, Message: "项目正在执行其他操作"}
+		return shared.Conflict("项目正在执行其他操作")
 	}
 	defer func() {
 		s.inProgress.remove(id)

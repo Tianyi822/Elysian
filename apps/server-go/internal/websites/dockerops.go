@@ -271,7 +271,7 @@ func (d *websiteDocker) Inspect(ctx context.Context, id string) (map[string]any,
 		return nil, err
 	}
 	if status == http.StatusNotFound {
-		return nil, &shared.InvalidRequestError{Status: 404, Message: "站点容器已不存在"}
+		return nil, shared.NotFound("站点容器已不存在")
 	}
 	if status != http.StatusOK {
 		return nil, errorsNew("读取站点容器失败")
@@ -303,7 +303,7 @@ func (d *websiteDocker) EnsureImage(ctx context.Context, ref string) error {
 			}
 		}
 	}
-	return &shared.InvalidRequestError{Status: 409, Message: fmt.Sprintf("指定版本的运行时镜像尚未拉取：%s", ref)}
+	return shared.Conflict(fmt.Sprintf("指定版本的运行时镜像尚未拉取：%s", ref))
 }
 
 // EnsureSiteDir mkdir 站点目录并 realpath 复核仍在归一化 `<mountRoot>/wwwroot` 之下
@@ -447,7 +447,7 @@ func (d *websiteDocker) Start(ctx context.Context, id string) error {
 		return err
 	}
 	if status == http.StatusNotFound {
-		return &shared.InvalidRequestError{Status: 404, Message: "站点容器已不存在"}
+		return shared.NotFound("站点容器已不存在")
 	}
 	if status != http.StatusNoContent && status != http.StatusNotModified && status != http.StatusOK {
 		return errorsNew(fmt.Sprintf("启动站点容器失败：%s", engineErrorMessage(parsed, fmt.Sprintf("HTTP %d", status))))
@@ -461,7 +461,7 @@ func (d *websiteDocker) Stop(ctx context.Context, id string) error {
 		return err
 	}
 	if status == http.StatusNotFound {
-		return &shared.InvalidRequestError{Status: 404, Message: "站点容器已不存在"}
+		return shared.NotFound("站点容器已不存在")
 	}
 	if status != http.StatusNoContent && status != http.StatusNotModified && status != http.StatusOK {
 		return errorsNew(fmt.Sprintf("停止站点容器失败：%s", engineErrorMessage(parsed, fmt.Sprintf("HTTP %d", status))))
@@ -568,7 +568,7 @@ func (d *websiteDocker) RemoveManaged(ctx context.Context, identity containerIde
 	imageText, _ := asString(config["Image"])
 	imageOk := imageText == identity.ImageRef
 	if !nameOk || !labelsOk || !imageOk || !bindMounted {
-		return "", &shared.InvalidRequestError{Status: 409, Message: "站点容器身份核对失败"}
+		return "", shared.Conflict("站点容器身份核对失败")
 	}
 	state := object(info["State"])
 	if running, ok := state["Running"].(bool); ok && running {

@@ -22,7 +22,7 @@ func (s *dockerService) tryLockAction(id string) (func(), error) {
 	s.actionMu.Lock()
 	defer s.actionMu.Unlock()
 	if _, busy := s.actionLocks[id]; busy {
-		return nil, &shared.InvalidRequestError{Status: http.StatusConflict, Message: actionBusyMessage}
+		return nil, shared.Conflict(actionBusyMessage)
 	}
 	s.actionLocks[id] = struct{}{}
 	var once sync.Once
@@ -54,7 +54,7 @@ func (s *dockerService) Action(ctx context.Context, id, action string) (contract
 		return contract.Container{}, &shared.InvalidRequestError{Status: http.StatusBadRequest, Message: actionSelfMessage}
 	}
 	if isPausedInspect(preInspect) {
-		return contract.Container{}, &shared.InvalidRequestError{Status: http.StatusConflict, Message: actionPausedMessage}
+		return contract.Container{}, shared.Conflict(actionPausedMessage)
 	}
 
 	if action == "restart" && s.deps.onRestarting != nil {
@@ -71,7 +71,7 @@ func (s *dockerService) Action(ctx context.Context, id, action string) (contract
 		return contract.Container{}, err
 	}
 	if status == http.StatusNotFound {
-		return contract.Container{}, &shared.InvalidRequestError{Status: http.StatusNotFound, Message: containerNotFoundMessage}
+		return contract.Container{}, shared.NotFound(containerNotFoundMessage)
 	}
 	if status != http.StatusOK && status != http.StatusNoContent && status != http.StatusNotModified {
 		return contract.Container{}, fmt.Errorf("容器%s失败（HTTP %d）", action, status)
@@ -140,7 +140,7 @@ func (s *dockerService) RemoveContainer(ctx context.Context, id string) error {
 		return &shared.InvalidRequestError{Status: status, Message: reason}
 	}
 	if reason := containerRemovalStateConflict(inspect); reason != "" {
-		return &shared.InvalidRequestError{Status: http.StatusConflict, Message: reason}
+		return shared.Conflict(reason)
 	}
 	targetID, err := requireID(inspect, "容器")
 	if err != nil {
@@ -151,10 +151,10 @@ func (s *dockerService) RemoveContainer(ctx context.Context, id string) error {
 		return err
 	}
 	if status == http.StatusNotFound {
-		return &shared.InvalidRequestError{Status: http.StatusNotFound, Message: containerNotFoundMessage}
+		return shared.NotFound(containerNotFoundMessage)
 	}
 	if status == http.StatusConflict {
-		return &shared.InvalidRequestError{Status: http.StatusConflict, Message: containerRunningRemoveMessage}
+		return shared.Conflict(containerRunningRemoveMessage)
 	}
 	if status != http.StatusOK && status != http.StatusNoContent {
 		return fmt.Errorf("容器删除失败（HTTP %d）：%s", status, engineErrorMessage(value, "未知错误"))
@@ -264,7 +264,7 @@ func (s *dockerService) pull(ctx context.Context, body any, onProgress func(imag
 		return err
 	}
 	if !s.pullInFlight.CompareAndSwap(false, true) {
-		return contract.ContainerImage{}, reject(&shared.InvalidRequestError{Status: http.StatusConflict, Message: pullBusyMessage})
+		return contract.ContainerImage{}, reject(shared.Conflict(pullBusyMessage))
 	}
 	defer s.pullInFlight.Store(false)
 	timeout := pullTimeout
@@ -360,7 +360,7 @@ func (s *dockerService) RemoveImage(ctx context.Context, id string) error {
 		return err
 	}
 	if refs > 0 {
-		return &shared.InvalidRequestError{Status: http.StatusConflict, Message: imageInUseMessage}
+		return shared.Conflict(imageInUseMessage)
 	}
 
 	inspect, err := s.inspectImageByID(ctx, normalizedID)

@@ -243,7 +243,7 @@ func (s *dockerService) inspectContainerByID(ctx context.Context, id string, tim
 		return nil, err
 	}
 	if status == http.StatusNotFound {
-		return nil, &shared.InvalidRequestError{Status: http.StatusNotFound, Message: containerNotFoundMessage}
+		return nil, shared.NotFound(containerNotFoundMessage)
 	}
 	if status < 200 || status >= 300 {
 		return nil, fmt.Errorf("获取容器详情失败（HTTP %d）", status)
@@ -527,7 +527,7 @@ func (s *dockerService) inspectImageByID(ctx context.Context, id string) (any, e
 		return nil, err
 	}
 	if status == http.StatusNotFound {
-		return nil, &shared.InvalidRequestError{Status: http.StatusNotFound, Message: imageNotFoundMessage}
+		return nil, shared.NotFound(imageNotFoundMessage)
 	}
 	if status < 200 || status >= 300 {
 		return nil, fmt.Errorf("获取镜像详情失败（HTTP %d）", status)

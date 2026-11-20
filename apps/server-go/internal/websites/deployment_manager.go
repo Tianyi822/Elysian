@@ -236,7 +236,7 @@ func (m *deploymentManager) archive(ctx context.Context, name, mode string, r io
 		err = ce
 	}
 	if err == nil && n > m.engine.limits.ArchiveBytes {
-		err = &shared.InvalidRequestError{Status: 413, Message: "压缩包超过上传上限"}
+		err = shared.TooLarge("压缩包超过上传上限")
 	}
 	if err == nil {
 		err = extractArchive(ctx, filename, m.sourceDir(s.ID), m.engine.limits)
@@ -387,7 +387,7 @@ func (m *deploymentManager) getSource(id string) (sourceRecord, error) {
 	defer m.mu.Unlock()
 	s := m.sources[id]
 	if s == nil {
-		return sourceRecord{}, &shared.InvalidRequestError{Status: 404, Message: "来源不存在或已过期"}
+		return sourceRecord{}, shared.NotFound("来源不存在或已过期")
 	}
 	b, _ := json.Marshal(s)
 	var copy sourceRecord
@@ -418,7 +418,7 @@ func (m *deploymentManager) getTask(id string) (deploymentTask, error) {
 	defer m.mu.Unlock()
 	t := m.tasks[id]
 	if t == nil {
-		return deploymentTask{}, &shared.InvalidRequestError{Status: 404, Message: "部署任务不存在"}
+		return deploymentTask{}, shared.NotFound("部署任务不存在")
 	}
 	b, _ := json.Marshal(t)
 	var copy deploymentTask

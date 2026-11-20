@@ -948,7 +948,7 @@ func (s *service) Create(input RuleInput) (FirewallRule, error) {
 	if s.findDuplicate(state, input, "") != nil {
 		// ufw 的端口规则一条就覆盖 IPv4/IPv6 两端：判重不看输入的地址族，
 		// 报错讲清这条语义，避免让用户以为存在一条列表里看不见的 ipv6 规则。
-		return FirewallRule{}, &shared.InvalidRequestError{Status: 409, Message: fmt.Sprintf("端口规则已存在：%s %s（IPv4 与 IPv6 由同一条规则覆盖，不能按地址族重复添加）", input.Protocol, jsNumberToString(input.Port))}
+		return FirewallRule{}, shared.Conflict(fmt.Sprintf("端口规则已存在：%s %s（IPv4 与 IPv6 由同一条规则覆盖，不能按地址族重复添加）", input.Protocol, jsNumberToString(input.Port)))
 	}
 	if len(portLinesOf(state)) >= firewallLimitUserRules {
 		return FirewallRule{}, fmt.Errorf("端口规则已达上限（最多 %d 条）：请先删除不再需要的规则", firewallLimitUserRules)
@@ -1000,7 +1000,7 @@ func (s *service) Update(ruleId string, input RuleInput) (FirewallRule, error) {
 		return FirewallRule{}, fmt.Errorf("面板端口规则不允许变更：它是保证工作台可访问的保底规则")
 	}
 	if s.findDuplicate(state, input, oldCanonical) != nil {
-		return FirewallRule{}, &shared.InvalidRequestError{Status: 409, Message: fmt.Sprintf("端口规则已存在：%s %s（IPv4 与 IPv6 由同一条规则覆盖，不能按地址族重复添加）", input.Protocol, jsNumberToString(input.Port))}
+		return FirewallRule{}, shared.Conflict(fmt.Sprintf("端口规则已存在：%s %s（IPv4 与 IPv6 由同一条规则覆盖，不能按地址族重复添加）", input.Protocol, jsNumberToString(input.Port)))
 	}
 
 	if nextCanonical == oldCanonical {
@@ -1072,7 +1072,7 @@ func (s *service) CreateIpRule(input IpRuleInput) (FirewallIpRule, error) {
 	}
 	for _, line := range ipLinesOf(state) {
 		if ipCanonicalId(line.IpSpec) == ipCanonicalId(spec) {
-			return FirewallIpRule{}, &shared.InvalidRequestError{Status: 409, Message: fmt.Sprintf("IP 规则已存在：%s", input.Source)}
+			return FirewallIpRule{}, shared.Conflict(fmt.Sprintf("IP 规则已存在：%s", input.Source))
 		}
 	}
 	if len(ipLinesOf(state)) >= firewallLimitIpRules {
@@ -1117,7 +1117,7 @@ func (s *service) UpdateIpRule(ruleId string, input IpRuleInput) (FirewallIpRule
 	}
 	for _, line := range ipLinesOf(state) {
 		if ipCanonicalId(line.IpSpec) == ipCanonicalId(spec) && ipCanonicalId(line.IpSpec) != oldCanonical {
-			return FirewallIpRule{}, &shared.InvalidRequestError{Status: 409, Message: fmt.Sprintf("IP 规则已存在：%s", input.Source)}
+			return FirewallIpRule{}, shared.Conflict(fmt.Sprintf("IP 规则已存在：%s", input.Source))
 		}
 	}
 	// ufw 无原地修改：先建新、再删旧；新旧行相同（只改备注）时退化为先删后建。
@@ -1190,7 +1190,7 @@ func (s *service) CreateForward(input ForwardInput) (FirewallForwardRule, error)
 		}
 		for _, candidate := range existing {
 			if forwardPortsOverlap(candidate, spec) {
-				return &shared.InvalidRequestError{Status: 409, Message: fmt.Sprintf("端口转发已存在：%s %s 与既有转发 %s %s 的端口区间重叠", spec.Protocol, spec.Port, candidate.Protocol, candidate.Port)}
+				return shared.Conflict(fmt.Sprintf("端口转发已存在：%s %s 与既有转发 %s %s 的端口区间重叠", spec.Protocol, spec.Port, candidate.Protocol, candidate.Port))
 			}
 		}
 		if err := s.writeForwards(append(existing, spec)); err != nil {
@@ -1236,7 +1236,7 @@ func (s *service) UpdateForward(ruleId string, input ForwardInput) (FirewallForw
 		}
 		for _, candidate := range existing {
 			if forwardIdOf(candidate) != oldId && forwardPortsOverlap(candidate, spec) {
-				return &shared.InvalidRequestError{Status: 409, Message: fmt.Sprintf("端口转发已存在：%s %s 与既有转发 %s %s 的端口区间重叠", spec.Protocol, spec.Port, candidate.Protocol, candidate.Port)}
+				return shared.Conflict(fmt.Sprintf("端口转发已存在：%s %s 与既有转发 %s %s 的端口区间重叠", spec.Protocol, spec.Port, candidate.Protocol, candidate.Port))
 			}
 		}
 		next := []ForwardSpec{}
@@ -1342,7 +1342,7 @@ func (s *service) SetScanConfig(config ScanConfig) (FirewallScanProtection, erro
 		}
 		if !parseScanSection(beforeRules).Enabled {
 			// 前置状态不满足：配置本身可能完全合法，只是开关没开 → 409（不是请求体错误）。
-			return &shared.InvalidRequestError{Status: 409, Message: "防扫描未启用：先开启开关再调整配置"}
+			return shared.Conflict("防扫描未启用：先开启开关再调整配置")
 		}
 		if err := s.writeScanSection(true, config); err != nil {
 			return err

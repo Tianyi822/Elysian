@@ -558,7 +558,7 @@ func assertContainerTerminalAllowed(ctx context.Context, transport seam.DockerTr
 		return err
 	}
 	if response.Status == http.StatusNotFound {
-		return &shared.InvalidRequestError{Status: http.StatusNotFound, Message: containerNotFoundMessage}
+		return shared.NotFound(containerNotFoundMessage)
 	}
 	if response.Status < 200 || response.Status >= 300 {
 		return fmt.Errorf("获取容器详情失败（HTTP %d）", response.Status)
@@ -578,7 +578,7 @@ func assertContainerTerminalAllowed(ctx context.Context, transport seam.DockerTr
 		}
 	}
 	if status != "running" {
-		return &shared.InvalidRequestError{Status: http.StatusConflict, Message: "只有运行中的容器可以打开终端"}
+		return shared.Conflict("只有运行中的容器可以打开终端")
 	}
 	return nil
 }

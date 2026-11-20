@@ -398,7 +398,7 @@ func (s *websiteService) record(ctx context.Context, id string) (WebsiteRecord, 
 			return row, nil
 		}
 	}
-	return WebsiteRecord{}, &shared.InvalidRequestError{Status: 404, Message: fmt.Sprintf("未找到项目 %s", id)}
+	return WebsiteRecord{}, shared.NotFound(fmt.Sprintf("未找到项目 %s", id))
 }
 
 // currentConfigOrNull 当前配置读取，任何失败（含连接类）都折算 null。
@@ -547,7 +547,7 @@ func (s *websiteService) pushCaddyConfig(ctx context.Context, rows []WebsiteReco
 	}
 	current := parseJSONValue(currentRaw)
 	if HasForeignConfig(current, knownHosts, s.deps.caddy.AdminListen()) {
-		return caddyPushResult{}, &shared.InvalidRequestError{Status: 409, Message: "宿主 Caddy 存在面板外的配置，拒绝覆盖"}
+		return caddyPushResult{}, shared.Conflict("宿主 Caddy 存在面板外的配置，拒绝覆盖")
 	}
 	if lerr := s.deps.caddy.Load(ctx, config); lerr != nil {
 		return caddyPushResult{}, fmt.Errorf("反向代理配置下发被拒绝：%s", lerr.Error())
@@ -580,12 +580,12 @@ func (s *websiteService) assertPortAvailable(ctx context.Context, port int, rows
 		if binding.Protocol != "udp" &&
 			binding.HostPort == port &&
 			hostIpsOverlap("127.0.0.1", effectiveHostIp(binding.HostIP)) {
-			return &shared.InvalidRequestError{Status: 409, Message: fmt.Sprintf("宿主端口已被占用：%d/tcp", port)}
+			return shared.Conflict(fmt.Sprintf("宿主端口已被占用：%d/tcp", port))
 		}
 	}
 	for _, row := range rows {
 		if row.Port == port {
-			return &shared.InvalidRequestError{Status: 409, Message: fmt.Sprintf("宿主端口已被站点占用：%d", port)}
+			return shared.Conflict(fmt.Sprintf("宿主端口已被站点占用：%d", port))
 		}
 	}
 	return nil

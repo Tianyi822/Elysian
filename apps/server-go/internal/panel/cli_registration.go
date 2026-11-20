@@ -88,7 +88,7 @@ func (m Manager) retryCLIRegistration(ctx context.Context, id string) (Task, err
 		return Task{}, err
 	}
 	if !finished {
-		return Task{}, &shared.InvalidRequestError{Status: 409, Message: "维护尚未提交或执行锁未释放，请稍后重试"}
+		return Task{}, shared.Conflict("维护尚未提交或执行锁未释放，请稍后重试")
 	}
 	row, err := m.Store.read(id)
 	return m.withCLIStatus(row).Task, err
@@ -130,12 +130,12 @@ func (m Manager) registerCommittedCLI(ctx context.Context, retryID string) (bool
 			return nil
 		}
 		if retryID != "" && record.ID != retryID {
-			return &shared.InvalidRequestError{Status: 409, Message: "该任务已不是当前版本，不能重试 CLI 注册"}
+			return shared.Conflict("该任务已不是当前版本，不能重试 CLI 注册")
 		}
 		if Commit != "unknown" && record.TargetCommit != Commit {
 			finished = true
 			if retryID != "" {
-				return &shared.InvalidRequestError{Status: 409, Message: "该任务目标不是当前运行版本，不能注册 CLI"}
+				return shared.Conflict("该任务目标不是当前运行版本，不能注册 CLI")
 			}
 			return nil
 		}

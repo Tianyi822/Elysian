@@ -3,7 +3,6 @@ package containerapps
 import (
 	"context"
 	"errors"
-	"net/http"
 	"path/filepath"
 	"strings"
 	"time"
@@ -202,7 +201,7 @@ func (a *AgentFacade) Write(ctx context.Context, slug, path, content, expectedDi
 		return nil, err
 	}
 	if digest != expectedDigest {
-		return nil, &shared.InvalidRequestError{Status: http.StatusConflict, Message: "工作区内容已变化，请重新读取并审批"}
+		return nil, shared.Conflict("工作区内容已变化，请重新读取并审批")
 	}
 	if remove {
 		if err := DeleteFile(dir, path); err != nil {
@@ -246,7 +245,7 @@ func (a *AgentFacade) Remove(ctx context.Context, slug, expectedDigest string) e
 		return err
 	}
 	if digest != expectedDigest {
-		return &shared.InvalidRequestError{Status: http.StatusConflict, Message: "工作区内容已变化，请重新确认删除范围"}
+		return shared.Conflict("工作区内容已变化，请重新确认删除范围")
 	}
 	return a.handler.Registry.Delete(slug)
 }

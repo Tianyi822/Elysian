@@ -57,11 +57,11 @@ func (s Store) mutationGate(sharedLock bool, fn func() error) error {
 	defer f.Close()
 	mode := syscall.LOCK_EX
 	wait := exclusiveGateWait
-	busy := &shared.InvalidRequestError{Status: 503, Message: "面板正忙，请稍后重试"}
+	busy := shared.Unavailable("面板正忙，请稍后重试")
 	if sharedLock {
 		mode = syscall.LOCK_SH
 		wait = sharedGateWait
-		busy = &shared.InvalidRequestError{Status: 409, Message: "面板正在维护，暂不能修改配置或执行部署，请稍后重试"}
+		busy = shared.Conflict("面板正在维护，暂不能修改配置或执行部署，请稍后重试")
 	}
 	deadline := time.Now().Add(wait)
 	for {

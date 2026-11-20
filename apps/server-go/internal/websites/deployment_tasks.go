@@ -118,7 +118,7 @@ func (m *deploymentManager) submit(ctx context.Context, in deploymentInput) (dep
 			return *existing, nil
 		}
 		if (activeDeployment(existing.State) || existing.State == "awaiting-config") && ((in.ProjectID != "" && existing.ProjectID == in.ProjectID) || (in.ProjectID == "" && existing.Name == in.Name)) {
-			return deploymentTask{}, &shared.InvalidRequestError{Status: 409, Message: "项目已有部署任务"}
+			return deploymentTask{}, shared.Conflict("项目已有部署任务")
 		}
 	}
 	if err = writeDeploymentJSON(filepath.Join(m.root, id+".json"), &t); err != nil {
