@@ -16,6 +16,7 @@ import (
 	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/harness/worker"
 	"elysian/server/internal/agent/tools"
+	"elysian/server/internal/applog"
 )
 
 type runtimeTestTools struct {
@@ -468,6 +469,10 @@ func TestManagerStorageFailureStopsBeforeEffectOrNextStep(t *testing.T) {
 func TestManagerResultBudgetsAndFailureAreFailFast(t *testing.T) {
 	for _, mode := range []string{"total", "single", "error", "panic", "truncated"} {
 		t.Run(mode, func(t *testing.T) {
+			var logPath string
+			if mode == "panic" {
+				logPath = openPanicTestLog(t)
+			}
 			b := &runtimeTestTools{execute: func(context.Context, string) (any, error) {
 				switch mode {
 				case "error":
@@ -511,7 +516,29 @@ func TestManagerResultBudgetsAndFailureAreFailFast(t *testing.T) {
 			if strings.Contains(string(raw), "secret-marker") {
 				t.Fatal("持久结果泄露工具错误")
 			}
+			if mode == "panic" {
+				assertPanicTestLog(t, logPath, "secret-marker", "harness/invoke.go:")
+			}
 		})
+	}
+}
+
+func openPanicTestLog(t *testing.T) string {
+	t.Helper()
+	dir := t.TempDir()
+	logger, err := applog.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = logger.Close() })
+	return filepath.Join(dir, applog.PanelLogName)
+}
+
+func assertPanicTestLog(t *testing.T, path, value, stackFrame string) {
+	t.Helper()
+	data, err := os.ReadFile(path)
+	if err != nil || !strings.Contains(string(data), value) || !strings.Contains(string(data), stackFrame) {
+		t.Fatalf("进程日志未记录异常及调用栈：%q %v", data, err)
 	}
 }
 

@@ -8,10 +8,13 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"elysian/server/internal/applog"
 )
 
 // 测试自举当前测试二进制，真实验证管道、进程退出和取消，不启动面板与任何域。
@@ -162,6 +165,37 @@ func TestToolErrorPreservesCauseAndWorkerRemainsReusable(t *testing.T) {
 	}
 	if err := p.Run(context.Background(), "next-run", []Step{{Tool: "first"}}, noTool); err != nil {
 		t.Fatalf("工具失败后进程应继续可用：%v", err)
+	}
+}
+
+func TestToolPanicLogsOnlyInParentAndWorkerRemainsReusable(t *testing.T) {
+	dir := t.TempDir()
+	logger, err := applog.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = logger.Close() })
+	p := startTestWorker(t, "normal")
+	const diagnostic = "fixture-tool-panic"
+	err = p.Run(context.Background(), "failed-run", []Step{{Tool: "first"}}, func(context.Context, int, string, json.RawMessage) (json.RawMessage, error) {
+		panic(diagnostic)
+	})
+	var toolErr *ToolError
+	if !errors.As(err, &toolErr) || !strings.Contains(err.Error(), "父进程工具调用发生异常") || strings.Contains(err.Error(), diagnostic) {
+		t.Fatalf("工具异常改变了返回错误：%v", err)
+	}
+	if err := p.Run(context.Background(), "next-run", []Step{{Tool: "first"}}, noTool); err != nil {
+		t.Fatalf("异常后 Worker 应继续可用：%v", err)
+	}
+	p.stderr.mu.Lock()
+	childLog := string(p.stderr.data)
+	p.stderr.mu.Unlock()
+	if strings.Contains(childLog, diagnostic) {
+		t.Fatal("父进程异常进入了子进程诊断")
+	}
+	data, err := os.ReadFile(filepath.Join(dir, applog.PanelLogName))
+	if err != nil || !strings.Contains(string(data), diagnostic) || !strings.Contains(string(data), "worker.invokeTool") {
+		t.Fatalf("父进程日志未记录异常及调用栈：%q %v", data, err)
 	}
 }
 

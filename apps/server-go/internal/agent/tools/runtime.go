@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"elysian/server/internal/agent/kardia"
+	"elysian/server/internal/applog"
 )
 
 type runtimeResult struct {
@@ -313,7 +314,8 @@ func (r *Runtime) Execute(ctx context.Context, name string, args map[string]any)
 	handle, err := r.root.Scope().Iter("tools.runtime-call", func(_ context.Context, scope *kardia.EffectScope) error {
 		outcome := runtimeResult{}
 		defer func() {
-			if recover() != nil {
+			if recovered := recover(); recovered != nil {
+				applog.Default().RecoveredPanic("Agent 工具运行时", recovered)
 				outcome = runtimeResult{err: errors.New("工具执行发生内部错误")}
 			}
 			completed <- outcome

@@ -14,6 +14,7 @@ import (
 	"testing"
 	"time"
 
+	"elysian/server/internal/applog"
 	"elysian/server/internal/config"
 	"elysian/server/internal/seam"
 )
@@ -85,6 +86,35 @@ func TestContainerOperationExactRetryRestartAndUnknownBarrier(t *testing.T) {
 	got, err = restarted.InspectContainerOperation(context.Background(), task.ID)
 	if err != nil || got.State != "unknown" {
 		t.Fatalf("running replayed: %+v %v", got, err)
+	}
+}
+
+func TestContainerOperationPanicLogsAndKeepsUnknown(t *testing.T) {
+	dir := t.TempDir()
+	logger, err := applog.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = logger.Close() })
+	a := &AgentFacade{operationRoot: filepath.Join(dir, "tasks")}
+	t.Cleanup(func() { _ = a.closeContainerOperations(context.Background()) })
+	const diagnostic = "fixture-operation-panic"
+	task, err := a.submitContainerOperation(strings.Repeat("a", 64), "test-target", nil, func(context.Context, string) (any, error) {
+		panic(diagnostic)
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := awaitContainerTask(t, a, task.ID)
+	if got.State != "unknown" || got.ErrorCode != "docker-container-operation-unknown" || got.Message != "容器操作结果未确认，请核实实际状态，禁止自动重试" {
+		t.Fatalf("异常改变了任务回执：%+v", got)
+	}
+	if err := a.CheckContainerMutation(context.Background(), "test-target", "", ""); err == nil {
+		t.Fatal("异常丢失原有未知结果保护")
+	}
+	data, err := os.ReadFile(filepath.Join(dir, applog.PanelLogName))
+	if err != nil || !strings.Contains(string(data), diagnostic) || !strings.Contains(string(data), "docker/agent_operations.go:") {
+		t.Fatalf("进程日志未记录容器操作异常及调用栈：%q %v", data, err)
 	}
 }
 

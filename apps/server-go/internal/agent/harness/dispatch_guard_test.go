@@ -28,9 +28,15 @@ func TestOperationDispatchGuard(t *testing.T) {
 		{"外部派发前允许取消", 3, "cancel", "outcome-unknown"},
 		{"票据签发时允许取消", 4, "cancel", "outcome-unknown"},
 		{"外部派发前保留守卫拒绝", 3, "deny", "maintenance-active"},
+		{"派发异常保留未知结果", 3, "panic", "outcome-unknown"},
 		{"票据签发时重新检查撤销", 4, "revoke", "capability-revoked"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
+			const panicValue = "fixture-dispatch-panic"
+			var logPath string
+			if tc.action == "panic" {
+				logPath = openPanicTestLog(t)
+			}
 			s, _ := openRuntimeTestStore(t)
 			run := createRuntimeTestRun(t, s, "dispatch-guard", runtimeStoreTestTime)
 			ctx, cancel := context.WithCancel(context.Background())
@@ -62,6 +68,9 @@ func TestOperationDispatchGuard(t *testing.T) {
 					if checks.Add(1) == tc.check {
 						close(entered)
 						<-release
+						if tc.action == "panic" {
+							panic(panicValue)
+						}
 						if tc.action == "deny" {
 							return bad("maintenance-active", "维护中")
 						}
@@ -119,6 +128,9 @@ func TestOperationDispatchGuard(t *testing.T) {
 				if err != nil || len(barriers) != 1 || barriers[0].Status != "unknown" {
 					t.Fatalf("取消后未保留已落盘的派发保护：%+v %v", barriers, err)
 				}
+			}
+			if tc.action == "panic" {
+				assertPanicTestLog(t, logPath, panicValue, "agent/harness/operation.go:")
 			}
 		})
 	}

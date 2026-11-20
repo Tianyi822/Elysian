@@ -2,10 +2,14 @@ package terminals
 
 import (
 	"context"
-	"elysian/server/internal/seam"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 	"testing"
+
+	"elysian/server/internal/applog"
+	"elysian/server/internal/seam"
 )
 
 func connFixture(t *testing.T) (*connEvents, *fakeWsConn, *fakePty, *service) {
@@ -119,5 +123,48 @@ func TestKitTotalLimit(t *testing.T) {
 	wrapped := NewKit().NewTotalLimitedService(svc, func() int { return 5 }, 5)
 	if h, ok := wrapped.TryOpen(); ok || h != nil {
 		t.Fatal("global limit bypassed")
+	}
+}
+
+const terminalPanicFixture = "fixture-terminal-panic"
+
+type panickingService struct{ serviceApi }
+
+func (panickingService) tryOpen(sessionEvents) sessionHandle { panic(terminalPanicFixture) }
+
+type panickingSession struct{ sessionHandle }
+
+func (panickingSession) handleClientFrame(clientFrame) { panic(terminalPanicFixture) }
+func (panickingSession) handleInput([]byte)            { panic(terminalPanicFixture) }
+func (panickingSession) dispose(disposeCause)          {}
+
+func TestConnectionPanicLogsWithoutChangingClose(t *testing.T) {
+	for _, tc := range []struct {
+		name, reason string
+		call         func(*connEvents, seam.WsConn)
+	}{
+		{"OnOpen", "终端会话建立失败", func(e *connEvents, c seam.WsConn) { e.OnOpen(c) }},
+		{"OnMessage", "终端消息处理失败", func(e *connEvents, c seam.WsConn) { e.OnMessage(c, []byte(`{"type":"ping"}`)) }},
+		{"OnBinaryMessage", "终端消息处理失败", func(e *connEvents, c seam.WsConn) { e.OnBinaryMessage(c, []byte("fixture-input")) }},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			logger, err := applog.Open(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = logger.Close() })
+			c := newFakeWsConn()
+			e := newConnEvents(panickingService{}, nil, "")
+			e.conn, e.session = c, panickingSession{}
+			tc.call(e, c)
+			if got := c.closesSnapshot(); len(got) != 1 || got[0].code != 1011 || got[0].reason != tc.reason || e.current() != nil {
+				t.Fatalf("异常改变了 WebSocket 关闭语义：%+v", got)
+			}
+			data, err := os.ReadFile(filepath.Join(dir, applog.PanelLogName))
+			if err != nil || !strings.Contains(string(data), terminalPanicFixture) || !strings.Contains(string(data), "."+tc.name+"(") || strings.Contains(string(data), "fixture-input") {
+				t.Fatalf("异常诊断缺失或包含客户端输入：%q %v", data, err)
+			}
+		})
 	}
 }

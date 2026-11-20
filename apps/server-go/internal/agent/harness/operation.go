@@ -18,6 +18,7 @@ import (
 	"elysian/server/internal/agent/jsonvalue"
 	"elysian/server/internal/agent/mcp"
 	"elysian/server/internal/agent/tools"
+	"elysian/server/internal/applog"
 )
 
 func (a *agentExecution) capability(name string) (Capability, bool) {
@@ -695,7 +696,8 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 	go func() {
 		var result outcome
 		defer func() {
-			if recover() != nil {
+			if recovered := recover(); recovered != nil {
+				applog.Default().RecoveredPanic("Agent 操作派发", recovered)
 				result.e = bad("operation-failed", "操作内部错误")
 				result.r.Unknown = !c.ReadOnly || state.ExternalOperation(dispatchedOperation)
 			}

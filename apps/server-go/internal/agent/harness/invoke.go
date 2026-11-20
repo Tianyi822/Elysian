@@ -12,6 +12,7 @@ import (
 	"elysian/server/internal/agent/harness/sessionstore"
 	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/tools"
+	"elysian/server/internal/applog"
 )
 
 type toolResponse struct {
@@ -103,7 +104,8 @@ func (m *Manager) invoke(ctx context.Context, run Run, index int, name string, a
 	go func() {
 		var result toolResponse
 		defer func() {
-			if recover() != nil {
+			if recovered := recover(); recovered != nil {
+				applog.Default().RecoveredPanic("Agent 旧工具派发", recovered)
 				result = toolResponse{err: errors.New("工具发生内部错误")}
 			}
 			response <- result

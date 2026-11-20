@@ -17,6 +17,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"runtime/debug"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -158,6 +159,14 @@ func (l *Logger) PanicStack(stack []byte) {
 		return
 	}
 	log.Printf("panic 栈：\n%s", stack)
+}
+
+// RecoveredPanic 在捕获现场记录进程诊断；调用方仍负责原有的错误投影与收尾。
+func (l *Logger) RecoveredPanic(site string, value any) {
+	if l == nil {
+		return
+	}
+	log.Printf("panic（%s）：%v\npanic 栈：\n%s", site, value, debug.Stack())
 }
 
 // FailureLogMiddleware 失败请求中间件：/api/* 且最终状态 ≥400 时记一行文本日志。

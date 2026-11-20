@@ -16,6 +16,8 @@ import (
 	"sync"
 	"syscall"
 	"time"
+
+	"elysian/server/internal/applog"
 )
 
 type incoming struct {
@@ -288,6 +290,7 @@ func invokeTool(ctx context.Context, invoke Invoker, index int, step Step, done 
 	result := invocation{}
 	defer func() {
 		if recovered := recover(); recovered != nil {
+			applog.Default().RecoveredPanic("Worker 父进程工具调用", recovered)
 			result.err = errors.New("父进程工具调用发生异常")
 		}
 		done <- result

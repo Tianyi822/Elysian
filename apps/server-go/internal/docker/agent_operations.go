@@ -14,6 +14,7 @@ import (
 	"syscall"
 	"time"
 
+	"elysian/server/internal/applog"
 	"elysian/server/internal/config"
 	"elysian/server/internal/paths"
 	"elysian/server/internal/seam"
@@ -204,7 +205,8 @@ func (a *AgentFacade) submitContainerOperation(requestID, target string, input a
 		var runErr error
 		func() {
 			defer func() {
-				if recover() != nil {
+				if recovered := recover(); recovered != nil {
+					applog.Default().RecoveredPanic("Docker 容器操作", recovered)
 					runErr = errors.New("容器操作内部失败")
 				}
 			}()

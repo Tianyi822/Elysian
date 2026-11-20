@@ -15,6 +15,7 @@ import (
 	"elysian/server/internal/agent/harness/worker"
 	"elysian/server/internal/agent/jsonvalue"
 	"elysian/server/internal/agent/mcp"
+	"elysian/server/internal/applog"
 )
 
 // agentExecution 只保存本次运行的控制状态；事实均先写入父进程数据库。
@@ -513,7 +514,8 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 	go func() {
 		var result modelOutcome
 		defer func() {
-			if recover() != nil {
+			if recovered := recover(); recovered != nil {
+				applog.Default().RecoveredPanic("Agent 模型请求", recovered)
 				result.err = errors.New("模型客户端发生内部错误")
 			}
 			resultCh <- result

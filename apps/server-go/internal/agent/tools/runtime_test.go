@@ -2,10 +2,14 @@ package tools
 
 import (
 	"context"
+	"os"
+	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
 	"elysian/server/internal/agent/kardia"
+	"elysian/server/internal/applog"
 )
 
 func runtimePlugin(t *testing.T, started chan<- struct{}, release <-chan struct{}) *kardia.Plugin {
@@ -98,5 +102,39 @@ func TestRuntimeRejectsNilContextAndPlugin(t *testing.T) {
 	}
 	if _, err := NewRuntime(context.Background(), nil); err == nil {
 		t.Fatal("nil 插件必须拒绝")
+	}
+}
+
+func TestRuntimePanicLogsWithoutChangingReturnedError(t *testing.T) {
+	dir := t.TempDir()
+	logger, err := applog.Open(dir)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = logger.Close() })
+	const diagnostic = "fixture-runtime-panic"
+	plugin := &kardia.Plugin{Name: "runtime-panic-test", Inject: kardia.InjectMap{"tools": nil}, Apply: func(c *kardia.Context, _ any) (kardia.Disposable, error) {
+		registry, err := RegistryFrom(c)
+		if err != nil {
+			return nil, err
+		}
+		return registry.Register(Descriptor{
+			Name: "test_panic", Description: "异常诊断测试工具", Parameters: Schema{Type: SchemaObject},
+			ValidateArguments: func(Arguments) error { panic(diagnostic) },
+			Handler:           func(*kardia.Context, Arguments) (any, error) { return nil, nil },
+		})
+	}}
+	r, err := NewRuntime(context.Background(), plugin)
+	if err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { _ = r.Close(context.Background()) })
+	value, err := r.Execute(context.Background(), "test_panic", nil)
+	if value != nil || err == nil || err.Error() != "工具执行发生内部错误" {
+		t.Fatalf("异常改变了工具返回值：%v %v", value, err)
+	}
+	data, err := os.ReadFile(filepath.Join(dir, applog.PanelLogName))
+	if err != nil || !strings.Contains(string(data), diagnostic) || !strings.Contains(string(data), "agent/tools/runtime.go:") {
+		t.Fatalf("进程日志未记录工具运行时异常及调用栈：%q %v", data, err)
 	}
 }

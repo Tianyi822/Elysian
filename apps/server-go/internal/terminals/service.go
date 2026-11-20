@@ -6,6 +6,7 @@ import (
 	"io"
 	"sync"
 
+	"elysian/server/internal/applog"
 	"elysian/server/internal/seam"
 )
 
@@ -99,7 +100,8 @@ type session struct {
 func (s *session) ID() string { return s.id }
 func (s *session) start() {
 	defer func() {
-		if recover() != nil {
+		if recovered := recover(); recovered != nil {
+			applog.Default().RecoveredPanic("终端启动进程", recovered)
 			s.fail(1011, "终端进程异常")
 		}
 	}()
@@ -174,7 +176,8 @@ func (s *session) handleInput(data []byte) {
 
 func (s *session) writeInput(proc seam.PtyProcess) {
 	defer func() {
-		if recover() != nil {
+		if recovered := recover(); recovered != nil {
+			applog.Default().RecoveredPanic("终端写入进程", recovered)
 			s.fail(1011, "终端输入写入失败")
 		}
 	}()

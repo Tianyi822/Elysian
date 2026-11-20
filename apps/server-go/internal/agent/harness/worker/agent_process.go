@@ -9,6 +9,8 @@ import (
 	"io"
 	"strconv"
 	"time"
+
+	"elysian/server/internal/applog"
 )
 
 type agentInvocation struct {
@@ -19,7 +21,8 @@ type agentInvocation struct {
 func invokeAgent(ctx context.Context, broker AgentBroker, request frame, done chan<- agentInvocation) {
 	result := agentInvocation{}
 	defer func() {
-		if recover() != nil {
+		if recovered := recover(); recovered != nil {
+			applog.Default().RecoveredPanic("Worker 父进程 Agent 调用", recovered)
 			result.err = errors.New("父进程 Agent 操作发生异常")
 		}
 		done <- result

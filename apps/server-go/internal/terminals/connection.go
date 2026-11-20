@@ -1,10 +1,12 @@
 package terminals
 
 import (
-	"elysian/server/internal/seam"
-	"elysian/server/internal/shared"
 	"errors"
 	"sync"
+
+	"elysian/server/internal/applog"
+	"elysian/server/internal/seam"
+	"elysian/server/internal/shared"
 )
 
 // One connection owns one process, registered against the authenticated panel
@@ -28,7 +30,8 @@ func (e *connEvents) OnOpen(conn seam.WsConn) {
 	e.conn = conn
 	e.mu.Unlock()
 	defer func() {
-		if recover() != nil {
+		if recovered := recover(); recovered != nil {
+			applog.Default().RecoveredPanic("终端建立连接", recovered)
 			e.close(1011, "终端会话建立失败")
 		}
 	}()
@@ -77,7 +80,8 @@ func (e *connEvents) OnMessage(_ seam.WsConn, text []byte) {
 		return
 	}
 	defer func() {
-		if recover() != nil {
+		if recovered := recover(); recovered != nil {
+			applog.Default().RecoveredPanic("终端控制消息", recovered)
 			e.close(1011, "终端消息处理失败")
 		}
 	}()
@@ -85,7 +89,8 @@ func (e *connEvents) OnMessage(_ seam.WsConn, text []byte) {
 }
 func (e *connEvents) OnBinaryMessage(_ seam.WsConn, data []byte) {
 	defer func() {
-		if recover() != nil {
+		if recovered := recover(); recovered != nil {
+			applog.Default().RecoveredPanic("终端二进制消息", recovered)
 			e.close(1011, "终端消息处理失败")
 		}
 	}()

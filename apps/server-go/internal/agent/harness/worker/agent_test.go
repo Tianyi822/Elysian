@@ -8,10 +8,13 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"path/filepath"
 	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
+
+	"elysian/server/internal/applog"
 )
 
 type testAgentBroker struct {
@@ -136,6 +139,15 @@ func TestAgentProcessRunsThroughRealPipesAndWaitsForFinalize(t *testing.T) {
 func TestAgentBrokerFailurePreservesCauseAndReusesWorker(t *testing.T) {
 	for _, operation := range []string{"model", "tool", "finalize", "panic"} {
 		t.Run(operation, func(t *testing.T) {
+			var dir string
+			if operation == "panic" {
+				dir = t.TempDir()
+				logger, err := applog.Open(dir)
+				if err != nil {
+					t.Fatal(err)
+				}
+				t.Cleanup(func() { _ = logger.Close() })
+			}
 			p := startTestWorker(t, "normal")
 			want := errors.New("父侧持久化失败 secret-marker")
 			broker := finalAgentBroker()
@@ -156,8 +168,14 @@ func TestAgentBrokerFailurePreservesCauseAndReusesWorker(t *testing.T) {
 			if operation != "panic" && !errors.Is(err, want) {
 				t.Fatalf("父侧错误原因丢失：%v", err)
 			}
-			if operation == "panic" && (err == nil || strings.Contains(err.Error(), "secret-marker")) {
-				t.Fatalf("异常信息未隔离：%v", err)
+			if operation == "panic" {
+				if err == nil || !strings.Contains(err.Error(), "父进程 Agent 操作发生异常") || strings.Contains(err.Error(), "secret-marker") {
+					t.Fatalf("异常信息未隔离：%v", err)
+				}
+				data, readErr := os.ReadFile(filepath.Join(dir, applog.PanelLogName))
+				if readErr != nil || !strings.Contains(string(data), "secret-marker") || !strings.Contains(string(data), "worker.invokeAgent") {
+					t.Fatalf("父进程日志未记录异常及调用栈：%q %v", data, readErr)
+				}
 			}
 			var interrupted *InterruptedError
 			if errors.As(err, &interrupted) {

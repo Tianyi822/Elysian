@@ -191,6 +191,28 @@ func TestAgentDirectAnswerAndAtomicMemory(t *testing.T) {
 	}
 }
 
+func TestAgentModelPanicLogsAndKeepsGenericReceipt(t *testing.T) {
+	logPath := openPanicTestLog(t)
+	const panicValue = "fixture-model-client-panic"
+	m, s, _ := agentManager(t, func(context.Context, model.Profile, model.Request) (model.Response, error) {
+		panic(panicValue)
+	}, nil)
+	run := submitAgentTest(t, m, s, "model-panic", "测试模型输出")
+	if got := runtimeFinished(t, m, run.ID); got.Status != StateFailed {
+		t.Fatalf("模型异常不应更改运行失败状态：%+v", got)
+	}
+	page, err := m.ModelRequests(context.Background(), run.ID, "", 50)
+	if err != nil || len(page.Items) != 2 || page.Items[0].Purpose != "inference" || page.Items[1].Purpose != "failure-summary" {
+		t.Fatalf("推理失败与失败总结应各有一条回执：%+v %v", page.Items, err)
+	}
+	for _, record := range page.Items {
+		if record.Status != StateFailed || record.Error == nil || record.Error.Code != "model-failed" || record.Error.Message != "模型请求失败，请检查模型服务与凭据" {
+			t.Fatalf("模型异常不应更改失败回执：%+v", record)
+		}
+	}
+	assertPanicTestLog(t, logPath, panicValue, "agent/harness/agent.go:")
+}
+
 func TestAgentSerialToolsBusinessFailureContinues(t *testing.T) {
 	var inference atomic.Int32
 	var seen string

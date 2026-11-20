@@ -3,11 +3,16 @@ package terminals
 import (
 	"bytes"
 	"context"
-	"elysian/server/internal/seam"
 	"errors"
+	"os"
+	"path/filepath"
+	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"elysian/server/internal/applog"
+	"elysian/server/internal/seam"
 )
 
 type closeRecord struct {
@@ -20,6 +25,51 @@ type frameRecorder struct {
 	data   []byte
 	chunks []int
 	closes []closeRecord
+}
+
+type panickingPtyWriter struct{ *fakePty }
+
+func (panickingPtyWriter) Write([]byte) (int, error) { panic(terminalPanicFixture) }
+
+func TestSessionPanicLogsAndReleasesSlot(t *testing.T) {
+	for _, tc := range []struct{ name, reason, stack string }{
+		{"start", "终端进程异常", "(*session).start("},
+		{"write", "终端输入写入失败", "(*session).writeInput("},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			dir := t.TempDir()
+			logger, err := applog.Open(dir)
+			if err != nil {
+				t.Fatal(err)
+			}
+			t.Cleanup(func() { _ = logger.Close() })
+			p := newFakePty()
+			svc := newService(seam.TerminalHostDeps{SpawnPty: func(context.Context, seam.ShellSessionSpec, seam.TerminalIdentity) (seam.PtyProcess, error) {
+				if tc.name == "start" {
+					panic(terminalPanicFixture)
+				}
+				return panickingPtyWriter{p}, nil
+			}}, func() seam.TerminalIdentity { return seam.TerminalIdentity{} }, seam.ShellSessionSpec{}, 1, realClock{})
+			recorder := &frameRecorder{}
+			sess := svc.tryOpen(recorder)
+			t.Cleanup(func() { sess.dispose(disposeClientClose) })
+			if tc.name == "write" {
+				waitFor(t, func() bool { recorder.mu.Lock(); defer recorder.mu.Unlock(); return len(recorder.frames) != 0 }, "终端未就绪")
+				sess.handleInput([]byte("fixture-terminal-input"))
+			}
+			waitFor(t, func() bool { return svc.ActiveCount() == 0 }, "异常后终端未释放会话")
+			recorder.mu.Lock()
+			got := append([]closeRecord(nil), recorder.closes...)
+			recorder.mu.Unlock()
+			if len(got) != 1 || got[0] != (closeRecord{1011, tc.reason}) {
+				t.Fatalf("异常改变了终端关闭语义：%+v", got)
+			}
+			data, err := os.ReadFile(filepath.Join(dir, applog.PanelLogName))
+			if err != nil || !strings.Contains(string(data), terminalPanicFixture) || !strings.Contains(string(data), tc.stack) || strings.Contains(string(data), "fixture-terminal-input") {
+				t.Fatalf("终端异常诊断缺失或包含客户端输入：%q %v", data, err)
+			}
+		})
+	}
 }
 
 func (r *frameRecorder) sendFrame(f terminalFrame) {
