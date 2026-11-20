@@ -18,6 +18,7 @@ import (
 	"unicode/utf8"
 
 	"elysian/server/internal/agent/harness/model"
+	"elysian/server/internal/atomicfile"
 )
 
 func validateEmbeddingProfile(p EmbeddingProfile) error {
@@ -283,28 +284,10 @@ func (m *Manager) writeEmbeddingProfiles(records []EmbeddingProfile) error {
 	if err != nil {
 		return bad("embedding-profile-storage", "Embedding 配置暂存失败")
 	}
-	defer os.Remove(file.Name())
-	defer file.Close()
-	if err = file.Chmod(0600); err == nil {
-		_, err = file.Write(raw)
-	}
-	if err == nil {
-		err = file.Sync()
-	}
-	if closeErr := file.Close(); err == nil {
-		err = closeErr
-	}
-	if err != nil || os.Rename(file.Name(), path) != nil {
+	if err := atomicfile.ReplaceTemp(path, file, raw); err != nil {
 		return bad("embedding-profile-storage", "Embedding 配置写入失败")
 	}
-	dir, err := os.Open(filepath.Dir(path))
-	if err == nil {
-		err = dir.Sync()
-		if closeErr := dir.Close(); err == nil {
-			err = closeErr
-		}
-	}
-	if err != nil {
+	if err := atomicfile.SyncDirectory(filepath.Dir(path)); err != nil {
 		return bad("embedding-profile-write-unconfirmed", "Embedding 配置已写入，持久化结果未确认，请重新读取")
 	}
 	return nil

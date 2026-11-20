@@ -20,6 +20,7 @@ import (
 
 	"elysian/server/internal/agent/execution/config"
 	"elysian/server/internal/agent/jsonvalue"
+	"elysian/server/internal/atomicfile"
 )
 
 const maxStoreBytes = 32 << 20
@@ -475,28 +476,10 @@ func writeDocument(path string, records []Server, catalogs []storedCatalog) (boo
 	if err != nil {
 		return false, storageError()
 	}
-	defer os.Remove(f.Name())
-	defer f.Close()
-	if err = f.Chmod(0600); err == nil {
-		_, err = f.Write(b)
-	}
-	if err == nil {
-		err = f.Sync()
-	}
-	if closeErr := f.Close(); err == nil {
-		err = closeErr
-	}
-	if err != nil || os.Rename(f.Name(), path) != nil {
+	if err := atomicfile.ReplaceTemp(path, f, b); err != nil {
 		return false, storageError()
 	}
-	dir, err := os.Open(filepath.Dir(path))
-	if err == nil {
-		err = dir.Sync()
-		if closeErr := dir.Close(); err == nil {
-			err = closeErr
-		}
-	}
-	if err != nil {
+	if err := atomicfile.SyncDirectory(filepath.Dir(path)); err != nil {
 		return true, problem(503, "mcp-write-unconfirmed", "MCP 配置已写入但持久化结果未确认，请重新读取检查")
 	}
 	return true, nil

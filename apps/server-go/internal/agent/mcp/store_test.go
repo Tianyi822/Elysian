@@ -170,6 +170,62 @@ func TestRejectDuplicateStorageKeysAndSymlink(t *testing.T) {
 	_, err = Open(link)
 	requireCode(t, err, "mcp-storage")
 }
+
+func TestWriteDocumentDiskContract(t *testing.T) {
+	for _, tc := range []struct {
+		name string
+		path func(string) string
+		code string
+	}{
+		{"正常替换", func(root string) string { return filepath.Join(root, "mcp.json") }, ""},
+		{"目录不存在", func(root string) string { return filepath.Join(root, "missing", "mcp.json") }, "mcp-storage"},
+		{"目标为目录", func(root string) string { return root }, "mcp-storage"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			path := tc.path(t.TempDir())
+			committed, err := writeDocument(path, nil, nil)
+			if tc.code != "" {
+				requireCode(t, err, tc.code)
+				if committed {
+					t.Fatal("未替换目标时不能报告已发布")
+				}
+				return
+			}
+			if err != nil || !committed {
+				t.Fatalf("写入结果 = %v, %v", committed, err)
+			}
+			if data, err := os.ReadFile(path); err != nil || string(data) != `{"version":1,"servers":[],"catalogs":[]}` {
+				t.Fatalf("MCP 落盘内容 = %q, %v", data, err)
+			}
+		})
+	}
+}
+
+func TestStorePublishesRenamedDocumentWithUnconfirmedDurability(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "mcp.json")
+	s, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	s.write = func(path string, servers []Server, catalogs []storedCatalog) (bool, error) {
+		committed, err := writeDocument(path, servers, catalogs)
+		if err != nil {
+			return committed, err
+		}
+		return committed, problem(503, "mcp-write-unconfirmed", "MCP 配置已写入但持久化结果未确认，请重新读取检查")
+	}
+	_, err = s.Create(sampleInput())
+	requireCode(t, err, "mcp-write-unconfirmed")
+	loaded, err := Open(path)
+	if err != nil {
+		t.Fatal(err)
+	}
+	current, persisted := s.List(), loaded.List()
+	if len(current) != 1 || len(persisted) != 1 || current[0].ID != persisted[0].ID {
+		t.Fatal("同步未确认时，内存应显示已发布的文件事实")
+	}
+}
+
 func TestCatalogImmutableAndUnknownConstraintsRejected(t *testing.T) {
 	s, _ := Open(filepath.Join(t.TempDir(), "servers.json"))
 	p, _ := s.Create(sampleInput())
