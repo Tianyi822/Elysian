@@ -80,6 +80,18 @@ func TestWriteFileAtomicDockerRejectsPreexistingTempFile(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
+	const want = `[
+  {
+    "name": "x",
+    "credentials": {},
+    "networkScope": "",
+    "resourceTier": "",
+    "createdAt": ""
+  }
+]`
+	if string(before) != want {
+		t.Fatalf("服务容器登记字节变更：%q", before)
+	}
 	temporary := path + "." + fmt.Sprintf("%d", os.Getpid()) + ".tmp"
 	const preset = "预置内容"
 	if err := os.WriteFile(temporary, []byte(preset), 0o600); err != nil {
