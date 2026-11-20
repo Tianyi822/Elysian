@@ -16,6 +16,7 @@ import (
 	"elysian/server/internal/config"
 	"elysian/server/internal/shared"
 	"elysian/server/internal/tasklog"
+	"elysian/server/internal/taskstore"
 )
 
 var idPattern = regexp.MustCompile(`^[a-f0-9]{32}$`)
@@ -83,8 +84,10 @@ func (s Store) mutationGate(sharedLock bool, fn func() error) error {
 
 func (s Store) tasksDir() string          { return filepath.Join(s.Root, "state", "panel-maintenance") }
 func (s Store) networkPath() string       { return filepath.Join(s.Root, "config", "panel-network.json") }
-func (s Store) taskPath(id string) string { return filepath.Join(s.tasksDir(), id+".json") }
+func (s Store) taskPath(id string) string { return s.ledger().Path(id) }
 func (s Store) logPath(id string) string  { return filepath.Join(s.tasksDir(), id+".log") }
+
+func (s Store) ledger() taskstore.Dir { return taskstore.Dir(s.tasksDir()) }
 
 func (s Store) tryWorkerLock() (*os.File, error) {
 	if err := os.MkdirAll(s.tasksDir(), 0700); err != nil {
@@ -147,7 +150,7 @@ func (s Store) read(id string) (taskRecord, error) {
 }
 
 func (s Store) records() ([]taskRecord, error) {
-	entries, err := os.ReadDir(s.tasksDir())
+	ids, err := s.ledger().ReadDirIDs()
 	if os.IsNotExist(err) {
 		return nil, nil
 	}
@@ -155,11 +158,8 @@ func (s Store) records() ([]taskRecord, error) {
 		return nil, err
 	}
 	rows := []taskRecord{}
-	for _, e := range entries {
-		if filepath.Ext(e.Name()) != ".json" {
-			continue
-		}
-		r, err := s.read(e.Name()[:len(e.Name())-5])
+	for _, id := range ids {
+		r, err := s.read(id)
 		if err != nil {
 			return nil, err
 		}
@@ -169,7 +169,7 @@ func (s Store) records() ([]taskRecord, error) {
 	return rows, nil
 }
 
-func (s Store) save(r taskRecord) error { return config.AtomicJSON(s.taskPath(r.ID), r) }
+func (s Store) save(r taskRecord) error { return s.ledger().Save(r.ID, r, config.AtomicJSON) }
 
 func newID() (string, error) {
 	b := make([]byte, 16)

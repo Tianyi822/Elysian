@@ -18,11 +18,31 @@ func (d Dir) Glob() ([]string, error) {
 	return filepath.Glob(filepath.Join(string(d), "*.json"))
 }
 
+// ReadDirIDs 保留 ReadDir 的顺序和错误。扩展名匹配的目录也交给调用方读取。
+func (d Dir) ReadDirIDs() ([]string, error) {
+	entries, err := os.ReadDir(string(d))
+	if err != nil {
+		return nil, err
+	}
+	var ids []string
+	for _, entry := range entries {
+		name := entry.Name()
+		if ext := filepath.Ext(name); ext == ".json" {
+			ids = append(ids, name[:len(name)-len(ext)])
+		}
+	}
+	return ids, nil
+}
+
+func (d Dir) Save(id string, record any, write func(string, any) error) error {
+	return write(d.Path(id), record)
+}
+
 func (d Dir) Remove(id string) error { return os.Remove(d.Path(id)) }
 
 // SaveAndPublish 成功写入后才发布任务。调用方持有原锁，并负责准备独立副本。
 func SaveAndPublish[T any](d Dir, tasks map[string]T, id string, next T, write func(string, any) error) error {
-	if err := write(d.Path(id), next); err != nil {
+	if err := d.Save(id, next, write); err != nil {
 		return err
 	}
 	tasks[id] = next
