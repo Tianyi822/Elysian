@@ -249,6 +249,7 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 	if closeAgent != nil {
 		runtime.closeFuncs = append(runtime.closeFuncs, closeAgent)
 	}
+	runtime.closeFuncs = append(runtime.closeFuncs, appBuilds.Close)
 	if firewallAgent != nil {
 		runtime.closeFuncs = append(runtime.closeFuncs, firewallAgent.Close)
 	}

@@ -46,6 +46,7 @@ func TestBuildStreamLossKeepsWorkspaceAndImageReservations(t *testing.T) {
 	recoveryDeps := env.manager.deps
 	recoveryDeps.Now = func() time.Time { return fixedBuildClock().Add(400 * 24 * time.Hour) }
 	restarted := newBuildManager(recoveryDeps, env.manager.limits)
+	t.Cleanup(func() { _ = restarted.Close(context.Background()) })
 	retained, err := restarted.Get("uncertain", task.ID)
 	if err != nil || !retained.MayStillRun || !restarted.HasActive("uncertain") {
 		t.Fatalf("restart or retention cleanup released unknown task: %+v %v", retained, err)
@@ -102,6 +103,7 @@ func TestBuildRecoveryUsesPersistedDispatchEvidence(t *testing.T) {
 				t.Fatal(err)
 			}
 			manager := newBuildManager(BuildDeps{Engine: newFakeBuildEngine(), StateRoot: stateRoot, LogRoot: t.TempDir(), SpoolRoot: t.TempDir(), Now: fixedBuildClock}, defaultBuildLimits())
+			t.Cleanup(func() { _ = manager.Close(context.Background()) })
 			status, err := NewAgentFacade(Handler{Builds: manager}, nil).InspectTask(context.Background(), task.ID)
 			if err != nil || status.Terminal == item.mayStillRun || manager.HasActive("site") != item.mayStillRun {
 				t.Fatalf("incorrect restart evidence handling: %+v %v", status, err)

@@ -13,6 +13,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"testing"
+	"testing/synctest"
 	"time"
 
 	"elysian/server/internal/seam"
@@ -253,6 +254,7 @@ func newBuildTestEnv(t *testing.T) *buildTestEnv {
 		LogRoot:   filepath.Join(stateDir, "logs"),
 		SpoolRoot: filepath.Join(stateDir, "tmp"),
 	}, defaultBuildLimits())
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
 	env.manager = manager
 	env.handler = Handler{
 		Registry:        registry,
@@ -1152,6 +1154,7 @@ func TestRecoveryMarksInterrupted(t *testing.T) {
 		LogRoot:   filepath.Join(stateDir, "logs"),
 		SpoolRoot: spoolRoot,
 	}, defaultBuildLimits())
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
 	recovered, err := manager.Get("a", building.ID)
 	if err != nil {
 		t.Fatal(err)
@@ -1207,12 +1210,50 @@ func TestCleanupExpiredRemovesOldTerminalTasks(t *testing.T) {
 		LogRoot:   filepath.Join(stateDir, "logs"),
 		SpoolRoot: filepath.Join(stateDir, "tmp"),
 	}, defaultBuildLimits())
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
 	if _, err := manager.Get("a", old.ID); err == nil {
 		t.Fatal("31 天前的终态任务应被清理")
 	}
 	if _, err := os.Stat(filepath.Join(stateRoot, old.ID+".json")); !os.IsNotExist(err) {
 		t.Fatal("任务 JSON 应删除")
 	}
+}
+
+func TestBuildManagerStopsHourlyCleanup(t *testing.T) {
+	root := t.TempDir()
+	synctest.Test(t, func(t *testing.T) {
+		var cleanupCalls atomic.Int32
+		m := newBuildManager(BuildDeps{
+			StateRoot: filepath.Join(root, "state"),
+			LogRoot:   filepath.Join(root, "logs"),
+			SpoolRoot: filepath.Join(root, "spool"),
+			Now: func() time.Time {
+				cleanupCalls.Add(1)
+				return time.Now()
+			},
+		}, defaultBuildLimits())
+		closeManager := func() {
+			if err := m.Close(context.Background()); err != nil {
+				t.Error(err)
+			}
+		}
+		defer closeManager()
+		synctest.Wait()
+		if calls := cleanupCalls.Load(); calls != 1 {
+			t.Fatalf("启动应清理一次，实际 %d 次", calls)
+		}
+		time.Sleep(time.Hour)
+		synctest.Wait()
+		if calls := cleanupCalls.Load(); calls != 2 {
+			t.Fatalf("一小时后应再次清理，实际共 %d 次", calls)
+		}
+		closeManager()
+		time.Sleep(2 * time.Hour)
+		synctest.Wait()
+		if calls := cleanupCalls.Load(); calls != 2 {
+			t.Fatalf("关闭后不应再清理，实际共 %d 次", calls)
+		}
+	})
 }
 
 // ---------- NDJSON 解码 ----------
@@ -1325,6 +1366,7 @@ func TestSubmitRollsBackWhenPersistFails(t *testing.T) {
 		LogRoot:   filepath.Join(stateDir, "logs"),
 		SpoolRoot: filepath.Join(stateDir, "tmp"),
 	}, defaultBuildLimits())
+	t.Cleanup(func() { _ = manager.Close(context.Background()) })
 	workspace := filepath.Join(mountDir, "elysian", "apps", "rb")
 	if err := os.MkdirAll(workspace, 0700); err != nil {
 		t.Fatal(err)

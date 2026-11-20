@@ -211,6 +211,10 @@ type BuildManager struct {
 	requestIndex map[string]string
 	workers      chan struct{}
 	logTrackers  map[string]*buildLogTracker
+
+	cleanupStop chan struct{}
+	cleanupDone chan struct{}
+	cleanupOnce sync.Once
 }
 
 // buildLogTracker 单任务日志写入记账（总量截断用）。
@@ -285,6 +289,8 @@ func newBuildManager(deps BuildDeps, limits BuildLimits) *BuildManager {
 		requestIndex: map[string]string{},
 		workers:      make(chan struct{}, limits.Concurrency),
 		logTrackers:  map[string]*buildLogTracker{},
+		cleanupStop:  make(chan struct{}),
+		cleanupDone:  make(chan struct{}),
 	}
 	for _, dir := range []string{deps.StateRoot, deps.LogRoot, deps.SpoolRoot} {
 		_ = os.MkdirAll(dir, 0700)
@@ -334,12 +340,31 @@ func newBuildManager(deps BuildDeps, limits BuildLimits) *BuildManager {
 		}
 	}
 	m.cleanupExpired()
+	ticker := time.NewTicker(time.Hour)
 	go func() {
-		for range time.NewTicker(time.Hour).C {
-			m.cleanupExpired()
+		defer close(m.cleanupDone)
+		defer ticker.Stop()
+		for {
+			select {
+			case <-m.cleanupStop:
+				return
+			case <-ticker.C:
+				m.cleanupExpired()
+			}
 		}
 	}()
 	return m
+}
+
+// Close 停止并等待定期清理，不更改在途构建。
+func (m *BuildManager) Close(ctx context.Context) error {
+	m.cleanupOnce.Do(func() { close(m.cleanupStop) })
+	select {
+	case <-m.cleanupDone:
+		return nil
+	case <-ctx.Done():
+		return ctx.Err()
+	}
 }
 
 // now 取注入时钟的当前时间。
