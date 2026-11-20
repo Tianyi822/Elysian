@@ -10,10 +10,11 @@ import (
 	"testing"
 
 	storesqlite "elysian/server/internal/agent/harness/sessionstore/sqlite"
+	"elysian/server/internal/agent/recovery"
 )
 
 func TestMaintenanceWithoutConfiguredExecutionDoesNotRequireDocker(t *testing.T) {
-	h := SystemHost{Store: Store{Root: t.TempDir(), Inspector: storesqlite.Inspector{}}, DockerSocket: filepath.Join(t.TempDir(), "absent.sock")}
+	h := SystemHost{Store: Store{Root: t.TempDir(), Inspector: storesqlite.Inspector{}}, AgentRecovery: recovery.Maintenance{}, DockerSocket: filepath.Join(t.TempDir(), "absent.sock")}
 	if err := h.recoverAgentExecution(context.Background()); err != nil {
 		t.Fatalf("普通安装不应被新增 Docker 依赖阻止维护：%v", err)
 	}
@@ -27,7 +28,7 @@ func TestMaintenanceIgnoresLegacyAgentConfigurationPaths(t *testing.T) {
 	root := t.TempDir()
 	writeRestoreFixture(t, root, "config/agent-execution.json", "不再读取的旧执行配置")
 	writeRestoreFixture(t, root, "config/agent-mcp-servers.json", "不再读取的旧 MCP 配置")
-	if required, err := AgentExecutionRecoveryRequired(root, storesqlite.Inspector{}); err != nil || required {
+	if required, err := AgentExecutionRecoveryRequired(root, recovery.Maintenance{}, storesqlite.Inspector{}); err != nil || required {
 		t.Fatalf("旧配置路径不应参与执行恢复判定：%t %v", required, err)
 	}
 }
@@ -35,7 +36,7 @@ func TestMaintenanceIgnoresLegacyAgentConfigurationPaths(t *testing.T) {
 func TestMaintenanceRequiresDockerForConfiguredOrPendingExecution(t *testing.T) {
 	for _, kind := range []string{"执行配置", "stdio配置", "未决屏障", "配置损坏"} {
 		t.Run(kind, func(t *testing.T) {
-			h := SystemHost{Store: Store{Root: t.TempDir(), Inspector: storesqlite.Inspector{}}, DockerSocket: filepath.Join(t.TempDir(), "absent.sock")}
+			h := SystemHost{Store: Store{Root: t.TempDir(), Inspector: storesqlite.Inspector{}}, AgentRecovery: recovery.Maintenance{}, DockerSocket: filepath.Join(t.TempDir(), "absent.sock")}
 			switch kind {
 			case "执行配置":
 				writeRestoreFixture(t, h.Store.Root, "config/agent/execution.json", `{"schema":1,"profiles":[{"enabled":false}],"grants":[]}`)
@@ -84,7 +85,7 @@ func TestMaintenanceChecksOwnedContainersAndVolumesAfterStop(t *testing.T) {
 			})}
 			go server.Serve(listener)
 			defer server.Close()
-			h := SystemHost{Store: Store{Root: t.TempDir(), Inspector: storesqlite.Inspector{}}, DockerSocket: socket}
+			h := SystemHost{Store: Store{Root: t.TempDir(), Inspector: storesqlite.Inspector{}}, AgentRecovery: recovery.Maintenance{}, DockerSocket: socket}
 			err = h.recoverAgentExecution(context.Background())
 			if fail && err == nil || !fail && err != nil {
 				t.Fatalf("停止核实结果错误：%v", err)

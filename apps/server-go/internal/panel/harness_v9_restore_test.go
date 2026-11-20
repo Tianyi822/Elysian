@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	storesqlite "elysian/server/internal/agent/harness/sessionstore/sqlite"
+	"elysian/server/internal/agent/recovery"
 )
 
 func TestMaintenancePreservesV9AuthorizationDecisionsAndRevocations(t *testing.T) {
@@ -64,7 +65,7 @@ func TestMaintenancePreservesV9AuthorizationDecisionsAndRevocations(t *testing.T
 		}
 		assertRestoreFixture(t, target, "data/agent-records/sessions/session-1.jsonl", currentRecords)
 		assertRestoreFixture(t, target, "config/agent/execution.json", currentConfig)
-		if needed, err := AgentExecutionRecoveryRequired(target, storesqlite.Inspector{}); err != nil || !needed {
+		if needed, err := AgentExecutionRecoveryRequired(target, recovery.Maintenance{}, storesqlite.Inspector{}); err != nil || !needed {
 			t.Fatalf("unknown runtime execution was released: %t %v", needed, err)
 		}
 	}

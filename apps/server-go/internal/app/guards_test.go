@@ -69,6 +69,21 @@ func TestNoCrossDomainImports(t *testing.T) {
 	}
 }
 
+func TestPanelDoesNotDependOnAgentExecutionImplementation(t *testing.T) {
+	// 只检查生产代码的直接导入；只读 Inspector 的既有传递依赖保留。
+	imports, err := goList("-f", "{{range .Imports}}{{println .}}{{end}}", "elysian/server/internal/panel")
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, dep := range imports {
+		for _, implementation := range []string{"elysian/server/internal/agent/execution", "elysian/server/internal/agent/recovery"} {
+			if dep == implementation || strings.HasPrefix(dep, implementation+"/") {
+				t.Errorf("panel 必须通过注入的恢复接口访问 Agent，不能依赖 %s", dep)
+			}
+		}
+	}
+}
+
 // goList 执行 go list 并按行取包路径。
 func goList(args ...string) ([]string, error) {
 	out, err := exec.Command("go", append([]string{"list"}, args...)...).Output()

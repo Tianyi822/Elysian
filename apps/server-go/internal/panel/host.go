@@ -17,12 +17,14 @@ import (
 	"time"
 
 	"elysian/server/internal/config"
+	"elysian/server/internal/seam"
 	"elysian/server/internal/shared"
 )
 
 type SystemHost struct {
 	Store            Store
 	DockerSocket     string
+	AgentRecovery    seam.AgentExecutionRecovery
 	MissingServiceOK bool
 	// 仅安装器准备平台依赖之前使用；Docker 就绪后及版本切换前必须再次完整核验。
 	BeforePlatformDependencies bool

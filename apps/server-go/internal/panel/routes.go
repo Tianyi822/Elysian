@@ -13,7 +13,6 @@ import (
 	"time"
 	"unicode/utf8"
 
-	"elysian/server/internal/agent/harness/sessionstore"
 	"elysian/server/internal/config"
 	"elysian/server/internal/middleware"
 	"elysian/server/internal/shared"
@@ -599,7 +598,7 @@ func (m Manager) Health(w http.ResponseWriter, r *http.Request) {
 	}{true, ready, Commit, m.Ports})
 }
 
-func RunCLI(ctx context.Context, command string, args []string, root, socket string, inspector sessionstore.Inspector) (err error) {
+func RunCLI(ctx context.Context, command string, args []string, host SystemHost) (err error) {
 	// 维护命令以 systemd 瞬态单元或 ExecStartPre 运行，没有 HTTP 层的 panic 兜底：
 	// 这里兜住异常并转成错误返回，让 systemd 记录失败而不是静默冻结任务。
 	defer func() {
@@ -607,9 +606,7 @@ func RunCLI(ctx context.Context, command string, args []string, root, socket str
 			err = fmt.Errorf("维护命令异常退出：%v", p)
 		}
 	}()
-	s := Store{Root: root, Inspector: inspector}
-	host := SystemHost{Store: s, DockerSocket: socket}
-	worker := Worker{Store: s, Host: host, Source: DefaultSource()}
+	worker := Worker{Store: host.Store, Host: host, Source: DefaultSource()}
 	if command == "maintenance-resource-version" && len(args) == 0 {
 		fmt.Println("1")
 		return nil

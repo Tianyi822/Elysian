@@ -20,6 +20,7 @@ import (
 	"elysian/server/internal/agent/harness/workspace"
 	"elysian/server/internal/agent/kardia"
 	"elysian/server/internal/agent/mcp"
+	"elysian/server/internal/agent/recovery"
 	"elysian/server/internal/agent/tools"
 	"elysian/server/internal/config"
 	"elysian/server/internal/files"
@@ -198,7 +199,8 @@ func assembleProductionHarness(cfg *config.Config, views seam.DockerViews, optio
 	} else {
 		extensions.ExecutionReason = joinDiagnostic(extensions.ExecutionReason, "无法定位容器执行二进制")
 	}
-	needsRecovery, recoveryError := panel.AgentExecutionRecoveryRequired(options.Home, sqlite.Inspector{})
+	agentRecovery := recovery.Maintenance{}
+	needsRecovery, recoveryError := panel.AgentExecutionRecoveryRequired(options.Home, agentRecovery, sqlite.Inspector{})
 	executionSocket := cfg.DockerSocket
 	if executionSocket == "" {
 		executionSocket = "/var/run/docker.sock"
@@ -233,7 +235,7 @@ func assembleProductionHarness(cfg *config.Config, views seam.DockerViews, optio
 		}
 		if cfg.BareMetal {
 			store := panel.Store{Root: options.Home, Inspector: sqlite.Inspector{}}
-			info, err := (panel.Manager{Store: store, Host: panel.SystemHost{Store: store, DockerSocket: cfg.DockerSocket}, Enabled: true}).Info()
+			info, err := (panel.Manager{Store: store, Host: panel.SystemHost{Store: store, DockerSocket: cfg.DockerSocket, AgentRecovery: agentRecovery}, Enabled: true}).Info()
 			if err == nil && info.ActiveTask != nil && info.ActiveTask.Kind == "update" {
 				return &harness.Error{Status: 409, Code: "panel-update-active", Message: "面板更新中断了任务，进度已保存，请在更新结束后手动继续"}
 			}
