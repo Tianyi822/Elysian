@@ -53,7 +53,9 @@ type BuildPlanInput struct {
 }
 
 // buildInputInvalid 构建请求字段无效（模式取值与两模式互斥字段共用这一句）。
-func buildInputInvalid() error { return shared.InvalidRequest("构建请求字段无效") }
+const buildInputInvalidMessage = "构建请求字段无效"
+
+func buildInputInvalid() error { return shared.InvalidRequest(buildInputInvalidMessage) }
 
 // validateBuildInputShape 校验请求体的模式与互斥字段；forSubmit 区分 preview（不带
 // requestId）与提交（带 requestId）两种允许的字段面。

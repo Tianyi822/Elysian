@@ -20,18 +20,9 @@ import (
 )
 
 func decodeDeployment(w http.ResponseWriter, r *http.Request, v any) error {
-	body, err := middleware.ReadJSONBody(w, r, 256<<10)
-	if err != nil {
-		return err
-	}
-	b, err := json.Marshal(body)
-	if err != nil {
-		return err
-	}
-	if json.Unmarshal(b, v) != nil {
-		return shared.InvalidRequest("部署请求格式无效")
-	}
-	return nil
+	return middleware.DecodeJSONBody(w, r, v, 256<<10, middleware.DecodeJSONOptions{
+		InvalidFieldsMessage: "部署请求格式无效",
+	})
 }
 func mountDeploymentRoutes(r chi.Router, m *deploymentManager) {
 	r.Post("/sources/archive", func(w http.ResponseWriter, r *http.Request) {

@@ -213,6 +213,57 @@ func TestReadJSONBody(t *testing.T) {
 	})
 }
 
+func TestDecodeJSONBodyKeepsGuardsAndEndpointPolicy(t *testing.T) {
+	const fields = "测试端点字段无效"
+	const object = "测试端点要求对象"
+	for _, tc := range []struct {
+		name, body, media string
+		limit             int64
+		strict, object    bool
+		want              int
+		status            int
+		message           string
+	}{
+		{"未知字段可忽略", `{"port":22,"extra":true}`, "application/json", 0, false, false, 22, 0, ""},
+		{"严格拒绝未知字段", `{"port":22,"extra":true}`, "application/json", 0, true, false, 0, 400, fields},
+		{"拒绝非整数", `{"port":22.1}`, "application/json", 0, true, true, 0, 400, fields},
+		{"null 可按原规则解码", `null`, "application/json", 0, true, false, 0, 0, ""},
+		{"强制对象时拒绝 null", `null`, "application/json", 0, true, true, 0, 400, object},
+		{"重复键与整数归一", `{"port":1,"port":2.0}`, "application/json", 0, true, true, 2, 0, ""},
+		{"媒体类型错误先返回", `{`, "text/plain", 0, true, true, 0, 415, "Content-Type 必须为 application/json"},
+		{"长度超限先返回", `{broken`, "application/json", 1, true, true, 0, 413, "请求体过大"},
+		{"语法错误先返回", `{`, "application/json", 0, true, true, 0, 400, "请求体不是有效 JSON"},
+		{"尾随对象仍非法", `{} {}`, "application/json", 0, true, true, 0, 400, "请求体不是有效 JSON"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var input struct {
+				Port int `json:"port"`
+			}
+			req := httptest.NewRequest(http.MethodPost, "/", strings.NewReader(tc.body))
+			req.Header.Set("Content-Type", tc.media)
+			rec := httptest.NewRecorder()
+			opts := DecodeJSONOptions{DisallowUnknownFields: tc.strict, InvalidFieldsMessage: fields}
+			if tc.object {
+				opts.NonObjectMessage = object
+			}
+			err := DecodeJSONBody(rec, req, &input, tc.limit, opts)
+			if tc.status == 0 {
+				if err != nil || input.Port != tc.want {
+					t.Fatalf("解码 = %+v, %v；期望端口 %d", input, err, tc.want)
+				}
+				return
+			}
+			if err == nil {
+				t.Fatal("应返回错误")
+			}
+			WriteError(rec, err)
+			if rec.Code != tc.status || rec.Body.String() != `{"error":"`+tc.message+`"}` {
+				t.Fatalf("回执 = %d %s；期望 %d %q", rec.Code, rec.Body.String(), tc.status, tc.message)
+			}
+		})
+	}
+}
+
 func TestWriteErrorMapping(t *testing.T) {
 	t.Run("守卫错误按自带状态", func(t *testing.T) {
 		rec := httptest.NewRecorder()

@@ -1,9 +1,7 @@
 package harness
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"errors"
 	"log"
 	"net/http"
@@ -89,21 +87,13 @@ func newRuntimeRouter(service runtimeService, unavailableReason string) http.Han
 			})
 		})
 		r.Post("/runs", func(w http.ResponseWriter, req *http.Request) {
-			body, err := middleware.ReadJSONBody(w, req, int64(DefaultLimits().InputBytes))
-			if err != nil {
-				writeRuntimeError(w, err)
-				return
-			}
-			raw, err := json.Marshal(body)
-			if err != nil || len(raw) == 0 || raw[0] != '{' {
-				writeRuntimeError(w, shared.InvalidRequest("任务请求必须为 JSON 对象"))
-				return
-			}
 			var input SubmitInput
-			decoder := json.NewDecoder(bytes.NewReader(raw))
-			decoder.DisallowUnknownFields()
-			if err = decoder.Decode(&input); err != nil {
-				writeRuntimeError(w, shared.InvalidRequest("任务请求字段无效或含未声明的字段"))
+			if err := middleware.DecodeJSONBody(w, req, &input, int64(DefaultLimits().InputBytes), middleware.DecodeJSONOptions{
+				DisallowUnknownFields: true,
+				InvalidFieldsMessage:  "任务请求字段无效或含未声明的字段",
+				NonObjectMessage:      "任务请求必须为 JSON 对象",
+			}); err != nil {
+				writeRuntimeError(w, err)
 				return
 			}
 			run, duplicate, err := service.Submit(req.Context(), input)

@@ -1,6 +1,7 @@
 package middleware
 
 import (
+	"bytes"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -12,6 +13,39 @@ import (
 // DefaultJSONBodyMaxBytes 读体守卫的缺省上限：64 KiB（规则与配置都远小于它，超限一律
 // 413，防大包拖垮解析与内存）。websites 域两端点用 256 KiB 上限，由该域自行传参。
 const DefaultJSONBodyMaxBytes int64 = 64 * 1024
+
+type DecodeJSONOptions struct {
+	DisallowUnknownFields bool
+	InvalidFieldsMessage  string
+	NonObjectMessage      string // 非空时要求顶层是对象。
+}
+
+// DecodeJSONBody 将既有读体守卫的结果解码为类型化参数。保留中间 JSON 值的
+// 数字和重复键语义，由端点选择字段严格度与错误回执。
+func DecodeJSONBody(w http.ResponseWriter, r *http.Request, dst any, maxBytes int64, opts DecodeJSONOptions) error {
+	value, err := ReadJSONBody(w, r, maxBytes)
+	if err != nil {
+		return err
+	}
+	raw, err := json.Marshal(value)
+	if opts.NonObjectMessage != "" && (err != nil || len(raw) == 0 || raw[0] != '{') {
+		return shared.InvalidRequest(opts.NonObjectMessage)
+	}
+	if err != nil {
+		return err
+	}
+	if opts.DisallowUnknownFields {
+		decoder := json.NewDecoder(bytes.NewReader(raw))
+		decoder.DisallowUnknownFields()
+		err = decoder.Decode(dst)
+	} else {
+		err = json.Unmarshal(raw, dst)
+	}
+	if err != nil {
+		return shared.InvalidRequest(opts.InvalidFieldsMessage)
+	}
+	return nil
+}
 
 // ReadJSONBody 读体守卫（go-plan §3.5，TS readJsonBody 等价物）：
 // Content-Type 前缀非 application/json → 415「Content-Type 必须为 application/json」；

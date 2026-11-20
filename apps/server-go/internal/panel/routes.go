@@ -1,9 +1,7 @@
 package panel
 
 import (
-	"bytes"
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
@@ -406,21 +404,12 @@ func (m Manager) Router() chi.Router {
 		shared.SendJSON(w, 200, u)
 	})
 	r.Post("/update/preflight", func(w http.ResponseWriter, r *http.Request) {
-		body, err := middleware.ReadJSONBody(w, r, 8192)
-		if err != nil {
-			middleware.WriteError(w, err)
-			return
-		}
-		b, err := json.Marshal(body)
-		if err != nil {
-			middleware.WriteError(w, err)
-			return
-		}
 		var input submitInput
-		decoder := json.NewDecoder(bytes.NewReader(b))
-		decoder.DisallowUnknownFields()
-		if err = decoder.Decode(&input); err != nil {
-			shared.SendError(w, 400, "资源预检参数无效")
+		if err := middleware.DecodeJSONBody(w, r, &input, 8192, middleware.DecodeJSONOptions{
+			DisallowUnknownFields: true,
+			InvalidFieldsMessage:  "资源预检参数无效",
+		}); err != nil {
+			middleware.WriteError(w, err)
 			return
 		}
 		out, err := m.PreflightUpdate(r.Context(), input)
@@ -463,21 +452,12 @@ func (m Manager) Router() chi.Router {
 	for _, route := range []struct{ method, path, kind string }{{"PUT", "/ports", "ports"}, {"POST", "/restart", "restart"}, {"POST", "/update", "update"}} {
 		kind := route.kind
 		r.MethodFunc(route.method, route.path, func(w http.ResponseWriter, r *http.Request) {
-			body, err := middleware.ReadJSONBody(w, r, 8192)
-			if err != nil {
-				middleware.WriteError(w, err)
-				return
-			}
-			b, err := json.Marshal(body)
-			if err != nil {
-				middleware.WriteError(w, err)
-				return
-			}
 			var input submitInput
-			d := json.NewDecoder(bytes.NewReader(b))
-			d.DisallowUnknownFields()
-			if err = d.Decode(&input); err != nil {
-				shared.SendError(w, 400, "维护请求字段无效，端口必须为整数")
+			if err := middleware.DecodeJSONBody(w, r, &input, 8192, middleware.DecodeJSONOptions{
+				DisallowUnknownFields: true,
+				InvalidFieldsMessage:  "维护请求字段无效，端口必须为整数",
+			}); err != nil {
+				middleware.WriteError(w, err)
 				return
 			}
 			task, err := m.Submit(r.Context(), kind, input, r.Header.Get("Origin"))

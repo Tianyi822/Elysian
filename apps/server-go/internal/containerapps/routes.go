@@ -2,12 +2,10 @@ package containerapps
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
 	"io"
 	"net/http"
 	"strconv"
-	"strings"
 	"time"
 
 	"github.com/go-chi/chi/v5"
@@ -137,21 +135,12 @@ func (h Handler) list(w http.ResponseWriter, r *http.Request) {
 }
 
 func (h Handler) create(w http.ResponseWriter, r *http.Request) {
-	body, err := middleware.ReadJSONBody(w, r, maxCreateBodyBytes)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
-	raw, err := json.Marshal(body)
-	if err != nil {
-		writeError(w, err)
-		return
-	}
 	var input createInput
-	decoder := json.NewDecoder(strings.NewReader(string(raw)))
-	decoder.DisallowUnknownFields()
-	if err = decoder.Decode(&input); err != nil {
-		writeError(w, shared.InvalidRequest("工作区请求字段无效"))
+	if err := middleware.DecodeJSONBody(w, r, &input, maxCreateBodyBytes, middleware.DecodeJSONOptions{
+		DisallowUnknownFields: true,
+		InvalidFieldsMessage:  "工作区请求字段无效",
+	}); err != nil {
+		writeError(w, err)
 		return
 	}
 	now := h.Time
@@ -400,21 +389,14 @@ func writeError(w http.ResponseWriter, err error) {
 // decodeBuildInput 读并校验构建请求体：DisallowUnknownFields + 两模式互斥字段面，
 // 不符一律 400「构建请求字段无效」。
 func (h Handler) decodeBuildInput(w http.ResponseWriter, r *http.Request, forSubmit bool) (BuildPlanInput, error) {
-	body, err := middleware.ReadJSONBody(w, r, maxCreateBodyBytes)
-	if err != nil {
-		return BuildPlanInput{}, err
-	}
-	raw, err := json.Marshal(body)
-	if err != nil {
-		return BuildPlanInput{}, err
-	}
 	var input BuildPlanInput
-	decoder := json.NewDecoder(strings.NewReader(string(raw)))
-	decoder.DisallowUnknownFields()
-	if err = decoder.Decode(&input); err != nil {
-		return BuildPlanInput{}, buildInputInvalid()
+	if err := middleware.DecodeJSONBody(w, r, &input, maxCreateBodyBytes, middleware.DecodeJSONOptions{
+		DisallowUnknownFields: true,
+		InvalidFieldsMessage:  buildInputInvalidMessage,
+	}); err != nil {
+		return BuildPlanInput{}, err
 	}
-	if err = input.validateBuildInputShape(forSubmit); err != nil {
+	if err := input.validateBuildInputShape(forSubmit); err != nil {
 		return BuildPlanInput{}, err
 	}
 	return input, nil
