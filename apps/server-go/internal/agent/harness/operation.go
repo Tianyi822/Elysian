@@ -340,11 +340,9 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		_ = closeScope()
 		return err
 	}
-	if m.deps.DispatchGuard != nil {
-		if err = m.deps.DispatchGuard(); err != nil {
-			m.mu.Unlock()
-			return err
-		}
+	if err = a.checkOperationGuardLocked(ctx, execution, o); err != nil {
+		m.mu.Unlock()
+		return err
 	}
 	if c.Source == "script" {
 		items, readErr := readView(ctx, m.store).OperationContext(ctx, run.TaskID)
@@ -429,11 +427,9 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 	o.PolicyVersion = a.run.Snapshot.PolicyVersion
 	o.PermissionMode = a.run.Snapshot.PermissionMode
 	o.DecisionSource = decisionSource
-	if m.deps.DispatchGuard != nil {
-		if err = m.deps.DispatchGuard(); err != nil {
-			m.mu.Unlock()
-			return err
-		}
+	if err = a.checkOperationGuardLocked(ctx, execution, o); err != nil {
+		m.mu.Unlock()
+		return err
 	}
 	if o.ApprovalID == "" {
 		wait, readErr := unknownResourceWait(dbCtx, m.store, o, stamp(m.deps.Now()))
@@ -712,13 +708,14 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		if result.e = m.store.DispatchError(); result.e != nil {
 			return
 		}
+		guardErr := m.checkDispatchGuard()
 		m.mu.Lock()
 		if m.closed || execution.finishing || m.storageError || callCtx.Err() != nil {
 			result.e = context.Canceled
 		} else if m.store.DispatchError() != nil {
 			result.e = m.store.DispatchError()
-		} else if result.e = m.checkRevocations(callCtx, *a.run.Snapshot, dispatchedOperation); result.e == nil && m.deps.DispatchGuard != nil {
-			result.e = m.deps.DispatchGuard()
+		} else if result.e = m.checkRevocations(callCtx, *a.run.Snapshot, dispatchedOperation); result.e == nil {
+			result.e = guardErr
 		}
 		m.mu.Unlock()
 		if result.e != nil {
@@ -992,6 +989,25 @@ func (a *agentExecution) executeOperation(ctx context.Context, index int, propos
 		return bad("operation-failed", "步骤能力调用失败，需要人工恢复")
 	}
 	return nil
+}
+
+// checkOperationGuardLocked 在等待外部维护检查时放开锁；返回前重验原执行和撤销状态。
+func (a *agentExecution) checkOperationGuardLocked(ctx context.Context, execution *executionState, o Operation) error {
+	m := a.manager
+	guard := m.deps.DispatchGuard
+	if guard == nil {
+		return nil
+	}
+	m.mu.Unlock()
+	err := guard()
+	m.mu.Lock()
+	if m.closed || m.storageError || m.executionLocked(o.RunID) != execution || execution.deleted || execution.finishing || ctx.Err() != nil {
+		return context.Canceled
+	}
+	if err != nil {
+		return err
+	}
+	return m.checkRevocations(ctx, *a.run.Snapshot, o)
 }
 
 // 仅转交各扩展包明确公开的错误，不输出底层诊断或服务正文。

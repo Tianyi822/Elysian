@@ -50,6 +50,7 @@ func (m *Manager) authorizeDispatch(ctx context.Context, s CapabilitySnapshot, o
 	}
 	binding := tools.AuthorizationBinding{OperationID: o.ID, DispatchID: o.DispatchID, Tool: o.Capability.Name, ArgumentsDigest: tools.ArgumentsDigest(args), SnapshotDigest: s.Digest, CatalogID: s.Digest}
 	authorized, err := m.toolAuthority.Authorize(ctx, binding, o, func(checkCtx context.Context) error {
+		guardErr := m.checkDispatchGuard()
 		if err := m.store.DispatchError(); err != nil {
 			return err
 		}
@@ -69,7 +70,7 @@ func (m *Manager) authorizeDispatch(ctx context.Context, s CapabilitySnapshot, o
 		}
 		m.mu.Lock()
 		defer m.mu.Unlock()
-		if m.closed || m.storageError {
+		if m.closed || m.storageError || checkCtx.Err() != nil {
 			return context.Canceled
 		}
 		if err := m.checkOperationAuthorization(checkCtx, o); err != nil {
@@ -85,10 +86,7 @@ func (m *Manager) authorizeDispatch(ctx context.Context, s CapabilitySnapshot, o
 				}
 			}
 		}
-		if m.deps.DispatchGuard != nil {
-			return m.deps.DispatchGuard()
-		}
-		return nil
+		return guardErr
 	})
 	if err != nil {
 		return nil, err
