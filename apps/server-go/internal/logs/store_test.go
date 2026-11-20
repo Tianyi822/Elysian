@@ -54,6 +54,9 @@ func TestQueryOperationFilterAndKeyword(t *testing.T) {
 	if page.Entries[0].At != "2026-09-23T00:00:03.000Z" {
 		t.Errorf("at 不符：%s", page.Entries[0].At)
 	}
+	if row := page.Entries[0]; row.Target != nil || row.Method != nil || row.Path != nil || row.HTTPStatus != nil {
+		t.Errorf("操作日志缺失字段应保持 nil：%+v", row)
+	}
 
 	// category + result 筛选。
 	query := operationLogListQuery{}
@@ -90,6 +93,20 @@ func TestQueryOperationFilterAndKeyword(t *testing.T) {
 	page, _ = store.QueryOperation(query)
 	if len(page.Entries) != 2 {
 		t.Errorf("q=100%% 应命中两行，得 %d", len(page.Entries))
+	}
+
+	query.HasCursor = true
+	query.Before = "2026-09-23T00:00:03.000Z"
+	query.BeforeID = 3
+	page, err = store.QueryOperation(query)
+	if err != nil || page.Total != 2 || page.Truncated || len(page.Entries) != 1 || page.Entries[0].ID != "2" {
+		t.Fatalf("末页应保留筛选总数并按游标截断：%+v，%v", page, err)
+	}
+	query.Before = "2026-09-23T00:00:02.000Z"
+	query.BeforeID = 2
+	page, err = store.QueryOperation(query)
+	if err != nil || page.Total != 2 || page.Truncated || page.Entries == nil || len(page.Entries) != 0 {
+		t.Fatalf("游标耗尽后应保留筛选总数和空数组：%+v，%v", page, err)
 	}
 }
 
