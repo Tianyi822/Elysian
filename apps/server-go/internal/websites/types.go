@@ -26,8 +26,6 @@ const (
 	RunStateRunning = "running"
 	RunStateStopped = "stopped"
 
-	CategoryProduction  = "production"
-	CategoryTesting     = "testing"
 	CategoryDevelopment = "development"
 )
 

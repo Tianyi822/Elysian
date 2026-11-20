@@ -8,10 +8,6 @@ import (
 
 // registryPolicy 对等测试（registryPolicy.test.ts 锚点）。
 
-func resolvePublic(hostname string) ([]string, error) {
-	return []string{"93.184.216.34"}, nil
-}
-
 func resolveTo(addresses ...string) func(string) ([]string, error) {
 	return func(string) ([]string, error) { return addresses, nil }
 }

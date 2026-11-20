@@ -4,7 +4,6 @@
 package middleware
 
 import (
-	"context"
 	"crypto/rand"
 	"encoding/hex"
 	"net/http"
@@ -15,8 +14,6 @@ const RequestIDHeader = "X-Request-Id"
 
 // requestIDMaxLength 回显外部请求 ID 的长度上限。
 const requestIDMaxLength = 128
-
-type requestIDKey struct{}
 
 // RequestID 请求 ID 中间件（go-plan §3.4，Go 侧新增的进程内诊断设施，不改变任何既有
 // 契约）：请求头 X-Request-Id 存在且 ≤128 个安全可打印字符则回显，否则生成 16 位 hex；
@@ -29,16 +26,8 @@ func RequestID(next http.Handler) http.Handler {
 			id = newRequestID()
 		}
 		w.Header().Set(RequestIDHeader, id)
-		next.ServeHTTP(w, r.WithContext(context.WithValue(r.Context(), requestIDKey{}, id)))
+		next.ServeHTTP(w, r)
 	})
-}
-
-// RequestIDFrom 取当前请求的请求 ID（未挂中间件时为空串）。
-func RequestIDFrom(ctx context.Context) string {
-	if v, ok := ctx.Value(requestIDKey{}).(string); ok {
-		return v
-	}
-	return ""
 }
 
 // sanitizeRequestID 校验外部回显：非空、长度 ≤128、全部为安全可打印字符

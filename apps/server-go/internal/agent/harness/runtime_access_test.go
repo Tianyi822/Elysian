@@ -87,14 +87,6 @@ func TestRuntimeAccessNewRunsNeverRememberSessionScope(t *testing.T) {
 	}
 }
 
-func readRecordCount(t *testing.T, s *store, id string) int {
-	t.Helper()
-	var n int
-	if err := s.db.QueryRow("SELECT COUNT(*) FROM agent_record_outbox WHERE fact_type='session_authorizations' AND fact_key=?", id).Scan(&n); err != nil {
-		t.Fatal(err)
-	}
-	return n
-}
 func TestRuntimeAccessDenialCannotBeReaskedInSameRun(t *testing.T) {
 	var inferences, calls atomic.Int32
 	cat := &demandTestCatalog{operationCatalog{execute: func(context.Context, Operation) (CapabilityResult, error) {

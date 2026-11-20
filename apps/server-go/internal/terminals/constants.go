@@ -3,17 +3,16 @@ package terminals
 import "time"
 
 const (
-	TERMINAL_MAX_SESSIONS         = 5
-	TERMINAL_IDLE_TIMEOUT         = 30 * time.Minute
-	TERMINAL_FRAME_MAX_BYTES      = 8192
-	TERMINAL_INPUT_MAX_BYTES      = 32 * 1024
-	TERMINAL_DATA_MAX_BYTES       = 32 * 1024
-	TERMINAL_CREDIT_BYTES         = 256 * 1024
-	TERMINAL_COLS                 = 100
-	TERMINAL_ROWS                 = 30
-	TERMINAL_VIOLATION_CLOSE_CODE = 1008
-	TERMINAL_LIMIT_REASON         = "并发终端会话已达上限（5）"
-	TERMINAL_UNAVAILABLE_MESSAGE  = "真实终端仅在 Docker 容器内可用"
+	TERMINAL_MAX_SESSIONS        = 5
+	TERMINAL_IDLE_TIMEOUT        = 30 * time.Minute
+	TERMINAL_FRAME_MAX_BYTES     = 8192
+	TERMINAL_INPUT_MAX_BYTES     = 32 * 1024
+	TERMINAL_DATA_MAX_BYTES      = 32 * 1024
+	TERMINAL_CREDIT_BYTES        = 256 * 1024
+	TERMINAL_COLS                = 100
+	TERMINAL_ROWS                = 30
+	TERMINAL_LIMIT_REASON        = "并发终端会话已达上限（5）"
+	TERMINAL_UNAVAILABLE_MESSAGE = "真实终端仅在 Docker 容器内可用"
 )
 
 // The shell owns editing, prompts, history and pagers. Only explicit environment

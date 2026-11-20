@@ -6,27 +6,8 @@
 // 数据库判据等）随各域实现按 gaps 协议补入，域内不得私造跨域共享类型。
 package contract
 
-// 容器状态取值（TS ContainerStatus）。
-const (
-	ContainerStatusRunning    = "running"
-	ContainerStatusStopped    = "stopped"
-	ContainerStatusRestarting = "restarting"
-	ContainerStatusPaused     = "paused"
-)
-
-// 重启策略取值（TS RestartPolicy）。
-const (
-	RestartPolicyNo            = "no"
-	RestartPolicyAlways        = "always"
-	RestartPolicyOnFailure     = "on-failure"
-	RestartPolicyUnlessStopped = "unless-stopped"
-)
-
-// 端口协议取值。
-const (
-	ProtocolTCP = "tcp"
-	ProtocolUDP = "udp"
-)
+// RestartPolicyUnlessStopped 重启策略取值（TS RestartPolicy）。
+const RestartPolicyUnlessStopped = "unless-stopped"
 
 // PortBindingView 端口映射视图：容器内监听端口 → 宿主机端口（TS PortMapping）。
 type PortBindingView struct {

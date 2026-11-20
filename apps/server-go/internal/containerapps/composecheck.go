@@ -17,10 +17,9 @@ const coverageText = "只判定 volumes 短语法与长语法 source、以及 en
 
 // ReferenceKind 引用类型取值。
 const (
-	KindVolume     = "volume"
-	KindEnvFile    = "env_file"
-	KindBuild      = "build"
-	KindUnreadable = "unreadable"
+	KindVolume  = "volume"
+	KindEnvFile = "env_file"
+	KindBuild   = "build"
 )
 
 // Reference compose 里引用到的一条宿主侧路径。

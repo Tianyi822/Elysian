@@ -38,8 +38,6 @@ var (
 	ConfigDir = filepath.Join(ElysianHome, "config")
 	// AgentConfigDir Agent 独立配置目录。
 	AgentConfigDir = filepath.Join(ConfigDir, "agent")
-	// HostKeysDir sshd 主机密钥：持久在卷上，/etc/ssh/ssh_host_* 以符号链接指向这里。
-	HostKeysDir = filepath.Join(ElysianHome, "ssh", "host-keys")
 )
 
 // ElysianPaths ~/.Elysian 下的具体文件路径表（TS 侧 ELYSIAN_PATHS 的等价物）。
@@ -68,10 +66,6 @@ type ElysianPaths struct {
 	PanelPasswordAudit string
 	// PlatformLogsDir 平台日志根。
 	PlatformLogsDir string
-	// RuntimeLogsDir 运行日志目录。
-	RuntimeLogsDir string
-	// OperationLogsDir 操作日志目录。
-	OperationLogsDir string
 	// SshChangedAt SSH 配置最近变更时间戳。
 	SshChangedAt string
 	// SshRootPasswordResetAt root 密码最近重置时间戳。
@@ -108,8 +102,6 @@ func buildPaths() ElysianPaths {
 		SshdLog:                filepath.Join(LogsDir, "sshd.log"),
 		PanelPasswordAudit:     filepath.Join(LogsDir, "panel-password-audit.jsonl"),
 		PlatformLogsDir:        PlatformLogsDir,
-		RuntimeLogsDir:         filepath.Join(PlatformLogsDir, "runtime"),
-		OperationLogsDir:       filepath.Join(PlatformLogsDir, "operation"),
 		SshChangedAt:           filepath.Join(StateDir, "ssh-changed-at"),
 		SshRootPasswordResetAt: filepath.Join(StateDir, "ssh-root-password-reset-at"),
 		PanelCredentials:       filepath.Join(ConfigDir, "panel-credentials.json"),
