@@ -98,10 +98,10 @@ export type ImagePullProgress = {
 /** 容器资源采样的单项（事件 container/sample 的载荷成员）。 */
 export type ContainerSample = {
   containerId: string
-  /** CPU 占用百分比。 */
-  cpuPercent: number
-  /** 内存占用（MB）。 */
-  memMb: number
+  /** 最近一次有效 CPU 占用百分比。 */
+  cpuPercent?: number
+  /** 最近一次有效内存占用（MB）。 */
+  memMb?: number
 }
 
 /** 创建容器的输入：界面表单收集后经 adapter 提交；name 留空由实现按镜像名生成唯一名。 */

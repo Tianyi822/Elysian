@@ -1,4 +1,4 @@
-import type { Container, ContainerStatus } from '../container/containers.ts'
+import type { Container, ContainerSample, ContainerStatus } from '../container/containers.ts'
 import type { AgentStatus, ApprovalOutcome, Severity } from './enums.ts'
 
 /** 事件分发模式，与 Cordis 的 @mode 约定一致。 */
@@ -60,8 +60,8 @@ export interface Events {
   }
   /** @mode emit */
   'container/sample': {
-    /** 全部运行中容器的资源采样；停止/重启中的容器不在载荷里。 */
-    samples: ReadonlyArray<{ containerId: string; cpuPercent: number; memMb: number }>
+    /** 运行中容器最近一次有效读数，首次采到前对应指标缺省。 */
+    samples: readonly ContainerSample[]
   }
   /** @mode emit */
   'container/updated': { containerId: string; status: ContainerStatus; startedAt: string | null }
