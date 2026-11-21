@@ -1,6 +1,6 @@
 import { useCallback, useState } from 'react'
 import { useGateway } from '../../adapters/GatewayProvider'
-import { TerminalShell } from '../../components/terminal/TerminalShell'
+import { TerminalConnectionStatus, TerminalShell } from '../../components/terminal/TerminalShell'
 import { CommandTerminal } from '../../components/terminal/CommandTerminal'
 import { RawTerminalViewport } from '../../components/terminal/RawTerminalViewport'
 import { clampTerminalFontSize, TERMINAL_FONT_SIZE_DEFAULT } from '../../terminal/terminalFontSize'
@@ -17,9 +17,9 @@ export function TerminalWindow() {
   const real = gateway.containers.terminalMode === 'pty'
   return <TerminalShell title={`${container.name} 终端`} banner={real ? '容器终端' : '演示终端 · 待接入真实执行'} subject={container.name} onClose={() => void closeTerminal(gateway)} interactive={terminal.status === 'connected'} labels={{ close: '关闭终端', confirmTitle: '确认关闭终端？', confirmDescription: '会话历史将不再保留。', confirmCancel: '继续使用', confirmAccept: '确认关闭' }}>
     {terminal.status === 'connecting' && <p role="status" className="p-4 text-sm text-fg-muted">正在连接容器终端…</p>}
-    {terminal.errorMessage && <p role="alert" className="px-4 py-2 text-xs text-danger">{terminal.errorMessage}</p>}
     {terminal.status !== 'connecting' && (real
       ? <RawTerminalViewport sessionKey={`container:${terminal.sessionId}`} interactive={terminal.status === 'connected'} fontSize={fontSize} onFontZoom={zoom} />
       : <CommandTerminal sessionKey={`container:${terminal.sessionId}`} prompt={terminal.prompt ?? '$ '} interactive={terminal.status === 'connected'} fontSize={fontSize} onFontZoom={zoom} inputLabel="命令输入" execute={command => gateway.containers.executeTerminalCommand!(terminal.sessionId, command)} completions={input => gateway.containers.terminalCompletions?.(terminal.sessionId, input) ?? []} />)}
+    {terminal.status === 'error' && <TerminalConnectionStatus message={terminal.errorMessage ?? '连接容器终端失败'} />}
   </TerminalShell>
 }

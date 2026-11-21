@@ -4,7 +4,6 @@ import { deactivateRawTerminal, disposeRawTerminal, rawTerminalRuntime } from '.
 import { CONTAINER_TERMINAL_CLOSE_FALLBACK } from '../utils/containerCopy'
 import { captureAuthGeneration } from '../utils/authGeneration'
 import { messageOf } from '../utils/errorMessage'
-import { useMessageStore } from './messageStore'
 
 export type ContainerTerminalStatus = 'connecting' | 'connected' | 'error'
 
@@ -56,7 +55,6 @@ export function createContainerTerminal(
     deactivateRawTerminal(`container:${sessionId}`)
     const errorMessage = info.reason || hostTerminalCloseMessage(info.code, info.reason, CONTAINER_TERMINAL_CLOSE_FALLBACK)
     set({ terminal: { ...session, status: 'error', errorMessage } })
-    useMessageStore.getState().notify({ tone: 'danger', message: errorMessage })
   }
 
   function applyTerminalFrame(sessionId: string, frame: HostTerminalFrame): void {
@@ -112,7 +110,6 @@ export function createContainerTerminal(
       if (generation !== captureAuthGeneration() || get().terminal?.sessionId !== pendingId) return
       const errorMessage = messageOf(error, '连接容器终端失败')
       set(state => ({ terminal: state.terminal && { ...state.terminal, status: 'error', errorMessage } }))
-      useMessageStore.getState().notify({ tone: 'danger', message: errorMessage })
     }
   }
 

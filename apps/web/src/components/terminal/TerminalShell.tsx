@@ -2,6 +2,15 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { useEffect, useRef, useState, type ReactNode } from 'react'
 import { Button } from '../Button'
 
+export function TerminalConnectionStatus({ message, onRetry }: { message: string; onRetry?: () => void }) {
+  return (
+    <div className="flex shrink-0 items-baseline gap-2 px-3 pb-3 font-mono text-xs leading-5 text-danger">
+      <p role="alert" className="min-w-0 wrap-anywhere">{message}</p>
+      {onRetry && <Button type="button" unstyled onClick={onRetry} className="shrink-0 text-fg-muted underline underline-offset-2 hover:text-fg">重试</Button>}
+    </div>
+  )
+}
+
 /** 弹窗只管理布局和关闭确认；终端内容由第三方组件持有。 */
 export type TerminalShellProps = {
   title: string

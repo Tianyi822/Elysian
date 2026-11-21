@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import type { CommandTerminalProps } from '../../components/terminal/CommandTerminal'
@@ -34,6 +34,32 @@ describe('终端页面集成', () => {
     await user.click(screen.getByRole('button', { name: '关闭 ops@elysian-demo' }))
     await user.click(screen.getByRole('button', { name: '确认关闭' }))
     expect(await screen.findByText('还没有终端会话')).toBeInTheDocument()
+  })
+  it('断线后保留终端，在面板末尾显示原因和重试', async () => {
+    const gateway = createMockGateway()
+    const user = userEvent.setup()
+    renderApp('/terminals', { gateway })
+    const output = await screen.findByRole('log')
+    const panel = screen.getByRole('tabpanel')
+    const id = useTerminalsStore.getState().activeId!
+    act(() => useTerminalsStore.getState().handleClose(id, { code: 4000, reason: '' }))
+    const alert = within(panel).getByRole('alert')
+    expect(alert).toHaveTextContent('终端会话空闲超时，已断开')
+    expect(panel.lastElementChild).toContainElement(alert)
+    expect(within(panel).getByRole('log')).toBe(output)
+    expect(screen.queryByRole('region', { name: '本机终端连接失败' })).not.toBeInTheDocument()
+    await user.click(within(panel).getByRole('button', { name: '重试' }))
+    await waitFor(() => expect(useTerminalsStore.getState().sessions[0]?.status).toBe('connected'))
+    expect(useTerminalsStore.getState().activeId).not.toBe(id)
+    expect(screen.queryByRole('alert')).not.toBeInTheDocument()
+  })
+  it('首次连接失败时直接显示在终端面板内', async () => {
+    const gateway = createMockGateway()
+    vi.spyOn(gateway.terminals, 'connect').mockRejectedValueOnce(new Error('连接超时'))
+    renderApp('/terminals', { gateway })
+    const alert = await screen.findByRole('alert')
+    expect(alert).toHaveTextContent('连接超时')
+    expect(screen.getByRole('tabpanel').lastElementChild).toContainElement(alert)
   })
   it('字体按钮和滚轮共用像素字号', async () => {
     const user = userEvent.setup()

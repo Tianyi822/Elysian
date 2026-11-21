@@ -1,5 +1,4 @@
 import { create } from 'zustand'
-import { useMessageStore } from './messageStore'
 import { isDockerRuntime } from '../utils/isDockerRuntime'
 import { hostTerminalCloseMessage } from '../terminal/terminalCloseMessage'
 import { deactivateRawTerminal, disposeRawTerminal, rawTerminalRuntime } from '../terminal/rawTerminalRuntime'
@@ -80,7 +79,6 @@ export const useTerminalsStore = create<State>((set, get) => ({
       if (operation !== revision || generation !== captureAuthGeneration() || !get().sessions.some(session => session.id === pendingId)) return
       const errorMessage = messageOf(error, '连接本机终端失败')
       set(state => ({ opening: false, sessions: state.sessions.map(session => session.id === pendingId ? { ...session, status: 'error', errorMessage } : session) }))
-      useMessageStore.getState().notify({ tone: 'danger', message: `本机终端连接失败：${errorMessage}` })
     }
   },
   async closeSession(gateway, id) {
@@ -106,6 +104,5 @@ export const useTerminalsStore = create<State>((set, get) => ({
     deactivateRawTerminal(runtimeKey(id))
     const errorMessage = info.reason || hostTerminalCloseMessage(info.code, info.reason)
     set(state => ({ sessions: state.sessions.map(session => session.id === id ? { ...session, status: 'error', errorMessage } : session) }))
-    useMessageStore.getState().notify({ tone: 'danger', message: `本机终端：${errorMessage}` })
   },
 }))

@@ -1,13 +1,13 @@
 import { useCallback, useEffect, useState } from 'react'
 import { useGateway } from '../../adapters/GatewayProvider'
-import { ConfirmCloseDialog } from '../../components/terminal/TerminalShell'
+import { ConfirmCloseDialog, TerminalConnectionStatus } from '../../components/terminal/TerminalShell'
 import {
   clampTerminalFontSize,
   TERMINAL_FONT_SIZE_DEFAULT,
 } from '../../terminal/terminalFontSize'
 import { RawTerminalViewport } from '../../components/terminal/RawTerminalViewport'
 import { CommandTerminal } from '../../components/terminal/CommandTerminal'
-import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
+import { EmptyState, LoadingState } from '../../components/states/StateViews'
 import {
   hostTerminalEmptyDescription,
   useTerminalsStore,
@@ -89,17 +89,6 @@ export function TerminalPage() {
         </div>
       ) : null}
 
-      {active?.status === 'error' ? (
-        <div className="shrink-0 p-2">
-          <ErrorState
-            title="本机终端连接失败"
-            description={active.errorMessage}
-            notify={false}
-            onRetry={() => void reconnect(gateway, active.id)}
-          />
-        </div>
-      ) : null}
-
       {active && active.status !== 'connecting' ? (
         <div
           id={`terminal-panel-${active.id}`}
@@ -116,6 +105,10 @@ export function TerminalPage() {
             inputLabel="命令输入"
             execute={command => gateway.terminals.executeCommand!(active.id, command)}
             completions={input => gateway.terminals.completions?.(active.id, input) ?? []}
+          />}
+          {active.status === 'error' && <TerminalConnectionStatus
+            message={active.errorMessage ?? '连接本机终端失败'}
+            onRetry={() => void reconnect(gateway, active.id)}
           />}
         </div>
       ) : null}
