@@ -13,3 +13,26 @@
   --color: var(--t-fg);
   --background: var(--t-bg);
 }
+
+.elysian-command-terminal .terminal-scroller::-webkit-scrollbar {
+  width: 12px;
+}
+
+.elysian-command-terminal .terminal-scroller::-webkit-scrollbar-thumb {
+  border: 4px solid transparent;
+  border-radius: 999px;
+  background-color: color-mix(in srgb, var(--t-fg-subtle) 72%, transparent);
+  background-clip: padding-box;
+}
+
+.elysian-command-terminal .terminal-scroller::-webkit-scrollbar-thumb:is(:hover, :active) {
+  border-inline-width: 3px;
+  background-color: var(--t-fg-muted);
+}
+
+@supports not selector(::-webkit-scrollbar) {
+  .elysian-command-terminal .terminal-scroller {
+    scrollbar-width: thin;
+    scrollbar-color: var(--t-fg-subtle) transparent;
+  }
+}

@@ -1,6 +1,21 @@
-/* 覆盖 xterm 默认的黑色滚动视口，让透明画布沿用面板表面。 */
+/* xterm 6 scrolls through its separate scrollable element. */
 .elysian-raw-terminal .xterm .xterm-viewport {
   background-color: transparent;
+  scrollbar-width: none;
+}
+
+/* Keep xterm's drag target while drawing a narrower thumb inside it. */
+.elysian-raw-terminal .xterm .xterm-scrollable-element > .scrollbar.vertical > .slider {
+  box-sizing: border-box;
+  border: 4px solid transparent;
+  border-radius: 999px;
+  background-color: color-mix(in srgb, var(--t-fg-subtle) 72%, transparent);
+  background-clip: padding-box;
+}
+
+.elysian-raw-terminal .xterm .xterm-scrollable-element > .scrollbar.vertical > .slider:is(:hover, .active) {
+  border-inline-width: 3px;
+  background-color: var(--t-fg-muted);
 }
 
 .elysian-raw-terminal .xterm .composition-view {
