@@ -2,6 +2,8 @@ package docker
 
 import (
 	"context"
+	"io"
+	"net/http"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -292,6 +294,31 @@ func TestHubSample(t *testing.T) {
 	}
 	// 上一拍未完成跳过本拍。
 	_ = clock
+}
+
+func TestHubSampleThroughUnixTransport(t *testing.T) {
+	id := strings.Repeat("c", 64)
+	transport := streamTransportFixture(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case seam.EngineAPIPrefix + "/containers/json":
+			_, _ = io.WriteString(w, listOf(`{"Id":"`+id+`","State":"running"}`))
+		case seam.EngineAPIPrefix + "/containers/" + id + "/stats":
+			time.Sleep(10 * time.Millisecond)
+			_, _ = io.WriteString(w, statsJSON(
+				cpuBlock("1000", "2000", "2", ""),
+				cpuBlock("1000", "1000", "2", ""),
+				memBlock(tos(4*mib), "", "", "")))
+		default:
+			http.NotFound(w, r)
+		}
+	})
+	hub := newEventsHub(eventsHubConfig{transport: transport})
+	hub.sampleOnce()
+	frame := hub.lastSampleFrame
+	want := `{"containerId":"` + id + `","cpuPercent":0,"memMb":4}`
+	if frame == nil || !strings.Contains(frame.data, want) {
+		t.Fatalf("expected idle CPU and memory sample from the Unix transport, got %+v", frame)
+	}
 }
 
 func TestHubReplayFromSampleFrameID(t *testing.T) {

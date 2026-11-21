@@ -25,7 +25,7 @@ const (
 	maxSubscribers      = 8
 	backoffInitialMs    = 1000
 	backoffMaxMs        = 30000
-	statsTimeout        = 2000
+	statsTimeout        = 2 * time.Second
 	hubListTimeout      = 10 * time.Second
 	hubJSONMaxBytes     = 32 * 1024 * 1024
 )
