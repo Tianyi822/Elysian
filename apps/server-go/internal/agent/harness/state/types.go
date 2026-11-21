@@ -52,7 +52,6 @@ type Run struct {
 	Diagnosis        *RunDiagnosis     `json:"diagnosis,omitempty"`
 	CompletionChecks int               `json:"completionChecks,omitempty"`
 	Wait             *RunWait          `json:"wait,omitempty"`
-	CurrentReport    *CurrentReport    `json:"currentReport,omitempty"`
 	Report           *RunReport        `json:"report,omitempty"`
 	FailureAnalysis  string            `json:"failureAnalysis,omitempty"`
 	RecoveryPolicy   string            `json:"recoveryPolicy,omitempty"`
@@ -310,13 +309,6 @@ type TerminalResult struct {
 	Origin  string     `json:"origin"`
 	Content string     `json:"content"`
 	Report  *RunReport `json:"report,omitempty"`
-}
-
-// CurrentReport is a read projection. Historical terminal reports remain immutable.
-type CurrentReport struct {
-	EvidenceVersion string `json:"evidenceVersion"`
-	AsOf            string `json:"asOf"`
-	*RunReport
 }
 
 type ReportStep struct {

@@ -114,7 +114,6 @@ type RunReader interface {
 	Continuation(ctx context.Context, r Run) (*Continuation, error)
 	UnsettledRun(ctx context.Context, id string) (bool, error)
 	ReadRun(ctx context.Context, id string) (Run, error)
-	ProjectCurrentReport(ctx context.Context, r *Run) error
 	TerminalResult(ctx context.Context, r Run) (*TerminalResult, error)
 	ReservedResultBytes(ctx context.Context, runID string, count *int64) error
 	QueuedRunCount(ctx context.Context, count *int) error

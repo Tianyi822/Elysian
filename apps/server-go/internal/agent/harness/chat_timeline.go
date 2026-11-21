@@ -56,10 +56,6 @@ func (m *Manager) ChatSnapshot(ctx context.Context, id string) (hstate.ChatOutpu
 		if err != nil {
 			return hstate.ChatOutput{}, err
 		}
-		if err = projectCurrentReport(ctx, m.store, &run); err != nil {
-			return hstate.ChatOutput{}, err
-		}
-		timeline.CurrentReport = run.CurrentReport
 		if !hstate.Terminal(run.Status) {
 			timeline.Wait = run.Wait
 		}

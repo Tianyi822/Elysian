@@ -301,7 +301,6 @@ func saveRun(ctx context.Context, tx *sql.Tx, r *Run) error {
 	copy := *r
 	copy.Task = nil
 	copy.Continuation = nil
-	copy.CurrentReport = nil
 	b, err := json.Marshal(copy)
 	if err != nil {
 		return err

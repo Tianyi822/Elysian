@@ -75,7 +75,6 @@ type WorkflowNodeExecution = state.WorkflowNodeExecution
 type WorkflowExecutionTree = state.WorkflowExecutionTree
 type StorageHealth = state.StorageHealth
 type TerminalResult = state.TerminalResult
-type CurrentReport = state.CurrentReport
 type ReportStep = state.ReportStep
 type RunReport = state.RunReport
 type ToolInventory = state.ToolInventory

@@ -697,9 +697,6 @@ func (s *store) latestRun(ctx context.Context, taskID string) (*Run, error) {
 		run.Task = nil
 		if err == nil {
 			run.Continuation, err = continuation(ctx, s.reader(ctx), run)
-			if err == nil {
-				err = projectCurrentReport(ctx, s.reader(ctx), &run)
-			}
 		}
 		return &run, err
 	})

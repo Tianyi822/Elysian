@@ -4,7 +4,6 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
-	"fmt"
 	_ "image/jpeg"
 	_ "image/png"
 	"strings"
@@ -237,30 +236,6 @@ func (s *store) saveTerminalResult(ctx context.Context, tx *sql.Tx, r *Run) erro
 }
 
 type TerminalResult = state.TerminalResult
-
-type CurrentReport = state.CurrentReport
-
-func projectCurrentReport(ctx context.Context, q reportReader, r *Run) error {
-	if !state.EvidenceRecoveryRun(*r) || !state.Terminal(r.Status) {
-		return nil
-	}
-	latest := *r
-	latest.Report = nil
-	report, err := buildRunReport(ctx, q, latest)
-	if err != nil {
-		return err
-	}
-	var seq int64
-	if err = q.QueryRowContext(ctx, "SELECT COALESCE(MAX(seq),0) FROM run_events WHERE run_id=?", r.ID).Scan(&seq); err != nil {
-		return err
-	}
-	var asOf string
-	if err = q.QueryRowContext(ctx, "SELECT COALESCE(json_extract(document,'$.at'),'') FROM run_events WHERE run_id=? ORDER BY seq DESC LIMIT 1", r.ID).Scan(&asOf); err != nil {
-		return err
-	}
-	r.CurrentReport = &CurrentReport{EvidenceVersion: fmt.Sprintf("%s:%d:%s", r.ID, seq, state.DigestJSON(report)), AsOf: asOf, RunReport: report}
-	return nil
-}
 
 func buildRunReport(ctx context.Context, q reportReader, r Run) (*RunReport, error) {
 	if r.Report != nil {

@@ -418,9 +418,6 @@ func (m *Manager) Get(ctx context.Context, id string) (Run, error) {
 		r, err := readView(ctx, m.store).Get(ctx, id)
 		if err == nil {
 			r.Continuation, err = continuation(ctx, m.store, r)
-			if err == nil {
-				err = projectCurrentReport(ctx, m.store, &r)
-			}
 		}
 		return r, err
 	})

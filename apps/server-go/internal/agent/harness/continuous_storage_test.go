@@ -1,7 +1,6 @@
 package harness
 
 import (
-	"bytes"
 	"context"
 	"encoding/json"
 	"strings"
@@ -134,13 +133,10 @@ func TestModelFactAndHistoricalReportRemainImmutableAfterVerification(t *testing
 		t.Fatal(err)
 	}
 	latest, _ := s.get(context.Background(), run.ID)
-	if err := projectCurrentReport(context.Background(), s, &latest); err != nil {
-		t.Fatal(err)
-	}
 	current, _ := json.Marshal(latest.Report)
 	var after string
 	s.db.QueryRow("SELECT json_extract(document,'$.modelContent') FROM calls WHERE id=?", call.ID).Scan(&after)
-	if content == "" || content != after || !bytes.Equal(report, current) || latest.CurrentReport == nil || latest.CurrentReport.Completed != 1 || latest.CurrentReport.Unconfirmed != 0 || latest.Report.Unconfirmed != 1 || latest.Status != StateInterrupted {
+	if content == "" || content != after || string(report) != string(current) || latest.Report.Unconfirmed != 1 || latest.Status != StateInterrupted {
 		t.Fatalf("核实改写了原模型事实或终态：%+v", latest)
 	}
 }

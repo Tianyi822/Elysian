@@ -165,10 +165,6 @@ func readBarrier(ctx context.Context, q sessionstore.ReadView, id string) (Execu
 	return readView(ctx, q).ReadBarrier(ctx, id)
 }
 
-func projectCurrentReport(ctx context.Context, q sessionstore.ReadView, r *Run) error {
-	return readView(ctx, q).ProjectCurrentReport(ctx, r)
-}
-
 func cancelUserInputs(ctx context.Context, tx sessionstore.Tx, runID string, endedAt string) error {
 	return tx.CancelUserInputs(ctx, runID, endedAt)
 }

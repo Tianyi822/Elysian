@@ -196,7 +196,6 @@ type ChatCacheHitUsage struct {
 
 type ChatTimelineSnapshot struct {
 	Wait             *RunWait            `json:"wait,omitempty"`
-	CurrentReport    *CurrentReport      `json:"currentReport,omitempty"`
 	BlockingRecovery []BlockingRecovery  `json:"blockingRecovery"`
 	Recovery         *RunRecovery        `json:"recovery,omitempty"`
 	RecoveryPolicy   string              `json:"recoveryPolicy,omitempty"`

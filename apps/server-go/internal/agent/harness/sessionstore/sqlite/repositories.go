@@ -392,15 +392,6 @@ func (v *view) ReadBarrier(ctx context.Context, id string) (ExecutionBarrier, er
 	return viewValue(ctx, v, "ReadBarrier", func(ctx context.Context) (ExecutionBarrier, error) { return readBarrier(ctx, v.query(ctx), id) })
 }
 
-func (v *view) ProjectCurrentReport(ctx context.Context, r *Run) error {
-	err := v.read(ctx, "ProjectCurrentReport", func(ctx context.Context) error {
-		var readErr error
-		readErr = projectCurrentReport(ctx, v.query(ctx), r)
-		return readErr
-	})
-	return normalizeError("ProjectCurrentReport", err, v.tx != nil)
-}
-
 func (v *transaction) SaveTerminalResult(ctx context.Context, r *Run) error {
 	err := v.store.saveTerminalResult(ctx, v.tx, r)
 	return normalizeError("SaveTerminalResult", err, true)
