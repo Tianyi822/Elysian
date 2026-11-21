@@ -25,7 +25,7 @@ const (
 	maxSubscribers      = 8
 	backoffInitialMs    = 1000
 	backoffMaxMs        = 30000
-	statsTimeout        = 2 * time.Second
+	statsTimeout        = 4 * time.Second
 	hubListTimeout      = 10 * time.Second
 	hubJSONMaxBytes     = 32 * 1024 * 1024
 )
@@ -76,6 +76,7 @@ type eventsHub struct {
 	backoffMs          int
 	dockerLive         bool
 	statsInFlight      bool
+	lastSamples        map[string]containerSampleItem
 	lastSampleFrame    *hubFrame
 	nonSampleBuffer    []hubFrame
 	containerDebounce  map[string]func()
@@ -188,9 +189,9 @@ type containerCreatedPayload struct {
 }
 
 type containerSampleItem struct {
-	ContainerID string  `json:"containerId"`
-	CPUPercent  float64 `json:"cpuPercent"`
-	MemMB       float64 `json:"memMb"`
+	ContainerID string   `json:"containerId"`
+	CPUPercent  *float64 `json:"cpuPercent,omitempty"`
+	MemMB       *float64 `json:"memMb,omitempty"`
 }
 
 type containerSamplePayload struct {
@@ -609,46 +610,54 @@ func (h *eventsHub) sampleOnce() {
 		}
 	}
 
-	samples, _ := mapWithConcurrency(runningIDs, statsConcurrency, func(id string, _ int) (containerSampleResult, error) {
-		response, err := h.cfg.transport.Request(context.Background(), seam.EngineRequest{
-			Method:   http.MethodGet,
-			Path:     "/containers/" + encodeEngineID(id) + "/stats",
-			Query:    url.Values{"stream": {"0"}},
-			Timeout:  statsTimeout,
-			MaxBytes: hubJSONMaxBytes,
-		})
-		if err != nil {
-			return containerSampleResult{skip: true}, nil
-		}
-		if response.Status < 200 || response.Status >= 300 {
-			return containerSampleResult{skip: true}, nil
-		}
-		value, err := decodeOrderedJSON(response.Body)
-		if err != nil {
-			return containerSampleResult{skip: true}, nil
-		}
-		cpu, cpuOK := cpuPercent(value)
-		mem, memOK := memoryMb(value)
-		if !cpuOK || !memOK {
-			return containerSampleResult{skip: true}, nil
-		}
-		return containerSampleResult{item: containerSampleItem{ContainerID: stripSha256Prefix(id), CPUPercent: cpu, MemMB: mem}}, nil
+	samples, _ := mapWithConcurrency(runningIDs, statsConcurrency, func(id string, _ int) (containerSampleItem, error) {
+		return h.readContainerSample(id), nil
 	})
+	h.mu.Lock()
+	defer h.mu.Unlock()
+	// Rebuild from the running IDs so stopped and removed containers leave the cache.
+	next := make(map[string]containerSampleItem, len(samples))
 	valid := make([]containerSampleItem, 0, len(samples))
 	for _, sample := range samples {
-		if sample.skip {
-			continue
+		previous := h.lastSamples[sample.ContainerID]
+		if sample.CPUPercent == nil {
+			sample.CPUPercent = previous.CPUPercent
 		}
-		valid = append(valid, sample.item)
+		if sample.MemMB == nil {
+			sample.MemMB = previous.MemMB
+		}
+		if sample.CPUPercent != nil || sample.MemMB != nil {
+			next[sample.ContainerID] = sample
+			valid = append(valid, sample)
+		}
 	}
-	h.mu.Lock()
+	h.lastSamples = next
 	h.emitLocked("container/sample", containerSamplePayload{Samples: valid}, true)
-	h.mu.Unlock()
 }
 
-type containerSampleResult struct {
-	item containerSampleItem
-	skip bool
+func (h *eventsHub) readContainerSample(id string) containerSampleItem {
+	sample := containerSampleItem{ContainerID: stripSha256Prefix(id)}
+	response, err := h.cfg.transport.Request(context.Background(), seam.EngineRequest{
+		Method:   http.MethodGet,
+		Path:     "/containers/" + encodeEngineID(id) + "/stats",
+		Query:    url.Values{"stream": {"0"}},
+		Timeout:  statsTimeout,
+		MaxBytes: hubJSONMaxBytes,
+	})
+	if err != nil || response.Status < 200 || response.Status >= 300 {
+		return sample
+	}
+	value, err := decodeOrderedJSON(response.Body)
+	if err != nil {
+		return sample
+	}
+	if cpu, ok := cpuPercent(value); ok {
+		sample.CPUPercent = &cpu
+	}
+	if mem, ok := memoryMb(value); ok {
+		sample.MemMB = &mem
+	}
+	return sample
 }
 
 // startSampleTimerLocked 立即采一次，然后每 3s 一拍（自续定时器，可取消）。

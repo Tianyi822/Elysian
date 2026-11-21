@@ -3,7 +3,7 @@ package docker
 import "math"
 
 // stats JSON 的 CPU% 与内存 MB 计算（dockerStats.ts 逐字移植）。
-// 语义要点：缺 precpu 不入样；systemDelta ≤ 0 不入样；差值 × 在线核数 × 100 后
+// 语义要点：缺 precpu 或 systemDelta ≤ 0 时无法计算 CPU；差值 × 在线核数 × 100 后
 // 钳 0–100 留一位小数；online_cpus 缺失时用 percpu_usage 长度；内存缓存按
 // inactive_file → total_inactive_file → cache 三级回退，下限 0，四舍五入 MiB。
 
@@ -31,14 +31,11 @@ func readCpuBlock(block any) (cpuStatsBlock, bool) {
 	}
 
 	online, hasOnline := asNumber(mustGet(record, "online_cpus"))
-	hasOnline = hasOnline && isFiniteNumber(online)
-	if !hasOnline {
+	if !hasOnline || !isFiniteNumber(online) || online <= 0 {
+		online = 0
 		if percpu, ok := asArray(mustGet(cpuUsage, "percpu_usage")); ok {
-			online, hasOnline = float64(len(percpu)), true
+			online = float64(len(percpu))
 		}
-	}
-	if !hasOnline || online <= 0 {
-		return cpuStatsBlock{}, false
 	}
 	return cpuStatsBlock{totalUsage: totalUsage, systemUsage: systemUsage, online: online}, true
 }
@@ -55,7 +52,7 @@ func cpuPercent(current any) (float64, bool) {
 	}
 	currentCpu, ok1 := readCpuBlock(mustGet(record, "cpu_stats"))
 	preCpu, ok2 := readCpuBlock(mustGet(record, "precpu_stats"))
-	if !ok1 || !ok2 {
+	if !ok1 || !ok2 || currentCpu.online <= 0 {
 		return 0, false
 	}
 

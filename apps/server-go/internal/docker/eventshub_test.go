@@ -321,6 +321,55 @@ func TestHubSampleThroughUnixTransport(t *testing.T) {
 	}
 }
 
+func TestHubReplaysLastValidReadingsAcrossPartialSamples(t *testing.T) {
+	firstID := strings.Repeat("a", 64)
+	secondID := strings.Repeat("b", 64)
+	round := 1
+	engine := newFakeEngine(func(call engineCall) (int, string, bool) {
+		current := cpuBlock("1100", "2000", "2", "")
+		previous := cpuBlock("1000", "1000", "", "")
+		switch call.Path {
+		case "/containers/json":
+			first := `{"Id":"` + firstID + `","State":"running"}`
+			if round == 3 {
+				return 200, listOf(first, `{"Id":"`+secondID+`","State":"exited"}`), true
+			}
+			return 200, listOf(first, `{"Id":"`+secondID+`","State":"running"}`), true
+		case "/containers/" + firstID + "/stats":
+			if round == 1 {
+				return 200, statsJSON(current, `{}`, memBlock(tos(4*mib), "", "", "")), true
+			}
+			return 200, statsJSON(current, previous, `{}`), true
+		case "/containers/" + secondID + "/stats":
+			if round != 1 {
+				return 503, "{}", true
+			}
+			return 200, statsJSON(current, previous, memBlock(tos(8*mib), "", "", "")), true
+		}
+		return 404, "{}", true
+	})
+	hub, _ := newHubWithClock(engine)
+	reading := func(id, metrics string) string {
+		return `{"containerId":"` + id + `",` + metrics + `}`
+	}
+	for _, want := range []string{
+		reading(firstID, `"memMb":4`) + "," + reading(secondID, `"cpuPercent":20,"memMb":8`),
+		reading(firstID, `"cpuPercent":20,"memMb":4`) + "," + reading(secondID, `"cpuPercent":20,"memMb":8`),
+		reading(firstID, `"cpuPercent":20,"memMb":4`),
+		reading(firstID, `"cpuPercent":20,"memMb":4`),
+	} {
+		hub.sampleOnce()
+		var replay string
+		hub.mu.Lock()
+		hub.deliverReplayLocked("", func(_, _, data string) { replay = data })
+		hub.mu.Unlock()
+		if !strings.Contains(replay, `"samples":[`+want+`]`) {
+			t.Fatalf("round %d: got %s, want samples [%s]", round, replay, want)
+		}
+		round++
+	}
+}
+
 func TestHubReplayFromSampleFrameID(t *testing.T) {
 	engine := newFakeEngine(func(call engineCall) (int, string, bool) {
 		if strings.HasSuffix(call.Path, "/stats") {
