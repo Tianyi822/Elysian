@@ -3,9 +3,11 @@ import type { ElysianGateway } from '../contracts/adapters'
 import type { ContainerTerminalSession } from './containerTerminal'
 import { getLastContainerSample, onStreamEvent } from './eventStreamStore'
 
+export type ContainerSamples = Readonly<Record<string, Omit<ContainerSample, 'containerId'>>>
+
 type EventState = {
   containers: readonly Container[]
-  samples: Readonly<Record<string, { cpuPercent: number; memMb: number }>>
+  samples: ContainerSamples
   detailContainerId?: string
   terminal?: ContainerTerminalSession
 }
@@ -24,7 +26,7 @@ export function createContainerEvents({ get, set, getGateway, onResync, releaseT
   function applySamples(samples: readonly ContainerSample[]): void {
     set({
       samples: Object.fromEntries(
-        samples.map((sample) => [sample.containerId, { cpuPercent: sample.cpuPercent, memMb: sample.memMb }]),
+        samples.map(({ containerId, ...usage }) => [containerId, usage]),
       ),
     })
   }

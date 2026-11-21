@@ -11,7 +11,7 @@ import {
 import { useMessageStore } from './messageStore'
 import { messageOf } from '../utils/errorMessage'
 import { createContainerImages, type ContainerImagesState } from './containerImages'
-import { createContainerEvents } from './containerEvents'
+import { createContainerEvents, type ContainerSamples } from './containerEvents'
 import { createContainerInventory } from './containerInventory'
 import { createContainerTerminal, type ContainerTerminalState } from './containerTerminal'
 import { createTabMemorySlice, type TabMemoryState } from './tabMemoryStore'
@@ -78,7 +78,7 @@ export const useContainersStore = create<TabMemoryState<ContainerView> & Contain
   liveStatus: 'live' | 'connecting'
   errorMessage?: string
   containers: readonly Container[]
-  samples: Readonly<Record<string, { cpuPercent: number; memMb: number }>>
+  samples: ContainerSamples
   statusFilter: ContainerStatus | 'all'
   search: string
   detailContainerId?: string
@@ -126,10 +126,7 @@ export const useContainersStore = create<TabMemoryState<ContainerView> & Contain
   },
 
   setLiveStatus(liveStatus) {
-    set({
-      liveStatus,
-      ...(liveStatus === 'connecting' ? { samples: {} } : {}),
-    })
+    set({ liveStatus })
   },
 
   load(gateway) {
@@ -147,8 +144,8 @@ export const useContainersStore = create<TabMemoryState<ContainerView> & Contain
       try {
         await read
         if (!current()) return
-        set({ status: 'ready' })
         events.replayLatestSample()
+        set({ status: 'ready' })
       } catch (error) {
         if (current()) set({ status: hadData ? 'ready' : 'error', errorMessage: messageOf(error, '读取容器数据失败') })
       } finally { if (pendingLoad === operation) pendingLoad = undefined }

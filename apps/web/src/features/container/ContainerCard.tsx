@@ -53,7 +53,7 @@ function confirmCopy(action: ConfirmAction, name: string) {
 
 export function ContainerCard({ container }: { container: Container }) {
   const gateway = useGateway()
-  const sample = useContainersStore((s) => s.samples[container.id])
+  const sample = useContainersStore((s) => container.status === 'running' ? s.samples[container.id] : undefined)
   const image = useContainersStore((s) => s.images.find((i) => i.id === container.imageId))
   const busy = useContainersStore((s) => s.busyActions.some((key) => key.startsWith(`${container.id}:`)))
   const removing = useContainersStore((s) => s.busyActions.includes(`${container.id}:remove`))
@@ -72,8 +72,8 @@ export function ContainerCard({ container }: { container: Container }) {
   const pausedBlocked = container.status === 'paused'
   const pausedTitle = '容器已暂停，面板暂不支持恢复'
   const actionsDisabled = busy || container.status === 'restarting' || pausedBlocked
-  const cpu = sample ? `${sample.cpuPercent}%` : '—'
-  const memory = sample ? `${sample.memMb} MB` : '—'
+  const cpu = sample?.cpuPercent !== undefined ? `${sample.cpuPercent}%` : '—'
+  const memory = sample?.memMb !== undefined ? `${sample.memMb} MB` : '—'
 
   return (
     <article

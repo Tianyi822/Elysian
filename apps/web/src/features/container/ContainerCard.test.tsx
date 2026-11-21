@@ -45,6 +45,16 @@ const localBindContainer: Container = {
 }
 
 describe('ContainerCard 契约展示', () => {
+  it('独立显示 CPU 和内存，也显示真实的零值', () => {
+    renderCard(localBindContainer)
+    act(() => useContainersStore.setState({ samples: { [localBindContainer.id]: { memMb: 16 } } }))
+    expect(screen.getByText('16 MB')).toBeInTheDocument()
+    expect(screen.getByText('—', { selector: 'span.font-medium' })).toBeInTheDocument()
+    act(() => useContainersStore.setState({ samples: { [localBindContainer.id]: { cpuPercent: 0, memMb: 0 } } }))
+    expect(screen.getByText('0%')).toBeInTheDocument()
+    expect(screen.getByText('0 MB')).toBeInTheDocument()
+  })
+
   it('已暂停时除详情外操作禁用，并提示面板不支持恢复', () => {
     renderCard(pausedContainer)
     const card = screen.getByRole('article', { name: 'paused-demo' })

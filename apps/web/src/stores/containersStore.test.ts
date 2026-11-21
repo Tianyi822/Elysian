@@ -249,12 +249,23 @@ describe('containersStore', () => {
     expect(useContainersStore.getState().images).toHaveLength(1)
   })
 
-  it('setLiveStatus(connecting) 清空 samples', () => {
-    useContainersStore.setState({
-      samples: { 'ctr-nginx-proxy': { cpuPercent: 9, memMb: 10 } },
-    })
-    useContainersStore.getState().setLiveStatus('connecting')
-    expect(useContainersStore.getState().samples).toEqual({})
+  it('首屏回放多个容器的读数，重连和刷新列表保留这些读数', async () => {
+    const [first, second] = CONTAINERS.filter((row) => row.status === 'running')
+    const gateway = gatewayWith()
+    const store = useContainersStore.getState()
+    const samples = {
+      [first!.id]: { cpuPercent: 0, memMb: 10 },
+      [second!.id]: { memMb: 12 },
+    }
+    emitToStore?.(event('container/sample', {
+      samples: Object.entries(samples).map(([containerId, usage]) => ({ containerId, ...usage })),
+    }))
+    await store.load(gateway)
+    expect(useContainersStore.getState().samples).toEqual(samples)
+    store.setLiveStatus('connecting')
+    expect(useContainersStore.getState().samples).toEqual(samples)
+    await store.load(gateway)
+    expect(useContainersStore.getState().samples).toEqual(samples)
   })
 
   it('Docker 运行时启停成功通知不含 mock 标注', () => {
