@@ -9,18 +9,31 @@ export BUN_CONFIG_REGISTRY="${ELYSIAN_BUN_REGISTRY:-${BUN_CONFIG_REGISTRY:-https
 export GOFLAGS="${GOFLAGS:--trimpath -p=1}"
 export GOMAXPROCS="${GOMAXPROCS:-2}"
 export GOMEMLIMIT="${GOMEMLIMIT:-768MiB}"
-[ "$#" -eq 3 ] || { echo '用法：build-release.sh <源码目录> <产物目录> <提交标识>' >&2; exit 1; }
+usage() {
+  echo '用法：build-release.sh [--web-only|--go-only] <源码目录> <产物目录> <提交标识>' >&2
+  exit 1
+}
+mode=all
+case "${1:-}" in
+  --web-only|--go-only) mode="${1#--}"; shift ;;
+  --*) usage ;;
+esac
+[ "$#" -eq 3 ] || usage
 SOURCE_DIR="$1"
 OUTPUT_DIR="$2"
 BUILD_COMMIT="$3"
 BUILD_STARTED_SECONDS=$SECONDS
-trap 'printf "发布构建脚本用时：%s 秒\n" "$((SECONDS - BUILD_STARTED_SECONDS))"' EXIT
+trap 'printf "发布构建 %s 用时：%s 秒\n" "$mode" "$((SECONDS - BUILD_STARTED_SECONDS))"' EXIT
 [ -f "$SOURCE_DIR/package.json" ] && [ -f "$SOURCE_DIR/bun.lock" ] && [ -f "$SOURCE_DIR/apps/server-go/go.mod" ] || { echo '源码缺少构建文件或锁文件' >&2; exit 1; }
-mkdir -p "$OUTPUT_DIR"
 cd "$SOURCE_DIR"
-bun install --frozen-lockfile --registry="$BUN_CONFIG_REGISTRY"
-ELYSIAN_BUILD_COMMIT="$BUILD_COMMIT" ELYSIAN_DOCKER=1 bun run build
+if [ "$mode" != go-only ]; then
+  bun install --frozen-lockfile --registry="$BUN_CONFIG_REGISTRY"
+  ELYSIAN_BUILD_COMMIT="$BUILD_COMMIT" ELYSIAN_DOCKER=1 bun run build
+fi
 [ -f apps/web/dist/index.html ] || { echo '前端产物缺少 index.html' >&2; exit 1; }
+[ "$mode" != web-only ] || exit 0
+
+mkdir -p "$OUTPUT_DIR"
 rm -rf apps/server-go/web/dist
 mkdir -p apps/server-go/web/dist
 cp -a apps/web/dist/. apps/server-go/web/dist/

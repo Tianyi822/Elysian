@@ -83,7 +83,7 @@ try {
   const origin = `http://127.0.0.1:${server.port}`
   const cache = join(root, 'persistent-cache'), bin = join(root, 'bin')
   await mkdir(bin)
-  await writeFile(join(bin, 'go'), `#!/bin/bash\nif [ "$1" = build ]; then shift; exec ${realGo} build -x "$@" 2>"$CACHE_TEST_GO_TRACE"; fi\nexec ${realGo} "$@"\n`, { mode: 0o755 })
+  await writeFile(join(bin, 'go'), `#!/bin/bash\nif [ "$1" = build ]; then shift; exec ${realGo} build -x "$@" 2>>"$CACHE_TEST_GO_TRACE"; fi\nexec ${realGo} "$@"\n`, { mode: 0o755 })
   const environment = {
     PATH: `${bin}:${process.env.PATH}`, GOENV: 'off', GOTOOLCHAIN: 'local', GOSUMDB: 'off', GONOPROXY: 'none',
     ELYSIAN_GOPROXY: `${origin}/go`, ELYSIAN_BUN_REGISTRY: origin,
@@ -91,7 +91,7 @@ try {
   }
   async function source(name, version = '1.0.0', stable = 'stable1') {
     const src = join(root, name, 'source')
-    for (const dir of ['apps/web', 'apps/server-go/cmd/elysian', 'apps/server-go/internal/panel', 'apps/server-go/internal/stable', 'apps/server-go/web']) await mkdir(join(src, dir), { recursive: true })
+    for (const dir of ['apps/web', 'apps/server-go/cmd/elysian', 'apps/server-go/cmd/platform-helper', 'apps/server-go/internal/panel', 'apps/server-go/internal/stable', 'apps/server-go/web']) await mkdir(join(src, dir), { recursive: true })
     await writeFile(join(src, 'package.json'), JSON.stringify({ name: 'build-cache-fixture', private: true, scripts: { build: 'bun frontend.mjs' }, dependencies: { 'elysian-cache-fixture': version } }))
     await writeFile(join(src, 'frontend.mjs'), `await Bun.write('apps/web/dist/index.html', process.env.ELYSIAN_BUILD_COMMIT)\n`)
     await writeFile(join(src, 'apps/server-go/go.mod'), `module elysian/server\n\ngo 1.23.0\n\nrequire example.test/cachedep v${version}\n`)
@@ -100,13 +100,14 @@ try {
     await writeFile(join(src, 'apps/server-go/internal/stable/stable.go'), `package stable\nimport "example.test/cachedep"\nfunc Value() string { return cachedep.Value + "-${stable}" }\n`)
     await writeFile(join(src, 'apps/server-go/web/embed.go'), 'package web\nimport "embed"\n//go:embed all:dist\nvar FS embed.FS\n')
     await writeFile(join(src, 'apps/server-go/cmd/elysian/main.go'), 'package main\nimport ("fmt"; "elysian/server/internal/panel"; "elysian/server/internal/stable"; "elysian/server/web")\nfunc main() { front,_:=web.FS.ReadFile("dist/index.html");fmt.Printf("%s|%s|%s|%s",panel.Commit,panel.BuildTime,stable.Value(),front) }\n')
+    await writeFile(join(src, 'apps/server-go/cmd/platform-helper/main.go'), 'package main\nfunc main() {}\n')
     // 用独立缓存准备锁文件，不能提前预热被测持久缓存。
     await run(['bun', 'install', '--lockfile-only', '--cwd', src, '--registry', origin], { BUN_INSTALL_CACHE_DIR: join(root, 'lockfile-cache') })
     return src
   }
-  async function build(src, commit, buildScript = script, success = true) {
+  async function build(src, commit, buildScript = script, success = true, args = []) {
     const output = join(src, '../artifact'), trace = join(src, '../go-trace.log')
-    const result = await run(['bash', buildScript, src, output, commit], { ...environment, CACHE_TEST_GO_TRACE: trace }, success)
+    const result = await run(['bash', buildScript, ...args, src, output, commit], { ...environment, CACHE_TEST_GO_TRACE: trace }, success)
     if (!success) { assert.notEqual(result.code, 0); return }
     const executable = await run([join(output, 'elysian')])
     const fields = executable.stdout.split('|')
@@ -147,6 +148,15 @@ try {
   assert.deepEqual(downloads, beforeFailure)
   assert((await readFile(join(cache, 'go-mod/example.test/cachedep@v1.1.0/value.go'), 'utf8')).includes('1.1.0'))
   console.log('✓ 失败及临时目录清理保留持久缓存')
+
+  const split = await source('split')
+  const splitCommit = 'f'.repeat(40)
+  await build(split, splitCommit, script, false, ['--go-only'])
+  await run(['bash', script, '--web-only', split, join(split, '../artifact'), splitCommit], environment)
+  await writeFile(join(split, 'frontend.mjs'), 'process.exit(7)\n')
+  const reused = await build(split, splitCommit, script, true, ['--go-only'])
+  assert.equal(reused.value, '1.0.0-stable1')
+  console.log('✓ Go 打包需要前端产物，且复用已有产物时不会重跑前端构建')
 } finally {
   server?.stop(true)
   await rm(root, { recursive: true, force: true })

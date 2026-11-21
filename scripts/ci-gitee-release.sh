@@ -15,7 +15,15 @@ fi
 [ "$(git rev-parse "refs/tags/$tag^{commit}")" = "$commit" ] || { echo '发版标签与完整提交不符' >&2; exit 1; }
 source_dir="$PWD"
 tools_dir="$(mktemp -d /tmp/elysian-ci-tools.XXXXXX)"
-trap 'rm -rf "$tools_dir"' EXIT
+web_pid=
+cleanup() {
+  # Keep the tools available until the background build exits, even on validation failure.
+  if [ -n "$web_pid" ]; then
+    wait "$web_pid" || true
+  fi
+  rm -rf "$tools_dir"
+}
+trap cleanup EXIT
 if [ "$(id -u)" = 0 ]; then ci_root=(); else ci_root=(sudo); fi
 "${ci_root[@]}" apt-get update -qq
 "${ci_root[@]}" apt-get install -y --no-install-recommends ca-certificates curl unzip python3 jq qemu-user-static
@@ -38,12 +46,17 @@ export GOTOOLCHAIN=local
 printf 'Go 模块代理：%s\n' "$GOPROXY"
 output="$source_dir/out/gitee-release"
 mkdir -p "$output"
+bash scripts/build-release.sh --web-only "$source_dir" "$output" "$commit" &
+web_pid=$!
 (cd apps/server-go && go test ./internal/platformhelper ./internal/panel ./internal/cli/...)
 (cd apps/server-go && go test ./internal/agent/harness/sessionstore/... -run 'Test(SessionStore|SQLiteCancelled|StoreRead|StoreWrite)')
 python3 -B scripts/release-download.test.py
 python3 -B scripts/publish-gitee.test.py
+# go:embed requires the completed Web build. Both architectures use the same files.
+wait "$web_pid" || { echo '前端构建失败，停止打包' >&2; exit 1; }
+web_pid=
 for arch in amd64 arm64; do
-  GOOS=linux GOARCH="$arch" bash scripts/build-release.sh "$source_dir" "$output/$arch" "$commit"
+  GOOS=linux GOARCH="$arch" bash scripts/build-release.sh --go-only "$source_dir" "$output/$arch" "$commit"
   bun scripts/package-release.mjs "$source_dir" "$output/$arch" "$commit" "$arch"
   if [ "$arch" = amd64 ]; then
     bash scripts/test-release-package.sh "$output/$arch/elysian-linux-$arch"
