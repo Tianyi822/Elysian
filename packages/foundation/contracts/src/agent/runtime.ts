@@ -86,12 +86,10 @@ export type AgentBudgetStop = { resource: 'tokens' | 'active-time' | 'results'; 
 export type AgentContinuation = { sourceRunId: string; allowed: boolean; blockedReason?: string }
 
 export type AgentRunWait = { kind: 'waiting-model' | 'waiting-storage'; nextAt: string; attempts: number; requestId?: string; reason?: RuntimeFailure }
-export type AgentCurrentReport = AgentRunReport & { evidenceVersion: string; asOf: string }
 export type AgentStorageHealth = { read: 'ready' | 'unavailable'; write: 'ready' | 'unavailable'; records: 'ready' | 'unavailable'; recovery?: 'retrying' | 'verification-required' }
 
 export type RuntimeRun = {
  wait?: AgentRunWait
- currentReport?: AgentCurrentReport
   recoveryPolicy?: 'evidence-recovery/v1' | 'evidence-recovery/v2'
   recovery?: AgentRecovery
   report?: AgentRunReport

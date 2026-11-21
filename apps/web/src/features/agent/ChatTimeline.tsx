@@ -104,9 +104,6 @@ export function ChatTimeline({ timeline, answer, active, stopped, stopping, api,
   const hasFinal = timeline.entries.some(entry => entry.kind === 'content' && entry.modelRequestId === timeline.finalResponseId)
   const result = timeline.done && timeline.terminalResult && (!stopped || timeline.terminalResult.report) ? timeline.terminalResult.content : !stopped && answer?.origin === 'runtime' ? answer.content : undefined
   const modelAnswer = answer?.origin === 'runtime' || result ? undefined : answer
-  const currentReport = timeline.currentReport
-  const currentFacts = currentReport && (({ evidenceVersion: _version, asOf: _asOf, ...facts }) => facts)(currentReport)
-  const reportChanged = currentFacts && JSON.stringify(currentFacts) !== JSON.stringify(timeline.terminalResult?.report)
   useLayoutEffect(onProgress, [timeline.done, result, onProgress])
   return <div className="chat-timeline" aria-label="回复过程">
     {timeline.entries.map(entry => {
@@ -130,13 +127,5 @@ export function ChatTimeline({ timeline, answer, active, stopped, stopping, api,
     {result && <ChatRuntimeResult content={result} />}
     <ChatRecovery timeline={timeline} api={api} />
     {timeline.status === 'recovery-required' && timeline.error?.code === 'continuous-policy-frozen' && <p role="status" className="text-sm text-fg-muted">{timeline.error.message}</p>}
-    {currentReport && reportChanged && <details className="text-sm text-fg-muted" aria-label="最新核实结果">
-      <summary>最新核实结果</summary>
-      <p>{currentReport.completed} 项已确认成功，{currentReport.failed} 项失败，{currentReport.unconfirmed} 项仍待核实。</p>
-      <p>{currentReport.reason}</p>
-      {!!currentReport.remaining.length && <p>未完成：{currentReport.remaining.join('；')}</p>}
-      <p>{currentReport.next}</p>
-      <p className="text-xs">核实时间：{currentReport.asOf}。原运行结果保留。</p>
-    </details>}
   </div>
 }

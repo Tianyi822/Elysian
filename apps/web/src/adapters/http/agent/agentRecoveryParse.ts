@@ -1,4 +1,4 @@
-import type { AgentCurrentReport, AgentRunWait, AgentStorageHealth, AgentExecutionEvidence, AgentRecovery, AgentRunReport, AgentToolAttempt, RuntimeFailure } from '@elysian/contracts'
+import type { AgentRunWait, AgentStorageHealth, AgentExecutionEvidence, AgentRecovery, AgentRunReport, AgentToolAttempt, RuntimeFailure } from '@elysian/contracts'
 
 const invalid = () => new Error('Agent 恢复记录格式无效')
 const object = (v: unknown): Record<string, unknown> => { if (!v || typeof v !== 'object' || Array.isArray(v)) throw invalid(); return v as Record<string, unknown> }
@@ -36,10 +36,6 @@ export function parseRunWait(value: unknown): AgentRunWait {
  if (!['waiting-model','waiting-storage'].includes(string(row.kind)) || !Number.isFinite(Date.parse(string(row.nextAt))) || integer(row.attempts)<1) throw invalid()
  return {kind:row.kind as AgentRunWait['kind'],nextAt:string(row.nextAt),attempts:integer(row.attempts),...(row.requestId===undefined?{}:{requestId:string(row.requestId)}),...(row.reason===undefined?{}:{reason:parseRecoveryFailure(row.reason)})}
 }
-export function parseCurrentReport(value: unknown): AgentCurrentReport {
- const row=object(value)
- return {...parseRunReport(row),evidenceVersion:string(row.evidenceVersion),asOf:string(row.asOf)}
-}
 export function parseStorageHealth(value: unknown): AgentStorageHealth {
  const row=object(value)
  for(const key of ['read','write','records']) if(!['ready','unavailable'].includes(string(row[key]))) throw invalid()
@@ -48,5 +44,5 @@ export function parseStorageHealth(value: unknown): AgentStorageHealth {
 }
 export function parseContinuousFields(row: Record<string,unknown>){
  if(row.recoveryPolicy!==undefined&&!['evidence-recovery/v1','evidence-recovery/v2'].includes(String(row.recoveryPolicy)))throw invalid()
- return {...(row.recoveryPolicy===undefined?{}:{recoveryPolicy:row.recoveryPolicy as 'evidence-recovery/v1'|'evidence-recovery/v2'}),...(row.wait===undefined?{}:{wait:parseRunWait(row.wait)}),...(row.currentReport===undefined?{}:{currentReport:parseCurrentReport(row.currentReport)})}
+ return {...(row.recoveryPolicy===undefined?{}:{recoveryPolicy:row.recoveryPolicy as 'evidence-recovery/v1'|'evidence-recovery/v2'}),...(row.wait===undefined?{}:{wait:parseRunWait(row.wait)})}
 }
