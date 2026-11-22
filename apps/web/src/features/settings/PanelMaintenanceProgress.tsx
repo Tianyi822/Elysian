@@ -132,7 +132,7 @@ export function PanelMaintenanceProgress({ task, paused = false }: { task: Panel
       : download?.status === 'verifying' ? '正在校验安装包' : '下载安装包'
   const validTaskStages = current >= 0 && current < steps.length
 
-  return <div className="mt-4 space-y-4">
+  return <div className="mt-4 min-w-0 space-y-4">
     {task.kind === 'update' ? <div className="grid min-w-0 gap-2 rounded-xl bg-surface-raised/60 p-3 text-xs leading-5 sm:grid-cols-2">
       <p className="text-fg-muted">更新来源：{task.updateSource ? PANEL_UPDATE_SOURCE_LABELS[task.updateSource] : '未记录（历史任务）'}</p>
       <p className="text-fg-muted">版本：{task.releaseTag ? <span className="font-medium text-fg">{task.releaseTag}</span> : '历史更新'}</p>
@@ -141,13 +141,14 @@ export function PanelMaintenanceProgress({ task, paused = false }: { task: Panel
 
     {validTaskStages ? <>
       <Stepper
+        key={task.id}
         ariaLabel="维护阶段"
         steps={steps}
         current={current}
         completed={task.state === 'succeeded'}
         failed={failed}
       />
-      <div className="rounded-lg border border-line bg-surface px-3 py-2.5">
+      <div className="overflow-x-clip rounded-lg border border-line bg-surface px-3 py-2.5">
         <StepPanels current={current}>
           {steps.map(step => <p key={step.key} className="text-xs leading-5 text-fg-muted">{stepDetail(task, step, phase, moving)}</p>)}
         </StepPanels>
