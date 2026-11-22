@@ -577,7 +577,7 @@ describe('端口与更新设置', () => {
     expect(screen.getByRole('button', { name: '重新加载面板' })).toBeInTheDocument()
     vi.unstubAllGlobals()
   })
-  it('运行版本与目标提交一致时隐藏维护进度并显示重载倒计时', async () => {
+  it('其他页面发起的更新核对运行版本后自动刷新', async () => {
     const g = gateway(); const sha = commitUpdate.targetCommit
     const updateTask = { ...task, kind: 'update' as const, newPorts: ports, targetCommit: sha }
     g.panel.info = async () => ({ ...info, activeTask: updateTask })
@@ -589,10 +589,8 @@ describe('端口与更新设置', () => {
     renderApp('/settings?tab=maintenance', { gateway: g })
     await screen.findByText(/等待执行|正在执行/)
     finished = true
-    expect(await screen.findByRole('dialog', { name: '更新完成' }, { timeout: 4000 })).toBeInTheDocument()
-    expect(reloadPanelPage).not.toHaveBeenCalled()
-    await userEvent.click(screen.getByRole('button', { name: '立刻重启' }))
-    expect(reloadPanelPage).toHaveBeenCalledTimes(1)
+    await waitFor(() => expect(reloadPanelPage).toHaveBeenCalledTimes(1), { timeout: 4000 })
+    expect(screen.queryByRole('dialog', { name: '更新完成' })).not.toBeInTheDocument()
     expect(screen.queryByRole('region', { name: '面板维护进度' })).not.toBeInTheDocument()
     vi.unstubAllGlobals()
   })
@@ -615,8 +613,8 @@ describe('端口与更新设置', () => {
       await act(async () => { await vi.advanceTimersByTimeAsync(6000) })
       // 恢复触发的重渲染在上一段 act 结束时完成，重连轮询的定时器在这段推进里触发。
       await act(async () => { await vi.advanceTimersByTimeAsync(4000) })
-      expect(screen.getByRole('dialog', { name: '更新完成' })).toBeInTheDocument()
-      expect(reloadPanelPage).not.toHaveBeenCalled()
+      expect(screen.queryByRole('dialog', { name: '更新完成' })).not.toBeInTheDocument()
+      expect(reloadPanelPage).toHaveBeenCalledTimes(1)
       await act(async () => { await vi.advanceTimersByTimeAsync(30_000) })
       expect(reloadPanelPage).toHaveBeenCalledTimes(1)
     } finally {

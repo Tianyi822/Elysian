@@ -35,7 +35,7 @@ beforeEach(() => {
 })
 afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs() })
 describe('常驻维护监控', () => {
-  it.each(['CLI', '其他标签页'])('空闲每 15 秒发现 %s 的更新，后台仍启动倒计时', async () => {
+  it.each(['CLI', '其他标签页'])('空闲每 15 秒发现 %s 的更新，直接刷新旧页面', async () => {
     const g = gateway()
     mount(g); await advance(0)
     expect(g.panel.info).toHaveBeenCalledTimes(1)
@@ -46,13 +46,30 @@ describe('常驻维护监控', () => {
     expect(g.panel.info).not.toHaveBeenCalled()
     await advance(1)
     expect(g.panel.info).toHaveBeenCalledTimes(1)
-    expect(screen.getByRole('dialog', { name: '更新完成' })).toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: '更新完成' })).not.toBeInTheDocument()
+    expect(reloadPanelPage).toHaveBeenCalledTimes(1)
     expect(g.panel.update).not.toHaveBeenCalled()
+    expect(g.panel.restart).not.toHaveBeenCalled()
     await advance(30_000)
     expect(reloadPanelPage).toHaveBeenCalledTimes(1)
     Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'visible' })
   })
-  it('活动任务每两秒回读；CLI 注册失败不阻止倒计时', async () => {
+  it('设备恢复运行时立即发现更新，并自动刷新一次', async () => {
+    vi.stubEnv('ELYSIAN_BUILD_COMMIT', info.commit)
+    const g = gateway()
+    mount(g); await advance(0)
+    g.panel.info = vi.fn(async () => ({ ...info, lastTask: finished }))
+    g.panel.task = vi.fn(async () => ({ task: finished, logs: '', nextOffset: 0 }))
+    act(() => window.dispatchEvent(new Event('focus')))
+    await advance(0)
+    expect(g.panel.info).toHaveBeenCalledTimes(1)
+    expect(reloadPanelPage).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    act(() => window.dispatchEvent(new Event('online')))
+    await advance(0)
+    expect(reloadPanelPage).toHaveBeenCalledTimes(1)
+  })
+  it('活动任务每两秒回读，CLI 注册失败时仍加载新版页面', async () => {
     const g = gateway(task)
     mount(g); await advance(0)
     const reads = vi.mocked(g.panel.task).mock.calls.length
@@ -60,7 +77,8 @@ describe('常驻维护监控', () => {
     expect(g.panel.task).toHaveBeenCalledTimes(reads)
     g.panel.task = vi.fn(async () => ({ task: { ...finished, cliRegistration: { status: 'failed' as const, error: '外部命令占用' } }, logs: '', nextOffset: 0 }))
     await advance(1)
-    expect(screen.getByRole('dialog', { name: '更新完成' })).toBeInTheDocument()
+    expect(reloadPanelPage).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('dialog', { name: '更新完成' })).not.toBeInTheDocument()
     expect(usePanelStore.getState().task?.cliRegistration?.error).toBe('外部命令占用')
   })
   it('未确认提交按精确编号回读，不重新派发；离开设置页也可完成', async () => {
@@ -73,6 +91,7 @@ describe('常驻维护监控', () => {
     expect(g.panel.taskByRequest).toHaveBeenCalledWith(pending.requestId, expect.any(AbortSignal))
     await advance(2000)
     expect(screen.getByRole('dialog', { name: '更新完成' })).toBeInTheDocument()
+    expect(reloadPanelPage).not.toHaveBeenCalled()
     expect(g.panel.update).not.toHaveBeenCalled()
     expect(g.panel.restart).not.toHaveBeenCalled()
     expect(sessionStorage.getItem(PANEL_PENDING_KEY)).toBeNull()
@@ -89,7 +108,8 @@ describe('常驻维护监控', () => {
     vi.stubEnv('ELYSIAN_BUILD_COMMIT', info.commit)
     mount(gateway(finished)); await advance(0)
     expect(fetch).toHaveBeenCalledWith('/api/health', expect.objectContaining({ cache: 'no-store' }))
-    expect(screen.getByRole('dialog', { name: '更新完成' })).toBeInTheDocument()
+    expect(reloadPanelPage).toHaveBeenCalledTimes(1)
+    expect(screen.queryByRole('dialog', { name: '更新完成' })).not.toBeInTheDocument()
   })
   it('版本不一致保留错误和手动入口状态；五秒后重新核对', async () => {
     const g = gateway(task)
@@ -100,7 +120,7 @@ describe('常驻维护监控', () => {
     expect(usePanelStore.getState().needsManualReload).toBe(true)
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
     await advance(5000)
-    expect(screen.getByRole('dialog', { name: '更新完成' })).toBeInTheDocument()
+    expect(reloadPanelPage).toHaveBeenCalledTimes(1)
     expect(usePanelStore.getState().verificationError).toBeNull()
   })
   it('恢复已有截止时间，不再等待 30 秒；已执行任务不会重载两次', async () => {
@@ -157,6 +177,7 @@ it('设置页提交后进入 Agent，再进入文件页，监控及截止时间�
   await act(async () => { await view.router.navigate('/files') })
   expect(readPanelReload()!.deadline).toBe(deadline)
   expect(screen.getByRole('dialog', { name: '更新完成' })).toBeInTheDocument()
-  await user.click(screen.getByRole('button', { name: '立刻重启' }))
+  await user.click(screen.getByRole('button', { name: '立即刷新' }))
   expect(reloadPanelPage).toHaveBeenCalledTimes(1)
+  expect(g.panel.restart).not.toHaveBeenCalled()
 })

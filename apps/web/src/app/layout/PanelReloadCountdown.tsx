@@ -36,20 +36,21 @@ export function PanelReloadCountdown() {
     }
   }, [reload?.taskId, reload?.deadline, reload?.executed, phase, auth])
   if (!reload || reload.executed || phase !== 'authed') return null
-  const remaining = Math.max(0, reload.deadline - now)
+  const remaining = reload.deadline - Math.max(now, Date.now())
+  if (remaining <= 0) return null
   return createPortal(<div role="dialog" aria-modal="false" aria-labelledby={title} aria-describedby={description} className="fixed left-1/2 top-1/2 z-[80] size-40 -translate-x-1/2 -translate-y-1/2">
-    <p role="status" className="sr-only">更新完成，倒计时结束后重新加载当前页面，也可立刻重启。</p>
+    <p role="status" className="sr-only">更新完成，倒计时结束后自动刷新当前页面，也可立即刷新。</p>
     <p id={description} className="sr-only">剩余 {Math.ceil(remaining / 1000)} 秒后重新加载当前页面。</p>
-    <Button unstyled type="button" aria-label="立刻重启" aria-describedby={description} data-animation-paused={document.hidden || undefined} className="panel-reload-countdown group relative flex size-40 flex-col items-center justify-center rounded-full border border-line bg-surface-raised text-fg shadow-[0_8px_24px_-12px_var(--t-panel-shadow)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent-fg" onClick={() => {
+    <Button unstyled type="button" aria-label="立即刷新" aria-describedby={description} data-animation-paused={document.hidden || undefined} className="panel-reload-countdown group relative flex size-40 flex-col items-center justify-center rounded-full border border-line bg-surface-raised text-fg shadow-[0_8px_24px_-12px_var(--t-panel-shadow)] focus-visible:outline focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-accent-fg" onClick={() => {
       if (usePanelStore.getState().consumeReload(reload.taskId, auth)) reloadPanelPage()
     }}>
       <CountdownRing progress={Math.min(1, remaining / PANEL_RELOAD_DELAY_MS)} aria-hidden className="pointer-events-none absolute inset-0 size-full" />
       <span id={title} className="text-xs font-medium text-fg-muted">更新完成</span>
       <span className="relative mt-1 flex h-12 items-center justify-center">
         <span aria-hidden className="text-4xl font-medium tabular-nums tracking-tight group-hover:invisible group-focus-visible:invisible">{Math.ceil(remaining / 1000)}</span>
-        <span aria-hidden className="invisible absolute whitespace-nowrap text-base font-medium text-accent-fg group-hover:visible group-focus-visible:visible">立刻重启</span>
+        <span aria-hidden className="invisible absolute whitespace-nowrap text-base font-medium text-accent-fg group-hover:visible group-focus-visible:visible">立即刷新</span>
       </span>
-      <span aria-hidden className="mt-1 text-[11px] text-fg-subtle group-hover:invisible group-focus-visible:invisible">秒后重启</span>
+      <span aria-hidden className="mt-1 text-[11px] text-fg-subtle group-hover:invisible group-focus-visible:invisible">秒后刷新</span>
     </Button>
   </div>, document.body)
 }

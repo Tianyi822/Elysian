@@ -38,6 +38,13 @@ export function PanelUpdateMonitor() {
       if (!current()) return
       if (!busy) schedule(0)
     }
+    const rediscover = () => {
+      discoverAt = 0
+      wake()
+    }
+    const onVisible = () => {
+      if (document.visibilityState === 'visible') rediscover()
+    }
     const tick = async () => {
       if (!current() || busy) return
       busy = true
@@ -111,8 +118,9 @@ export function PanelUpdateMonitor() {
             next = Math.min(next, 5000)
             const health = await probeSameOriginHealth(abort.signal)
             if (!current() || store().task?.id !== finished.id) return
-            if (health?.commit && health.commit === finished.targetCommit) store().requestReload(finished)
-            else usePanelStore.setState({ needsManualReload: true, verificationError: health?.commit
+            if (health?.commit && health.commit === finished.targetCommit) {
+              store().requestReload(finished, store().submittedUpdateId === finished.id ? 'countdown' : 'immediate')
+            } else usePanelStore.setState({ needsManualReload: true, verificationError: health?.commit
               ? `面板已恢复，但运行版本 ${health.commit.slice(0, 7)} 与目标提交不一致，未自动刷新页面；请查看任务日志或在服务器核实。`
               : '面板已恢复，但暂无法确认运行版本，未自动刷新页面；可手动重新加载后查看当前版本。' })
           }
@@ -150,8 +158,17 @@ export function PanelUpdateMonitor() {
       if (!busy && (state.task?.id !== previous.task?.id || state.pending?.requestId !== previous.pending?.requestId)) wake()
       if (previous.connectionError && !state.connectionError) { recovering = false; disconnectedAt = undefined; if (!busy) wake() }
     })
+    const wakeEvents = ['focus', 'pageshow', 'online'] as const
+    wakeEvents.forEach(event => window.addEventListener(event, rediscover))
+    document.addEventListener('visibilitychange', onVisible)
+    document.addEventListener('resume', rediscover)
     void tick()
-    return () => { stopped = true; abort.abort(); clearTimeout(timer); unsubscribe() }
+    return () => {
+      stopped = true; abort.abort(); clearTimeout(timer); unsubscribe()
+      wakeEvents.forEach(event => window.removeEventListener(event, rediscover))
+      document.removeEventListener('visibilitychange', onVisible)
+      document.removeEventListener('resume', rediscover)
+    }
   }, [gateway, phase])
   return <PanelReloadCountdown />
 }

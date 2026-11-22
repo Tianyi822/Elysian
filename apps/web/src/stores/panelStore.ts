@@ -13,6 +13,7 @@ type PanelState = {
   errorMessage?: string
   task: PanelTask | null; logs: string; offset: number; hasMore: boolean
   trackedTaskId: string | null
+  submittedUpdateId: string | null
   pending: PanelPending | null
   progressError: string | null
   connectionError: string | null
@@ -23,7 +24,7 @@ type PanelState = {
   put(task: PanelTask): void
   setPending(value: PanelPending | null): void
   acceptPending(task: PanelTask, requestId: string): boolean
-  requestReload(task: PanelTask, now?: number): void
+  requestReload(task: PanelTask, timing?: 'countdown' | 'immediate'): void
   consumeReload(taskId: string, auth: number): boolean
   load(gateway: ElysianGateway, options?: { preserveTask?: boolean; signal?: AbortSignal }): Promise<void>
   poll(gateway: ElysianGateway, signal?: AbortSignal): Promise<PanelTaskReport | null>
@@ -32,7 +33,7 @@ type PanelState = {
 let epoch = 0, readVersion = 0
 let owner: ElysianGateway | undefined
 let polling: { gateway: ElysianGateway; id: string; revision: number; auth: number; signal?: AbortSignal; promise: Promise<PanelTaskReport | null> } | undefined
-const monitorBlank = { pending: null, progressError: null, connectionError: null, verificationError: null, needsManualReload: false, verifiedUpdate: null, reload: null }
+const monitorBlank = { pending: null, submittedUpdateId: null, progressError: null, connectionError: null, verificationError: null, needsManualReload: false, verifiedUpdate: null, reload: null }
 const infoBlank = { status: 'idle', info: null, errorMessage: undefined } as const
 const infoStatusWithoutSnapshot = (errorMessage?: string) => errorMessage === undefined ? 'idle' : 'error'
 export const usePanelStore = create<PanelState>((set, get) => ({
@@ -53,11 +54,12 @@ export const usePanelStore = create<PanelState>((set, get) => ({
   setPending(pending) { savePanelPending(pending); set({ pending }) },
   acceptPending(task, requestId) {
     if (get().pending?.requestId !== requestId) return false
+    if (task.kind === 'update') set({ submittedUpdateId: task.id })
     get().setPending(null)
     get().put(task)
     return true
   },
-  requestReload(task, now = Date.now()) {
+  requestReload(task, timing = 'countdown') {
     set({ verifiedUpdate: task.id, verificationError: null, needsManualReload: false })
     if (frontendCommit() === task.targetCommit) { set({ reload: null }); return }
     const previous = get().reload ?? readPanelReload()
@@ -65,7 +67,8 @@ export const usePanelStore = create<PanelState>((set, get) => ({
       if (!previous.executed) set({ reload: previous })
       return
     }
-    const reload: PanelReload = { version: 1, taskId: task.id, targetCommit: task.targetCommit, deadline: now + PANEL_RELOAD_DELAY_MS, executed: false }
+    const deadline = Date.now() + (timing === 'immediate' ? 0 : PANEL_RELOAD_DELAY_MS)
+    const reload: PanelReload = { version: 1, taskId: task.id, targetCommit: task.targetCommit, deadline, executed: false }
     savePanelReload(reload)
     set({ reload })
   },

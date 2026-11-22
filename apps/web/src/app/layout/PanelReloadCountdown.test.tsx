@@ -30,7 +30,7 @@ describe('全局圆形重载倒计时', () => {
     const circle = screen.getByRole('dialog', { name: '更新完成' })
     expect(within(circle).getByText('30')).toBeInTheDocument()
     const deadline = readPanelReload()!.deadline
-    fireEvent.mouseOver(screen.getByRole('button', { name: '立刻重启' }))
+    fireEvent.mouseOver(screen.getByRole('button', { name: '立即刷新' }))
     Object.defineProperty(document, 'visibilityState', { configurable: true, value: 'hidden' })
     await advance(12_000)
     expect(within(circle).getByText('18')).toBeInTheDocument()
@@ -50,7 +50,7 @@ describe('全局圆形重载倒计时', () => {
     vi.useRealTimers()
     show()
     const address = window.location.href
-    const button = screen.getByRole('button', { name: '立刻重启' })
+    const button = screen.getByRole('button', { name: '立即刷新' })
     const user = userEvent.setup()
     if (method === 'click') await user.click(button)
     else { button.focus(); await user.keyboard(method === 'Enter' ? '{Enter}' : ' ') }
@@ -80,7 +80,7 @@ describe('全局圆形重载倒计时', () => {
     expect(usePanelStore.getState().reload).toEqual(record)
     render(<PanelReloadCountdown />)
     expect(screen.getByText('20')).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '立刻重启' })).toHaveAccessibleDescription('剩余 20 秒后重新加载当前页面。')
+    expect(screen.getByRole('button', { name: '立即刷新' })).toHaveAccessibleDescription('剩余 20 秒后重新加载当前页面。')
     expect(screen.getByRole('status')).not.toHaveTextContent('30 秒')
     vi.setSystemTime(record.deadline + 15_000)
     fireEvent(window, new Event('pageshow'))
@@ -89,7 +89,7 @@ describe('全局圆形重载倒计时', () => {
   it('登录代次变化后旧按钮和到期回调不能重载；登出移除浮层与存储', async () => {
     show()
     advanceAuthGeneration()
-    fireEvent.click(screen.getByRole('button', { name: '立刻重启' }))
+    fireEvent.click(screen.getByRole('button', { name: '立即刷新' }))
     await advance(30_000)
     expect(reloadPanelPage).not.toHaveBeenCalled()
     act(() => useSessionStore.getState().expire())
