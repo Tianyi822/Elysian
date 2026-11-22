@@ -38,6 +38,7 @@ type Info struct {
 	Ports                    config.PanelNetwork `json:"ports"`
 	Commit                   string              `json:"commit"`
 	BuildTime                string              `json:"buildTime"`
+	ReleaseTag               string              `json:"releaseTag,omitempty"`
 	Repository               string              `json:"repository"`
 	Available                bool                `json:"available"`
 	Reason                   string              `json:"reason"`
@@ -73,7 +74,7 @@ func probeWorker(ctx context.Context, host Host, id string) WorkerStatus {
 }
 
 func (m Manager) Info() (Info, error) {
-	i := Info{UpdateDelivery: PrecompiledDelivery, Ports: m.Ports, Commit: Commit, BuildTime: BuildTime, Repository: panelRepository, Available: m.Enabled && m.Host.Available()}
+	i := Info{UpdateDelivery: PrecompiledDelivery, Ports: m.Ports, Commit: Commit, BuildTime: BuildTime, ReleaseTag: ReleaseTag, Repository: panelRepository, Available: m.Enabled && m.Host.Available()}
 	if _, ok := m.Host.(resourceHost); ok {
 		i.ResourcePreflightVersion = 1
 	}

@@ -14,6 +14,7 @@ const serviceName = "elysian"
 // 构建脚本经 -ldflags 注入，导出的源码无需 Git 工作树。
 var Commit = "unknown"
 var BuildTime = "unknown"
+var ReleaseTag = ""
 
 type UpdateChannel string
 

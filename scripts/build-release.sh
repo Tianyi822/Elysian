@@ -22,6 +22,11 @@ esac
 SOURCE_DIR="$1"
 OUTPUT_DIR="$2"
 BUILD_COMMIT="$3"
+BUILD_RELEASE_TAG="${ELYSIAN_RELEASE_TAG:-}"
+if [ -n "$BUILD_RELEASE_TAG" ] && { [[ "$BUILD_RELEASE_TAG" != v* ]] || ! git check-ref-format "refs/tags/$BUILD_RELEASE_TAG"; }; then
+  echo '发布标签必须是有效的 v* 标签' >&2
+  exit 1
+fi
 BUILD_STARTED_SECONDS=$SECONDS
 trap 'printf "发布构建 %s 用时：%s 秒\n" "$mode" "$((SECONDS - BUILD_STARTED_SECONDS))"' EXIT
 [ -f "$SOURCE_DIR/package.json" ] && [ -f "$SOURCE_DIR/bun.lock" ] && [ -f "$SOURCE_DIR/apps/server-go/go.mod" ] || { echo '源码缺少构建文件或锁文件' >&2; exit 1; }
@@ -39,6 +44,6 @@ mkdir -p apps/server-go/web/dist
 cp -a apps/web/dist/. apps/server-go/web/dist/
 BUILD_TIME="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 cd apps/server-go
-CGO_ENABLED=0 go build -trimpath -mod=readonly -buildvcs=false -ldflags="-s -w -X elysian/server/internal/panel.Commit=${BUILD_COMMIT} -X elysian/server/internal/panel.BuildTime=${BUILD_TIME}" -o "$OUTPUT_DIR/elysian" ./cmd/elysian
+CGO_ENABLED=0 go build -trimpath -mod=readonly -buildvcs=false -ldflags="-s -w -X elysian/server/internal/panel.Commit=${BUILD_COMMIT} -X elysian/server/internal/panel.BuildTime=${BUILD_TIME} -X elysian/server/internal/panel.ReleaseTag=$BUILD_RELEASE_TAG" -o "$OUTPUT_DIR/elysian" ./cmd/elysian
 
 CGO_ENABLED=0 go build -trimpath -mod=readonly -buildvcs=false -ldflags="-s -w" -o "$OUTPUT_DIR/platform-helper" ./cmd/platform-helper

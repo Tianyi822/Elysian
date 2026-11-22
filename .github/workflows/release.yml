@@ -54,6 +54,7 @@ jobs:
       - name: 构建前端与单二进制
         env:
           COMMIT: ${{ needs.version.outputs.commit }}
+          ELYSIAN_RELEASE_TAG: ${{ needs.version.outputs.tag }}
           ELYSIAN_GOPROXY: https://proxy.golang.org,direct
           ELYSIAN_BUN_REGISTRY: https://registry.npmjs.org
         run: bash scripts/build-release.sh "$GITHUB_WORKSPACE" "$RUNNER_TEMP/release" "$COMMIT"

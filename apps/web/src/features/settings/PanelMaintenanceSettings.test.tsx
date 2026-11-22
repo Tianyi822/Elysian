@@ -22,6 +22,20 @@ function gateway() {
   return result
 }
 describe('端口与更新设置', () => {
+  it('面板更新直接显示运行版本，检查更新后与目标版本分别展示', async () => {
+    const g = gateway()
+    g.panel.info = async () => ({ ...info, releaseTag: 'v1.1.0' })
+    g.panel.checkUpdate = async () => releaseUpdate
+    renderApp('/settings?tab=maintenance', { gateway: g })
+    const card = within(await screen.findByRole('region', { name: '面板更新' }))
+    expect(await card.findByText('v1.1.0')).toBeInTheDocument()
+    expect(card.queryByText('使用正式发版，不包含预发布版本。')).not.toBeInTheDocument()
+    await userEvent.click(card.getByRole('button', { name: '检查更新' }))
+    expect(await card.findByText('可更新至正式发版 · v1.2.0')).toBeInTheDocument()
+    expect(card.getByText('v1.1.0')).toBeInTheDocument()
+  })
+
+
   it('来源切换使旧检查失效，迟到回执不回灌，日志跟随 Gitee', async () => {
     const g = gateway()
     let finish!: (value: PanelUpdate) => void

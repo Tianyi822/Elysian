@@ -39,6 +39,7 @@ export function parsePanelTask(value: unknown): PanelTask {
 export function parsePanelInfo(value: unknown): PanelInfo {
   const row = object(value)
   for (const key of ['commit', 'buildTime', 'repository', 'reason']) if (typeof row[key] !== 'string') throw new Error('面板信息响应无效')
+  if (row.releaseTag !== undefined && typeof row.releaseTag !== 'string') throw new Error('面板发版标签无效')
   if (typeof row.available !== 'boolean') throw new Error('面板维护能力响应无效')
   if (row.resourcePreflightVersion !== undefined && (!Number.isSafeInteger(row.resourcePreflightVersion) || Number(row.resourcePreflightVersion) < 1)) throw new Error('面板资源预检能力响应无效')
   return { ...row, ports: ports(row.ports), activeTask: row.activeTask === null ? null : parsePanelTask(row.activeTask), lastTask: row.lastTask === null ? null : parsePanelTask(row.lastTask) } as PanelInfo

@@ -75,6 +75,7 @@ export function PanelMaintenanceSettings() {
     && task.cliRegistration?.status !== 'pending' && task.cliRegistration?.status !== 'failed'
     && (trackedTaskId !== task.id || verifiedUpdate === task.id)
   const unavailable = !info?.available || active || submitting || pending !== null
+  const currentVersion = info ? info.releaseTag || '未记录' : status === 'error' ? '读取失败' : '正在读取…'
   useFeedbackMessage(loadError ? `面板配置读取失败：${loadError}` : null)
   useFeedbackMessage(info && !info.available ? `面板维护不可用：${info.reason}` : null, 'warning')
   useFeedbackMessage(task?.state === 'succeeded' && (task.kind !== 'update' || verifiedUpdate === task.id) ? '面板维护已完成' : null, 'success')
@@ -216,8 +217,12 @@ export function PanelMaintenanceSettings() {
           disabled={active || submitting || pending !== null}
         />
       </div>
-      <p className="mt-2 text-xs leading-5 text-fg-muted">使用正式发版，不包含预发布版本。</p>
-      <div className="mt-3 space-y-2 text-xs leading-5 text-fg-muted"><p>更新来源：<a className="text-fg underline underline-offset-4" href={source === 'gitee' ? 'https://gitee.com/Chentyit/Elysian' : 'https://github.com/Tianyi822/Elysian'} target="_blank" rel="noreferrer">{source === 'gitee' ? 'Gitee · Chentyit/Elysian' : 'GitHub · Tianyi822/Elysian'}</a> · 正式发版</p><p className="break-all">当前提交：{info?.commit ?? '正在读取…'}</p>{info?.buildTime && info.buildTime !== 'unknown' ? <p>构建时间：{info.buildTime}</p> : null}</div>
+      <div className="mt-3 space-y-2 text-xs leading-5 text-fg-muted">
+        <p className="wrap-anywhere">当前版本：<span className="font-medium text-fg">{currentVersion}</span></p>
+        <p>更新来源：<a className="text-fg underline underline-offset-4" href={source === 'gitee' ? 'https://gitee.com/Chentyit/Elysian' : 'https://github.com/Tianyi822/Elysian'} target="_blank" rel="noreferrer">{source === 'gitee' ? 'Gitee · Chentyit/Elysian' : 'GitHub · Tianyi822/Elysian'}</a></p>
+        <p className="break-all">当前提交：{info?.commit ?? '正在读取…'}</p>
+        {info?.buildTime && info.buildTime !== 'unknown' ? <p>构建时间：{info.buildTime}</p> : null}
+      </div>
       {update ? <div role="status" className="mt-4 space-y-1 break-all text-xs leading-5 text-fg">
         <p>{updateSummary(update)}</p>
         <p>来源：{PANEL_UPDATE_SOURCE_LABELS[update.source]}</p>

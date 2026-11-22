@@ -33,6 +33,7 @@ export type PanelTask = {
 export type PanelInfo = {
   ports: PanelPorts; commit: string; buildTime: string; repository: string
   available: boolean; reason: string; activeTask: PanelTask | null; lastTask: PanelTask | null
+  releaseTag?: string
   updateDelivery?: 'precompiled/v1'
   resourcePreflightVersion?: number
 }

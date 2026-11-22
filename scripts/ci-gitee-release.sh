@@ -56,7 +56,7 @@ python3 -B scripts/publish-gitee.test.py
 wait "$web_pid" || { echo '前端构建失败，停止打包' >&2; exit 1; }
 web_pid=
 for arch in amd64 arm64; do
-  GOOS=linux GOARCH="$arch" bash scripts/build-release.sh --go-only "$source_dir" "$output/$arch" "$commit"
+  GOOS=linux GOARCH="$arch" ELYSIAN_RELEASE_TAG="$tag" bash scripts/build-release.sh --go-only "$source_dir" "$output/$arch" "$commit"
   bun scripts/package-release.mjs "$source_dir" "$output/$arch" "$commit" "$arch"
   if [ "$arch" = amd64 ]; then
     bash scripts/test-release-package.sh "$output/$arch/elysian-linux-$arch"
