@@ -2,12 +2,13 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { useCallback, useEffect, useState } from 'react'
 import type { PanelCommit, PanelUpdateChannel, PanelUpdateSource } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
-import { formatDateTime } from '../../components/format'
+import { formatDateTimeWithYear } from '../../components/format'
 import { X } from '../../components/icons'
 import { ScrollArea } from '../../components/ScrollArea'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
 import { useMessageStore } from '../../stores/messageStore'
 import { Button } from '../../components/Button'
+import { Badge } from '../../components/easyui/Badge'
 import { messageOf } from '../../utils/errorMessage'
 
 /**
@@ -91,6 +92,7 @@ export function PanelChangelogDialog({
                 <ol className="flex flex-col gap-2">
                   {commits.map((commit) => {
                     const isCurrent = currentCommit !== '' && commit.sha === currentCommit
+                    const time = formatDateTimeWithYear(commit.time)
                     return (
                       <li
                         key={commit.sha}
@@ -98,18 +100,15 @@ export function PanelChangelogDialog({
                           isCurrent ? 'border-accent/50 bg-accent/10' : 'border-line'
                         }`}
                       >
-                        <div className="flex items-start gap-2">
-                          <p className="min-w-0 flex-1 text-xs leading-5 text-fg">{commit.message}</p>
+                        <div className="flex flex-wrap items-start gap-x-2 gap-y-1">
+                          <p className="min-w-0 flex-1 wrap-anywhere text-xs leading-5 text-fg">{commit.message}</p>
                           {isCurrent ? (
-                            <span className="shrink-0 rounded bg-accent/15 px-1.5 py-0.5 text-[0.625rem] font-medium text-accent-fg">
+                            <Badge tone="info" animateChanges={false} className="h-5 shrink-0 px-2 text-[0.625rem]">
                               当前版本
-                            </span>
+                            </Badge>
                           ) : null}
                         </div>
-                        <div className="flex flex-wrap items-center gap-x-2 text-[0.625rem] leading-4 text-fg-muted">
-                          <code className="break-all font-mono">{commit.sha.slice(0, 7)}</code>
-                          <span className="tabular-nums">{formatDateTime(commit.time)}</span>
-                        </div>
+                        {time ? <time dateTime={commit.time} className="text-xs leading-5 tabular-nums text-fg-muted">{time} 北京时间</time> : null}
                       </li>
                     )
                   })}

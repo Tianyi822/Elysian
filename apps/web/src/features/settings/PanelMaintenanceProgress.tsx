@@ -2,7 +2,6 @@ import { useMemo } from 'react'
 import { PANEL_TASK_PHASE_LABELS, PANEL_UPDATE_SOURCE_LABELS, panelTaskIsActive } from '@elysian/contracts'
 import type { PanelTask } from '@elysian/contracts'
 import { Check, Download, Loader2 } from '../../components/icons'
-import { CopyButton } from '../../components/CopyButton'
 import { StepPanels, Stepper, type Step } from '../../components/easyui/Stepper'
 
 type MaintenanceStep = Step & { key: string; phases: string[] }
@@ -120,23 +119,14 @@ function UpdateTarget({ task, logs }: { task: PanelTask; logs: string }) {
   const entries = useMemo(() => new Set(logs.split(/[\n；]/).map(entry => entry.trim())), [logs])
   const source = task.updateSource ? PANEL_UPDATE_SOURCE_LABELS[task.updateSource] : ''
   const version = task.releaseTag
-  const commit = task.targetCommit
   const showSource = source && !entries.has(`更新来源：${source}`)
   const showVersion = version && !entries.has(`版本：${version}`) && !entries.has(`更新策略：最新发版 ${version}`)
-  const showCommit = commit && !entries.has(`目标提交：${commit}`)
-  if (!showSource && !showVersion && !showCommit) return null
+  if (!showSource && !showVersion) return null
 
   return (
     <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2 text-xs leading-5 text-fg-muted">
       {showSource ? <p>更新来源：{source}</p> : null}
       {showVersion ? <p className="wrap-anywhere">版本：<span className="font-medium text-fg">{version}</span></p> : null}
-      {showCommit ? (
-        <div className="flex min-w-0 items-center gap-2">
-          <span className="shrink-0">目标提交</span>
-          <code className="min-w-0 truncate text-fg" title={commit}>{commit}</code>
-          <CopyButton label="提交" tooltip="复制完整提交 SHA" value={commit} />
-        </div>
-      ) : null}
     </div>
   )
 }

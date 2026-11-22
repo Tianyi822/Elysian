@@ -24,15 +24,21 @@ function gateway() {
 describe('端口与更新设置', () => {
   it('面板更新直接显示运行版本，检查更新后与目标版本分别展示', async () => {
     const g = gateway()
-    g.panel.info = async () => ({ ...info, releaseTag: 'v1.1.0' })
+    const buildTime = '2026-11-22T10:03:05Z'
+    g.panel.info = async () => ({ ...info, releaseTag: 'v1.1.0', buildTime })
     g.panel.checkUpdate = async () => releaseUpdate
     renderApp('/settings?tab=maintenance', { gateway: g })
     const card = within(await screen.findByRole('region', { name: '面板更新' }))
     expect(await card.findByText('v1.1.0')).toBeInTheDocument()
+    expect(card.getByText('2026-11-22 18:03 北京时间')).toHaveAttribute('datetime', buildTime)
+    expect(card.queryByRole('button', { name: '更新并重启' })).not.toBeInTheDocument()
     expect(card.queryByText('使用正式发版，不包含预发布版本。')).not.toBeInTheDocument()
     await userEvent.click(card.getByRole('button', { name: '检查更新' }))
-    expect(await card.findByText('可更新至正式发版 · v1.2.0')).toBeInTheDocument()
+    expect(await card.findByText('可更新至 v1.2.0')).toHaveAttribute('data-easyui', 'badge')
     expect(card.getByText('v1.1.0')).toBeInTheDocument()
+    expect(card.queryByText(releaseUpdate.message)).not.toBeInTheDocument()
+    expect(card.queryByText(new RegExp(`${info.commit}|${releaseUpdate.targetCommit}`))).not.toBeInTheDocument()
+    expect(useMessageStore.getState().messages).not.toContainEqual(expect.objectContaining({ message: expect.stringMatching(/^检查更新：/) }))
   })
 
   it('失败回执进入维护日志后只显示一次，日志未到时保留错误', async () => {
@@ -48,7 +54,8 @@ describe('端口与更新设置', () => {
     renderApp('/settings?tab=maintenance', { gateway: g })
     const progress = within(await screen.findByRole('region', { name: '面板维护进度' }))
     expect(progress.getByRole('alert')).toHaveTextContent(failed.error)
-    expect(progress.getByText(failed.targetCommit)).toBeInTheDocument()
+    expect(progress.queryByText(failed.targetCommit)).not.toBeInTheDocument()
+    expect(progress.queryByRole('button', { name: '复制提交' })).not.toBeInTheDocument()
 
     const logs = `更新来源：GitHub\n版本：${failed.releaseTag}\n目标提交：${failed.targetCommit}\n维护失败：${failed.error}\n`
     await act(async () => finishLog({ task: failed, logs, nextOffset: logs.length }))
@@ -71,8 +78,8 @@ describe('端口与更新设置', () => {
     await user.click(screen.getByRole('button', { name: '检查更新' }))
     await user.click(screen.getByRole('button', { name: 'Gitee' }))
     await act(async () => finish(releaseUpdate))
-    expect(screen.getByRole('button', { name: '更新并重启' })).toBeDisabled()
-    expect(screen.getByRole('link', { name: 'Gitee · Chentyit/Elysian' })).toHaveAttribute('href', 'https://gitee.com/Chentyit/Elysian')
+    expect(screen.queryByRole('button', { name: '更新并重启' })).not.toBeInTheDocument()
+    expect(screen.getByRole('link', { name: '打开 Gitee 仓库' })).toHaveAttribute('href', 'https://gitee.com/Chentyit/Elysian')
     await user.click(screen.getByRole('button', { name: '检查更新' }))
     await waitFor(() => expect(screen.getByRole('button', { name: '更新并重启' })).toBeEnabled())
     expect(g.panel.checkUpdate).toHaveBeenLastCalledWith('release', 'gitee')
@@ -240,12 +247,12 @@ describe('端口与更新设置', () => {
     await waitFor(() => expect(screen.getByRole('button', { name: '检查更新' })).toBeEnabled())
     expect(screen.getByRole('button', { name: 'Gitee' })).toBeInTheDocument()
     expect(screen.getByRole('group', { name: '更新来源' })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: 'GitHub · Tianyi822/Elysian' })).toHaveAttribute('href', 'https://github.com/Tianyi822/Elysian')
+    expect(screen.getByRole('link', { name: '打开 GitHub 仓库' })).toHaveAttribute('href', 'https://github.com/Tianyi822/Elysian')
     expect(screen.queryByRole('group', { name: '更新策略' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '最新提交' })).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '最新发版' })).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '检查更新' }))
-    expect(await screen.findByText('可更新至正式发版 · v1.2.0')).toBeInTheDocument()
+    expect(await screen.findByText('可更新至 v1.2.0')).toBeInTheDocument()
     expect(g.panel.checkUpdate).toHaveBeenCalledWith('release', 'github')
     await user.click(screen.getByRole('button', { name: '更新日志' }))
     const dialog = await screen.findByRole('dialog', { name: '更新日志' })
@@ -256,25 +263,32 @@ describe('端口与更新设置', () => {
     await waitFor(() => expect(g.panel.update).toHaveBeenCalledWith({ channel: 'release', source: 'github', releaseTag: 'v1.2.0', targetCommit: releaseUpdate.targetCommit }, expect.any(String)))
   })
   it.each([
-    { ...releaseUpdate, releaseTag: '', targetCommit: '', available: false, message: '上游仓库暂无正式发版', expected: '上游仓库暂无正式发版' },
-    { ...releaseUpdate, targetCommit: info.commit, available: false, expected: '当前已是最新版本 · v1.2.0' },
-  ])('发版不可更新时禁用提交：$expected', async ({ expected, ...result }) => {
-    const g = gateway(); g.panel.checkUpdate = vi.fn(async () => result)
+    { ...releaseUpdate, releaseTag: '', targetCommit: '', available: false, expected: '暂无可用发版' },
+    { ...releaseUpdate, targetCommit: info.commit, available: false, expected: '已是最新版本' },
+    { ...releaseUpdate, expected: '可更新' },
+  ])('发版检查仅显示一次当前版本：$expected', async ({ expected, ...result }) => {
+    const g = gateway()
+    g.panel.info = async () => ({ ...info, releaseTag: releaseUpdate.releaseTag, buildTime: 'invalid' })
+    g.panel.checkUpdate = vi.fn(async () => result)
     renderApp('/settings?tab=maintenance', { gateway: g }); const user = userEvent.setup()
     await waitFor(() => expect(screen.getByRole('button', { name: '检查更新' })).toBeEnabled())
     await user.click(screen.getByRole('button', { name: '检查更新' }))
     expect(await screen.findByText(expected)).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '更新并重启' })).toBeDisabled()
+    const card = within(screen.getByRole('region', { name: '面板更新' }))
+    expect(card.getAllByText(new RegExp(releaseUpdate.releaseTag))).toHaveLength(1)
+    expect(card.queryByText('构建时间')).not.toBeInTheDocument()
+    if (result.available) expect(card.getByRole('button', { name: '更新并重启' })).toBeEnabled()
+    else expect(card.queryByRole('button', { name: '更新并重启' })).not.toBeInTheDocument()
   })
   it('再次检查失败后不允许提交上一次的目标', async () => {
     const g = gateway(); g.panel.checkUpdate = vi.fn().mockResolvedValueOnce(releaseUpdate).mockRejectedValueOnce(new Error('GitHub 请求失败'))
     renderApp('/settings?tab=maintenance', { gateway: g }); const user = userEvent.setup()
     await waitFor(() => expect(screen.getByRole('button', { name: '检查更新' })).toBeEnabled())
     await user.click(screen.getByRole('button', { name: '检查更新' }))
-    expect(await screen.findByText('可更新至正式发版 · v1.2.0')).toBeInTheDocument()
+    expect(await screen.findByText('可更新至 v1.2.0')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '检查更新' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('GitHub 请求失败')
-    expect(screen.getByRole('button', { name: '更新并重启' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: '更新并重启' })).not.toBeInTheDocument()
   })
   it('刷新后恢复后台任务及回滚错误', async () => {
     const g = gateway(); g.panel.info = async () => ({ ...info, lastTask: { ...task, state: 'rolled-back', error: '健康检查失败，已恢复' } })
@@ -372,7 +386,8 @@ describe('端口与更新设置', () => {
     expect(within(dialog).getByText('防火墙按运行模式保护实际入口')).toBeInTheDocument()
     expect(within(dialog).getByText('部署任务标注项目状态')).toBeInTheDocument()
     expect(within(dialog).getAllByText('当前版本')).toHaveLength(1)
-    expect(within(dialog).getByText(info.commit.slice(0, 7))).toBeInTheDocument()
+    expect(within(dialog).queryByText(info.commit.slice(0, 7))).not.toBeInTheDocument()
+    expect(within(dialog).getByText('2026-10-03 20:00 北京时间')).toHaveAttribute('datetime', '2026-10-03T12:00:00Z')
     expect(within(dialog).getByRole('region', { name: '更新日志内容' })).toHaveClass('scroll-area-viewport')
   })
   it('更新日志读取失败把原因留在窗口内，重试再次拉取', async () => {
@@ -492,7 +507,7 @@ describe('端口与更新设置', () => {
     renderApp('/settings?tab=maintenance', { gateway: g }); const user = userEvent.setup()
     await waitFor(() => expect(screen.getByRole('button', { name: '检查更新' })).toBeEnabled())
     await user.click(screen.getByRole('button', { name: '检查更新' }))
-    expect(await screen.findByText(`目标提交：${releaseUpdate.targetCommit}`)).toBeInTheDocument()
+    expect(await screen.findByText('可更新至 v1.2.0')).toBeInTheDocument()
     const submitButton = screen.getByRole('button', { name: '更新并重启' })
     await user.click(submitButton)
     expect(submitButton).toBeDisabled()
@@ -510,7 +525,7 @@ describe('端口与更新设置', () => {
     renderApp('/settings?tab=maintenance', { gateway: g }); const user = userEvent.setup()
     await waitFor(() => expect(screen.getByRole('button', { name: '检查更新' })).toBeEnabled())
     await user.click(screen.getByRole('button', { name: '检查更新' }))
-    expect(await screen.findByText(`目标提交：${releaseUpdate.targetCommit}`)).toBeInTheDocument()
+    expect(await screen.findByText('可更新至 v1.2.0')).toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '更新并重启' }))
     expect(await screen.findByRole('alert')).toHaveTextContent('请求与当前任务冲突')
     expect(useMessageStore.getState().messages).not.toContainEqual(expect.objectContaining({ tone: 'danger', message: '面板正忙，请稍后重试' }))
@@ -572,7 +587,7 @@ describe('端口与更新设置', () => {
     renderApp('/settings?tab=maintenance', { gateway: g })
     await screen.findByText(/等待执行|正在执行/)
     finished = true
-    expect(await screen.findByRole('alert', {}, { timeout: 4000 })).toHaveTextContent('与目标提交不一致')
+    expect(await screen.findByRole('alert', {}, { timeout: 4000 })).toHaveTextContent('运行版本与更新目标不一致')
     expect(vi.mocked(reloadPanelPage)).not.toHaveBeenCalled()
     expect(screen.getByRole('button', { name: '重新加载面板' })).toBeInTheDocument()
     vi.unstubAllGlobals()

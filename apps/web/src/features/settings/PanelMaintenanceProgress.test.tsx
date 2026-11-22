@@ -39,11 +39,11 @@ describe('维护图形进度与日志', () => {
     expect(screen.getByRole('listitem', { name: /校验安装包.*失败/ })).toHaveAttribute('aria-current', 'step')
     expect(screen.getByRole('listitem', { name: /健康检查.*待执行/ })).toBeInTheDocument()
   })
-  it('日志分批到达时只展示尚未出现在日志中的目标字段', () => {
+  it('日志分批到达时补充版本和来源，提交 ID 始终只在日志中显示', () => {
     const view = render(<PanelMaintenanceProgress task={task} logs="更新来源：GitHub" />)
     expect(screen.queryByText('更新来源：GitHub')).not.toBeInTheDocument()
     expect(screen.getByText(task.releaseTag!)).toBeInTheDocument()
-    expect(screen.getByText(task.targetCommit)).toBeInTheDocument()
+    expect(screen.queryByText(task.targetCommit)).not.toBeInTheDocument()
     view.rerender(<PanelMaintenanceProgress task={task} logs={`更新来源：GitHub；更新策略：最新发版 ${task.releaseTag}；目标提交：${task.targetCommit}\n`} />)
     expect(screen.queryByText(task.releaseTag!)).not.toBeInTheDocument()
     expect(screen.queryByText(task.targetCommit)).not.toBeInTheDocument()

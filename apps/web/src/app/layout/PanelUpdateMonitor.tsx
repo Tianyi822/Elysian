@@ -121,7 +121,7 @@ export function PanelUpdateMonitor() {
             if (health?.commit && health.commit === finished.targetCommit) {
               store().requestReload(finished, store().submittedUpdateId === finished.id ? 'countdown' : 'immediate')
             } else usePanelStore.setState({ needsManualReload: true, verificationError: health?.commit
-              ? `面板已恢复，但运行版本 ${health.commit.slice(0, 7)} 与目标提交不一致，未自动刷新页面；请查看任务日志或在服务器核实。`
+              ? '面板已恢复，但运行版本与更新目标不一致。请查看维护进程日志或在服务器核实。'
               : '面板已恢复，但暂无法确认运行版本，未自动刷新页面；可手动重新加载后查看当前版本。' })
           }
         } else if (store().trackedTaskId === finished.id && refreshedTerminal !== finished.id) {

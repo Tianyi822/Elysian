@@ -21,13 +21,19 @@ import { useImeEnterGuard } from '../../components/useImeEnterGuard'
 import { useMessageStore } from '../../stores/messageStore'
 import { sendPanelPending, type PanelPending } from '../../stores/panelPending'
 import { Button } from '../../components/Button'
+import { Badge } from '../../components/easyui/Badge'
+import { formatDateTimeWithYear } from '../../components/format'
+import { IconButton } from '../../components/IconButton'
+import { ExternalLink } from '../../components/icons'
 import { FORM_CONTROL_HEIGHT_CLASS, MAINTENANCE_FORM_ACTION_CLASS } from '../../components/formControl'
 import { messageOf } from '../../utils/errorMessage'
 
 const BUTTON = `${MAINTENANCE_FORM_ACTION_CLASS} transition-colors hover:border-fg-subtle`
 const INPUT = `${FORM_CONTROL_HEIGHT_CLASS} w-full rounded-lg border border-control-line bg-surface-raised px-3 text-sm tabular-nums text-fg transition-colors hover:border-fg-subtle disabled:cursor-not-allowed disabled:opacity-50`
-function updateSummary(update: PanelUpdate): string {
-  return !update.releaseTag ? '上游仓库暂无正式发版' : `${update.available ? '可更新至正式发版' : '当前已是最新版本'} · ${update.releaseTag}`
+function updateStatusLabel(update: PanelUpdate, currentVersion: string | undefined): string {
+  if (!update.releaseTag) return '暂无可用发版'
+  if (!update.available) return '已是最新版本'
+  return update.releaseTag === currentVersion ? '可更新' : `可更新至 ${update.releaseTag}`
 }
 
 export function PanelMaintenanceSettings() {
@@ -76,10 +82,14 @@ export function PanelMaintenanceSettings() {
     && (trackedTaskId !== task.id || verifiedUpdate === task.id)
   const unavailable = !info?.available || active || submitting || pending !== null
   const currentVersion = info ? info.releaseTag || '未记录' : status === 'error' ? '读取失败' : '正在读取…'
+  const buildTime = formatDateTimeWithYear(info?.buildTime)
+  const checkedUpdate = update?.channel === channel && update.source === source ? update : null
+  const hasAvailableUpdate = checkedUpdate?.available === true
+  const sourceUrl = source === 'gitee' ? 'https://gitee.com/Chentyit/Elysian' : 'https://github.com/Tianyi822/Elysian'
+  const sourceLinkLabel = `打开 ${PANEL_UPDATE_SOURCE_LABELS[source]} 仓库`
   useFeedbackMessage(loadError ? `面板配置读取失败：${loadError}` : null)
   useFeedbackMessage(info && !info.available ? `面板维护不可用：${info.reason}` : null, 'warning')
   useFeedbackMessage(task?.state === 'succeeded' && (task.kind !== 'update' || verifiedUpdate === task.id) ? '面板维护已完成' : null, 'success')
-  useFeedbackMessage(update ? `检查更新：${updateSummary(update)}` : null, 'info')
 
   // 首次展示、恢复任务及追加分页后都贴底；只滚动日志框，不移动设置页。
   useLayoutEffect(() => {
@@ -186,8 +196,9 @@ export function PanelMaintenanceSettings() {
     setSource(next); setUpdate(null); setResourceTarget(null); setChecking(false); setUpdateError(null)
   }
   const beginUpdate = () => {
-    if (!update || unavailable) return
-    const target = { channel: update.channel, source: update.source, targetCommit: update.targetCommit, releaseTag: update.releaseTag }
+    if (!checkedUpdate?.available || unavailable || checking) return
+    const { channel, source, targetCommit, releaseTag } = checkedUpdate
+    const target = { channel, source, targetCommit, releaseTag }
     if (info?.resourcePreflightVersion) setResourceTarget(target)
     else void submit(`update:${target.source}:${target.channel}:${target.releaseTag}:${target.targetCommit}`, { kind: 'update', input: target })
   }
@@ -208,7 +219,31 @@ export function PanelMaintenanceSettings() {
     </section>
     <section aria-label="面板更新" className="panel-surface p-5">
       <div className="flex items-center gap-1.5"><h2 className="text-sm font-medium text-fg">面板更新</h2><SectionHelp label="面板更新说明">{info?.updateDelivery === 'precompiled/v1' ? '从所选平台下载并校验预编译安装包，准备完成后短暂重启。服务器无需 Go 或 Bun，不提前停止其他业务；更新失败会恢复原版本并保留数据。' : '先下载并编译新版本，成功后重启。更新失败会恢复原版本，保留面板数据。资源不足时，先确认停机清单；提前停止面板后，构建期间页面暂时不可访问。'}</SectionHelp></div>
-      <div className="mt-4 flex flex-wrap items-center gap-3">
+      <div className="mt-3 flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5">
+        <p className="flex min-w-0 flex-wrap items-baseline gap-x-2 gap-y-1 text-xs text-fg-muted">
+          <span>当前版本</span>
+          <span className="min-w-0 wrap-anywhere text-lg font-semibold tabular-nums text-fg">{currentVersion}</span>
+        </p>
+        <div role="status" className="min-w-0 empty:sr-only">
+          {checkedUpdate ? (
+            <Badge
+              dot
+              animateChanges={false}
+              tone={hasAvailableUpdate ? 'info' : checkedUpdate.releaseTag ? 'success' : 'neutral'}
+              className="h-auto min-h-6 max-w-full wrap-anywhere whitespace-normal py-0.5"
+            >
+              {updateStatusLabel(checkedUpdate, info?.releaseTag)}
+            </Badge>
+          ) : null}
+        </div>
+      </div>
+      {buildTime ? (
+        <p className="mt-1 flex flex-wrap items-baseline gap-x-2 text-xs leading-5 text-fg-muted">
+          <span>构建时间</span>
+          <time dateTime={info?.buildTime} className="tabular-nums">{buildTime} 北京时间</time>
+        </p>
+      ) : null}
+      <div className="mt-4 flex flex-wrap items-center gap-2">
         <ChipGroup
           ariaLabel="更新来源"
           items={(['github', 'gitee'] as const).map((value) => ({ value, label: PANEL_UPDATE_SOURCE_LABELS[value] }))}
@@ -216,20 +251,31 @@ export function PanelMaintenanceSettings() {
           onSelect={selectSource}
           disabled={active || submitting || pending !== null}
         />
+        <IconButton asChild label={sourceLinkLabel}>
+          <a
+            aria-label={sourceLinkLabel}
+            href={sourceUrl}
+            target="_blank"
+            rel="noreferrer"
+            className="icon-button inline-flex size-8 shrink-0 items-center justify-center text-fg-muted hover:bg-surface-raised hover:text-fg"
+          >
+            <ExternalLink aria-hidden size={16} />
+          </a>
+        </IconButton>
       </div>
-      <div className="mt-3 space-y-2 text-xs leading-5 text-fg-muted">
-        <p className="wrap-anywhere">当前版本：<span className="font-medium text-fg">{currentVersion}</span></p>
-        <p>更新来源：<a className="text-fg underline underline-offset-4" href={source === 'gitee' ? 'https://gitee.com/Chentyit/Elysian' : 'https://github.com/Tianyi822/Elysian'} target="_blank" rel="noreferrer">{source === 'gitee' ? 'Gitee · Chentyit/Elysian' : 'GitHub · Tianyi822/Elysian'}</a></p>
-        <p className="break-all">当前提交：{info?.commit ?? '正在读取…'}</p>
-        {info?.buildTime && info.buildTime !== 'unknown' ? <p>构建时间：{info.buildTime}</p> : null}
+      <div className="mt-4 flex flex-wrap gap-2">
+        {hasAvailableUpdate ? (
+          <Button type="button" className={BUTTON} disabled={unavailable || checking} onClick={beginUpdate}>
+            {submitting ? '正在提交…' : '更新并重启'}
+          </Button>
+        ) : null}
+        <Button variant={hasAvailableUpdate ? 'outline' : 'primary'} type="button" className={BUTTON} disabled={unavailable} isLoading={checking} loadingText="正在检查…" onClick={() => void check()}>
+          检查更新
+        </Button>
+        <Button variant="outline" type="button" className={BUTTON} disabled={!info?.available} title={info && !info.available ? info.reason : undefined} onClick={() => setChangelogOpen(true)}>
+          更新日志
+        </Button>
       </div>
-      {update ? <div role="status" className="mt-4 space-y-1 break-all text-xs leading-5 text-fg">
-        <p>{updateSummary(update)}</p>
-        <p>来源：{PANEL_UPDATE_SOURCE_LABELS[update.source]}</p>
-        {update.targetCommit ? <p>目标提交：{update.targetCommit}</p> : null}
-        {update.message && update.targetCommit ? <p className="text-fg-muted">{update.message}</p> : null}
-      </div> : null}
-      <div className="mt-4 flex flex-wrap gap-2"><Button variant="outline" type="submit" className={BUTTON} disabled={unavailable || checking} onClick={() => void check()}>{checking ? '正在检查…' : '检查更新'}</Button><Button variant="outline" type="submit" className={BUTTON} disabled={unavailable || checking || !update?.available || update.channel !== channel || update.source !== source} onClick={beginUpdate}>{submitting ? '正在提交…' : '更新并重启'}</Button><Button variant="outline" type="submit" className={BUTTON} disabled={!info?.available} title={info && !info.available ? info.reason : undefined} onClick={() => setChangelogOpen(true)}>更新日志</Button></div>
       {info?.available && !info.resourcePreflightVersion ? <p className="mt-2 text-xs leading-5 text-warning">当前服务器版本不支持更新资源预检。首次升级前请手动释放负载；不会自动停止其他业务。</p> : null}
       {updateError || verificationError ? <p role="alert" className="mt-3 break-all text-xs leading-5 text-danger">{updateError ?? verificationError}</p> : null}
     </section>

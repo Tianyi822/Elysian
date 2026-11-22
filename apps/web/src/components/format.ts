@@ -1,17 +1,29 @@
 /**
  * 业务时间默认走固定时区，保证跨机器显示一致；标明本地时间的读数单独格式化。
  */
-const DATE_TIME_FORMATTER = new Intl.DateTimeFormat('zh-CN', {
+const DATE_TIME_OPTIONS = {
   timeZone: 'Asia/Shanghai',
   month: '2-digit',
   day: '2-digit',
   hour: '2-digit',
   minute: '2-digit',
   hour12: false,
-})
+} satisfies Intl.DateTimeFormatOptions
+
+const DATE_TIME_FORMATTER = new Intl.DateTimeFormat('zh-CN', DATE_TIME_OPTIONS)
 
 export function formatDateTime(iso: string): string {
   return DATE_TIME_FORMATTER.format(new Date(iso))
+}
+
+const DATE_TIME_WITH_YEAR_FORMATTER = new Intl.DateTimeFormat('sv-SE', {
+  ...DATE_TIME_OPTIONS,
+  year: 'numeric',
+})
+
+export function formatDateTimeWithYear(iso: string | undefined): string | null {
+  const timestamp = iso ? Date.parse(iso) : NaN
+  return Number.isFinite(timestamp) ? DATE_TIME_WITH_YEAR_FORMATTER.format(timestamp) : null
 }
 
 /** 按浏览器本地时区展示完整日期和时间。 */

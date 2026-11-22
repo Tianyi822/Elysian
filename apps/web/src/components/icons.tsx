@@ -34,6 +34,7 @@ export {
   Copy,
   Database,
   Download,
+  ExternalLink,
   Eye,
   EyeOff,
   File,
