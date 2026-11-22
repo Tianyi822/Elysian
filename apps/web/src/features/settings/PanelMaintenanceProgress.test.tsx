@@ -3,7 +3,7 @@ import { render, screen, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it } from 'vitest'
 import type { PanelTask } from '@elysian/contracts'
-import { PanelMaintenanceProgress } from './PanelMaintenanceProgress'
+import { PanelMaintenanceProgress, panelMaintenancePhaseLabel } from './PanelMaintenanceProgress'
 import { PanelMaintenanceLog } from './PanelMaintenanceLog'
 
 const task: PanelTask = {
@@ -15,25 +15,50 @@ const task: PanelTask = {
 }
 
 describe('维护图形进度与日志', () => {
-  it('以真实字节展示下载比例及速率，阶段进度独立于下载百分比', () => {
+  it('使用 EasyUI Stepper 展示真实下载进度与当前阶段', () => {
     render(<PanelMaintenanceProgress task={task} />)
     expect(screen.getByRole('progressbar', { name: '安装包下载进度' })).toHaveAttribute('aria-valuenow', '25')
     expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuetext', '4.0 MiB / 16.0 MiB，下载安装包')
     expect(screen.getByText('平均 512.0 KiB/s')).toBeInTheDocument()
     const steps = screen.getByRole('list', { name: '维护阶段' })
-    expect(within(steps).getByRole('listitem', { name: '环境检查：已完成' })).toBeInTheDocument()
-    expect(within(steps).getByRole('listitem', { name: '下载安装：进行中' })).toHaveAttribute('aria-current', 'step')
-    expect(within(steps).getByRole('listitem', { name: '健康检查：待执行' })).toBeInTheDocument()
+    expect(within(steps).getByRole('listitem', { name: /检查运行环境.*已完成/ })).toBeInTheDocument()
+    expect(within(steps).getByRole('listitem', { name: /下载安装包.*进行中/ })).toHaveAttribute('aria-current', 'step')
+    expect(within(steps).getByRole('listitem', { name: /健康检查.*待执行/ })).toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: '安装包校验结果' })).not.toBeInTheDocument()
   })
-  it('传输完成后仍展示校验过程，失败不宣称安装包已就绪', () => {
+  it('下载完成后单独进入校验步骤，失败状态不误报校验通过', () => {
     const verifying = { ...task, download: { ...task.download!, completedBytes: task.download!.totalBytes, status: 'verifying' as const } }
     const view = render(<PanelMaintenanceProgress task={verifying} />)
     expect(screen.getByText('正在校验安装包')).toBeInTheDocument()
     expect(screen.queryByText('安装包已校验')).not.toBeInTheDocument()
+    expect(screen.getByRole('listitem', { name: /校验安装包.*进行中/ })).toHaveAttribute('aria-current', 'step')
+    expect(screen.getByText(/正在比对发布包 SHA256/)).toBeInTheDocument()
     view.rerender(<PanelMaintenanceProgress task={{ ...verifying, state: 'failed', phase: 'finished', failedPhase: 'downloading-release' }} />)
-    expect(screen.getByText('安装包校验失败')).toBeInTheDocument()
-    expect(screen.getByText('失败阶段：下载安装包')).toBeInTheDocument()
-    expect(screen.getByRole('listitem', { name: '健康检查：待执行' })).toBeInTheDocument()
+    expect(screen.getByText('安装包校验未完成')).toBeInTheDocument()
+    expect(screen.getByText('此阶段未能完成。具体原因见维护任务错误信息和日志。')).toBeInTheDocument()
+    expect(screen.getByRole('listitem', { name: /校验安装包.*失败/ })).toHaveAttribute('aria-current', 'step')
+    expect(screen.getByRole('listitem', { name: /健康检查.*待执行/ })).toBeInTheDocument()
+  })
+  it('服务端返回 ready 后显示真实校验项目，并在原下载阶段过渡到准备新版本', async () => {
+    const verifying = { ...task, download: { ...task.download!, completedBytes: task.download!.totalBytes, status: 'verifying' as const } }
+    const view = render(<PanelMaintenanceProgress task={verifying} />)
+    const ready = { ...verifying, download: { ...verifying.download!, status: 'ready' as const } }
+
+    view.rerender(<PanelMaintenanceProgress task={ready} />)
+
+    expect(panelMaintenancePhaseLabel(ready)).toBe('准备新版本')
+    expect(screen.getByRole('listitem', { name: /准备新版本.*进行中/ })).toHaveAttribute('aria-current', 'step')
+    expect(screen.getByRole('region', { name: '安装包校验结果' })).toBeInTheDocument()
+    expect(screen.getByText('发布包 SHA256 与发布信息一致')).toBeInTheDocument()
+    expect(screen.getByText('目标提交与 release.json 一致')).toBeInTheDocument()
+    expect(screen.getByText('发布清单中的文件摘要已核对')).toBeInTheDocument()
+    expect(screen.getByText('可执行文件架构与当前主机一致')).toBeInTheDocument()
+    expect(await screen.findByText('安装包校验结果已返回通过，正在准备更新资源。')).toBeInTheDocument()
+  })
+  it('旧源码更新任务仍按源码下载与构建阶段显示', () => {
+    render(<PanelMaintenanceProgress task={{ ...task, phase: 'downloading', download: undefined }} />)
+    expect(screen.getByRole('listitem', { name: /下载源码.*进行中/ })).toHaveAttribute('aria-current', 'step')
+    expect(screen.queryByRole('listitem', { name: /校验安装包/ })).not.toBeInTheDocument()
   })
   it.each([{ workerStatus: 'unknown' as const }, { workerDead: true }, { paused: true }])('进程或连接未确认时冻结活动图形：%j', ({ paused, ...changes }) => {
     const { container } = render(<PanelMaintenanceProgress task={{ ...task, ...changes }} paused={paused} />)
@@ -42,17 +67,6 @@ describe('维护图形进度与日志', () => {
     expect(container.querySelector('.motion-safe\\:animate-spin')).toBeNull()
     expect(container.querySelector('.motion-safe\\:animate-pull-progress')).toBeNull()
     expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '25')
-  })
-  it('阶段连接线只跨圆间空隙不穿圆，活动段有流动高光', () => {
-    const { container } = render(<PanelMaintenanceProgress task={task} />)
-    const connectors = container.querySelectorAll('ol[aria-label="维护阶段"] li > span.absolute')
-    expect(connectors).toHaveLength(4)
-    for (const connector of connectors) {
-      expect(connector.className).not.toContain('w-full')
-      expect(connector.className).toContain('left-[calc')
-      expect(connector.className).toContain('right-[calc')
-    }
-    expect(container.querySelector('.motion-safe\\:animate-pull-progress')).not.toBeNull()
   })
   it('旧任务无字节数据时显示等待信息，不估算下载百分比', () => {
     render(<PanelMaintenanceProgress task={{ ...task, download: undefined }} />)

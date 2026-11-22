@@ -2,7 +2,7 @@ import { randomId } from '../../utils/randomId'
 import { SectionHelp } from '../../components/SectionHelp'
 import { useEffect, useId, useLayoutEffect, useRef, useState } from 'react'
 import type { FormEvent } from 'react'
-import { PANEL_TASK_PHASE_LABELS, PANEL_TASK_STATE_LABELS, PANEL_UPDATE_SOURCE_LABELS, panelTaskIsActive, validatePanelPorts } from '@elysian/contracts'
+import { PANEL_TASK_STATE_LABELS, PANEL_UPDATE_SOURCE_LABELS, panelTaskIsActive, validatePanelPorts } from '@elysian/contracts'
 import type { PanelTask, PanelUpdate, PanelUpdateSource, PanelUpdateTarget } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { PanelHttpError } from '../../adapters/http/panelHttpAdapter'
@@ -13,7 +13,7 @@ import { panelAddress } from '../../utils/panelAddress'
 export { panelAddress } from '../../utils/panelAddress'
 import { PanelChangelogDialog } from './PanelChangelogDialog'
 import { PanelResourcePreflightDialog } from './PanelResourcePreflightDialog'
-import { PanelMaintenanceProgress } from './PanelMaintenanceProgress'
+import { PanelMaintenanceProgress, panelMaintenancePhaseLabel } from './PanelMaintenanceProgress'
 import { PanelMaintenanceLog } from './PanelMaintenanceLog'
 import { ChipGroup } from '../../components/ChipGroup'
 import { useFeedbackMessage } from '../../components/useFeedbackMessage'
@@ -236,7 +236,7 @@ export function PanelMaintenanceSettings() {
     </section> : null}
     {task && !updateCompleted ? <section aria-label="面板维护进度" className="panel-surface p-5">
       <h2 className="text-sm font-medium text-fg">面板维护进度</h2>
-      <p role="status" className="mt-3 text-xs leading-5 text-fg">{task.state === 'succeeded' && task.kind === 'update' && trackedTaskId === task.id && verifiedUpdate !== task.id ? '运行版本待确认' : PANEL_TASK_STATE_LABELS[task.state]} · {PANEL_TASK_PHASE_LABELS[task.phase] ?? task.phase}</p>
+      <p role="status" className="mt-3 text-xs leading-5 text-fg">{task.state === 'succeeded' && task.kind === 'update' && trackedTaskId === task.id && verifiedUpdate !== task.id ? '运行版本待确认' : PANEL_TASK_STATE_LABELS[task.state]} · {panelMaintenancePhaseLabel(task)}</p>
       <PanelMaintenanceProgress task={task} paused={Boolean(progressError || connectionError)} />
       {panelTaskIsActive(task) && task.workerDead ? <p role="status" className="mt-2 break-all text-xs leading-5 text-warning">维护进程已退出但任务尚未判定结果，等待服务器自动收敛；若长时间无变化，请在服务器执行 journalctl -u elysian-maintenance-{task.id} 查看现场。</p> : null}
       {panelTaskIsActive(task) && (task.workerStatus === 'unknown' || (task.workerStatus === undefined && !task.workerDead)) ? <p className="mt-2 text-xs leading-5 text-fg-muted">维护进程状态尚未确认，继续等待任务结果。</p> : null}

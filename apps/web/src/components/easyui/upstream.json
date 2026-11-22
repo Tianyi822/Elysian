@@ -21,13 +21,15 @@
     "GooeyMenu.tsx": "src/components/ui/GooeyMenu.tsx",
     "Login.tsx": "src/components/ui/Login.tsx",
     "PeekCard.tsx": "src/components/ui/PeekCard.tsx",
-    "Sidebar.tsx": "src/components/ui/sidebar.tsx"
+    "Sidebar.tsx": "src/components/ui/sidebar.tsx",
+    "Stepper.tsx": "src/components/ui/stepper.tsx"
   },
   "adaptations": [
     "Adapt Login's centered title and circular mark, 448px card with 24px corners, and stacked 40px fields with 14px corners to the supplied EasyUI preview and Elysian theme tokens. Leave native username/password handling, IME protection, validation, notices and session navigation with the existing login page. Omit email, remember-device, social and signup controls. The login help uses an opt-in login-themed Peek Card; retain upstream appearance and motion for system load.",
     "Take the custom-content Peek Card from EasyUI for system-load details. Retain the 288/320px panel, measured 19.6px corners, 8px gap, 16px padding, black surface, border and shadow, 0.96 scale and signed 6px/4px travel, snappy spring entrance and 120ms exit. Use Radix for the existing click trigger, viewport collision placement, Escape and focus restoration; the portal escapes the sidebar drawer, and exiting content is inert. Preserve all live diagnostic content and honor reduced motion.",
     "Add a CSS-only Sidebar density preset for desktop viewports from 1440px: 64px brand area, 36px mark, 40px navigation/footer rows, 20px icons and 4px row gaps. Keep upstream widths, compact desktop/mobile density, motion, and navigation behavior.",
     "Map colors to existing semantic theme tokens and Chinese labels.",
+    "Copy the official Stepper and StepPanels. Map colors to Elysian semantic tokens, add localized active, completed and failed states with reduced-motion handling, and use the controlled Stepper and sliding detail panels for panel maintenance. Advance stages only from recorded task phases and package verification receipts.",
     "Add an optional DataTable searchAction beside the built-in search field. The Docker image table keeps refresh next to search and pull in the existing right-hand toolbar slot instead of a row count; selection still replaces the normal toolbar.",
     "Allow DataTable callers to hide the default toolbar row count without adding a right-hand action; used by the read-only login log table.",
     "Preserve controlled values, disabled state, and reduced-motion support.",
@@ -58,6 +60,7 @@
     "GooeyMenu.tsx": "a4d68b641d39b0782cc83103cc407760da2fce4b",
     "Login.tsx": "f2287ce01ae6b6e7be28ca8d6a803dff91a20c96",
     "PeekCard.tsx": "f2287ce01ae6b6e7be28ca8d6a803dff91a20c96",
-    "Sidebar.tsx": "a64cd82c1adc0b44ec4f495e45b3b4d76f1f0143"
+    "Sidebar.tsx": "a64cd82c1adc0b44ec4f495e45b3b4d76f1f0143",
+    "Stepper.tsx": "a64cd82c1adc0b44ec4f495e45b3b4d76f1f0143"
   }
 }
