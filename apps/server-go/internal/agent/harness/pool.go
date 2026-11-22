@@ -6,6 +6,7 @@ import (
 	"sync"
 	"time"
 
+	hstate "elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/harness/worker"
 	"elysian/server/internal/agent/tools"
 )
@@ -29,8 +30,14 @@ type executionState struct {
 }
 
 type workerSlot struct {
-	process worker.Process
-	state   string
+	process     worker.Process
+	state       string
+	claimedID   string
+	claimedRoot string
+}
+
+func (slot *workerSlot) clearClaim() {
+	slot.claimedID, slot.claimedRoot = "", ""
 }
 
 func (m *Manager) loop() {
@@ -38,7 +45,7 @@ func (m *Manager) loop() {
 	var workers sync.WaitGroup
 	m.mu.Lock()
 	for i := 0; i < m.deps.Limits.Concurrency; i++ {
-		slot := &workerSlot{state: "starting"}
+		slot := &workerSlot{state: "idle"}
 		m.workers = append(m.workers, slot)
 		workers.Add(1)
 		go func() { defer workers.Done(); m.workerLoop(slot) }()
@@ -52,12 +59,10 @@ func (m *Manager) setWorkerStateLocked(slot *workerSlot, state string) {
 	m.workerState = "unavailable"
 	allStopped := true
 	for _, other := range m.workers {
-		if other.state == "ready" {
+		// Public readiness describes ability to accept work, including cold slots.
+		if other.state == "ready" || other.state == "idle" || other.state == "starting" {
 			m.workerState = "ready"
 			return
-		}
-		if other.state == "starting" {
-			m.workerState = "starting"
 		}
 		allStopped = allStopped && other.state == "stopped"
 	}
@@ -70,6 +75,7 @@ func (m *Manager) closeWorker(slot *workerSlot) {
 	m.mu.Lock()
 	p := slot.process
 	slot.process = nil
+	slot.clearClaim()
 	m.setWorkerStateLocked(slot, "stopped")
 	m.mu.Unlock()
 	if p != nil {
@@ -105,7 +111,43 @@ func (m *Manager) rootHasCapacityLocked(r Run) bool {
 			active++
 		}
 	}
+	for _, slot := range m.workers {
+		if slot.claimedID == r.ID {
+			return false
+		}
+		if slot.claimedRoot == root {
+			active++
+		}
+	}
 	return active < 2
+}
+
+func (m *Manager) nextWorkerRunLocked() (Run, error) {
+	view := readView(m.ctx, m.store)
+	ids, err := view.Queued(m.ctx)
+	if err != nil {
+		return Run{}, err
+	}
+	for _, id := range ids {
+		candidate, err := view.Get(m.ctx, id)
+		if err != nil {
+			return Run{}, err
+		}
+		if !m.rootHasCapacityLocked(candidate) {
+			continue
+		}
+		if candidate.WorkflowID != "" {
+			w, err := readWorkflow(m.ctx, m.store, candidate.WorkflowID)
+			if err != nil {
+				return Run{}, err
+			}
+			if w.GateClosed || w.Status == StateRecoveryRequired || hstate.Terminal(w.Status) {
+				continue
+			}
+		}
+		return candidate, nil
+	}
+	return Run{}, nil
 }
 
 // Retain these two read-only aggregate fields for older diagnostics/tests.

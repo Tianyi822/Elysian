@@ -72,10 +72,15 @@ func TestUserInputSuspendsRestoresAndResumesExactlyOnce(t *testing.T) {
 			}
 			m, session, _ := agentManager(t, client, func(d *Deps) {
 				d.Now = func() time.Time { return time.Now().Add(time.Duration(clockOffset.Load())) }
+				d.workerIdleTimeout = 50 * time.Millisecond
 			})
 			run := submitAgentTest(t, m, session, "question-run", "需要确认范围")
 			q := waitUserInput(t, m, run.ID)
-			runtimeEventually(t, func() bool { m.mu.Lock(); defer m.mu.Unlock(); return len(m.executions) == 0 })
+			runtimeEventually(t, func() bool {
+				m.mu.Lock()
+				defer m.mu.Unlock()
+				return len(m.executions) == 0 && m.workers[0].process == nil
+			})
 			if restart {
 				m = reopenOperationManager(t, m)
 				if got := waitUserInput(t, m, run.ID); got.ID != q.ID {

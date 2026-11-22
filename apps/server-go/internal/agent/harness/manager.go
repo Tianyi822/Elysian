@@ -46,6 +46,7 @@ type Deps struct {
 	Now                   func() time.Time
 	NewID                 func() string
 	Spawn                 func(context.Context) (worker.Process, error)
+	workerIdleTimeout     time.Duration
 }
 
 // Manager 是父进程的唯一状态写入者。Worker 的消息只能提出请求，不能指定终态。
@@ -147,7 +148,7 @@ func New(deps Deps) (*Manager, error) {
 		return nil, fmt.Errorf("恢复运行记录失败：%w", err)
 	}
 	ctx, cancel := context.WithCancel(context.Background())
-	m := &Manager{store: s, deps: deps, ctx: ctx, cancel: cancel, wake: make(chan struct{}, 1), done: make(chan struct{}), taskDone: make(chan struct{}), closeDone: make(chan struct{}), workerState: "starting", executions: make(map[string]*executionState)}
+	m := &Manager{store: s, deps: deps, ctx: ctx, cancel: cancel, wake: make(chan struct{}, 1), done: make(chan struct{}), taskDone: make(chan struct{}), closeDone: make(chan struct{}), workerState: "ready", executions: make(map[string]*executionState)}
 	if err = m.initializeToolRuntime(); err != nil {
 		cancel()
 		return nil, err
@@ -535,6 +536,11 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 	defer sweep.Stop()
 	approvalTick := time.NewTicker(time.Minute)
 	defer approvalTick.Stop()
+	idleTimeout := m.deps.workerIdleTimeout
+	if idleTimeout <= 0 {
+		idleTimeout = time.Minute
+	}
+	var idleDeadline time.Time
 	backoff := time.Second
 	for {
 		if m.ctx.Err() != nil {
@@ -543,29 +549,46 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 		m.mu.Lock()
 		blocked := m.blocked != "" || m.store.DispatchError() != nil
 		p := slot.process
-		m.mu.Unlock()
 		if blocked {
-			select {
-			case <-m.ctx.Done():
-				return
-			case <-m.wake:
-				continue
-			}
+			slot.clearClaim()
 		}
-		if p != nil {
+		m.mu.Unlock()
+		if p == nil {
+			idleDeadline = time.Time{}
+		} else {
+			if idleDeadline.IsZero() {
+				idleDeadline = time.Now().Add(idleTimeout)
+			}
+			exited := false
 			select {
 			case <-processDone(p):
+				exited = true
+			default:
+			}
+			if exited || !time.Now().Before(idleDeadline) {
+				if err := closeWorkerProcess(p); err != nil {
+					// Keep ownership of the old process until its exit is confirmed.
+					if !m.waitWorkerRetry(time.Second) {
+						return
+					}
+					continue
+				}
 				m.mu.Lock()
+				slot.clearClaim()
 				slot.process = nil
-				m.setWorkerStateLocked(slot, "unavailable")
+				m.setWorkerStateLocked(slot, "idle")
 				m.mu.Unlock()
-				_ = closeWorkerProcess(p)
-				if !m.waitWorkerRetry(time.Second) {
+				if exited && !m.waitWorkerRetry(time.Second) {
 					return
 				}
 				continue
-			default:
 			}
+		}
+		if blocked {
+			if !m.waitWorkerQueue(nil, processDone(p), nil, idleDeadline) {
+				return
+			}
+			continue
 		}
 		// 即使持续有队列，也要在两个任务之间执行到期清理。
 		select {
@@ -574,28 +597,17 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 			continue
 		default:
 		}
-		if p == nil {
-			proc, err := m.spawnWorker(slot)
-			if err != nil {
-				if !m.waitWorkerRetry(backoff) {
-					return
-				}
-				backoff *= 2
-				if backoff > 30*time.Second {
-					backoff = 30 * time.Second
-				}
-				continue
-			}
-			p = proc
-			backoff = time.Second
-		}
 		if err := m.checkDispatchGuard(); err != nil {
+			m.mu.Lock()
+			slot.clearClaim()
+			m.mu.Unlock()
 			if !m.waitWorkerRetry(time.Second) {
 				return
 			}
 			continue
 		}
 		m.mu.Lock()
+		slot.clearClaim()
 		if m.ctx.Err() != nil {
 			m.mu.Unlock()
 			return
@@ -613,43 +625,11 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 		if _, err := m.promoteResourceWaiters(m.ctx); err != nil && m.ctx.Err() == nil {
 			m.storageFailedLocked()
 		}
-		ids, err := readView(m.ctx, m.store).Queued(m.ctx)
-		if err != nil {
-			if m.ctx.Err() == nil {
-				m.storageFailedLocked()
-			}
+		if m.blocked != "" || m.store.DispatchError() != nil {
 			m.mu.Unlock()
 			continue
 		}
-		if len(ids) == 0 {
-			m.mu.Unlock()
-			if !m.waitWorkerQueue(approvalTick.C, processDone(p), sweep.C) {
-				return
-			}
-			continue
-		}
-		var r Run
-		for _, id := range ids {
-			candidate, readErr := readView(m.ctx, m.store).Get(m.ctx, id)
-			if readErr != nil {
-				err = readErr
-				break
-			}
-			if candidate.WorkflowID != "" {
-				w, e := readWorkflow(m.ctx, m.store, candidate.WorkflowID)
-				if e != nil {
-					err = e
-					break
-				}
-				if w.GateClosed || w.Status == StateRecoveryRequired || hstate.Terminal(w.Status) {
-					continue
-				}
-			}
-			if m.rootHasCapacityLocked(candidate) {
-				r = candidate
-				break
-			}
-		}
+		r, err := m.nextWorkerRunLocked()
 		if err != nil {
 			if m.ctx.Err() == nil {
 				m.storageFailedLocked()
@@ -659,9 +639,28 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 		}
 		if r.ID == "" {
 			m.mu.Unlock()
-			// 有队列却无可领取任务时不监听进程退出和清理时钟。
-			if !m.waitWorkerQueue(approvalTick.C, nil, nil) {
+			if !m.waitWorkerQueue(approvalTick.C, processDone(p), sweep.C, idleDeadline) {
 				return
+			}
+			continue
+		}
+		if p == nil {
+			// Reserve only the in-memory slot. After handshake the normal queue checks
+			// run again, so cancellation and maintenance still win before dispatch.
+			slot.claimedID, slot.claimedRoot = r.ID, executionRoot(r)
+			m.setWorkerStateLocked(slot, "starting")
+			m.signal()
+			m.mu.Unlock()
+			if err := m.spawnWorker(slot); err != nil {
+				if !m.waitWorkerRetry(backoff) {
+					return
+				}
+				backoff = min(2*backoff, 30*time.Second)
+				m.mu.Lock()
+				m.setWorkerStateLocked(slot, "idle")
+				m.mu.Unlock()
+			} else {
+				backoff = time.Second
 			}
 			continue
 		}
@@ -748,6 +747,7 @@ func (m *Manager) workerLoop(slot *workerSlot) {
 		m.refreshLegacyLocked()
 		m.signal()
 		m.mu.Unlock()
+		idleDeadline = time.Time{}
 		m.runWorkerExecution(slot, p, runCtx, cancel, r, execution, activeStart)
 	}
 }
@@ -759,20 +759,19 @@ func closeWorkerProcess(p worker.Process) error {
 	return err
 }
 
-func (m *Manager) spawnWorker(slot *workerSlot) (worker.Process, error) {
-	m.mu.Lock()
-	m.setWorkerStateLocked(slot, "starting")
-	m.mu.Unlock()
+func (m *Manager) spawnWorker(slot *workerSlot) error {
 	proc, err := m.deps.Spawn(m.ctx)
 	m.mu.Lock()
 	if err != nil {
+		slot.clearClaim()
 		m.setWorkerStateLocked(slot, "unavailable")
+		m.signal()
 	} else {
 		slot.process = proc
 		m.setWorkerStateLocked(slot, "ready")
 	}
 	m.mu.Unlock()
-	return proc, err
+	return err
 }
 
 func (m *Manager) waitWorkerRetry(delay time.Duration) bool {
@@ -794,13 +793,20 @@ func (m *Manager) sweepWorkerQueue() {
 	m.mu.Unlock()
 }
 
-func (m *Manager) waitWorkerQueue(approvals <-chan time.Time, exited <-chan struct{}, sweep <-chan time.Time) bool {
+func (m *Manager) waitWorkerQueue(approvals <-chan time.Time, exited <-chan struct{}, sweep <-chan time.Time, idleDeadline time.Time) bool {
+	var idle <-chan time.Time
+	if !idleDeadline.IsZero() {
+		timer := time.NewTimer(time.Until(idleDeadline))
+		defer timer.Stop()
+		idle = timer.C
+	}
 	select {
 	case <-m.ctx.Done():
 		return false
 	case <-m.wake:
 	case <-approvals:
 	case <-exited:
+	case <-idle:
 	case <-sweep:
 		m.sweepWorkerQueue()
 	}
@@ -945,7 +951,7 @@ func (m *Manager) runWorkerExecution(slot *workerSlot, p worker.Process, runCtx 
 	recycle := ctxErr != nil || errors.As(err, &interrupted) || m.blocked != ""
 	if recycle {
 		slot.process = nil
-		m.setWorkerStateLocked(slot, "starting")
+		m.setWorkerStateLocked(slot, "idle")
 	}
 	m.mu.Unlock()
 	if recycle {
@@ -1002,7 +1008,7 @@ func (m *Manager) recoverWorkerCheckpointLocked(slot *workerSlot, p worker.Proce
 	m.refreshLegacyLocked()
 	m.signal()
 	slot.process = nil
-	m.setWorkerStateLocked(slot, "starting")
+	m.setWorkerStateLocked(slot, "idle")
 	return true, nil
 }
 

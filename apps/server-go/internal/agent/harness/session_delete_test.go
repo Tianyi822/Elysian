@@ -57,7 +57,7 @@ func TestForceDeleteRunningModelIgnoresLateResultAndKeepsOtherSessions(t *testin
 		m.mu.Lock()
 		defer m.mu.Unlock()
 		// The cancelled process can still report ready before its recycle begins.
-		return m.workerState == "ready" && m.workers[0].process != nil && m.workers[0].process != originalProcess
+		return m.workerState == "ready" && m.workers[0].process == nil
 	})
 	other, err := m.CreateSession(context.Background(), CreateSessionInput{ModelProfileID: session.ModelProfileID, ModelRevision: session.ModelRevision})
 	if err != nil {
@@ -69,7 +69,7 @@ func TestForceDeleteRunningModelIgnoresLateResultAndKeepsOtherSessions(t *testin
 		return err == nil && r.Status == StateSucceeded
 	})
 	m.mu.Lock()
-	if m.storageError || m.blocked != "" {
+	if m.storageError || m.blocked != "" || m.workers[0].process == originalProcess {
 		t.Errorf("删除冻结了全局派发：%s", m.blocked)
 	}
 	m.mu.Unlock()

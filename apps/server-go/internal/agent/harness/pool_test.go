@@ -2,9 +2,102 @@ package harness
 
 import (
 	"context"
+	"errors"
+	"os"
+	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
+
+	"elysian/server/internal/agent/harness/worker"
 )
+
+func TestWorkerPoolStartsOnlyForClaimedRuns(t *testing.T) {
+	entered, release := make(chan struct{}), make(chan struct{})
+	unblock := sync.OnceFunc(func() { close(release) })
+	var starts atomic.Int32
+	m := runtimeManager(t, &runtimeTestTools{}, func(d *Deps) {
+		d.Limits.Concurrency = 2
+		d.Spawn = func(ctx context.Context) (worker.Process, error) {
+			if starts.Add(1) == 1 {
+				close(entered)
+				select {
+				case <-ctx.Done():
+					return nil, ctx.Err()
+				case <-release:
+				}
+			}
+			return &runtimeTestProcess{}, nil
+		}
+	})
+	defer unblock()
+	if starts.Load() != 0 {
+		t.Fatal("empty queue spawned workers")
+	}
+	first := runtimeSubmit(t, m, "cold-first", "docker_images_list")
+	awaitDeleteSignal(t, entered)
+	second := runtimeSubmit(t, m, "cold-second", "docker_containers_list")
+	if got := runtimeFinished(t, m, second.ID); got.Status != StateSucceeded {
+		t.Fatalf("second run: %+v", got)
+	}
+	got, err := m.Get(context.Background(), first.ID)
+	if err != nil || got.Status != StateQueued || got.StartedAt != "" || starts.Load() != 2 {
+		t.Fatalf("handshake claim lost: %+v, starts=%d, err=%v", got, starts.Load(), err)
+	}
+	if _, err := m.Cancel(context.Background(), first.ID); err != nil {
+		t.Fatal(err)
+	}
+	unblock()
+	if got := runtimeFinished(t, m, first.ID); got.Status != StateCancelled || got.StartedAt != "" {
+		t.Fatalf("cancelled cold run was dispatched: %+v", got)
+	}
+}
+
+func TestWorkerPoolRetiresIdleProcessAndStartsAgain(t *testing.T) {
+	starts := make(chan worker.Process, 2)
+	m := runtimeManager(t, &runtimeTestTools{}, func(d *Deps) {
+		d.workerIdleTimeout = 50 * time.Millisecond
+		d.Spawn = func(ctx context.Context) (worker.Process, error) {
+			p, err := worker.Spawn(ctx, worker.Options{Path: os.Args[0], Args: []string{"-test.run=^TestRuntimeWorkerHelper$"}, Env: []string{"HOME=/tmp", "ELYSIAN_RUNTIME_TEST_CHILD=1"}})
+			if err == nil {
+				starts <- p
+			}
+			return p, err
+		}
+	})
+	for _, id := range []string{"before-idle-timeout", "after-idle-timeout"} {
+		run := runtimeSubmit(t, m, id, "docker_images_list")
+		if got := runtimeFinished(t, m, run.ID); got.Status != StateSucceeded || got.Usage.Calls != 1 {
+			t.Fatalf("run: %+v", got)
+		}
+		awaitDeleteSignal(t, processDone(<-starts))
+		if !m.Info().Available || len(starts) != 0 {
+			t.Fatal("idle retirement disabled admission or respawned a process")
+		}
+	}
+}
+
+func TestWorkerPoolRetriesFailedHandshakeWithoutStartingRun(t *testing.T) {
+	var starts atomic.Int32
+	var tools runtimeTestTools
+	m := runtimeManager(t, &tools, func(d *Deps) {
+		d.Spawn = func(context.Context) (worker.Process, error) {
+			if starts.Add(1) == 1 {
+				return nil, errors.New("fixture handshake failure")
+			}
+			return &runtimeTestProcess{}, nil
+		}
+	})
+	run := runtimeSubmit(t, m, "failed-handshake", "docker_images_list")
+	runtimeEventually(t, func() bool { return m.Info().Worker == "unavailable" })
+	got, err := m.Get(context.Background(), run.ID)
+	if err != nil || got.Status != StateQueued || got.StartedAt != "" || tools.count.Load() != 0 {
+		t.Fatalf("failed handshake started run: %+v, err=%v", got, err)
+	}
+	if got = runtimeFinished(t, m, run.ID); got.Status != StateSucceeded || tools.count.Load() != 1 || starts.Load() != 2 {
+		t.Fatalf("retry did not run exactly once: %+v, starts=%d", got, starts.Load())
+	}
+}
 
 func TestWorkerPoolRunsIndependentTasksAndCancelsOnlyTarget(t *testing.T) {
 	entered := make(chan string, 2)

@@ -567,7 +567,7 @@ func TestManagerRestartDispatchesQueuedButNeverReplaysRunning(t *testing.T) {
 	}
 }
 
-func TestManagerObservesIdleWorkerExitAndRestarts(t *testing.T) {
+func TestManagerObservesIdleWorkerExitAndRestartsOnDemand(t *testing.T) {
 	dead := make(chan struct{})
 	var starts atomic.Int32
 	m := runtimeManager(t, &runtimeTestTools{}, func(d *Deps) {
@@ -578,8 +578,23 @@ func TestManagerObservesIdleWorkerExitAndRestarts(t *testing.T) {
 			return &runtimeTestProcess{}, nil
 		}
 	})
+	first := runtimeSubmit(t, m, "before-idle-exit", "docker_images_list")
+	if got := runtimeFinished(t, m, first.ID); got.Status != StateSucceeded {
+		t.Fatalf("first run: %+v", got)
+	}
 	close(dead)
-	runtimeEventually(t, func() bool { return starts.Load() >= 2 && m.Info().Available })
+	runtimeEventually(t, func() bool {
+		m.mu.Lock()
+		defer m.mu.Unlock()
+		return m.workers[0].process == nil
+	})
+	if starts.Load() != 1 || !m.Info().Available {
+		t.Fatalf("idle exit caused eager replacement or disabled admission: starts=%d", starts.Load())
+	}
+	next := runtimeSubmit(t, m, "after-idle-exit", "docker_images_list")
+	if got := runtimeFinished(t, m, next.ID); got.Status != StateSucceeded || starts.Load() != 2 {
+		t.Fatalf("next run: %+v, starts=%d", got, starts.Load())
+	}
 }
 
 func TestManagerCancelCommittedBeforeFinishWinsOverLastToolSuccess(t *testing.T) {
