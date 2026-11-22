@@ -46,7 +46,7 @@ export function GooeySelect<T extends string>({
         <path d="m6 9 6 6 6-6" />
       </motion.svg>
     </>}
-    triggerClassName="h-7 max-w-full gap-3 rounded-full px-3 text-sm font-medium"
+    triggerClassName="h-[var(--message-button-size,2rem)] max-w-full gap-3 rounded-full px-3 text-sm font-medium"
     className={className}
   />
 }

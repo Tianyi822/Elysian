@@ -2,7 +2,6 @@
 
 .log-filter-table .operation-log-filter button[aria-haspopup="listbox"] {
   width: var(--log-filter-width);
-  height: var(--dt-control-height);
   gap: 8px;
 }
 .operation-log-category { --log-filter-width: 8.25rem; }
