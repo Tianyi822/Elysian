@@ -35,9 +35,19 @@ describe('维护图形进度与日志', () => {
     expect(screen.getByText(/正在比对发布包 SHA256/)).toBeInTheDocument()
     view.rerender(<PanelMaintenanceProgress task={{ ...verifying, state: 'failed', phase: 'finished', failedPhase: 'downloading-release' }} />)
     expect(screen.getByText('安装包校验未完成')).toBeInTheDocument()
-    expect(screen.getByText('此阶段未能完成。具体原因见维护任务错误信息和日志。')).toBeInTheDocument()
+    expect(screen.queryByText('此阶段未能完成。具体原因见维护任务错误信息和日志。')).not.toBeInTheDocument()
     expect(screen.getByRole('listitem', { name: /校验安装包.*失败/ })).toHaveAttribute('aria-current', 'step')
     expect(screen.getByRole('listitem', { name: /健康检查.*待执行/ })).toBeInTheDocument()
+  })
+  it('日志分批到达时只展示尚未出现在日志中的目标字段', () => {
+    const view = render(<PanelMaintenanceProgress task={task} logs="更新来源：GitHub" />)
+    expect(screen.queryByText('更新来源：GitHub')).not.toBeInTheDocument()
+    expect(screen.getByText(task.releaseTag!)).toBeInTheDocument()
+    expect(screen.getByText(task.targetCommit)).toBeInTheDocument()
+    view.rerender(<PanelMaintenanceProgress task={task} logs={`更新来源：GitHub；更新策略：最新发版 ${task.releaseTag}；目标提交：${task.targetCommit}\n`} />)
+    expect(screen.queryByText(task.releaseTag!)).not.toBeInTheDocument()
+    expect(screen.queryByText(task.targetCommit)).not.toBeInTheDocument()
+    expect(screen.getByRole('progressbar')).toHaveAttribute('aria-valuenow', '25')
   })
   it('服务端返回 ready 后显示真实校验项目，并在原下载阶段过渡到准备新版本', async () => {
     const verifying = { ...task, download: { ...task.download!, completedBytes: task.download!.totalBytes, status: 'verifying' as const } }

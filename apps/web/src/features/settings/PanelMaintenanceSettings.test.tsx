@@ -6,7 +6,7 @@ import { createHttpPanelAdapter, PanelHttpError, PanelNetworkError } from '../..
 import { usePanelStore } from '../../stores/panelStore'
 import { useMessageStore } from '../../stores/messageStore'
 import { renderApp } from '../../test/renderApp'
-import type { PanelInfo, PanelTask, PanelUpdate, PanelUpdatePreflight } from '@elysian/contracts'
+import type { PanelInfo, PanelTask, PanelTaskReport, PanelUpdate, PanelUpdatePreflight } from '@elysian/contracts'
 import { openPanelAddress, reloadPanelPage } from '../../utils/panelNavigation'
 import { PANEL_PENDING_KEY, savePanelPending } from '../../stores/panelPending'
 import { advanceAuthGeneration } from '../../utils/authGeneration'
@@ -35,6 +35,29 @@ describe('端口与更新设置', () => {
     expect(card.getByText('v1.1.0')).toBeInTheDocument()
   })
 
+  it('失败回执进入维护日志后只显示一次，日志未到时保留错误', async () => {
+    const g = gateway()
+    const failed: PanelTask = {
+      ...task, kind: 'update', state: 'failed', phase: 'finished', failedPhase: 'downloading-release',
+      error: 'GitHub 安装包下载失败：unexpected EOF', targetCommit: releaseUpdate.targetCommit,
+      updateSource: 'github', releaseTag: releaseUpdate.releaseTag,
+    }
+    let finishLog!: (report: PanelTaskReport) => void
+    g.panel.info = async () => ({ ...info, lastTask: failed })
+    g.panel.task = () => new Promise(resolve => { finishLog = resolve })
+    renderApp('/settings?tab=maintenance', { gateway: g })
+    const progress = within(await screen.findByRole('region', { name: '面板维护进度' }))
+    expect(progress.getByRole('alert')).toHaveTextContent(failed.error)
+    expect(progress.getByText(failed.targetCommit)).toBeInTheDocument()
+
+    const logs = `更新来源：GitHub\n版本：${failed.releaseTag}\n目标提交：${failed.targetCommit}\n维护失败：${failed.error}\n`
+    await act(async () => finishLog({ task: failed, logs, nextOffset: logs.length }))
+    const log = within(progress.getByRole('region', { name: '维护任务日志' }))
+    expect(log.getByRole('alert')).toHaveTextContent(failed.error)
+    expect(progress.getAllByRole('alert')).toHaveLength(1)
+    expect(log.getByText(`目标提交：${failed.targetCommit}`)).toBeInTheDocument()
+    expect(progress.queryByText(failed.targetCommit)).not.toBeInTheDocument()
+  })
 
   it('来源切换使旧检查失效，迟到回执不回灌，日志跟随 Gitee', async () => {
     const g = gateway()

@@ -1,3 +1,4 @@
+import { useMemo } from 'react'
 import { PANEL_TASK_PHASE_LABELS, PANEL_UPDATE_SOURCE_LABELS, panelTaskIsActive } from '@elysian/contracts'
 import type { PanelTask } from '@elysian/contracts'
 import { Check, Download, Loader2 } from '../../components/icons'
@@ -78,8 +79,6 @@ function bytes(value: number): string {
 }
 
 function stepDetail(task: PanelTask, step: MaintenanceStep, phase: string, moving: boolean): string {
-  if (task.state === 'succeeded') return '维护任务已完成，所有已记录阶段均已结束。'
-  if (failedStates.includes(task.state)) return '此阶段未能完成。具体原因见维护任务错误信息和日志。'
   if (task.state === 'queued') return '维护任务已排队，开始执行后会先检查当前环境。'
   if (!moving) return '服务器尚未确认新的阶段回执，当前显示停留在最后一条已确认进度。'
 
@@ -117,7 +116,32 @@ function stepDetail(task: PanelTask, step: MaintenanceStep, phase: string, movin
   }
 }
 
-export function PanelMaintenanceProgress({ task, paused = false }: { task: PanelTask; paused?: boolean }) {
+function UpdateTarget({ task, logs }: { task: PanelTask; logs: string }) {
+  const entries = useMemo(() => new Set(logs.split(/[\n；]/).map(entry => entry.trim())), [logs])
+  const source = task.updateSource ? PANEL_UPDATE_SOURCE_LABELS[task.updateSource] : ''
+  const version = task.releaseTag
+  const commit = task.targetCommit
+  const showSource = source && !entries.has(`更新来源：${source}`)
+  const showVersion = version && !entries.has(`版本：${version}`) && !entries.has(`更新策略：最新发版 ${version}`)
+  const showCommit = commit && !entries.has(`目标提交：${commit}`)
+  if (!showSource && !showVersion && !showCommit) return null
+
+  return (
+    <div className="flex min-w-0 flex-wrap items-center gap-x-4 gap-y-2 text-xs leading-5 text-fg-muted">
+      {showSource ? <p>更新来源：{source}</p> : null}
+      {showVersion ? <p className="wrap-anywhere">版本：<span className="font-medium text-fg">{version}</span></p> : null}
+      {showCommit ? (
+        <div className="flex min-w-0 items-center gap-2">
+          <span className="shrink-0">目标提交</span>
+          <code className="min-w-0 truncate text-fg" title={commit}>{commit}</code>
+          <CopyButton label="提交" tooltip="复制完整提交 SHA" value={commit} />
+        </div>
+      ) : null}
+    </div>
+  )
+}
+
+export function PanelMaintenanceProgress({ task, logs = '', paused = false }: { task: PanelTask; logs?: string; paused?: boolean }) {
   const phase = taskPhase(task)
   const steps = stepsFor(task, phase)
   const failed = failedStates.includes(task.state)
@@ -125,7 +149,8 @@ export function PanelMaintenanceProgress({ task, paused = false }: { task: Panel
   const moving = task.state === 'running' && task.workerStatus === 'alive' && !task.workerDead && !paused
   const download = task.download
   const percent = download ? Math.max(0, Math.min(100, Math.floor(download.completedBytes / download.totalBytes * 100))) : 0
-  const downloading = task.phase === 'downloading-release' && panelTaskIsActive(task)
+  const active = panelTaskIsActive(task)
+  const downloading = task.phase === 'downloading-release' && active
   const downloadLabel = failed && download?.status !== 'ready'
     ? download?.status === 'verifying' ? '安装包校验未完成' : '下载未完成'
     : download?.status === 'ready' ? '安装包已校验'
@@ -133,11 +158,7 @@ export function PanelMaintenanceProgress({ task, paused = false }: { task: Panel
   const validTaskStages = current >= 0 && current < steps.length
 
   return <div className="mt-4 min-w-0 space-y-4">
-    {task.kind === 'update' ? <div className="grid min-w-0 gap-2 rounded-xl bg-surface-raised/60 p-3 text-xs leading-5 sm:grid-cols-2">
-      <p className="text-fg-muted">更新来源：{task.updateSource ? PANEL_UPDATE_SOURCE_LABELS[task.updateSource] : '未记录（历史任务）'}</p>
-      <p className="text-fg-muted">版本：{task.releaseTag ? <span className="font-medium text-fg">{task.releaseTag}</span> : '历史更新'}</p>
-      <div className="flex min-w-0 items-center gap-2 sm:col-span-2"><span className="shrink-0 text-fg-muted">目标提交</span><code className="min-w-0 truncate text-fg" title={task.targetCommit}>{task.targetCommit || '未记录'}</code>{task.targetCommit ? <CopyButton label="提交" tooltip="复制完整提交 SHA" value={task.targetCommit} /> : null}</div>
-    </div> : null}
+    {task.kind === 'update' ? <UpdateTarget task={task} logs={logs} /> : null}
 
     {validTaskStages ? <>
       <Stepper
@@ -148,12 +169,12 @@ export function PanelMaintenanceProgress({ task, paused = false }: { task: Panel
         completed={task.state === 'succeeded'}
         failed={failed}
       />
-      <div className="overflow-x-clip rounded-lg border border-line bg-surface px-3 py-2.5">
+      {active ? <div className="overflow-x-clip rounded-lg border border-line bg-surface px-3 py-2.5">
         <StepPanels current={current}>
           {steps.map(step => <p key={step.key} className="text-xs leading-5 text-fg-muted">{stepDetail(task, step, phase, moving)}</p>)}
         </StepPanels>
-      </div>
-    </> : task.state !== 'succeeded' && !panelTaskIsActive(task)
+      </div> : null}
+    </> : task.state !== 'succeeded' && !active
       ? <p className="text-xs text-fg-muted">历史任务未记录结束前的阶段。</p>
       : null}
 
@@ -170,7 +191,7 @@ export function PanelMaintenanceProgress({ task, paused = false }: { task: Panel
         {downloading && download.status === 'downloading' && moving && download.bytesPerSecond > 0 ? <span>平均 {bytes(download.bytesPerSecond)}/s</span> : null}
         {downloading && !moving ? <span>等待进度同步</span> : null}
       </div>
-      <p className="mt-2 truncate font-mono text-[0.625rem] text-fg-subtle" title={download.fileName}>{download.fileName}</p>
+      <p className="mt-2 truncate font-mono text-[0.625rem] text-fg-subtle">{download.fileName}</p>
     </div> : downloading ? <p className="flex items-center gap-2 text-xs text-fg-muted">{moving ? <Loader2 size={14} aria-hidden className="motion-safe:animate-spin" /> : <Download size={14} aria-hidden />}正在获取安装包信息，等待下载数据…</p> : null}
 
     {task.kind === 'update' && download?.status === 'ready' ? <section aria-label="安装包校验结果" className="rounded-lg border border-success/30 bg-success/5 p-3">
