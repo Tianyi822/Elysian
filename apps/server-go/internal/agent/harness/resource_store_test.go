@@ -2,12 +2,45 @@ package harness
 
 import (
 	"context"
+	"sync/atomic"
 	"testing"
 	"time"
 
 	"elysian/server/internal/agent/harness/sessionstore"
 	hstate "elysian/server/internal/agent/harness/state"
 )
+
+func TestResourceWaiterPromotionSkipsWriteWhenNoWaiters(t *testing.T) {
+	s, _ := openRuntimeTestStore(t)
+	ctx := context.Background()
+	m := &Manager{store: s, deps: Deps{Now: func() time.Time { return runtimeStoreTestTime }}}
+
+	select {
+	case <-s.Changes():
+	case <-time.After(time.Second):
+		t.Fatal("存储启动同步没有发出初始通知")
+	}
+
+	var writes atomic.Int32
+	s.beforeWrite = func(op string) error {
+		if op == "resource-promote" {
+			writes.Add(1)
+		}
+		return nil
+	}
+
+	if n, err := m.promoteResourceWaiters(ctx); err != nil || n != 0 {
+		t.Fatalf("无等待租约时提升结果错误：%d %v", n, err)
+	}
+	if got := writes.Load(); got != 0 {
+		t.Fatalf("无等待租约时仍提交了 %d 次资源提升事务", got)
+	}
+	select {
+	case <-s.Changes():
+		t.Fatal("无等待租约时仍发出了存储变更通知")
+	default:
+	}
+}
 
 func TestResourceWaiterPromotesWithoutConsumingApprovalOrBudget(t *testing.T) {
 	s, _ := openRuntimeTestStore(t)

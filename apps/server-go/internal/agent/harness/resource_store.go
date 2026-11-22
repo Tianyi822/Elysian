@@ -12,8 +12,18 @@ import (
 // the subsequent dispatch transaction acquires it together with its approval,
 // budget reservation and dispatch marker.
 func (m *Manager) promoteResourceWaiters(ctx context.Context) (int, error) {
+	leases, err := storeRead(ctx, m.store, "WaitingResourceLeases", func(ctx context.Context) ([]ResourceLease, error) {
+		return readView(ctx, m.store).WaitingResourceLeases(ctx)
+	})
+	if err != nil {
+		return 0, err
+	}
+	if len(leases) == 0 {
+		return 0, nil
+	}
+
 	var promoted int
-	err := writeStore(m.store, ctx, "resource-promote", func(tx sessionstore.Tx) error {
+	err = writeStore(m.store, ctx, "resource-promote", func(tx sessionstore.Tx) error {
 		var queued int
 		if err := tx.QueuedRunCount(ctx, &queued); err != nil {
 			return err
