@@ -7,18 +7,17 @@ import type { CSSProperties } from 'react'
 import { useMessageStore } from '../stores/messageStore'
 import type { FeedbackMessage, MessageTone } from '../contracts/messages'
 import { formatLoginTime } from './format'
-import { CircleCheck, Info, TriangleAlert } from './icons'
-import type { IconComponent } from './icons'
 import { NotificationBell } from './easyui/NotificationBell'
+import { Alert, AlertDescription, AlertTitle } from './easyui/Alert'
 import './messageCenter.css'
 import { Button } from './Button'
 
 const UNEXPECTED_ERROR = '页面操作发生异常，请重试；若仍失败，请刷新页面。'
-const TONES: Record<MessageTone, { icon: IconComponent; color: string; label: string }> = {
-  success: { icon: CircleCheck, color: 'text-success', label: '成功' },
-  info: { icon: Info, color: 'text-accent-fg', label: '提示' },
-  warning: { icon: TriangleAlert, color: 'text-warning', label: '警告' },
-  danger: { icon: TriangleAlert, color: 'text-danger', label: '失败' },
+const TONE_LABELS: Record<MessageTone, string> = {
+  success: '成功',
+  info: '提示',
+  warning: '警告',
+  danger: '失败',
 }
 
 export function visibleMessageIds(list: HTMLElement): string[] {
@@ -34,17 +33,15 @@ export function visibleMessageIds(list: HTMLElement): string[] {
 }
 
 function MessageItem({ message, unsaved, delay }: { message: FeedbackMessage; unsaved: boolean; delay?: number }) {
-  const { icon: Icon, color, label } = TONES[message.tone]
-  return <li data-message-id={message.id} className="message-item panel-surface" data-clearing={delay !== undefined || undefined}
+  return <li data-message-id={message.id} className="message-item" data-clearing={delay !== undefined || undefined}
     style={delay !== undefined ? { '--message-delay': `${delay}ms` } as CSSProperties : undefined}>
-    <Icon aria-hidden size={16} className={`mt-0.5 shrink-0 ${color}`} />
-    <div className="min-w-0 flex-1">
-      <p className="whitespace-pre-line text-sm leading-5 text-fg [overflow-wrap:anywhere]"><span className="sr-only">{label}：</span>{message.message}</p>
-      <p className="mt-1 flex flex-wrap gap-x-2 text-xs leading-5 text-fg-subtle">
+    <Alert tone={message.tone} role="none">
+      <AlertTitle className="whitespace-pre-line [overflow-wrap:anywhere]"><span className="sr-only">{TONE_LABELS[message.tone]}：</span>{message.message}</AlertTitle>
+      <AlertDescription className="flex flex-wrap gap-x-2 text-xs leading-5">
         <time dateTime={message.occurredAt} className="tabular-nums">{formatLoginTime(message.occurredAt)}</time>
         {unsaved && <span className="text-warning">仅当前页面可用</span>}
-      </p>
-    </div>
+      </AlertDescription>
+    </Alert>
   </li>
 }
 
@@ -166,7 +163,7 @@ export function MessageCenter() {
           }}
           onInteractOutside={event => { if (event.target instanceof Node && trigger.current?.contains(event.target)) event.preventDefault() }}>
           <div className="message-heading">
-            <Dialog.Title className="text-sm font-semibold text-fg">消息</Dialog.Title>
+            <Dialog.Title className="sr-only">消息</Dialog.Title>
             <Button variant="outline" type="button" className="message-clear" disabled={phase !== 'idle' || !displayed.length}
               onClick={() => { void clear() }}>清空全部消息</Button>
           </div>
@@ -187,7 +184,7 @@ export function MessageCenter() {
               return <MessageItem key={message.id} message={message} unsaved={state.unsavedIds.includes(message.id)} delay={delay} />
             })}
           </ol>
-          {!displayed.length && !loading && !state.errorMessage && <p className="message-empty text-center text-sm text-fg-subtle">暂无消息</p>}
+          {!displayed.length && !loading && !displayError && <p className="message-empty text-center text-sm text-fg-subtle">暂无消息</p>}
           {loading && <p role="status" className="px-4 py-3 text-center text-xs text-fg-subtle">正在读取消息…</p>}
           {(snapshot ? snapshot.hasMore : state.hasMore) && !loading && <Button variant="outline" type="button" disabled={phase !== 'idle'} className="message-more" onClick={() => { void state.loadMore() }}>加载更多</Button>}
         </Dialog.Content>

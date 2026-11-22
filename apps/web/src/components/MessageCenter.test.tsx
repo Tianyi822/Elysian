@@ -22,7 +22,7 @@ describe('全局消息组件', () => {
       useMessageStore.getState().notify({ tone: 'danger', message: '第二条' })
     })
     expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
-    expect(screen.getByLabelText('有未读消息')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '消息' })).toHaveAttribute('data-unread', 'true')
     await act(async () => { await useMessageStore.getState().flush() })
     const panel = await openCenter()
     const expected = [...useMessageStore.getState().messages].sort((a, b) => a.occurredAt !== b.occurredAt
@@ -30,7 +30,32 @@ describe('全局消息组件', () => {
       : a.id === b.id ? 0 : a.id < b.id ? 1 : -1)
     expect(within(panel).getAllByRole('listitem').map(item => item.dataset.messageId)).toEqual(expected.map(item => item.id))
     expect(panel.querySelector('time')?.textContent).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/)
-    expect(screen.queryByLabelText('有未读消息')).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '消息' })).not.toHaveAttribute('data-unread')
+  })
+  it('打开列表直接显示已加载的记录，并保留 EasyUI Alert 色调和原文', async () => {
+    renderCenter()
+    const messages = [
+      { tone: 'success', message: '保存成功\n配置已更新。', border: 'border-emerald-200' },
+      { tone: 'info', message: '正在检查服务状态', border: 'border-sky-200' },
+      { tone: 'warning', message: '部分服务暂不可用', border: 'border-amber-200' },
+      { tone: 'danger', message: '连接失败：请重试', border: 'border-red-200' },
+    ] as const
+    act(() => messages.forEach(({ tone, message }) => useMessageStore.getState().notify({ tone, message })))
+    await act(async () => { await useMessageStore.getState().flush() })
+    const panel = await openCenter()
+    const list = within(panel).getByRole('list', { name: '消息记录' })
+    expect(within(list).getAllByRole('listitem')).toHaveLength(messages.length)
+    for (const { message, border } of messages) {
+      const title = [...list.querySelectorAll('li p')].find(element =>
+        [...element.childNodes].some(node => node.nodeType === Node.TEXT_NODE && node.textContent === message),
+      )
+      expect(title).toBeVisible()
+      const row = title?.closest('li')
+      const alert = row?.querySelector('[role="none"]')
+      expect(alert).not.toBeNull()
+      expect(alert).toHaveClass(border)
+    }
+    expect(within(list).queryByRole('alert')).not.toBeInTheDocument()
   })
   it('空列表禁用清空，F8 打开、Escape 关闭并返回焦点', async () => {
     renderCenter()
@@ -71,7 +96,7 @@ describe('全局消息组件', () => {
     act(() => { useMessageStore.getState().notify({ tone: 'info', message: '清空之后的新消息' }) })
     await waitFor(() => expect(screen.queryByRole('dialog', { name: '消息' })).not.toBeInTheDocument())
     expect(useMessageStore.getState().messages.map(item => item.message)).toEqual(['清空之后的新消息'])
-    expect(screen.getByLabelText('有未读消息')).toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '消息' })).toHaveAttribute('data-unread', 'true')
   })
   it('未捕获异常仅记录脱敏消息，连续异常不重复', async () => {
     const add = vi.spyOn(window, 'addEventListener')

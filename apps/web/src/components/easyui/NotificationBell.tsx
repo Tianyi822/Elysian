@@ -1,7 +1,7 @@
 /**
  * EasyUI NotificationBell trigger, adapted for Elysian.
  * Copyright (c) 2026 Suraj Maurya — MIT, see ./LICENSE.
- * Upstream: src/components/ui/NotificationBell.tsx
+ * Upstream: src/components/ui/notification-bell.tsx
  * The existing Radix message drawer owns the panel and focus lifecycle.
  */
 'use client';
@@ -37,7 +37,7 @@ export const NotificationBell = forwardRef<HTMLButtonElement, NotificationBellPr
     }, [arrivalKey, unread, reduced]);
 
     return (
-      <Button unstyled
+      <Button size="icon" variant="outline"
         data-easyui="notification-bell"
         ref={ref}
         type="button"
@@ -47,34 +47,28 @@ export const NotificationBell = forwardRef<HTMLButtonElement, NotificationBellPr
         }}
         animate={isShaking && !reduced ? { rotate: [0, -12, 10, -8, 6, -2, 0] } : { rotate: 0 }}
         transition={{ duration: reduced ? 0 : 0.5, ease: 'easeInOut' }}
-        whileHover={reduced ? undefined : { scale: 1.05 }}
-        whileTap={reduced ? undefined : { scale: 0.95 }}
         aria-expanded={isOpen}
         aria-label="消息"
+        data-unread={unread || undefined}
         className={cn(
-          'relative inline-flex items-center justify-center rounded-full border transition-colors focus-ring cursor-pointer',
-          isOpen
-            ? 'bg-surface-raised border-control-line text-fg'
-            : 'bg-surface border-control-line text-fg-muted hover:text-fg hover:bg-surface-raised',
+          'size-8 rounded-full aria-expanded:bg-surface-raised [&>span]:size-full',
           className
         )}
         {...props}
       >
-        <Bell aria-hidden size={18} />
-        <span aria-label={unread ? '有未读消息' : undefined}>
+        <Bell aria-hidden size={14} />
         <AnimatePresence>
           {unread && (
             <motion.span
-              aria-hidden="true"
               initial={reduced ? false : { scale: 0, opacity: 0 }}
               animate={{ scale: 1, opacity: 1 }}
               exit={{ scale: 0, opacity: 0 }}
               transition={reduced ? { duration: 0 } : motionTransitions.springSnappy}
-              className="absolute right-1 top-1 size-1.5 rounded-full bg-accent-fg"
+              className="absolute -right-1 -top-1 size-2.5 rounded-full border-2 border-surface bg-danger"
+              aria-hidden="true"
             />
           )}
         </AnimatePresence>
-        </span>
       </Button>
     );
   }

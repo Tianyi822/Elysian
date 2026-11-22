@@ -1,10 +1,10 @@
 :root {
-  --message-button-size: 28px;
+  --message-button-size: 2rem;
   --message-edge: 16px;
   --shell-action-space: 36px;
 }
 @media (min-width: 768px) {
-  :root { --message-button-size: 36px; --message-edge: 24px; --shell-action-space: 48px; }
+  :root { --message-edge: 24px; --shell-action-space: 48px; }
 }
 .message-trigger {
   position: fixed;
@@ -37,17 +37,13 @@
 }
 .message-panel[data-state="open"] { animation: message-panel-in 220ms cubic-bezier(0.22, 1, 0.36, 1); }
 .message-panel[data-state="closed"] { animation: message-panel-out 160ms ease-in both; }
-.message-heading { display: flex; flex-shrink: 0; align-items: center; justify-content: space-between; gap: 12px; height: var(--shell-header-height); padding: 0 calc(var(--message-button-size) + 12px) 0 0; }
+.message-heading { display: flex; flex-shrink: 0; align-items: center; justify-content: flex-end; height: var(--shell-header-height); padding: 0 calc(var(--message-button-size) + 12px) 0 0; }
 .message-clear:focus-visible, .message-more:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 .message-clear:disabled { cursor: not-allowed; opacity: 0.45; }
 .message-list { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; padding: 0 0 16px; }
 .message-list:empty { display: none; }
 .message-list[data-frozen] { overflow-y: hidden; }
-/* 材质由 MessageCenter.tsx 挂上的共用 panel-surface 提供：本文件不重描边、不铺底色，
-   未分层规则优先级高于 @layer components，写了会把共用材质整体盖掉。 */
-.message-item { display: flex; gap: 10px; padding: 12px 14px; }
 .message-item + .message-item { margin-top: 12px; }
-.message-item:hover { border-color: var(--t-fg-subtle); }
 .message-item[data-clearing] { animation: message-item-out 180ms ease-in var(--message-delay) both; }
 .message-more { flex-shrink: 0; margin: 0 12px 8px; }
 .message-empty { display: grid; flex: 1; place-items: center; padding-bottom: var(--shell-header-height); }
