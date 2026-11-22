@@ -1,5 +1,6 @@
-import { createContext, useCallback, useContext, useEffect, useInsertionEffect, useMemo, useState } from 'react'
+import { createContext, useCallback, useContext, useEffect, useInsertionEffect, useMemo, useState, useSyncExternalStore } from 'react'
 import type { ReactNode } from 'react'
+import type { DataRouter } from 'react-router'
 import {
   clearStoredTheme,
   readStoredTheme,
@@ -15,7 +16,7 @@ export type Theme = 'dark' | 'light'
 
 type ThemeContextValue = {
   theme: Theme
-  /** 没有存过偏好时为 true：当前主题来自系统偏好，改系统设置会跟着走。 */
+  /** 工作台没有手动偏好时跟随系统。 */
   followsSystem: boolean
   setTheme: (theme: Theme) => void
   toggleTheme: () => void
@@ -38,6 +39,11 @@ function readSystemTheme(): Theme {
   return mediaQuery('(prefers-color-scheme: light)')?.matches ? 'light' : 'dark'
 }
 
+export function RoutedThemeProvider({ router, children }: { router: DataRouter; children: ReactNode }) {
+  const login = useSyncExternalStore(router.subscribe, () => /^\/login\/*$/i.test(router.state.location.pathname))
+  return <ThemeProvider defaultTheme={login ? 'dark' : undefined}>{children}</ThemeProvider>
+}
+
 /**
  * 主题只改 html[data-theme]，所有颜色差异由语义令牌层承担，
  * 组件里因此不需要写 dark: 变体。
@@ -50,20 +56,20 @@ function readSystemTheme(): Theme {
  */
 export function ThemeProvider({
   children,
+  defaultTheme,
   preferenceStorage,
 }: {
   children: ReactNode
+  defaultTheme?: Theme
   preferenceStorage?: PreferenceStorage
 }) {
   const storage = useMemo(() => preferenceStorage
     ? resilientPreferenceStorage(() => preferenceStorage, reportPreferenceStorageFailure)
     : browserPreferenceStorage, [preferenceStorage])
-  const [theme, setThemeState] = useState<Theme>(
-    () => readStoredTheme(storage) ?? readBootTheme(),
-  )
-  const [followsSystem, setFollowsSystem] = useState(
-    () => readStoredTheme(storage) === null,
-  )
+  const [preference, setPreference] = useState(() => readStoredTheme(storage))
+  const [systemTheme, setSystemTheme] = useState(() => defaultTheme ? readSystemTheme() : readBootTheme())
+  const followsSystem = preference === null
+  const theme = preference ?? defaultTheme ?? systemTheme
 
   // 渲染期同步翻转，子树若在 render 里读 computed style（如图表配色）也能拿到新主题。
   // insertion effect 再写一次，覆盖并发/严格模式边界。
@@ -78,14 +84,13 @@ export function ThemeProvider({
   useEffect(() => {
     if (!followsSystem) return
     const media = mediaQuery('(prefers-color-scheme: light)')
-    return observeMediaQuery(media, () => setThemeState(media?.matches ? 'light' : 'dark'))
+    return observeMediaQuery(media, () => setSystemTheme(media?.matches ? 'light' : 'dark'))
   }, [followsSystem])
 
   const setTheme = useCallback(
     (next: Theme) => {
       writeStoredTheme(storage, next)
-      setFollowsSystem(false)
-      setThemeState(next)
+      setPreference(next)
     },
     [storage],
   )
@@ -96,8 +101,8 @@ export function ThemeProvider({
 
   const followSystemTheme = useCallback(() => {
     clearStoredTheme(storage)
-    setFollowsSystem(true)
-    setThemeState(readSystemTheme())
+    setSystemTheme(readSystemTheme())
+    setPreference(null)
   }, [storage])
 
   const value = useMemo<ThemeContextValue>(

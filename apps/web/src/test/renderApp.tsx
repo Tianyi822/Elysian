@@ -5,7 +5,7 @@ import { GatewayProvider } from '../adapters/GatewayProvider'
 import { createMockGateway } from '../adapters/mock/gateway'
 import { MockSessionAdapter } from '../adapters/mock/mockAdapters'
 import { createAppRouter } from '../app/router'
-import { ThemeProvider } from '../app/theme/ThemeProvider'
+import { RoutedThemeProvider } from '../app/theme/ThemeProvider'
 import type { ElysianGateway } from '../contracts/adapters'
 import { useSessionStore } from '../stores/sessionStore'
 
@@ -26,13 +26,13 @@ export function renderApp(path = '/', options: { gateway?: ElysianGateway } = {}
   }
 
   const view = render(
-    <ThemeProvider>
+    <RoutedThemeProvider router={router}>
       <Tooltip.Provider delayDuration={0}>
         <GatewayProvider gateway={gateway}>
           <RouterProvider router={router} />
         </GatewayProvider>
       </Tooltip.Provider>
-    </ThemeProvider>,
+    </RoutedThemeProvider>,
   )
 
   return { ...view, router }

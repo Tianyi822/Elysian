@@ -3,13 +3,14 @@ import { useEffect, useLayoutEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactNode } from 'react'
 import { Navigate, useLocation, useNavigate } from 'react-router'
 import { useGateway } from '../../adapters/GatewayProvider'
+import { useTheme } from '../../app/theme/ThemeProvider'
 import { Button } from '../../components/Button'
 import { IconButton } from '../../components/IconButton'
 import { Login } from '../../components/easyui/Login'
 import { PeekCard } from '../../components/easyui/PeekCard'
 import { LoginPasswordInput } from './LoginPasswordInput'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
-import { ArrowRight, Bot, Check, Copy, Info, Lock, TriangleAlert, User } from '../../components/icons'
+import { ArrowRight, Bot, Check, Copy, Info, Lock, Moon, Sun, TriangleAlert, User } from '../../components/icons'
 import { useImeEnterGuard } from '../../components/useImeEnterGuard'
 import { useSessionStore } from '../../stores/sessionStore'
 import { useMessageStore } from '../../stores/messageStore'
@@ -101,7 +102,21 @@ function PasswordResetHelp() {
  * app-canvas 与共享面板提供双主题中性表面。
  */
 function CenteredShell({ children }: { children: ReactNode }) {
-  return <main className="app-canvas flex min-h-dvh items-center justify-center p-4 text-fg">{children}</main>
+  const { theme, toggleTheme } = useTheme()
+  const light = theme === 'light'
+  return (
+    <main className="app-canvas grid min-h-dvh grid-rows-[2.5rem_1fr_2.5rem] p-4 text-fg sm:p-6">
+      <IconButton
+        label={light ? '切换到深色主题' : '切换到浅色主题'}
+        className="size-10 justify-self-end [--icon-button-radius:9999px]"
+        tooltipSide="bottom"
+        onPress={toggleTheme}
+      >
+        {light ? <Moon aria-hidden size={18} /> : <Sun aria-hidden size={18} />}
+      </IconButton>
+      <div className="flex min-w-0 items-center justify-center py-4">{children}</div>
+    </main>
+  )
 }
 
 /** 卡片内的提示条：图标 + 文字 + 色调三者同时表达，不只靠颜色。 */

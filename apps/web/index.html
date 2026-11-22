@@ -6,8 +6,8 @@
     <link rel="icon" type="image/svg+xml" href="/favicon.svg" />
     <title>Elysian</title>
     <script>
-      // 首屏主题：先读本地存的界面偏好，没有或读不懂才按系统偏好，全部在样式生效之前
-      // 落到 html 上，避免闪一帧错的主题。格式与校验规则的唯一权威是
+      // 首屏主题：保存的偏好优先，登录页默认深色，其余页面默认跟随系统。
+      // 在样式生效之前写到 html 上，避免闪一帧错的主题。格式与校验规则的唯一权威是
       // src/app/theme/themePreferences.ts，这里只能内联同一份逻辑（模块脚本太晚）。
       ;(() => {
         let stored = null
@@ -17,13 +17,14 @@
             stored = parsed.theme
           }
         } catch {
-          // 坏掉的偏好当没有，回落到系统。
+          // 无效偏好使用当前页面的默认主题。
         }
-        let system = 'dark'
+        const login = /^\/login\/*$/i.test(document.location?.pathname ?? '')
+        let fallback = 'dark'
         try {
-          if (typeof matchMedia === 'function' && matchMedia('(prefers-color-scheme: light)').matches) system = 'light'
+          if (!login && typeof matchMedia === 'function' && matchMedia('(prefers-color-scheme: light)').matches) fallback = 'light'
         } catch { /* 读取不到系统偏好时使用深色。 */ }
-        document.documentElement.dataset.theme = stored ?? system
+        document.documentElement.dataset.theme = stored ?? fallback
       })()
     </script>
   </head>

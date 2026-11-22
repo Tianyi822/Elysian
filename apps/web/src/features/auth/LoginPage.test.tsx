@@ -1,6 +1,7 @@
 import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { UI_PREFERENCES_KEY } from '../../app/theme/themePreferences'
 import { createMockGateway } from '../../adapters/mock/gateway'
 import type { ElysianGateway, SessionAdapter, SessionStatus } from '../../contracts/adapters'
 import { useSessionStore } from '../../stores/sessionStore'
@@ -132,6 +133,34 @@ beforeEach(() => {
 })
 
 describe('LoginPage', () => {
+  it('无偏好时默认深色，切换浅色保留表单并与登录后的工作台共用偏好', async () => {
+    vi.stubGlobal('matchMedia', (query: string) => ({
+      matches: query === '(prefers-color-scheme: light)',
+      addEventListener: vi.fn(),
+      removeEventListener: vi.fn(),
+    }))
+    const login = vi.fn()
+    const { router } = renderApp('/login', { gateway: gatewayWithSession(anonymousSession(login)) })
+    const user = userEvent.setup()
+    try {
+      const toggle = await screen.findByRole('button', { name: '切换到浅色主题' })
+      expect(document.documentElement.dataset.theme).toBe('dark')
+      await user.type(screen.getByLabelText('用户名'), 'admin')
+      await user.type(screen.getByLabelText('密码'), 'demo-password')
+      await user.click(toggle)
+      expect(document.documentElement.dataset.theme).toBe('light')
+      expect(JSON.parse(localStorage.getItem(UI_PREFERENCES_KEY) ?? '{}')).toMatchObject({ theme: 'light' })
+      expect(screen.getByLabelText('密码')).toHaveValue('demo-password')
+      expect(login).not.toHaveBeenCalled()
+      await user.click(screen.getByRole('button', { name: '登录' }))
+      await waitFor(() => expect(router.state.location.pathname).toBe('/'))
+      expect(document.documentElement.dataset.theme).toBe('light')
+    } finally {
+      localStorage.removeItem(UI_PREFERENCES_KEY)
+      delete document.documentElement.dataset.theme
+    }
+  })
+
   it('输入法候选词确认回车不登录，组合结束后可正常提交原始密码', async () => {
     const login = vi.fn(async () => {})
     renderApp('/login', { gateway: gatewayWithSession(anonymousSession(login)) })
