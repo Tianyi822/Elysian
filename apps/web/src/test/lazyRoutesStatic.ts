@@ -11,7 +11,6 @@ import { LogsPage } from '../features/logs/LogsPage'
 import { TerminalPage } from '../features/terminal/TerminalPage'
 import { WebsitesPage } from '../features/websites/WebsitesPage'
 import { AgentChatPage } from '../features/agent/AgentChatPage'
-import { WikiPage } from '../features/memory/WikiPage'
 import { SettingsPage } from '../features/settings/SettingsPage'
 
 export {
@@ -25,7 +24,6 @@ export {
   TerminalPage,
   WebsitesPage,
   AgentChatPage,
-  WikiPage,
   SettingsPage,
 }
 
@@ -40,6 +38,5 @@ export const importers = {
   terminal: async () => ({ TerminalPage }),
   websites: async () => ({ WebsitesPage }),
   agent: async () => ({ AgentChatPage }),
-  wiki: async () => ({ WikiPage }),
   settings: async () => ({ SettingsPage }),
 } as const

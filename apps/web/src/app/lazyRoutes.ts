@@ -16,7 +16,6 @@ export const importers = {
   terminal: () => import('../features/terminal/TerminalPage'),
   websites: () => import('../features/websites/WebsitesPage'),
   agent: () => import('../features/agent/AgentChatPage'),
-  wiki: () => import('../features/memory/WikiPage'),
   settings: () => import('../features/settings/SettingsPage'),
 } as const
 
@@ -30,5 +29,4 @@ export const LogsPage = lazy(() => importers.logs().then(m => ({ default: m.Logs
 export const TerminalPage = lazy(() => importers.terminal().then(m => ({ default: m.TerminalPage })))
 export const WebsitesPage = lazy(() => importers.websites().then(m => ({ default: m.WebsitesPage })))
 export const AgentChatPage = lazy(() => importers.agent().then(m => ({ default: m.AgentChatPage })))
-export const WikiPage = lazy(() => importers.wiki().then(m => ({ default: m.WikiPage })))
 export const SettingsPage = lazy(() => importers.settings().then(m => ({ default: m.SettingsPage })))

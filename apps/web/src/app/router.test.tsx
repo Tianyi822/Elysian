@@ -105,10 +105,10 @@ describe('路由表', () => {
     expect(screen.queryByRole('button', { name: '导入资料' })).not.toBeInTheDocument()
   })
 
-  it('知识 Wiki 独立浏览页可达，主导航高亮', async () => {
+  it('知识 Wiki 已下线，旧地址显示未找到', async () => {
     renderApp('/wiki')
-    expect(await screen.findByRole('region', { name: 'Wiki 页面浏览' })).toBeInTheDocument()
-    expect(screen.getByRole('link', { name: '知识 Wiki' })).toHaveAttribute('aria-current', 'page')
+    expect(await screen.findByRole('heading', { level: 1, name: '未找到页面' })).toBeInTheDocument()
+    expect(screen.queryByRole('link', { name: '知识 Wiki' })).not.toBeInTheDocument()
   })
 
   it('智能体入口打开本地会话，仅加载模型目录且不检查运行时', async () => {

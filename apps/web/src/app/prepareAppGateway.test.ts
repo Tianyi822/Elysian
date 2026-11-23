@@ -19,7 +19,6 @@ describe('Agent 不可用接线', () => {
     const requests = [
       () => gateway.modelSettings.listModelServices(),
       () => gateway.agentRuntime.runtime(),
-      () => gateway.agentMemory.listSpaces(),
       () => gateway.agentExtensions.listSkills(),
       () => gateway.agentConversation.deleteSession('session-1'),
       () => gateway.agentConversation.uploadAttachments([new File(['示例'], 'sample.txt')]),

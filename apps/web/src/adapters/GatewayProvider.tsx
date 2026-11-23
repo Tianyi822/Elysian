@@ -23,7 +23,6 @@ export function createDefaultGateway(docker = isDockerRuntime(), onGlobalUnavail
     modelSettings: mode,
     agentRuntime: mode,
     agentExtensions: mode,
-    agentMemory: mode,
     onGlobalUnavailable,
   })
 }

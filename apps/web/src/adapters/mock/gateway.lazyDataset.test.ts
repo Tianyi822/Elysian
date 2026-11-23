@@ -19,7 +19,6 @@ const allHttp = {
   modelSettings: 'http',
   agentRuntime: 'http',
   agentExtensions: 'http',
-  agentMemory: 'http',
 } as const
 
 describe('演示数据集惰性构造', () => {

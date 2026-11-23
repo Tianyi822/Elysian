@@ -591,7 +591,6 @@ export interface AgentExtensionsAdapter {
 }
 
 export interface ElysianGateway {
-  agentMemory: import('./agentMemory').AgentMemoryAdapter
   agentExtensions: AgentExtensionsAdapter
   agentConversation: import('./agentChat').AgentConversationAdapter
   modelSettings: ModelSettingsAdapter

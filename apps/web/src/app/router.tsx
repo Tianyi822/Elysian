@@ -21,7 +21,6 @@ import {
   SettingsPage,
   TerminalPage,
   WebsitesPage,
-  WikiPage,
 } from './lazyRoutes'
 import { ShellBootFallback } from './layout/ShellBootFallback'
 import { NotFoundPage } from './NotFoundPage'
@@ -180,10 +179,6 @@ export const routes: RouteObject[] = [
       {
         path: 'agent/extensions',
         element: agentPage('技能与 MCP'),
-      },
-      {
-        path: 'wiki',
-        element: <RequireArea area="agent" title="知识 Wiki"><WikiPage /></RequireArea>,
       },
       {
         path: 'settings',

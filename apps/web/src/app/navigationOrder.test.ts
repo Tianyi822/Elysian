@@ -33,9 +33,9 @@ describe('导航顺序合并', () => {
     expect(mergeNavOrder(KNOWN, ['/docker', '/security', '/'])).toEqual(['/', '/docker', '/security', '/databases'])
   })
 
-  it('已存偏好不含导航新增项（/settings）时，新项按默认顺序补在末尾，仪表盘仍在第一位', () => {
+  it('丢弃已存偏好中的旧 Wiki 入口，缺少的入口按默认顺序补齐', () => {
     const known = NAV_ITEMS.map((item) => item.to)
-    expect(mergeNavOrder(known, ['/', '/websites'])).toEqual([
+    expect(mergeNavOrder(known, ['/', '/wiki', '/websites'])).toEqual([
       '/',
       '/websites',
       '/security',
@@ -45,7 +45,6 @@ describe('导航顺序合并', () => {
       '/logs',
       '/terminals',
       '/agent',
-      '/wiki',
       '/settings',
     ])
   })
