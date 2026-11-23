@@ -6,7 +6,8 @@ import { Button } from '../../components/Button'
 import { Plus } from '../../components/icons'
 import { useFeedbackMessage } from '../../components/useFeedbackMessage'
 import { useImeEnterGuard } from '../../components/useImeEnterGuard'
-import { isChatReplyActive, isChatRunActive, useAgentChatStore } from '../../stores/agentChatStore'
+import { hasActiveChatRun, isChatReplyActive, isChatRunActive, useAgentChatStore } from '../../stores/agentChatStore'
+import { observeElementSize } from '../../utils/observeElementSize'
 import { ChatComposer } from './ChatComposer'
 import { ChatMessageList } from './ChatMessageList'
 import { ChatSessionPane } from './ChatSessionPane'
@@ -25,6 +26,7 @@ export function AgentChatPage() {
     timelines: state.timelines,
     reasoning: state.reasoning,
     liveOutput: state.liveOutput,
+    confirmedReplyId: state.confirmedReplyId,
     outgoingMessage: state.outgoingMessage,
     restoringAttachments: state.restoringAttachments,
     refreshing: state.refreshing,
@@ -58,7 +60,7 @@ export function AgentChatPage() {
     reportOperation: state.reportOperation,
   })))
   const shell = useShellLayout()
-  const { agentConversation: api, agentMemory } = useGateway()
+  const { agentConversation: api } = useGateway()
   const { models, status, error, reload } = useChatModels()
   const navigation = useChatUrlSync(api, chat)
   const { navigationFailure } = navigation
@@ -68,17 +70,18 @@ export function AgentChatPage() {
   const following = useRef(true)
   const ime = useImeEnterGuard()
   const session = chat.session
-  const waitingInput = chat.run?.status === 'waiting-input'
   const model = models.find(item => item.id === session?.modelId)
-  const busy = chat.sending || chat.stopping || isChatRunActive(chat.run) || !!chat.remoteSession?.activeRunId || !!chat.remoteSession?.activeWorkflowId
-  const stopping = chat.stopping || (isChatRunActive(chat.run) && !!chat.run?.cancelRequestedAt)
-  const finalizing = isChatRunActive(chat.run) && !isChatReplyActive(chat.run) && !chat.remoteSession?.activeWorkflowId
-  const preferencesLocked = chat.sending || chat.uploadingAttachments || stopping || (busy && !finalizing)
+  const replyConfirmed = !!chat.run && chat.run.id === chat.confirmedReplyId
+  const waitingInput = !replyConfirmed && chat.run?.status === 'waiting-input'
+  const busy = chat.sending || chat.stopping || hasActiveChatRun(chat)
+  const stopping = chat.stopping || (isChatRunActive(chat.run) && !!chat.run?.cancelRequestedAt && !replyConfirmed)
+  const finalizing = isChatRunActive(chat.run) && (replyConfirmed || !isChatReplyActive(chat.run)) && !chat.remoteSession?.activeWorkflowId
   /** 思考等级只提供模型声明的档位：未选择或与当前模型不符时，取模型声明的默认档（官方预设按文档填入），未声明时优先「高」。 */
   const reasoningLevels = model?.reasoningLevels ?? []
   const reasoningLevel = session?.reasoningLevel && reasoningLevels.includes(session.reasoningLevel) ? session.reasoningLevel : defaultReasoningLevel(reasoningLevels, model?.defaultReasoningLevel) ?? ''
   const restoring = !!session?.remote && !chat.remoteSession
-  const attachmentsLocked = !session || chat.restoringAttachments || busy || chat.uploadingAttachments || restoring || !!session.pending || !!session.editing
+  const preferencesLocked = !session || chat.restoringAttachments || chat.sending || stopping || restoring || !!session.pending
+  const attachmentsLocked = preferencesLocked || chat.uploadingAttachments || !!session?.editing
   const readError = navigationFailure || (chat.syncErrorMessage && error && chat.syncErrorMessage !== error
     ? `会话：${chat.syncErrorMessage}\n模型：${error}`
     : chat.syncErrorMessage || error)
@@ -98,9 +101,9 @@ export function AgentChatPage() {
   }, [session?.id, session?.modelId, session?.remote, session?.pending, model, models, status, busy, chat.setModel])
   useEffect(() => {
     // 选择器不提供「默认」项：未选择或旧选择失效时把模型声明的默认档落进会话记录，提交与展示同一来源。
-    if (!model || chat.restoringAttachments || chat.sending || session?.pending) return
+    if (!model || preferencesLocked) return
     if ((session?.reasoningLevel ?? '') !== reasoningLevel) chat.setReasoningLevel(reasoningLevel || null)
-  }, [model, reasoningLevel, session?.reasoningLevel, session?.pending, chat.restoringAttachments, chat.sending, chat.setReasoningLevel])
+  }, [model, reasoningLevel, session?.reasoningLevel, preferencesLocked, chat.setReasoningLevel])
 
   const liveRunId = isChatRunActive(chat.run) ? chat.run!.id : undefined
   const streamingRunId = waitingInput || chat.run?.status === 'waiting-approval' ? undefined : liveRunId
@@ -109,6 +112,9 @@ export function AgentChatPage() {
   const followContent = useCallback(() => {
     if (following.current && history.current) history.current.scrollTop = history.current.scrollHeight
   }, [])
+  useEffect(() => {
+    if (history.current) return observeElementSize([history.current], followContent)
+  }, [followContent])
 
   useEffect(() => {
     const textarea = input.current
@@ -188,13 +194,13 @@ export function AgentChatPage() {
         </div>
         <Button variant="outline" type="button" className="chat-new" disabled={chat.sending} onClick={newConversation}><Plus size={14} aria-hidden /><span>新会话</span></Button>
       </header>
-      <ChatMessageList api={api} agentMemory={agentMemory} chat={chat} model={model} history={history} following={following}
+      <ChatMessageList api={api} chat={chat} model={model} history={history} following={following}
         followContent={followContent} liveRunId={liveRunId} waitingForMessage={waitingForMessage} waitingInput={waitingInput}
         busy={busy} restoring={restoring} finalizing={finalizing} stopping={stopping} canSubmit={canSubmit}
         editor={{ ...ime, editInput, dragFiles, dropFiles, pasteFiles, canResend, resend }} />
       <ChatComposer api={api} chat={chat} input={input} model={model} models={models} status={status}
         reasoningLevels={reasoningLevels} reasoningLevel={reasoningLevel} readError={readError} retryReadLabel={retryReadLabel}
-        retryReads={retryReads} liveRunId={liveRunId} waitingInput={waitingInput} busy={busy} stopping={stopping} finalizing={finalizing}
+        retryReads={retryReads} liveRunId={liveRunId} waitingInput={waitingInput} stopping={stopping} finalizing={finalizing}
         restoring={restoring} attachmentsLocked={attachmentsLocked} canSubmit={canSubmit}
         controls={{ ...ime, preferencesLocked, canSend, send, dragFiles, dropFiles, pasteFiles, addFiles, followContent }} />
     </section>}

@@ -4,12 +4,10 @@ import { IconButton } from '../../components/IconButton'
 import { Bot, Image as ImageIcon, Pencil, X } from '../../components/icons'
 import type { useImeEnterGuard } from '../../components/useImeEnterGuard'
 import type { AgentConversationAdapter } from '../../contracts/agentChat'
-import type { AgentMemoryAdapter } from '../../contracts/agentMemory'
 import type { useAgentChatStore } from '../../stores/agentChatStore'
 import { ChatMessageAttachments } from './ChatMessageAttachments'
 import { ChatEditorFrame, ChatSendButton } from './ChatEffects'
 import { ChatMessageCopy } from './ChatMessageCopy'
-import { ChatMemorySources } from './ChatMemory'
 import { ChatResponse } from './ChatResponse'
 import { ChatRuntimeResult } from './ChatRuntimeResult'
 import { ChatSwitchNotice, chatSwitchNotice } from './ChatSwitchNotice'
@@ -18,7 +16,6 @@ import type { ChatModelOption } from './useChatModels'
 
 type Props = {
   api: AgentConversationAdapter
-  agentMemory: AgentMemoryAdapter
   chat: Pick<ReturnType<typeof useAgentChatStore.getState>,
     'session' | 'messages' | 'outgoingMessage' | 'syncErrorMessage' | 'restoringAttachments' | 'run' | 'timelines' |
     'liveOutput' | 'sending' | 'cancelEdit' | 'setEditText' | 'editMessage' | 'reasoning' | 'continueTask'>
@@ -44,7 +41,7 @@ type Props = {
   }
 }
 
-export function ChatMessageList({ api, agentMemory, chat, model, history, following, followContent, liveRunId,
+export function ChatMessageList({ api, chat, model, history, following, followContent, liveRunId,
   waitingForMessage, waitingInput, busy, restoring, finalizing, stopping, canSubmit, editor }: Props) {
   const { guardProps, isImeKey, editInput, dragFiles, dropFiles, pasteFiles, canResend, resend } = editor
   const session = chat.session
@@ -127,7 +124,6 @@ export function ChatMessageList({ api, agentMemory, chat, model, history, follow
             </Button>
             {chat.run.continuation.blockedReason && <p role="status">{chat.run.continuation.blockedReason}</p>}
           </div>}
-          {!!answer?.wikiSources?.length && <ChatMemorySources sources={answer.wikiSources} api={agentMemory} />}
         </Fragment>
       })}
       {chat.outgoingMessage && <article className="chat-message" aria-label="你的消息">

@@ -11,10 +11,10 @@ import type { AgentUserInputAnswer, AgentUserInputRequest } from '@elysian/contr
 import { messageOf } from '../utils/errorMessage'
 import { createAgentChatAttachments, type AgentChatAttachmentState } from './agentChatAttachments'
 import { createAgentChatDirectory, type AgentChatDirectoryState } from './agentChatDirectory'
-import { createAgentChatRuntime, isChatReplyActive, isChatRunActive, type AgentChatRuntimeState } from './agentChatRuntime'
+import { createAgentChatRuntime, hasActiveChatRun, type AgentChatRuntimeState } from './agentChatRuntime'
 import { applySubmissionReceipt, isConfirmedRejection } from './agentChatSubmission'
 
-export { chatRunFailure, isChatReplyActive, isChatRunActive } from './agentChatRuntime'
+export { chatRunFailure, hasActiveChatRun, isChatReplyActive, isChatRunActive } from './agentChatRuntime'
 
 type AgentChatState = AgentChatDirectoryState & AgentChatAttachmentState & AgentChatRuntimeState & {
   setUserInputAnswer(request: AgentUserInputRequest, questionId: string, answer: AgentUserInputAnswer): void
@@ -43,7 +43,7 @@ type AgentChatState = AgentChatDirectoryState & AgentChatAttachmentState & Agent
 }
 
 const persistenceNotice = '浏览器暂时无法保存会话，刷新后可能丢失本页内容。'
-const remoteBlank = { remoteSession: null, messages: [], outgoingMessage: null, reasoning: {}, timelines: {}, liveOutput: null, run: null, sending: false, uploadingAttachments: false, stopping: false, refreshing: false, syncErrorMessage: undefined, inputError: null }
+const remoteBlank = { remoteSession: null, messages: [], outgoingMessage: null, reasoning: {}, timelines: {}, liveOutput: null, confirmedReplyId: undefined, run: null, sending: false, uploadingAttachments: false, stopping: false, refreshing: false, syncErrorMessage: undefined, inputError: null }
 const outgoingMessageFor = (session: AgentChatSession, content: string, refs?: readonly AgentAttachmentRef[]) => ({
   content,
   attachments: session.attachments.filter(attachment => attachment.serverId && (!refs || refs.some(ref => ref.id === attachment.serverId)))
@@ -95,6 +95,10 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
     }
     const current = (): AgentChatSession => get().session ?? adapter.read() ?? blankSession()
     const update = (patch: Partial<AgentChatSession>) => persist({ ...current(), ...patch })
+    const preferencesLocked = () => {
+      const state = get()
+      return state.sending || state.stopping || state.restoringAttachments || !!current().pending
+    }
     const stillCurrent = (localId: string) => get().session?.id === localId
     const attachmentFlow = createAgentChatAttachments({
       adapter, get, set, current, persist, update, notify, reportInput, captureLifetime,
@@ -335,7 +339,7 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
         }
       },
       editMessage(messageId) {
-        if (get().sending || get().uploadingAttachments || get().stopping || isChatRunActive(get().run) || current().pending || get().remoteSession?.activeRunId || get().remoteSession?.activeWorkflowId) return
+        if (get().sending || get().uploadingAttachments || get().stopping || current().pending || hasActiveChatRun(get())) return
         const last = get().messages.filter(message => message.role === 'user').at(-1)
         // 保存原轮引用；仅超限图片在提交前准备新附件，编辑模式仍只改文本。
         if (last?.id === messageId && current().editing?.messageId !== messageId) update({ editing: { messageId, taskId: last.taskId, text: last.content,
@@ -343,9 +347,9 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
       },
       setEditText(text) { set({ inputError: null }); if (current().editing && !get().sending && !current().pending) update({ editing: { ...current().editing!, text } }) },
       cancelEdit() { if (!get().sending && !current().pending) { attachmentFlow.discardPrepared(current()); update({ editing: undefined }) } },
-      setPermissionMode: permissionMode => { if (!get().sending && !isChatRunActive(get().run) && !get().remoteSession?.activeRunId && !get().remoteSession?.activeWorkflowId && !current().pending) update({ permissionMode, permissionVersion: 1 }) },
-      setModel: modelId => { set({ inputError: null }); if (!get().sending && !get().uploadingAttachments && !isChatReplyActive(get().run) && !current().pending) update({ modelId, reasoningLevel: null }) },
-      setReasoningLevel: reasoningLevel => { set({ inputError: null }); if (!get().sending && !isChatReplyActive(get().run) && !current().pending) update({ reasoningLevel }) },
+      setPermissionMode: permissionMode => { if (!preferencesLocked()) update({ permissionMode, permissionVersion: 1 }) },
+      setModel: modelId => { if (!preferencesLocked()) { set({ inputError: null }); update({ modelId, reasoningLevel: null }) } },
+      setReasoningLevel: reasoningLevel => { if (!preferencesLocked()) { set({ inputError: null }); update({ reasoningLevel }) } },
       async continueTask(api, model) {
         const session = current()
         if (session.pending) {
@@ -364,7 +368,7 @@ export function createAgentChatStore(adapter: AgentChatAdapter, now: () => strin
         const lifetime = lifecycle
         const continuing = session.pending?.input.continueFromRunId ?? continueFromRunId
         const text = session.pending?.input.content ?? (continuing ? '继续完成上轮未完成的任务。' : (session.editing?.text ?? session.draft).trim())
-        if (!api.available || !text || get().restoringAttachments || get().sending || get().uploadingAttachments || get().stopping || isChatRunActive(get().run)) return false
+        if (!api.available || !text || get().restoringAttachments || get().sending || get().uploadingAttachments || get().stopping || hasActiveChatRun(get())) return false
         const version = ++submissionVersion
         const valid = () => lifetime === lifecycle && version === submissionVersion && stillCurrent(session.id)
         if (!session.pending) {

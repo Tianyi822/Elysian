@@ -321,7 +321,7 @@ describe('基本聊天界面', () => {
     expect(details.queryByText(/99,999|88,888|old-model/)).not.toBeInTheDocument()
     await user.unhover(screen.getByRole('button', { name: '上下文用量' }))
     await user.click(screen.getByRole('button', { name: '选择模型：test-model' }))
-    await user.click(screen.getByRole('menuitemradio', { name: 'test-vision-model' }))
+    await user.click(screen.getByRole('option', { name: 'test-vision-model' }))
     await user.hover(screen.getByRole('button', { name: '上下文用量' }))
     details = within(await screen.findByRole('dialog', { name: '上下文用量明细' }))
     expect(details.getByText('test-model')).toBeInTheDocument()
@@ -329,7 +329,7 @@ describe('基本聊天界面', () => {
     expect(details.queryByText('test-vision-model')).not.toBeInTheDocument()
     await user.unhover(screen.getByRole('button', { name: '上下文用量' }))
     await user.click(screen.getByRole('button', { name: '选择模型：test-vision-model' }))
-    await user.click(screen.getByRole('menuitemradio', { name: 'test-model' }))
+    await user.click(screen.getByRole('option', { name: 'test-model' }))
   })
 
   it('新一轮尚无已确认推理时用量保持中性，不沿用上一轮上下文或缓存均值', async () => {
@@ -524,7 +524,7 @@ describe('基本聊天界面', () => {
     const user = userEvent.setup()
     renderChat()
     await user.click(await screen.findByRole('button', { name: '选择模型：test-model' }))
-    const option = await screen.findByRole('menuitemradio', { name: 'test-model' })
+    const option = await screen.findByRole('option', { name: 'test-model' })
     expect(option).toHaveTextContent('test-model')
     expect(option).toHaveTextContent('测试服务')
   })
@@ -635,7 +635,7 @@ describe('基本聊天界面', () => {
     expect(screen.getByRole('article', { name: '助手回复' })).toBe(article)
   })
 
-  it('正文结束后恢复下一轮选项，服务端收尾完成后由输出流回读解除发送锁定', async () => {
+  it('流式回复可准备下一轮，成功回执到达后不等历史分页即可提交', async () => {
     const user = userEvent.setup()
     const backend = chatTestApi()
     backend.hold()
@@ -653,40 +653,54 @@ describe('基本聊天界面', () => {
     await waitFor(() => expect(backend.api.stream).toHaveBeenCalled())
     act(() => emit({ runId: 'run-1', responseId: 'm1', reasoning: '', content: '完整回答', done: false }))
     await screen.findByText('完整回答')
-    expect(screen.getByRole('button', { name: '选择模型：test-model' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '停止回复' })).toBeEnabled()
 
-    backend.runs.get('run-1')!.phase = 'final-memory'
-    await act(async () => { await useAgentChatStore.getState().refresh(backend.api) })
-    expect(screen.queryByRole('button', { name: '停止回复' })).not.toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '正在保存回复' })).toBeDisabled()
-    expect(screen.getByRole('button', { name: '正在保存回复' })).toHaveAttribute('aria-busy', 'true')
-    expect(screen.getByRole('button', { name: '选择模型：test-model' })).toBeEnabled()
-    expect(screen.getByRole('button', { name: '选择思考等级：高' })).toBeEnabled()
-    expect(screen.getByRole('button', { name: '权限模式：请求批准' })).toBeDisabled()
     await user.click(screen.getByRole('button', { name: '选择模型：test-model' }))
-    await user.click(screen.getByRole('menuitemradio', { name: 'test-vision-model' }))
+    await user.click(screen.getByRole('option', { name: 'test-vision-model' }))
     await user.click(screen.getByRole('button', { name: '选择思考等级：高' }))
-    await user.click(screen.getByRole('menuitemradio', { name: '低' }))
+    await user.click(screen.getByRole('option', { name: '低' }))
+    await user.click(screen.getByRole('button', { name: '权限模式：请求批准' }))
+    await user.click(screen.getByRole('option', { name: '帮我批准' }))
+    expect(screen.getByRole('button', { name: '添加文件' })).toBeEnabled()
+    await user.upload(screen.getByLabelText('选择文件'), new File(['image'], 'next.png', { type: 'image/png' }))
+    await waitFor(() => expect(backend.api.uploadAttachments).toHaveBeenCalled())
+    await screen.findByText('next.png')
     const composer = screen.getByRole('textbox', { name: '发送给 Ely 的消息' })
     fireEvent.change(composer, { target: { value: '下一轮' } })
     fireEvent.keyDown(composer, { key: 'Enter' })
     expect(backend.api.continueTask).not.toHaveBeenCalled()
     expect(backend.api.switchModel).not.toHaveBeenCalled()
-    expect(useAgentChatStore.getState().run).toMatchObject({ id: 'run-1', status: 'running', phase: 'final-memory' })
+
+    backend.runs.get('run-1')!.phase = 'final-memory'
+    await act(async () => { await useAgentChatStore.getState().refresh(backend.api) })
+    expect(screen.getByRole('button', { name: '发送消息' })).toBeDisabled()
+    expect(screen.queryByRole('button', { name: '正在保存回复' })).not.toBeInTheDocument()
+    const done = { runId: 'run-1', responseId: 'm1', reasoning: '', content: '完整回答', done: true,
+      timeline: { runId: 'run-1', status: 'succeeded' as const, done: true, entries: [{
+        id: 'm1:content', modelRequestId: 'm1', requestIndex: 1, startedAt: '', kind: 'content' as const, text: '完整回答', status: 'succeeded' as const, incomplete: false,
+      }] } }
+    act(() => emit({ ...done, runId: 'other-run' }))
+    expect(screen.getByRole('button', { name: '发送消息' })).toBeDisabled()
 
     backend.complete('完整回答')
-    backend.api.getSession.mockResolvedValueOnce({ ...backend.session, activeRunId: 'run-1' })
-    await act(async () => {
-      emit({ runId: 'run-1', responseId: 'm1', reasoning: '', content: '完整回答', done: true })
-      finishStream()
+    const finalPage = deferred<void>()
+    const readMessages = backend.api.messages.getMockImplementation()!
+    backend.api.messages.mockImplementation(async (id, after) => {
+      if (backend.runs.size === 1) await finalPage.promise
+      return readMessages(id, after)
     })
-    await waitFor(() => expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled())
-    expect(screen.queryByRole('button', { name: '正在保存回复' })).not.toBeInTheDocument()
-    expect(useAgentChatStore.getState().remoteSession?.activeRunId).toBeUndefined()
-    expect(useAgentChatStore.getState().session).toMatchObject({ modelId: chatVisionTestModel.id, reasoningLevel: 'low', permissionMode: 'ask' })
+    await act(async () => { emit(done); finishStream() })
+    expect(useAgentChatStore.getState().run?.status).toBe('running')
+    act(() => emit({ ...done, content: '迟到的增量', done: false, timeline: undefined }))
+    expect(screen.getByRole('button', { name: '发送消息' })).toBeEnabled()
+    expect(screen.getByText('完整回答')).toBeInTheDocument()
+    expect(screen.queryByText('迟到的增量')).not.toBeInTheDocument()
     await user.click(screen.getByRole('button', { name: '发送消息' }))
-    await waitFor(() => expect(backend.api.continueTask).toHaveBeenCalledWith('task-1', expect.objectContaining({ content: '下一轮', reasoningLevel: 'low' })))
+    await waitFor(() => expect(backend.api.continueTask).toHaveBeenCalledWith('task-1', expect.objectContaining({
+      content: '下一轮', reasoningLevel: 'low', permissionMode: 'assist', attachments: [{ id: 'server-attachment-1' }],
+    })))
     expect(backend.api.switchModel).toHaveBeenCalledWith('server-session', { modelProfileId: chatVisionTestModel.id, modelRevision: chatVisionTestModel.revision })
+    await act(async () => { finalPage.resolve() })
   })
 
   it('运行中切到其他会话释放输出流，切回后以原运行重连并衔接内容', async () => {
@@ -739,7 +753,7 @@ describe('基本聊天界面', () => {
     expect(screen.getAllByText('检查服务')).toHaveLength(1)
   })
 
-  it('选择模型声明的思考等级并随消息提交，运行时锁定选择', async () => {
+  it('选择模型声明的思考等级并随消息提交，运行时仍可编辑下一轮', async () => {
     const user = userEvent.setup()
     const backend = chatTestApi()
     backend.hold()
@@ -748,13 +762,13 @@ describe('基本聊天界面', () => {
     const selector = await screen.findByRole('button', { name: '选择思考等级：高' })
     await waitFor(() => expect(selector).toBeEnabled())
     await user.click(selector)
-    expect(screen.getAllByRole('menuitemradio').map(item => item.textContent)).toEqual(['关闭', '低', '高', '最高'])
-    await user.click(screen.getByRole('menuitemradio', { name: '高' }))
+    expect(screen.getAllByRole('option').map(item => item.textContent)).toEqual(['关闭', '低', '高', '最高'])
+    await user.click(screen.getByRole('option', { name: '高' }))
     expect(useAgentChatStore.getState().session?.reasoningLevel).toBe('high')
     await user.type(screen.getByRole('textbox'), '检查状态')
     await user.click(screen.getByRole('button', { name: '发送消息' }))
     await waitFor(() => expect(backend.api.createTask).toHaveBeenCalledWith('server-session', expect.objectContaining({ reasoningLevel: 'high' })))
-    expect(screen.getByRole('button', { name: '选择思考等级：高' })).toBeDisabled()
+    await waitFor(() => expect(screen.getByRole('button', { name: '选择思考等级：高' })).toBeEnabled())
   })
 
   it('未声明思考档位的模型不显示思考等级选择器', async () => {
@@ -772,14 +786,14 @@ describe('基本聊天界面', () => {
     await waitFor(() => expect(trigger).toBeEnabled())
     act(() => trigger.focus())
     await user.keyboard('{ArrowDown}')
-    const menu = await screen.findByRole('menu', { name: /^选择思考等级/ })
+    expect(await screen.findByRole('listbox', { name: /^选择思考等级/ })).toHaveFocus()
     await user.keyboard('{End}{Enter}')
-    await waitFor(() => expect(menu).not.toBeInTheDocument())
+    expect(screen.queryByRole('listbox', { name: /^选择思考等级/ })).not.toBeInTheDocument()
     const updated = screen.getByRole('button', { name: '选择思考等级：最高' })
     expect(updated).toHaveFocus()
     await user.keyboard('{Enter}{Escape}')
     expect(updated).toHaveFocus()
-    expect(screen.queryByRole('menu', { name: /^选择思考等级/ })).not.toBeInTheDocument()
+    expect(screen.queryByRole('listbox', { name: /^选择思考等级/ })).not.toBeInTheDocument()
     expect(backend.api.createTask).not.toHaveBeenCalled()
   })
 
@@ -791,10 +805,10 @@ describe('基本聊天界面', () => {
     const selector = await screen.findByRole('button', { name: '选择思考等级：高' })
     await waitFor(() => expect(selector).toBeEnabled())
     await user.click(selector)
-    await user.click(screen.getByRole('menuitemradio', { name: '低' }))
+    await user.click(screen.getByRole('option', { name: '低' }))
     expect(useAgentChatStore.getState().session?.reasoningLevel).toBe('low')
     await user.click(screen.getByRole('button', { name: '选择模型：test-model' }))
-    await user.click(await screen.findByRole('menuitemradio', { name: 'other-model' }))
+    await user.click(await screen.findByRole('option', { name: 'other-model' }))
     // 旧选择「低」在新模型里仍有效，但切换仍重置为新模型的默认档（新模型未声明「高」，取 medium）。
     await waitFor(() => expect(useAgentChatStore.getState().session?.reasoningLevel).toBe('medium'))
     expect(screen.getByRole('button', { name: '选择思考等级：中' })).toBeInTheDocument()
@@ -914,7 +928,7 @@ describe('基本聊天界面', () => {
     expect(screen.queryByText(/Ely 正在|正在整理会话|正在发送/)).not.toBeInTheDocument()
     expect(screen.queryByRole('button', { name: '发送消息' })).not.toBeInTheDocument()
     expect(screen.getByRole('button', { name: '停止回复' })).toBeEnabled()
-    expect(screen.getByRole('button', { name: '选择模型：test-model' })).toBeDisabled()
+    expect(screen.getByRole('button', { name: '选择模型：test-model' })).toBeEnabled()
     vi.useFakeTimers()
     try {
       // 返回页面会重新读取；在可控定时器下检查后续轮询。
@@ -1110,17 +1124,17 @@ describe('基本聊天界面', () => {
     const view = renderChat()
     await waitFor(() => expect(screen.getByRole('button', { name: '选择思考等级：高' })).toBeEnabled())
     await user.click(screen.getByRole('button', { name: '权限模式：请求批准' }))
-    expect(screen.getAllByRole('menuitemradio')).toHaveLength(3)
-    expect(screen.getByRole('menuitemradio', { name: '完全开放' })).toHaveAccessibleDescription('自动批准已启用能力所需的操作与运行时权限，系统禁区与资源限制继续生效。')
+    expect(screen.getAllByRole('option')).toHaveLength(3)
+    expect(screen.getByRole('option', { name: '完全开放' })).toHaveAccessibleDescription('自动批准已启用能力所需的操作与运行时权限，系统禁区与资源限制继续生效。')
     expect(screen.queryByRole('menuitem', { name: '本会话授权…' })).not.toBeInTheDocument()
-    await user.click(screen.getByRole('menuitemradio', { name: '帮我批准' }))
+    await user.click(screen.getByRole('option', { name: '帮我批准' }))
     expect(useAgentChatStore.getState().session?.permissionMode).toBe('assist')
     expect(screen.queryByText('预览')).not.toBeInTheDocument()
     view.unmount()
     renderChat()
     expect(screen.getByRole('button', { name: '权限模式：帮我批准' })).toBeEnabled()
     await user.click(screen.getByRole('button', { name: '权限模式：帮我批准' }))
-    await user.click(screen.getByRole('menuitemradio', { name: '请求批准' }))
+    await user.click(screen.getByRole('option', { name: '请求批准' }))
     expect(screen.queryByText('预览')).not.toBeInTheDocument()
   })
 

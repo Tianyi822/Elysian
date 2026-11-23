@@ -2,10 +2,10 @@ import { useRef, type ClipboardEvent, type DragEvent, type RefObject } from 'rea
 import { Link } from 'react-router'
 import { AGENT_COMPOSER_FILE_ACCEPT } from '../../adapters/local/agentTextFiles'
 import { Button } from '../../components/Button'
+import { GooeySelect } from '../../components/GooeySelect'
 import { IconButton } from '../../components/IconButton'
-import { Hand, Loader2, ShieldAlert, ShieldCheck, Square, type IconComponent } from '../../components/icons'
+import { Brain, Hand, Loader2, ShieldAlert, ShieldCheck, Square, type IconComponent } from '../../components/icons'
 import { RefreshButton } from '../../components/RefreshState'
-import { SelectDropdown } from '../../components/SelectDropdown'
 import type { useImeEnterGuard } from '../../components/useImeEnterGuard'
 import type { AgentChatPermissionMode, AgentConversationAdapter } from '../../contracts/agentChat'
 import type { useAgentChatStore } from '../../stores/agentChatStore'
@@ -13,7 +13,6 @@ import { ChatApprovals } from './ChatApprovals'
 import { ChatAttachment } from './ChatAttachment'
 import { ChatAttachButton, ChatEditorFrame, ChatSendButton } from './ChatEffects'
 import { ChatPlan } from './ChatPlan'
-import { ChatReasoningMenu } from './ChatReasoningMenu'
 import { ChatUserInput } from './ChatUserInput'
 import { ChatUsageIndicator } from './ChatUsageIndicator'
 import { reasoningLabel, type ChatModelOption, type useChatModels } from './useChatModels'
@@ -41,7 +40,6 @@ type Props = {
   retryReads: () => void
   liveRunId?: string
   waitingInput: boolean
-  busy: boolean
   stopping: boolean
   finalizing: boolean
   restoring: boolean
@@ -60,7 +58,7 @@ type Props = {
 }
 
 export function ChatComposer({ api, chat, input, model, models, status, reasoningLevels, reasoningLevel, readError, retryReadLabel,
-  retryReads, liveRunId, waitingInput, busy, stopping, finalizing, restoring, attachmentsLocked, canSubmit, controls }: Props) {
+  retryReads, liveRunId, waitingInput, stopping, finalizing, restoring, attachmentsLocked, canSubmit, controls }: Props) {
   const session = chat.session
   const run = chat.run
   const fileInput = useRef<HTMLInputElement>(null)
@@ -72,11 +70,12 @@ export function ChatComposer({ api, chat, input, model, models, status, reasonin
   const permissionMode = PERMISSION_MODES.find(mode => mode.value === session?.permissionMode) ?? PERMISSION_MODES[0]!
   const PermissionIcon = permissionMode.Icon
   /** 模型标识与设置页的「模型 ID」列同一口径；服务名放副行，不占触发器宽度。 */
-  const modelOptions = models.map(item => ({
-    value: item.id,
-    label: models.some(other => other.id !== item.id && other.model === item.model) ? `${item.model} · ${item.serviceName}` : item.model,
-    description: item.serviceName,
-  }))
+  const modelOptions = models.map(item => {
+    const duplicate = models.some(other => other.id !== item.id && other.model === item.model)
+    return { value: item.id, label: duplicate ? `${item.model} · ${item.serviceName}` : item.model,
+      description: duplicate ? undefined : item.serviceName }
+  })
+  const modelSelectionLocked = status !== 'ready' || preferencesLocked
   const modelUnavailable = api.available && status === 'ready' && !chat.restoringAttachments && !restoring && (!models.length || (session?.remote && !model))
   const inputHints = [
     modelUnavailable ? '请选择支持文本与工具调用的可用模型，或前往设置添加模型。' : null,
@@ -101,12 +100,15 @@ export function ChatComposer({ api, chat, input, model, models, status, reasonin
 
     <ChatPlan key={`${session?.id}:${session?.remote?.runId}`} plan={usageTimeline?.plan ?? (run?.id === session?.remote?.runId ? run?.plan : undefined)}
       budgetStopped={!!(usageTimeline?.budgetStop ?? run?.budgetStop)} status={usageTimeline?.status ?? run?.status ?? 'queued'} stopping={stopping} onProgress={followContent} />
-    {run && (run.status === 'waiting-approval' || run.phase === 'preparing-runtime') ? <ChatApprovals key={run.id} api={api.governance} runId={run.id} onChanged={() => void chat.refresh(api)} onCancel={() => void chat.stop(api)} /> : inputRequest ? <ChatUserInput key={`${session?.id}:${inputRequest.id}`} request={inputRequest} answers={inputDraft?.answers ?? {}}
+    {run && !finalizing && (run.status === 'waiting-approval' || run.phase === 'preparing-runtime') ? <ChatApprovals key={run.id} api={api.governance} runId={run.id} onChanged={() => void chat.refresh(api)} onCancel={() => void chat.stop(api)} /> : inputRequest ? <ChatUserInput key={`${session?.id}:${inputRequest.id}`} request={inputRequest} answers={inputDraft?.answers ?? {}}
       submitting={chat.sending || stopping} pending={!!inputDraft?.pending}
       onAnswer={(questionId, answer) => chat.setUserInputAnswer(inputRequest, questionId, answer)}
       onSubmit={() => void chat.answerUserInput(api, inputRequest)} onCancel={() => void chat.stop(api)} /> :
     <ChatEditorFrame><form className="chat-composer panel-surface" {...guardProps} onSubmit={event => { event.preventDefault(); if (!isImeKey()) send() }} aria-label="消息输入框" onDragOver={dragFiles} onDrop={event => dropFiles(event)}>
-      {!!session?.attachments.length && <ul aria-label="本地附件" className="hover-scrollbar flex max-h-52 flex-wrap gap-2 overflow-y-auto px-4 pt-4">{session.attachments.map(attachment => <ChatAttachment key={attachment.id} attachment={attachment} onRemove={() => chat.removeAttachment(attachment.id)} />)}</ul>}
+      {!!session?.attachments.length && <ul aria-label="本地附件" className="hover-scrollbar flex max-h-52 flex-wrap gap-2 overflow-y-auto px-4 pt-4">
+        {session.attachments.map(attachment => <ChatAttachment key={attachment.id} attachment={attachment}
+          onRemove={chat.sending || session.pending ? undefined : () => chat.removeAttachment(attachment.id)} />)}
+      </ul>}
       <label htmlFor="agent-message" className="sr-only">发送给 Ely 的消息</label>
       <textarea
         id="agent-message" ref={input} value={session?.draft ?? ''} rows={2}
@@ -124,28 +126,26 @@ export function ChatComposer({ api, chat, input, model, models, status, reasonin
       <div className="chat-composer-tools">
         <ChatAttachButton onPress={() => fileInput.current?.click()} disabled={attachmentsLocked || !api.available} />
         <div className="chat-permission" data-mode={permissionMode.value} title={`${permissionMode.label}：${permissionMode.description}`}>
-          <SelectDropdown ariaLabel="权限模式" value={permissionMode.value} onSelect={chat.setPermissionMode}
-            items={PERMISSION_MODES.map(({ Icon, ...mode }) => ({ ...mode, icon: <Icon size={16} /> }))}
+          <GooeySelect portal ariaLabel="权限模式" value={permissionMode.value} onSelect={chat.setPermissionMode}
+            items={PERMISSION_MODES.map(({ Icon, ...mode }) => ({ ...mode, icon: <Icon size={16} className={mode.value === 'full' ? 'text-danger' : undefined} /> }))}
             leadingIcon={<PermissionIcon size={16} aria-hidden />}
-            disabled={!session || chat.restoringAttachments || busy || restoring || !!session.pending}
-            triggerClassName="chat-select chat-permission-select" contentClassName="chat-composer-menu chat-permission-menu" />
+            disabled={preferencesLocked} triggerClassName="chat-select chat-permission-select" />
         </div>
         <div className="chat-model">
           <ChatUsageIndicator key={session?.id} timeline={usageTimeline} />
-          <SelectDropdown ariaLabel="选择模型" value={model?.id} onSelect={chat.setModel}
+          <GooeySelect portal align="end" ariaLabel="选择模型" value={model?.id} onSelect={chat.setModel}
             items={modelOptions}
             fallbackLabel={status === 'loading' ? '加载模型…' : status === 'error' ? '模型不可用' : '选择模型'}
-            disabled={status !== 'ready' || !models.length || preferencesLocked || restoring || !!session?.pending} triggerClassName="chat-select chat-model-select" contentClassName="chat-composer-menu"
-            mono
-            search={models.length > 6 ? { ariaLabel: '搜索模型', placeholder: '搜索模型 ID…' } : undefined} />
+            disabled={modelSelectionLocked} triggerClassName="chat-select chat-model-select" />
         </div>
-        {reasoningLevels.length > 0 && <ChatReasoningMenu value={reasoningLevel}
-          levels={reasoningLevels.map(level => ({ value: level, label: reasoningLabel(level) }))}
+        {reasoningLevels.length > 0 && <GooeySelect portal align="end" ariaLabel="选择思考等级" value={reasoningLevel}
+          items={reasoningLevels.map(level => ({ value: level, label: reasoningLabel(level) }))}
           onSelect={chat.setReasoningLevel}
-          disabled={status !== 'ready' || !model || preferencesLocked || restoring || !!session?.pending} />}
-        {chat.sending || (finalizing && !stopping)
-          ? <IconButton label={chat.sending ? '正在发送消息' : '正在保存回复'} disabled busy className="chat-send chat-pending"><Loader2 size={18} className="animate-spin motion-reduce:animate-none" aria-hidden /></IconButton>
-          : liveRunId && !chat.remoteSession?.activeWorkflowId
+          disabled={modelSelectionLocked} leadingIcon={<Brain size={16} aria-hidden />}
+          triggerClassName="chat-select" className="shrink-0" />}
+        {chat.sending
+          ? <IconButton label="正在发送消息" disabled busy className="chat-send chat-pending"><Loader2 size={18} className="animate-spin motion-reduce:animate-none" aria-hidden /></IconButton>
+          : liveRunId && !finalizing && !chat.remoteSession?.activeWorkflowId
           ? <IconButton label={stopping ? '正在停止' : '停止回复'} onPress={() => void chat.stop(api)} disabled={stopping} className="chat-send chat-stop"><Square size={16} fill="currentColor" aria-hidden /></IconButton>
           : <ChatSendButton label={session?.pending && !session.pending.input.replaceMessageId ? '重试发送' : '发送消息'} onPress={send} disabled={!canSend} />}
       </div>

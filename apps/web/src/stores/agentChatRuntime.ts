@@ -12,6 +12,7 @@ type RuntimeDisplay = {
   reasoning: Readonly<Record<string, string>>
   timelines: Readonly<Record<string, AgentChatTimelineSnapshot>>
   liveOutput: AgentChatOutput | null
+  confirmedReplyId?: string
   run: AgentChatRun | null
   stopping: boolean
   refreshing: boolean
@@ -40,6 +41,12 @@ type RuntimeContext = {
 
 export const isChatRunActive = (run: AgentChatRun | null) => !!run && ['queued', 'running', 'waiting-input', 'waiting-approval', 'waiting-resource', 'waiting-task', 'waiting-recovery', 'waiting-model', 'waiting-storage', 'recovery-required'].includes(run.status)
 export const isChatReplyActive = (run: AgentChatRun | null) => isChatRunActive(run) && run?.phase !== 'final-memory'
+export function hasActiveChatRun({ run, remoteSession, confirmedReplyId }: Pick<RuntimeDisplay, 'run' | 'remoteSession' | 'confirmedReplyId'>) {
+  const activeRunId = remoteSession?.activeRunId
+  return Boolean(remoteSession?.activeWorkflowId ||
+    activeRunId && activeRunId !== confirmedReplyId ||
+    isChatRunActive(run) && run?.id !== confirmedReplyId)
+}
 export const chatRunFailure = (run: AgentChatRun | null) => run && !isChatRunActive(run) && run.status !== 'succeeded' && run.status !== 'cancelled' && !run.budgetStop
   ? `${RUNTIME_RUN_STATUS_LABELS[run.status]}${run.error ? `：${run.error.message}` : ''}`
   : null
@@ -96,7 +103,7 @@ export function createAgentChatRuntime({ get, set, current, update, notify, capt
   const actions: RuntimeActions = {
     async stop(api) {
       const run = get().run
-      if (!run || !isChatRunActive(run) || get().stopping || run.cancelRequestedAt) return
+      if (!run || !isChatRunActive(run) || run.id === get().confirmedReplyId || get().stopping || run.cancelRequestedAt) return
       const localId = current().id
       const lifetime = captureLifetime()
       const valid = () => lifetime() && get().session?.id === localId && get().run?.id === run.id
@@ -115,9 +122,14 @@ export function createAgentChatRuntime({ get, set, current, update, notify, capt
       const valid = () => lifetime() && !signal.aborted && get().session?.id === localId && get().run?.id === runId
       try {
         await api.stream(runId, output => {
-          if (!valid() || !isChatRunActive(get().run)) return
-          if (get().timelines[runId]?.done && !output.done) return
+          const state = get()
+          if (!valid() || output.runId !== runId || (output.timeline && output.timeline.runId !== runId) || !isChatRunActive(state.run)) return
+          const succeeded = output.done && output.timeline?.done && output.timeline.status === 'succeeded'
+          // A REST confirmation can arrive first. Still accept the final streamed content.
+          if (state.confirmedReplyId === runId && !succeeded) return
+          if (state.timelines[runId]?.done && !output.done) return
           set(state => ({ liveOutput: output, reasoning: { ...state.reasoning, [runId]: output.reasoning },
+            ...(succeeded ? { confirmedReplyId: runId } : {}),
             ...(output.timeline ? { timelines: { ...state.timelines, [runId]: output.timeline } } : {}) }))
         }, signal)
         if (valid()) await get().refresh(api, signal)
@@ -163,6 +175,11 @@ export function createAgentChatRuntime({ get, set, current, update, notify, capt
         let run = runId ? latestRun?.id === runId ? latestRun : await api.getRun(runId, signal) : null
         if (!valid()) return
         if (remote.activeRunId && run && !isChatRunActive(run)) remote = await api.getSession(remote.id, signal)
+        if (!valid()) return
+        // Confirm availability independently of paginated messages and tool history.
+        if (run?.status === 'succeeded' && run.id === get().run?.id && !remote.activeRunId && !remote.activeWorkflowId) {
+          set({ remoteSession: remote, confirmedReplyId: run.id })
+        }
         let messages = [...get().messages]
         let after = messages.at(-1)?.seq ?? '0'
         for (;;) {

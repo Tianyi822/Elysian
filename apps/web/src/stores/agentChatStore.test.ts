@@ -956,7 +956,7 @@ describe('智能体本地会话', () => {
     expect(local.files.size).toBe(1)
   })
 
-  it('图片处理期间阻止发送和模型切换，离开会话后中止处理且不再上传', async () => {
+  it('图片处理期间阻止发送，模型仍可选择，离开会话后中止上传', async () => {
     const store = localMemory().makeStore()
     const backend = chatTestApi()
     const prepared = deferred<File>()
@@ -971,7 +971,7 @@ describe('智能体本地会话', () => {
     expect(store.getState().uploadingAttachments).toBe(true)
     expect(await store.getState().send(backend.api, chatVisionTestModel)).toBe(false)
     store.getState().setModel('new-model')
-    expect(store.getState().session?.modelId).toBe('old-model')
+    expect(store.getState().session?.modelId).toBe('new-model')
     await store.getState().newSession()
     expect(signal.aborted).toBe(true)
     prepared.resolve(file)
@@ -1308,7 +1308,7 @@ describe('智能体本地会话', () => {
 })
 
 describe('基本聊天', () => {
-  it('收尾阶段可保存下一轮偏好，但仍等待本轮终态才接受发送', async () => {
+  it('生成和收尾阶段可保存下一轮偏好，发送等待本轮终态', async () => {
     const store = localMemory().makeStore()
     const backend = chatTestApi()
     backend.hold()
@@ -1320,7 +1320,7 @@ describe('基本聊天', () => {
     store.getState().setModel(chatVisionTestModel.id)
     store.getState().setReasoningLevel('low')
     store.getState().setPermissionMode('assist')
-    expect(store.getState().session).toMatchObject({ modelId: chatTestModel.id, reasoningLevel: 'high', permissionMode: 'ask' })
+    expect(store.getState().session).toMatchObject({ modelId: chatVisionTestModel.id, reasoningLevel: 'low', permissionMode: 'assist' })
 
     backend.runs.get('run-1')!.phase = 'final-memory'
     await store.getState().refresh(backend.api)
@@ -1328,14 +1328,20 @@ describe('基本聊天', () => {
     store.getState().setReasoningLevel('low')
     store.getState().setPermissionMode('assist')
     store.getState().setDraft('下一轮')
-    expect(store.getState().session).toMatchObject({ modelId: chatVisionTestModel.id, reasoningLevel: 'low', permissionMode: 'ask' })
+    expect(store.getState().session).toMatchObject({ modelId: chatVisionTestModel.id, reasoningLevel: 'low', permissionMode: 'assist' })
     expect(await store.getState().send(backend.api, chatVisionTestModel)).toBe(false)
     expect(backend.api.switchModel).not.toHaveBeenCalled()
     expect(store.getState().run).toMatchObject({ status: 'running', phase: 'final-memory' })
 
     backend.complete()
-    await store.getState().refresh(backend.api)
+    const history = deferred<Awaited<ReturnType<typeof backend.api.messages>>>()
+    backend.api.messages.mockReturnValueOnce(history.promise)
+    const refreshing = store.getState().refresh(backend.api)
+    await vi.waitFor(() => expect(store.getState().confirmedReplyId).toBe('run-1'))
+    expect(store.getState().run?.phase).toBe('final-memory')
     expect(await store.getState().send(backend.api, chatVisionTestModel)).toBe(true)
+    history.resolve({ items: [], nextCursor: '2', hasMore: false })
+    await refreshing
     expect(backend.api.continueTask).toHaveBeenCalledWith('task-1', expect.objectContaining({ content: '下一轮', reasoningLevel: 'low', extensionMode: 'enabled' }))
   })
 
