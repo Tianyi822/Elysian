@@ -77,9 +77,8 @@ function bytes(value: number): string {
   return `${(value / 1024 ** 2).toFixed(1)} MiB`
 }
 
-function stepDetail(task: PanelTask, step: MaintenanceStep, phase: string, moving: boolean): string {
+function stepDetail(task: PanelTask, step: MaintenanceStep, phase: string): string {
   if (task.state === 'queued') return '维护任务已排队，开始执行后会先检查当前环境。'
-  if (!moving) return '服务器尚未确认新的阶段回执，当前显示停留在最后一条已确认进度。'
 
   switch (step.key) {
     case 'checking':
@@ -159,9 +158,9 @@ export function PanelMaintenanceProgress({ task, logs = '', paused = false }: { 
         completed={task.state === 'succeeded'}
         failed={failed}
       />
-      {active ? <div className="overflow-x-clip rounded-lg border border-line bg-surface px-3 py-2.5">
+      {moving || task.state === 'queued' ? <div className="overflow-x-clip rounded-lg border border-line bg-surface px-3 py-2.5">
         <StepPanels current={current}>
-          {steps.map(step => <p key={step.key} className="text-xs leading-5 text-fg-muted">{stepDetail(task, step, phase, moving)}</p>)}
+          {steps.map(step => <p key={step.key} className="text-xs leading-5 text-fg-muted">{stepDetail(task, step, phase)}</p>)}
         </StepPanels>
       </div> : null}
     </> : task.state !== 'succeeded' && !active

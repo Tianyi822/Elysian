@@ -72,6 +72,8 @@ describe('维护图形进度与日志', () => {
   })
   it.each([{ workerStatus: 'unknown' as const }, { workerDead: true }, { paused: true }])('进程或连接未确认时冻结活动图形：%j', ({ paused, ...changes }) => {
     const { container } = render(<PanelMaintenanceProgress task={{ ...task, ...changes }} paused={paused} />)
+    expect(screen.queryByText(/服务器尚未确认新的阶段回执/)).not.toBeInTheDocument()
+    expect(screen.getByRole('listitem', { name: /下载安装包.*进行中/ })).toHaveAttribute('aria-current', 'step')
     expect(screen.getByText('等待进度同步')).toBeInTheDocument()
     expect(screen.queryByText(/平均/)).not.toBeInTheDocument()
     expect(container.querySelector('.motion-safe\\:animate-spin')).toBeNull()
