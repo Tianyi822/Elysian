@@ -1,4 +1,5 @@
 import * as Dialog from '@radix-ui/react-dialog'
+import * as Tooltip from '@radix-ui/react-tooltip'
 import { useCallback, useEffect, useState, type ReactElement } from 'react'
 import type { PanelCommit, PanelUpdateChannel, PanelUpdateSource } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
@@ -9,6 +10,7 @@ import { EmptyState, ErrorState, LoadingState } from '../../components/states/St
 import { useMessageStore } from '../../stores/messageStore'
 import { Button } from '../../components/Button'
 import { Badge } from '../../components/easyui/Badge'
+import { TOOLTIP_CONTENT_CLASS } from '../../components/tooltipStyles'
 import { messageOf } from '../../utils/errorMessage'
 
 /**
@@ -70,11 +72,22 @@ export function PanelChangelogDialog({
         <Dialog.Content className="fixed left-1/2 top-1/2 z-[61] flex max-h-[min(36rem,calc(100dvh-3rem))] w-[min(38rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col panel-surface shadow-xl">
           <div className="flex shrink-0 items-center justify-between gap-3 px-5 pt-5">
             <Dialog.Title className="text-sm font-semibold text-fg">更新日志</Dialog.Title>
-            <Dialog.Close asChild>
-              <Button variant="outline" type="button" aria-label="关闭更新日志" className="rounded-lg p-1.5 text-fg-muted hover:bg-surface-raised hover:text-fg">
-                <X aria-hidden size={16} />
-              </Button>
-            </Dialog.Close>
+            <Tooltip.Root>
+              <Tooltip.Trigger asChild>
+                <Dialog.Close asChild>
+                  <Button size="icon" variant="outline" aria-label="关闭更新日志"
+                    className="size-8 shrink-0 rounded-full focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-focus">
+                    <X aria-hidden size={16} />
+                  </Button>
+                </Dialog.Close>
+              </Tooltip.Trigger>
+              <Tooltip.Portal>
+                {/* 提示显示时先收到 Escape，仍按一次关闭整个弹窗。 */}
+                <Tooltip.Content side="top" sideOffset={6} className={TOOLTIP_CONTENT_CLASS} onEscapeKeyDown={() => setOpen(false)}>
+                  关闭更新日志<Tooltip.Arrow className="fill-surface-raised" />
+                </Tooltip.Content>
+              </Tooltip.Portal>
+            </Tooltip.Root>
           </div>
           <Dialog.Description className="shrink-0 px-5 pt-1 text-xs leading-5 text-fg-muted">
             {source === 'gitee' ? 'Gitee' : 'GitHub'} · 正式发版对应的提交记录，从新到旧。

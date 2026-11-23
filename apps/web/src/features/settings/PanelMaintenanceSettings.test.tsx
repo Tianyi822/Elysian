@@ -418,6 +418,7 @@ describe('端口与更新设置', () => {
 
     await user.keyboard('{Enter}')
     expect(screen.getByRole('dialog', { name: '更新日志' })).toBeInTheDocument()
+    expect(await screen.findByRole('tooltip')).toHaveTextContent('关闭更新日志')
     await user.keyboard('{Escape}')
     expect(screen.queryByRole('dialog', { name: '更新日志' })).not.toBeInTheDocument()
     await waitFor(() => expect(changelog).toHaveFocus())
