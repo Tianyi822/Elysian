@@ -29,6 +29,17 @@ describe('回复过渡', () => {
     expect(screen.queryByRole('status', { name: '等待模型回复' })).not.toBeInTheDocument()
   })
 
+  it('思考有内容时将指示接在思考行，回复开始后移除', async () => {
+    const onProgress = vi.fn()
+    const draw = (content: string) => <ChatResponse content={content} reasoning="先核对结果" active onProgress={onProgress} />
+    const view = render(draw(''))
+    const thought = await screen.findByRole('button', { name: '展开思考内容' })
+    expect(thought.querySelector('.chat-thinking-orb')).toHaveAttribute('aria-hidden', 'true')
+    view.rerender(draw('核对完成'))
+    expect(thought.querySelector('.chat-thinking-orb')).toBeNull()
+    expect(await screen.findByText('核对完成')).toBeInTheDocument()
+  })
+
   it('流式回落正文不提供复制条带，公开回复确认后才可复制', async () => {
     const onProgress = vi.fn()
     const draw = (copyable: boolean) => <Tooltip.Provider><ChatResponse content="已显示的正文" reasoning="" active={false} copyable={copyable} onProgress={onProgress} /></Tooltip.Provider>

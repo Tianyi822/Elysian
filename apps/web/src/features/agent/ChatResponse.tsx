@@ -1,5 +1,6 @@
 import { useLayoutEffect, useRef } from 'react'
 import { ChatMarkdown } from '../../components/ChatMarkdown'
+import { ChatThinkingOrb } from './ChatEffects'
 import { ChatMessageCopy } from './ChatMessageCopy'
 import { ChatReasoning } from './ChatReasoning'
 import { useSmoothedText } from './useSmoothedText'
@@ -24,9 +25,9 @@ export function ChatResponse({ content, reasoning, active, stopped, stopping, co
   if (!answer && !thought && !stopped && !waiting) return null
   return <div className="chat-response" data-streaming={active || answer !== content || undefined}>
     {waiting && <div className="chat-response-waiting" role="status" aria-label="等待模型回复">
-      <span aria-hidden /><span aria-hidden /><span aria-hidden />
+      <ChatThinkingOrb state="working" />
     </div>}
-    <ChatReasoning text={thought} active={active} />
+    <ChatReasoning text={thought} active={active} thinking={active && !content && !stopped && !stopping} />
     {!!answer && <article className={`chat-message chat-message-assistant${copyable ? '' : ' chat-message-intermediate'}`} aria-label="助手回复">
       <div className="chat-message-body">
         <ChatMarkdown text={answer} />
