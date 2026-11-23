@@ -36,6 +36,8 @@ Gitee 每个版本仅发布一个正式发行版，双架构安装包直接附�
 
 在线更新同样按来源选择：国内用 `ely upgrade --source gitee`，国外用 `ely upgrade --source github`。`sudo ely resetpwd` 重置管理员密码（全部会话失效），`ely help` 查看全部命令。
 
+升级到 Agent 存储 v12 前，先停止面板写入并备份同一时点的 `data/harness.sqlite`（含仍存在的 SQLite WAL）与 `data/agent-records/`。首次启动会清理在线 Wiki 专属数据和独立流水。回退代码时使用支持 v12 的构建。
+
 ## 卸载
 
 ```bash
