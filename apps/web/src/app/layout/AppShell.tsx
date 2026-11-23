@@ -17,14 +17,23 @@ import { Sidebar } from './Sidebar'
 import { ShellPageFallback, ShellLayoutContext, type ShellLayout } from './ShellLayoutContext'
 import { LoadingState } from '../../components/states/StateViews'
 import './headerControls.css'
-import { Sidebar as EasyUISidebar, SidebarDrawer, SidebarTrigger } from '../../components/easyui/Sidebar'
+import { Sidebar as EasyUISidebar, SidebarDrawer, SidebarTrigger, SIDEBAR_MAX_WIDTH, SIDEBAR_MIN_WIDTH } from '../../components/easyui/Sidebar'
 import { mediaQuery, observeMediaQuery } from '../../utils/mediaQuery'
+import { browserPreferenceStorage } from '../theme/themePreferences'
+
+const SIDEBAR_WIDTH_KEY = 'elysian.sidebar-width.v1'
+
+function readSidebarWidth() {
+  const width = Number(browserPreferenceStorage.getItem(SIDEBAR_WIDTH_KEY))
+  return Number.isInteger(width) && width >= SIDEBAR_MIN_WIDTH && width <= SIDEBAR_MAX_WIDTH ? width : SIDEBAR_MIN_WIDTH
+}
 
 export function AppShell() {
   const [openDrawer, setOpenDrawer] = useState<'navigation' | 'conversation' | null>(null)
   const openDrawerRef = useRef(openDrawer)
   openDrawerRef.current = openDrawer
   const [globalSidebarCollapsed, setGlobalSidebarCollapsed] = useState(false)
+  const [expandedSidebarWidth, setExpandedSidebarWidth] = useState(readSidebarWidth)
   // 聊天页的收展独立记账：进入时不折叠，继承当前全局状态；聊天内的改动不写回其他页面。
   const [agentSidebarCollapsed, setAgentSidebarCollapsed] = useState(false)
   const headerRowRef = useRef<HTMLDivElement>(null)
@@ -45,6 +54,11 @@ export function AppShell() {
     if (isAgentChat) setAgentSidebarCollapsed(collapsed)
     else setGlobalSidebarCollapsed(collapsed)
   }, [isAgentChat])
+  const saveSidebarWidth = useCallback((width: number) => {
+    if (width === expandedSidebarWidth) return
+    setExpandedSidebarWidth(width)
+    browserPreferenceStorage.setItem(SIDEBAR_WIDTH_KEY, String(width))
+  }, [expandedSidebarWidth])
   const setNavigationOpen = useCallback((open: boolean) => {
     setOpenDrawer(current => open ? 'navigation' : current === 'navigation' ? null : current)
   }, [])
@@ -107,7 +121,7 @@ export function AppShell() {
       <Dialog.Root open={layout.navigationOpen} onOpenChange={setNavigationOpen}>
         <PanelUpdateMonitor />
         <div className="app-canvas flex h-dvh overflow-hidden text-fg">
-          <EasyUISidebar collapsed={sidebarCollapsed}>
+          <EasyUISidebar collapsed={sidebarCollapsed} expandedWidth={expandedSidebarWidth} onExpandedWidthChange={saveSidebarWidth}>
             <Sidebar collapsed={sidebarCollapsed} onToggle={() => setSidebarCollapsed(!sidebarCollapsed)} />
           </EasyUISidebar>
 

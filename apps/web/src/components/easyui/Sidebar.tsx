@@ -13,13 +13,21 @@ import * as Tooltip from "@radix-ui/react-tooltip";
 import { AnimatePresence, motion, useDragControls, useIsPresent, useReducedMotion, type PanInfo } from "framer-motion";
 import { ChevronRight, PanelLeft } from "lucide-react";
 import { Button, type ButtonProps } from "../Button";
+import { mediaQuery, observeMediaQuery } from "../../utils/mediaQuery";
 import { observeElementSize } from "../../utils/observeElementSize";
 import { cn } from "./utils";
 import "./sidebar.css";
 
 const spring = { type: "spring", stiffness: 420, damping: 36, mass: 0.8 } as const;
-const EXPANDED = 248;
+export const SIDEBAR_MIN_WIDTH = 248;
+export const SIDEBAR_MAX_WIDTH = 352;
 const COLLAPSED = 56;
+const RESIZE_VIEWPORT = "(min-width: 1024px)";
+const RESIZE_STEP = 8;
+
+function clampSidebarWidth(width: number) {
+  return Math.min(SIDEBAR_MAX_WIDTH, Math.max(SIDEBAR_MIN_WIDTH, Math.round(width)));
+}
 
 export type SidebarChild = { id: string; label: string; badge?: string | number };
 export type SidebarItem = {
@@ -35,13 +43,90 @@ const SidebarContext = React.createContext({ collapsed: false });
 export const useSidebar = () => React.useContext(SidebarContext);
 
 /** Desktop shell extracted so the host keeps its route and drawer ownership. */
-export function Sidebar({ collapsed, children }: { collapsed: boolean; children: React.ReactNode }) {
+export function Sidebar({ collapsed, expandedWidth, onExpandedWidthChange, children }: {
+  collapsed: boolean; expandedWidth: number; onExpandedWidthChange(width: number): void; children: React.ReactNode;
+}) {
   const reduced = useReducedMotion();
-  return <motion.aside aria-label="桌面主导航" data-easyui="sidebar" data-collapsed={collapsed || undefined}
-    initial={false} animate={{ width: collapsed ? COLLAPSED : EXPANDED }}
-    transition={reduced ? { duration: 0 } : spring}
-    className="desktop-navigation hidden h-full shrink-0 overflow-hidden border-r border-sidebar-line bg-sidebar md:block">
+  const id = React.useId();
+  const [wide, setWide] = React.useState(() => mediaQuery(RESIZE_VIEWPORT)?.matches ?? false);
+  const [previewWidth, setPreviewWidth] = React.useState<number | null>(null);
+  const drag = React.useRef<{ handle: HTMLDivElement; pointerId: number; startX: number; startWidth: number } | null>(null);
+  const resizable = wide && !collapsed;
+  const currentWidth = previewWidth ?? expandedWidth;
+
+  const endResize = React.useCallback(() => {
+    const session = drag.current;
+    if (!session) return;
+    drag.current = null;
+    if (session.handle.hasPointerCapture(session.pointerId)) session.handle.releasePointerCapture(session.pointerId);
+    setPreviewWidth(null);
+  }, []);
+
+  React.useEffect(() => {
+    const media = mediaQuery(RESIZE_VIEWPORT);
+    const update = () => setWide(media?.matches ?? false);
+    update();
+    return observeMediaQuery(media, update);
+  }, []);
+  React.useLayoutEffect(() => { if (!resizable) endResize(); }, [resizable, endResize]);
+  React.useEffect(() => {
+    if (!resizable) return;
+    const move = (event: PointerEvent) => {
+      const session = drag.current;
+      if (session?.pointerId !== event.pointerId) return;
+      setPreviewWidth(clampSidebarWidth(session.startWidth + event.clientX - session.startX));
+    };
+    const commit = (event: PointerEvent) => {
+      const session = drag.current;
+      if (session?.pointerId !== event.pointerId) return;
+      if (event.clientX !== session.startX) onExpandedWidthChange(clampSidebarWidth(session.startWidth + event.clientX - session.startX));
+      endResize();
+    };
+    const cancel = (event: PointerEvent) => { if (drag.current?.pointerId === event.pointerId) endResize(); };
+    window.addEventListener("pointermove", move, true);
+    window.addEventListener("pointerup", commit, true);
+    window.addEventListener("pointercancel", cancel, true);
+    window.addEventListener("blur", endResize);
+    return () => {
+      window.removeEventListener("pointermove", move, true);
+      window.removeEventListener("pointerup", commit, true);
+      window.removeEventListener("pointercancel", cancel, true);
+      window.removeEventListener("blur", endResize);
+    };
+  }, [resizable, endResize, onExpandedWidthChange]);
+
+  const resizeByKey = (event: React.KeyboardEvent<HTMLDivElement>) => {
+    let width: number;
+    switch (event.key) {
+      case "ArrowLeft": width = expandedWidth - RESIZE_STEP; break;
+      case "ArrowRight": width = expandedWidth + RESIZE_STEP; break;
+      case "Home": width = SIDEBAR_MIN_WIDTH; break;
+      case "End": width = SIDEBAR_MAX_WIDTH; break;
+      default: return;
+    }
+    event.preventDefault();
+    if (!drag.current) onExpandedWidthChange(clampSidebarWidth(width));
+  };
+
+  return <motion.aside id={id} aria-label="桌面主导航" data-easyui="sidebar" data-collapsed={collapsed || undefined}
+    initial={false} animate={{ width: collapsed ? COLLAPSED : wide ? currentWidth : SIDEBAR_MIN_WIDTH }}
+    transition={reduced || previewWidth !== null ? { duration: 0 } : spring}
+    className="desktop-navigation relative hidden h-full shrink-0 overflow-hidden border-r border-sidebar-line bg-sidebar md:block">
     {children}
+    {resizable && <div role="separator" aria-label="主导航宽度" aria-controls={id} aria-orientation="vertical"
+      aria-valuemin={SIDEBAR_MIN_WIDTH} aria-valuemax={SIDEBAR_MAX_WIDTH} aria-valuenow={currentWidth} aria-valuetext={`${currentWidth} 像素`}
+      className="sidebar-resize-handle" tabIndex={0} data-dragging={previewWidth !== null || undefined}
+      onPointerDown={event => {
+        if (!event.isPrimary || event.button !== 0 || drag.current) return;
+        event.preventDefault();
+        const handle = event.currentTarget;
+        handle.focus({ preventScroll: true });
+        drag.current = { handle, pointerId: event.pointerId, startX: event.clientX, startWidth: handle.parentElement?.getBoundingClientRect().width || expandedWidth };
+        try { handle.setPointerCapture(event.pointerId); }
+        catch { /* 窗口监听仍可接续拖动。 */ }
+      }}
+      onLostPointerCapture={event => { if (drag.current?.pointerId === event.pointerId) endResize(); }}
+      onKeyDown={resizeByKey} />}
   </motion.aside>;
 }
 

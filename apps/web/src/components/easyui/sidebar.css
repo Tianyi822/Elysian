@@ -1,6 +1,26 @@
 .desktop-navigation .nav-link.sidebar-row-label { font-size: 16px; line-height: 24px; }
 .desktop-navigation .nav-link .sidebar-row-icon > svg { width: 20px; height: 20px; }
 
+.sidebar-resize-handle {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 0;
+  width: 8px;
+  z-index: 1;
+  cursor: col-resize;
+  touch-action: none;
+  outline: none;
+}
+.sidebar-resize-handle::after {
+  position: absolute;
+  inset-block: 0;
+  inset-inline-end: 0;
+  width: 2px;
+  content: '';
+}
+.sidebar-resize-handle:hover::after { background: var(--color-sidebar-subtle); }
+.sidebar-resize-handle:is(:focus-visible, [data-dragging])::after { background: var(--color-focus); }
+
 @media (min-width: 1440px) {
   .desktop-navigation {
     --sidebar-rail-inset: 12px;

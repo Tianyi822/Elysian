@@ -1,4 +1,4 @@
-import { fireEvent, screen, waitFor, within } from '@testing-library/react'
+import { act, fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { createMockGateway } from '../../adapters/mock/gateway'
@@ -430,6 +430,65 @@ describe('模板外壳', () => {
     await user.keyboard('{Escape}')
     await waitFor(() => expect(screen.queryByRole('dialog', { name: '主导航' })).not.toBeInTheDocument())
     await waitFor(() => expect(screen.getByRole('button', { name: '打开主导航' })).toHaveFocus())
+  })
+
+  it('宽屏调整侧栏宽度，成功提交后跨收展、切页和重新挂载恢复', async () => {
+    const user = userEvent.setup()
+    const viewport = Object.assign(new EventTarget(), { matches: true, media: '(min-width: 1024px)' })
+    vi.stubGlobal('matchMedia', (query: string) => query === viewport.media ? viewport : { matches: false, media: query })
+    const key = 'elysian.sidebar-width.v1'
+    const handle = () => screen.getByRole('separator', { name: '主导航宽度' })
+    const startDrag = () => fireEvent.pointerDown(handle(), { pointerId: 1, button: 0, isPrimary: true, clientX: 246 })
+    const move = (clientX: number) => fireEvent.pointerMove(handle(), { pointerId: 1, clientX })
+    try {
+      const app = renderApp('/')
+      expect(handle()).toHaveAttribute('aria-valuenow', '248')
+      expect(handle()).toHaveAttribute('aria-controls', screen.getByRole('complementary', { name: '桌面主导航' }).id)
+
+      startDrag()
+      move(500)
+      expect(handle()).toHaveAttribute('aria-valuenow', '352')
+      expect(localStorage.getItem(key)).toBeNull()
+      fireEvent.pointerUp(handle(), { pointerId: 1, clientX: 500 })
+      expect(localStorage.getItem(key)).toBe('352')
+
+      handle().focus()
+      await user.keyboard('{Home}{ArrowRight}{ArrowRight}{ArrowLeft}')
+      expect(handle()).toHaveAttribute('aria-valuetext', '256 像素')
+      expect(localStorage.getItem(key)).toBe('256')
+      await user.keyboard('{End}')
+      expect(handle()).toHaveAttribute('aria-valuenow', '352')
+      await user.keyboard('{ArrowLeft}')
+
+      for (const cancel of [() => fireEvent.pointerCancel(handle(), { pointerId: 1 }), () => fireEvent.blur(window)]) {
+        startDrag()
+        move(100)
+        expect(handle()).toHaveAttribute('aria-valuenow', '248')
+        cancel()
+        expect(handle()).toHaveAttribute('aria-valuenow', '344')
+        expect(localStorage.getItem(key)).toBe('344')
+      }
+
+      const setWide = (matches: boolean) => act(() => {
+        viewport.matches = matches
+        viewport.dispatchEvent(new Event('change'))
+      })
+      startDrag()
+      move(100)
+      setWide(false)
+      expect(screen.queryByRole('separator', { name: '主导航宽度' })).not.toBeInTheDocument()
+      setWide(true)
+      expect(handle()).toHaveAttribute('aria-valuenow', '344')
+
+      await user.click(screen.getByRole('button', { name: '收起侧边栏' }))
+      expect(screen.queryByRole('separator', { name: '主导航宽度' })).not.toBeInTheDocument()
+      await user.click(screen.getByRole('button', { name: '展开侧边栏' }))
+      await user.click(screen.getByRole('link', { name: '设置' }))
+      expect(handle()).toHaveAttribute('aria-valuenow', '344')
+      app.unmount()
+      renderApp('/')
+      expect(handle()).toHaveAttribute('aria-valuenow', '344')
+    } finally { vi.unstubAllGlobals() }
   })
 })
 
