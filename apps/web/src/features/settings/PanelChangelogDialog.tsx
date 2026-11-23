@@ -1,5 +1,5 @@
 import * as Dialog from '@radix-ui/react-dialog'
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useEffect, useState, type ReactElement } from 'react'
 import type { PanelCommit, PanelUpdateChannel, PanelUpdateSource } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { formatDateTimeWithYear } from '../../components/format'
@@ -19,20 +19,19 @@ import { messageOf } from '../../utils/errorMessage'
  * info.commit 比对后标注，比对不上就不硬认（安装来源未必是这条分支）。
  */
 export function PanelChangelogDialog({
-  open,
   currentCommit,
   channel,
   source,
-  onClose,
+  children,
 }: {
-  open: boolean
   /** 正在运行的构建提交；命中列表里的某条时标为当前版本。 */
   currentCommit: string
   channel: PanelUpdateChannel
   source: PanelUpdateSource
-  onClose: () => void
+  children: ReactElement
 }) {
   const gateway = useGateway()
+  const [open, setOpen] = useState(false)
   const [commits, setCommits] = useState<readonly PanelCommit[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -64,7 +63,8 @@ export function PanelChangelogDialog({
   const read = useCallback(() => setAttempt((value) => value + 1), [])
 
   return (
-    <Dialog.Root open={open} onOpenChange={(next) => (next ? undefined : onClose())}>
+    <Dialog.Root open={open} onOpenChange={setOpen}>
+      <Dialog.Trigger asChild>{children}</Dialog.Trigger>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-[60] bg-overlay" />
         <Dialog.Content className="fixed left-1/2 top-1/2 z-[61] flex max-h-[min(36rem,calc(100dvh-3rem))] w-[min(38rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col panel-surface shadow-xl">

@@ -57,7 +57,6 @@ export function PanelMaintenanceSettings() {
   const [source, setSource] = useState<PanelUpdateSource>('github')
   const [update, setUpdate] = useState<PanelUpdate | null>(null)
   const checkVersion = useRef(0)
-  const [changelogOpen, setChangelogOpen] = useState(false)
   const [resourceTarget, setResourceTarget] = useState<PanelUpdateTarget | null>(null)
   /** 提交与校验错误按区块落持久行：端口区（含重启）与更新区各自展示，不再只靠自动消失的提示。 */
   const [portsError, setPortsError] = useState<string | null>(null)
@@ -272,9 +271,11 @@ export function PanelMaintenanceSettings() {
         <Button variant={hasAvailableUpdate ? 'outline' : 'primary'} type="button" className={BUTTON} disabled={unavailable} isLoading={checking} loadingText="正在检查…" onClick={() => void check()}>
           检查更新
         </Button>
-        <Button variant="outline" type="button" className={BUTTON} disabled={!info?.available} title={info && !info.available ? info.reason : undefined} onClick={() => setChangelogOpen(true)}>
-          更新日志
-        </Button>
+        <PanelChangelogDialog source={source} channel={channel} currentCommit={info?.commit ?? ''}>
+          <Button variant="outline" type="button" className={BUTTON} disabled={!info?.available} title={info && !info.available ? info.reason : undefined}>
+            更新日志
+          </Button>
+        </PanelChangelogDialog>
       </div>
       {info?.available && !info.resourcePreflightVersion ? <p className="mt-2 text-xs leading-5 text-warning">当前服务器版本不支持更新资源预检。首次升级前请手动释放负载；不会自动停止其他业务。</p> : null}
       {updateError || verificationError ? <p role="alert" className="mt-3 break-all text-xs leading-5 text-danger">{updateError ?? verificationError}</p> : null}
@@ -307,7 +308,6 @@ export function PanelMaintenanceSettings() {
       {logs ? <PanelMaintenanceLog logs={logs} viewportRef={logViewport} /> : null}
       {hasMore ? <p role="status" className="mt-3 text-xs text-fg-muted">正在读取最新日志…</p> : null}
     </section> : null}
-    <PanelChangelogDialog source={source} open={changelogOpen} channel={channel} currentCommit={info?.commit ?? ''} onClose={() => setChangelogOpen(false)} />
     {resourceTarget ? <PanelResourcePreflightDialog target={resourceTarget} adapter={gateway.panel} precompiled={info?.updateDelivery === 'precompiled/v1'} onClose={() => setResourceTarget(null)} onConfirm={resourcePlan => {
       const target = { ...resourceTarget, resourcePlan }
       setResourceTarget(null)

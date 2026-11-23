@@ -409,15 +409,18 @@ describe('端口与更新设置', () => {
     g.panel.commits = vi.fn(async () => [])
     renderApp('/settings?tab=maintenance', { gateway: g })
     const user = userEvent.setup()
-    await user.click(await screen.findByRole('button', { name: '更新日志' }))
+    const changelog = await screen.findByRole('button', { name: '更新日志' })
+    await user.click(changelog)
     const dialog = screen.getByRole('dialog', { name: '更新日志' })
     await user.click(within(dialog).getByRole('button', { name: '关闭更新日志' }))
     expect(screen.queryByRole('dialog', { name: '更新日志' })).not.toBeInTheDocument()
+    await waitFor(() => expect(changelog).toHaveFocus())
 
-    await user.click(screen.getByRole('button', { name: '更新日志' }))
+    await user.keyboard('{Enter}')
     expect(screen.getByRole('dialog', { name: '更新日志' })).toBeInTheDocument()
     await user.keyboard('{Escape}')
     expect(screen.queryByRole('dialog', { name: '更新日志' })).not.toBeInTheDocument()
+    await waitFor(() => expect(changelog).toHaveFocus())
   })
   const commitUpdate = { channel: 'commit' as const, source: 'github' as const, releaseTag: '', repository: info.repository, branch: 'main', currentCommit: info.commit, targetCommit: 'c'.repeat(40), available: true, message: '修复说明' }
   it('HTTP IP 缺少 randomUUID 时，检查后仍发送真实更新请求并显示任务进度', async () => {
