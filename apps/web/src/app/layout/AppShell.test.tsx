@@ -389,6 +389,8 @@ describe('模板外壳', () => {
     const collapse = screen.getByRole('button', { name: '收起侧边栏' })
     expect(collapse).toHaveAttribute('data-sidebar-toggle')
     expect(collapse).toHaveAttribute('aria-expanded', 'true')
+    expect(collapse).not.toHaveAttribute('aria-keyshortcuts')
+    expect(collapse).not.toHaveTextContent('⌘B')
     await user.click(collapse)
     expect(screen.getByRole('button', { name: '展开侧边栏' })).toBe(collapse)
     expect(collapse).toHaveFocus()
@@ -402,7 +404,7 @@ describe('模板外壳', () => {
     expect(screen.getByRole('button', { name: '收起侧边栏' })).toBe(collapse)
   })
 
-  it('Cmd/Ctrl+B 复用桌面折叠状态，不拦截文本编辑的快捷键', async () => {
+  it('Cmd/Ctrl+B 不拦截按键或改变桌面侧栏收展', async () => {
     const user = userEvent.setup()
     vi.stubGlobal('matchMedia', (query: string) => ({ matches: query === '(min-width: 768px)', media: query,
       addEventListener() {}, removeEventListener() {}, addListener() {}, removeListener() {},
@@ -410,22 +412,20 @@ describe('模板外壳', () => {
     try {
       renderApp('/security')
       const desktop = screen.getByRole('complementary', { name: '桌面主导航' })
-      fireEvent.keyDown(window, { key: 'b', metaKey: true })
+      expect(fireEvent.keyDown(window, { key: 'b', metaKey: true })).toBe(true)
+      expect(desktop).not.toHaveAttribute('data-collapsed')
+      await user.click(screen.getByRole('button', { name: '收起侧边栏' }))
+      expect(fireEvent.keyDown(window, { key: 'b', ctrlKey: true })).toBe(true)
       expect(desktop).toHaveAttribute('data-collapsed')
-      fireEvent.keyDown(window, { key: 'b', ctrlKey: true })
-      expect(desktop).not.toHaveAttribute('data-collapsed')
-      const search = await screen.findByRole('searchbox', { name: '搜索端口、来源或备注' })
-      await user.click(search)
-      await user.keyboard('{Meta>}b{/Meta}')
-      expect(desktop).not.toHaveAttribute('data-collapsed')
     } finally { vi.unstubAllGlobals() }
   })
 
-  it('窄屏快捷键打开抽屉，Escape 关闭并归还焦点', async () => {
+  it('窄屏通过可见按钮打开抽屉，Escape 关闭并归还焦点', async () => {
     const user = userEvent.setup()
     renderApp('/')
-    screen.getByRole('button', { name: '打开主导航' }).focus()
-    fireEvent.keyDown(window, { key: 'b', ctrlKey: true })
+    expect(fireEvent.keyDown(window, { key: 'b', ctrlKey: true })).toBe(true)
+    expect(screen.queryByRole('dialog', { name: '主导航' })).not.toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '打开主导航' }))
     expect(screen.getByRole('dialog', { name: '主导航' })).toBeInTheDocument()
     await user.keyboard('{Escape}')
     await waitFor(() => expect(screen.queryByRole('dialog', { name: '主导航' })).not.toBeInTheDocument())

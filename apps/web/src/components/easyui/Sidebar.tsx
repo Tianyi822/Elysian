@@ -343,7 +343,6 @@ export function SidebarPanel({
                 onClick={onToggle}
                 aria-label={collapsed ? "展开侧边栏" : "收起侧边栏"}
                 aria-expanded={!collapsed}
-                aria-keyshortcuts="Meta+B Control+B"
                 data-sidebar-toggle
                 className="sidebar-row sidebar-row-label flex h-9 w-full items-center gap-3 rounded-[8px] px-2.5 text-sm text-sidebar-muted outline-none transition-colors hover:bg-sidebar-hover hover:text-sidebar-fg focus-visible:ring-2 focus-visible:ring-focus/50"
               >
@@ -358,11 +357,6 @@ export function SidebarPanel({
                 >
                   收起侧边栏
                 </motion.span>
-                {!collapsed && (
-                  <kbd className="rounded border border-sidebar-line px-1 font-sans text-[10px] text-sidebar-subtle">
-                    ⌘B
-                  </kbd>
-                )}
               </Button>
             )}
           </div>

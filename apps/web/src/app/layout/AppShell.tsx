@@ -70,21 +70,10 @@ export function AppShell() {
     if (isAgentChat) setAgentSidebarCollapsed(globalSidebarCollapsed)
     else setAgentSidebarCollapsed(false)
   }, [location.pathname, isAgentChat, globalSidebarCollapsed])
-  // The official shortcut shares the same state as the visible toggle. Text
-  // editors and terminals retain their native Cmd/Ctrl+B key handling.
   useEffect(() => {
-    const onKey = (event: KeyboardEvent) => {
-      if (event.defaultPrevented || event.repeat || !(event.metaKey || event.ctrlKey) || event.altKey || event.key.toLowerCase() !== 'b') return
-      if (event.target instanceof Element && event.target.closest('input,textarea,[contenteditable="true"],[role="textbox"],.xterm,.terminal')) return
-      event.preventDefault()
-      if (mediaQuery('(min-width: 768px)')?.matches) setSidebarCollapsed(!sidebarCollapsed)
-      else setNavigationOpen(openDrawerRef.current !== 'navigation')
-    }
-    window.addEventListener('keydown', onKey)
     const wide = mediaQuery('(min-width: 768px)')
-    const stop = observeMediaQuery(wide, () => { if (wide?.matches) closeNavigation() })
-    return () => { window.removeEventListener('keydown', onKey); stop() }
-  }, [sidebarCollapsed, setSidebarCollapsed, setNavigationOpen, closeNavigation])
+    return observeMediaQuery(wide, () => { if (wide?.matches) closeNavigation() })
+  }, [closeNavigation])
 
   const pageTitle =
     NAV_ITEMS.find((item) =>
