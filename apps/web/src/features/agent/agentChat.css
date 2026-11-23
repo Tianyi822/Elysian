@@ -35,10 +35,10 @@
    条带 32px 高（按钮 24px 贴底 2px）：按钮上方留 6px 不贴正文，下方 6px 后接下一轮消息。 */
 .chat-message { display: flex; position: relative; justify-content: flex-end; margin: 0 0 4px; padding: 0 0 32px; }
 .chat-message-body { max-width: min(88%, 660px); min-width: 0; }
-.chat-message-text { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 8px; padding: 12px 18px; border: 1px solid var(--t-panel-line); border-radius: 16px 16px 4px 16px; background: var(--t-panel-glass); font-size: 14px; line-height: 1.8; }
+.chat-message-text { white-space: pre-wrap; overflow-wrap: anywhere; margin-top: 8px; padding: 10px 15px; border-radius: 16px 16px 5px 16px; background: var(--t-surface-raised); font-size: 15px; line-height: 1.75; }
 .chat-message-assistant { justify-content: flex-start; }
 .chat-message-intermediate { padding-bottom: 0; }
-.chat-message-assistant .chat-message-body { max-width: 100%; }
+.chat-message-assistant .chat-message-body { width: 100%; max-width: 100%; }
 /* 消息复制按钮：悬停或键盘聚焦消息行时在气泡下方的条带内浮现，绝对定位不占布局空间；
    用户消息贴气泡右缘、助手回复贴左缘。仅用 opacity 隐藏以保持可聚焦，
    Tab 聚焦即由 focus-within 揭示——与编辑图标同一模式。 */
@@ -100,9 +100,35 @@
 .chat-markdown img { max-width: 100%; height: auto; border-radius: 8px; }
 .chat-markdown .contains-task-list { list-style: none; padding-left: 4px; }
 .chat-markdown .task-list-item > input { margin-right: 8px; }
+
+.agent-chat .chat-markdown { font-size: 15px; line-height: 1.75; }
+.agent-chat .chat-markdown :is(h1, h2, h3, h4, h5, h6) { margin: 1.35em 0 0.45em; line-height: 1.4; }
+.agent-chat .chat-markdown h1 { font-size: 23px; }
+.agent-chat .chat-markdown h2 { font-size: 20px; }
+.agent-chat .chat-markdown h3 { font-size: 17px; }
+.agent-chat .chat-markdown :is(h4, h5, h6) { font-size: 15px; }
+.agent-chat .chat-markdown > :first-child { margin-top: 0; }
+.agent-chat .chat-markdown > :last-child { margin-bottom: 0; }
+.agent-chat .chat-markdown :is(ul, ol) { padding-inline-start: 1.45em; }
+.agent-chat .chat-markdown ul ul { list-style: circle; }
+.agent-chat .chat-markdown ul ul ul { list-style: square; }
+.agent-chat .chat-markdown .contains-task-list { list-style: none; padding-inline-start: 0.3em; }
+.agent-chat .chat-markdown .task-list-item > input { accent-color: var(--t-fg); }
+.agent-chat .chat-markdown a { color: var(--t-accent-fg); }
+.agent-chat .chat-markdown blockquote { border-left-width: 1px; border-left-color: var(--t-control-line); padding-inline-start: 12px; }
+.agent-chat .chat-markdown :not(pre) > code { padding: 0.12em 0.35em; color: var(--t-code-fg); background: var(--t-code-bg); }
+.agent-chat .chat-markdown .chat-code-block { border-radius: 10px; }
+.agent-chat .chat-markdown .chat-code-toolbar { height: 34px; }
+.agent-chat .chat-markdown-table { border: 1px solid var(--t-panel-line); border-radius: 10px; }
+.agent-chat .chat-markdown th { background: var(--t-surface-raised); }
+.agent-chat .chat-markdown :is(th, td) { border: 0; border-bottom: 1px solid var(--t-panel-line); text-align: start; vertical-align: top; }
+.agent-chat .chat-markdown tbody tr:last-child td { border-bottom: 0; }
+.agent-chat .chat-markdown th[align="center"], .agent-chat .chat-markdown td[align="center"] { text-align: center; }
+.agent-chat .chat-markdown th[align="right"], .agent-chat .chat-markdown td[align="right"] { text-align: right; }
+
 .chat-thought { min-width: 0; margin: 0; color: var(--t-fg-muted); font-size: 13px; line-height: 1.7; }
-.chat-thought-toggle { display: flex; align-items: center; gap: 8px; width: 100%; min-width: 0; padding: 6px 0; text-align: left; border-radius: 4px; }
-.chat-thought-toggle:hover { color: var(--t-fg); }
+.chat-thought-toggle { display: flex; align-items: center; gap: 7px; width: 100%; min-width: 0; min-height: 32px; padding: 4px 8px; text-align: left; border-radius: 8px; }
+.chat-thought-toggle:hover { color: var(--t-fg); background: var(--t-nav-hover); }
 .chat-thought-toggle > svg { flex-shrink: 0; }
 .chat-thought-preview { display: block; flex: 1; min-width: 0; height: 1.7em; overflow: hidden; white-space: nowrap; }
 .chat-thought-line { display: block; width: max-content; min-width: 100%; }

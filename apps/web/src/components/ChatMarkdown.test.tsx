@@ -90,4 +90,22 @@ describe('回复 Markdown', () => {
     expect(view.container.querySelector('pre')).toBe(pre)
     highlight.mockRestore()
   })
+
+  it('长表格和代码分别保留键盘滚动容器，嵌套列表保留原语义', () => {
+    const example = 'very-long-address-'.repeat(24)
+    const { container } = render(markdown([
+      '- 检查服务\n  - 核对副项',
+      `| 键 | 值 |\n| --- | ---: |\n| 地址 | ${example} |`,
+      `\`\`\`txt\n${example}\n\`\`\``,
+    ].join('\n\n')))
+    expect(within(screen.getAllByRole('listitem')[0]!).getByText('核对副项')).toBeInTheDocument()
+    const tableScroller = screen.getByRole('table').parentElement
+    const codeScroller = container.querySelector('pre')
+    expect(tableScroller).toHaveClass('chat-markdown-table', 'hover-scrollbar')
+    expect(codeScroller).toHaveClass('hover-scrollbar')
+    expect(tableScroller).toHaveAttribute('tabindex', '0')
+    expect(codeScroller).toHaveAttribute('tabindex', '0')
+    expect(within(screen.getByRole('table')).getByRole('cell', { name: example })).toBeInTheDocument()
+    expect(codeScroller!.textContent).toBe(`${example}\n`)
+  })
 })
