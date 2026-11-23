@@ -138,12 +138,6 @@
     "workflow": {
       "available": false
     },
-    "wiki": {
-      "available": false
-    },
-    "embedding": {
-      "available": false
-    },
     "workflowV2": {
       "available": false
     },

@@ -1,6 +1,5 @@
 import type { RuntimeFailure, RuntimeJSONValue } from './runtime.ts'
 import type { AgentResourceClaim, AgentResourceRule } from './resources.ts'
-import type { AgentWikiRef } from './memory.ts'
 
 /** 不可变配置身份；digest 用于固定包、目录或环境内容。 */
 export type AgentRevisionRef = { id: string; revision: number; digest?: string }
@@ -207,7 +206,6 @@ export type AgentWorkspaceView = {
   /** 文件内容按 JSON 标准以 base64 返回。 */
   content?: string
   quarantined?: boolean
-  wikiSources?: readonly AgentWikiRef[]
 }
 
 export type AgentSkillSource = {

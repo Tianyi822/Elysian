@@ -7,8 +7,8 @@ afterEach(() => vi.unstubAllGlobals())
 const CAPS = {
   batch: { available: true }, agent: { available: true }, skills: { available: true },
   mcp: { available: false, reason: '未配置' }, containerExecution: { available: true },
-  approvals: { available: true }, workflow: { available: true }, wiki: { available: true },
-  embedding: { available: false, reason: '未配置 Embedding' }, workflowV2: { available: true },
+  approvals: { available: true }, workflow: { available: true },
+  workflowV2: { available: true },
   resourceLocks: { available: true }, executionRuntimes: { available: true },
 }
 
@@ -45,7 +45,7 @@ describe('parseAgentRuntimeInfo', () => {
     expect(info.tools).toHaveLength(1)
     expect(info.tools[0]?.name).toBe('docker_containers_list')
     const keys = ['batch', 'agent', 'skills', 'mcp', 'containerExecution', 'approvals', 'workflow',
-      'wiki', 'embedding', 'workflowV2', 'resourceLocks', 'executionRuntimes'] as const
+      'workflowV2', 'resourceLocks', 'executionRuntimes'] as const
     for (const key of keys) expect(info[key], key).toBeDefined()
   })
 

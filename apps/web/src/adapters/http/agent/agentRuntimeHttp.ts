@@ -6,13 +6,13 @@ import { defaultAgentHttpClient } from './agentShared'
 /*
  * GET /api/agent/runtime 的真实 HTTP 适配与响应解析。这是唯一挂在 503 组之外的
  * 端点：内核不可用时也可读（available:false + 中文 reason），页面先读它判定
- * 可用性与 12 个能力位，再决定渲染内容还是「内核不可用」状态。
+ * 可用性与能力位，再决定渲染内容还是「内核不可用」状态。
  */
 
-/** RuntimeInfo 携带的 12 个能力位；服务端按值序列化，全部必在响应里。 */
+/** RuntimeInfo 的能力位由服务端按值序列化。 */
 export const AGENT_RUNTIME_CAPABILITY_KEYS = [
   'batch', 'agent', 'skills', 'mcp', 'containerExecution', 'approvals',
-  'workflow', 'wiki', 'embedding', 'workflowV2', 'resourceLocks', 'executionRuntimes',
+  'workflow', 'workflowV2', 'resourceLocks', 'executionRuntimes',
 ] as const
 
 export type AgentRuntimeCapabilityKey = (typeof AGENT_RUNTIME_CAPABILITY_KEYS)[number]
@@ -72,7 +72,7 @@ function parseRuntimeToolSchema(value: unknown): RuntimeToolSchema {
   }
 }
 
-/** 解析 /runtime 响应为完整 AgentRuntimeInfo（12 能力位必在，缺任一即形状漂移）。 */
+/** 解析 /runtime 响应为完整 AgentRuntimeInfo。 */
 export function parseAgentRuntimeInfo(value: unknown): AgentRuntimeInfo {
   const row = object(value, 'Agent 运行时报告无效')
   if (typeof row.available !== 'boolean' || typeof row.worker !== 'string' ||

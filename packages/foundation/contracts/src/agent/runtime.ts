@@ -201,8 +201,6 @@ export type RuntimeInfo = {
   containerExecution?: RuntimeCapability
   approvals?: RuntimeCapability
   workflow?: RuntimeCapability
-  wiki?: RuntimeCapability
-  embedding?: RuntimeCapability
   workflowV2?: RuntimeCapability
   resourceLocks?: RuntimeCapability
   executionRuntimes?: RuntimeCapability
@@ -225,8 +223,6 @@ export type AgentRuntimeInfo = RuntimeInfo & {
   containerExecution: RuntimeCapability
   approvals: RuntimeCapability
   workflow: RuntimeCapability
-  wiki: RuntimeCapability
-  embedding: RuntimeCapability
   workflowV2: RuntimeCapability
   resourceLocks: RuntimeCapability
   executionRuntimes: RuntimeCapability

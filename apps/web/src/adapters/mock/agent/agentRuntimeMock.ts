@@ -23,8 +23,6 @@ export function demoAgentRuntimeInfo(): AgentRuntimeInfo {
     containerExecution: { available: true },
     approvals: { available: true },
     workflow: { available: false, reason: '工作流功能已退役' },
-    wiki: { available: true },
-    embedding: { available: true },
     workflowV2: { available: false, reason: '工作流功能已退役' },
     resourceLocks: { available: true },
     executionRuntimes: { available: true },

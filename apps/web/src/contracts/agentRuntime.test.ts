@@ -116,7 +116,7 @@ describe('真实任务运行共享契约', () => {
       batch: { available: true }, agent: { available: false }, skills: { available: false },
       mcp: { available: false }, containerExecution: { available: false }, approvals: { available: false },
       workflow: { available: false },
-      wiki: { available: false }, embedding: { available: false }, workflowV2: { available: false },
+      workflowV2: { available: false },
       resourceLocks: { available: false }, executionRuntimes: { available: false },
     }
     const failure: RuntimeFailure = { code: 'interrupted', message: '运行已中断，未自动重放' }
@@ -183,7 +183,6 @@ describe('真实任务运行共享契约', () => {
       endedAt: '2026-10-10T00:00:03Z', stepIndex: 0, args: {}, result: [], truncated: false,
     }
     const modelRequest: AgentModelRequestRecord = {
-      wikiSources: [{ pageId: 'wiki-page-1', revision: 1, digest: 'wiki-page-digest' }],
       contextItemIds: ['context-agent-1'],
       id: 'model-request-1', runId: run.id, index: 0, purpose: 'inference', status: 'succeeded',
       startedAt: '2026-10-10T00:00:01Z', endedAt: '2026-10-10T00:00:02Z',
@@ -203,7 +202,6 @@ describe('真实任务运行共享契约', () => {
     }
     const message: AgentMessage = {
       quarantined: true,
-      wikiSources: [{ pageId: 'wiki-page-1', revision: 1, digest: 'wiki-page-digest' }],
       id: 'message-1', sessionId: session.id, taskId: task.id, runId: run.id, seq,
       role: 'assistant', content: '查询结果中没有容器。', createdAt: endedAt, runStatus: 'succeeded',
     }
@@ -215,7 +213,7 @@ describe('真实任务运行共享契约', () => {
       batch: { available: true }, agent: { available: true },
       skills: { available: false }, mcp: { available: false }, containerExecution: { available: false }, approvals: { available: false },
       workflow: { available: false },
-      wiki: { available: false }, embedding: { available: false }, workflowV2: { available: false },
+      workflowV2: { available: false },
       resourceLocks: { available: false }, executionRuntimes: { available: false },
     }
     const emptyPage: RuntimePage<AgentMessage> = { items: [], nextCursor: seq, hasMore: false }

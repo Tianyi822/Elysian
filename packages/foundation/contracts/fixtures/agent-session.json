@@ -235,13 +235,6 @@
     "truncated": false
   },
   "modelRequest": {
-    "wikiSources": [
-      {
-        "pageId": "wiki-page-1",
-        "revision": 1,
-        "digest": "wiki-page-digest"
-      }
-    ],
     "contextItemIds": [
       "context-agent-1"
     ],
@@ -309,13 +302,6 @@
   },
   "message": {
     "quarantined": true,
-    "wikiSources": [
-      {
-        "pageId": "wiki-page-1",
-        "revision": 1,
-        "digest": "wiki-page-digest"
-      }
-    ],
     "id": "message-1",
     "sessionId": "session-1",
     "taskId": "task-agent-1",
@@ -384,12 +370,6 @@
       "available": false
     },
     "workflow": {
-      "available": false
-    },
-    "wiki": {
-      "available": false
-    },
-    "embedding": {
       "available": false
     },
     "workflowV2": {

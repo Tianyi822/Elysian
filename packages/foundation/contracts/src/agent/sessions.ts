@@ -1,6 +1,5 @@
 import type { AgentRecovery, AgentRunWait, AgentRunReport, AgentToolAttempt, AgentBudgetStop, AgentContinuation, RuntimeFailure, RuntimeJSONValue, RuntimeMemoryStatus, RuntimeRunStatus, RuntimeUsage } from './runtime.ts'
 import type { AgentPermissionMode, AgentPromptRef, AgentResourceRef, AgentRevisionRef } from './capabilities.ts'
-import type { AgentWikiRef } from './memory.ts'
 
 /** 模型能力由配置声明；source 记录能力信息来源。 */
 export type AgentModelReasoningLevel = string
@@ -194,8 +193,6 @@ export type AgentMessage = {
   replacesMessageId?: string
   /** 服务端判定该消息引用了不可信或未核实内容，展示时须与普通答复区分。 */
   quarantined?: boolean
-  /** 消息成文时引用的 Wiki 页面修订；由父进程核验，不在前端补全。 */
-  wikiSources?: readonly AgentWikiRef[]
   /** 该轮用户消息随文发送的图片附件描述符；旧文档缺字段按不存在兼容。 */
   attachments?: readonly AgentMessageAttachment[]
   /** 服务端按 Run 快照回填的模型与思考等级；旧记录缺少快照时回填空值，界面按未知处理。 */
@@ -254,8 +251,6 @@ export type AgentModelRequestRecord = {
   reasoning?: string
   /** 请求结束但未形成完整响应时保留的公开正文片段。 */
   content?: string
-  /** 本次请求随上下文送入的 Wiki 页面修订。 */
-  wikiSources?: readonly AgentWikiRef[]
   /** 本次请求实际载入的资料条目（技能正文、MCP 资源等 ContextItem 的 ID）。 */
   contextItemIds?: readonly string[]
   id: string
