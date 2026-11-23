@@ -12,7 +12,6 @@ func TestAgentConfigurationPathsShareDedicatedDirectory(t *testing.T) {
 		"skills.json":      Default.AgentSkills,
 		"mcp-servers.json": Default.AgentMCPServers,
 		"execution.json":   Default.AgentExecution,
-		"embeddings.json":  Default.AgentEmbeddings,
 		"runtime.json":     Default.AgentRuntime,
 	} {
 		if path != filepath.Join(wantRoot, name) {

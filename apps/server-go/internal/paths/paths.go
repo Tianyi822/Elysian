@@ -55,7 +55,6 @@ type ElysianPaths struct {
 	AgentSkills     string
 	AgentMCPServers string
 	AgentExecution  string
-	AgentEmbeddings string
 	AgentRuntime    string
 	SkillPackages   string
 	AgentWorkspaces string
@@ -95,7 +94,6 @@ func buildPaths() ElysianPaths {
 		AgentSkills:            filepath.Join(agentConfigDir, "skills.json"),
 		AgentMCPServers:        filepath.Join(agentConfigDir, "mcp-servers.json"),
 		AgentExecution:         filepath.Join(agentConfigDir, "execution.json"),
-		AgentEmbeddings:        filepath.Join(agentConfigDir, "embeddings.json"),
 		AgentRuntime:           filepath.Join(agentConfigDir, "runtime.json"),
 		SkillPackages:          filepath.Join(DataDir, "skills"),
 		AgentWorkspaces:        filepath.Join(DataDir, "agent-workspaces"),

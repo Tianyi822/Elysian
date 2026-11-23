@@ -21,7 +21,7 @@ func harnessAssemblyFixture(t *testing.T) (*config.Config, harnessAssemblyOption
 	t.Helper()
 	root := t.TempDir()
 	configRoot := filepath.Join(root, "config", "agent")
-	p := paths.ElysianPaths{AgentModels: filepath.Join(configRoot, "models.json"), AgentSkills: filepath.Join(configRoot, "skills.json"), AgentMCPServers: filepath.Join(configRoot, "mcp-servers.json"), AgentExecution: filepath.Join(configRoot, "execution.json"), AgentEmbeddings: filepath.Join(configRoot, "embeddings.json"), AgentRuntime: filepath.Join(configRoot, "runtime.json"), HarnessSqlite: filepath.Join(root, "data", "harness.sqlite"), SkillPackages: filepath.Join(root, "data", "skills"), AgentWorkspaces: filepath.Join(root, "data", "agent-workspaces")}
+	p := paths.ElysianPaths{AgentModels: filepath.Join(configRoot, "models.json"), AgentSkills: filepath.Join(configRoot, "skills.json"), AgentMCPServers: filepath.Join(configRoot, "mcp-servers.json"), AgentExecution: filepath.Join(configRoot, "execution.json"), AgentRuntime: filepath.Join(configRoot, "runtime.json"), HarnessSqlite: filepath.Join(root, "data", "harness.sqlite"), SkillPackages: filepath.Join(root, "data", "skills"), AgentWorkspaces: filepath.Join(root, "data", "agent-workspaces")}
 	return &config.Config{BareMetal: true, MountRoot: t.TempDir(), DockerSocket: filepath.Join(root, "absent.sock")}, harnessAssemblyOptions{Paths: p, Home: root}
 }
 
@@ -182,9 +182,6 @@ func TestHarnessAssemblyUsesConfiguredConcurrencyForBothRunKinds(t *testing.T) {
 			called := false
 			options.NewManager = func(deps harness.Deps) (http.Handler, func(context.Context) error, error) {
 				called = true
-				if deps.EmbeddingConfigPath != options.Paths.AgentEmbeddings {
-					t.Fatalf("Embedding 配置未使用显式 Agent 路径：%q", deps.EmbeddingConfigPath)
-				}
 				batch, agent := harness.DefaultLimits(), harness.DefaultAgentLimits()
 				batch.Concurrency, agent.Concurrency = tc.want, tc.want
 				if deps.Limits != batch || deps.AgentLimits != agent {

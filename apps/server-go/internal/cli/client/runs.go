@@ -63,15 +63,15 @@ func failureDetail(run Run) string {
 // endReasonDetail 终态归因的中文说明：已知 endReason 映射，未知取原文，空则无细节。
 func endReasonDetail(run Run) string {
 	known := map[string]string{
-		"panel-restarted":          "面板重启导致运行中断",
-		"approval-denied":          "审批被拒绝",
-		"approval-expired":         "审批已过期",
-		"cancelled":                "已请求取消",
-		"completed":                "已完成",
-		"wiki-context-invalidated": "知识上下文已失效",
-		"domain-task-failed":       "域任务失败",
-		"invalid-workflow-output":  "工作流输出无效",
-		"workflow-binding":         "工作流绑定失效",
+		"panel-restarted":         "面板重启导致运行中断",
+		"approval-denied":         "审批被拒绝",
+		"approval-expired":        "审批已过期",
+		"cancelled":               "已请求取消",
+		"completed":               "已完成",
+		"context-retired":         "旧任务上下文已退役",
+		"domain-task-failed":      "域任务失败",
+		"invalid-workflow-output": "工作流输出无效",
+		"workflow-binding":        "工作流绑定失效",
 	}
 	if run.EndReason == "" {
 		return ""

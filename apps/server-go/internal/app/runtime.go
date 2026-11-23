@@ -123,7 +123,7 @@ func assembleProductionHarness(cfg *config.Config, views seam.DockerViews, optio
 		return nil, nil, err
 	}
 	register(store.Close)
-	deps := harness.Deps{Store: store, EmbeddingConfigPath: options.Paths.AgentEmbeddings, Tools: bridge, Profiles: profiles, WorkflowRecoveryFence: panel.WorkflowRecoveryFencePath(options.Home)}
+	deps := harness.Deps{Store: store, Tools: bridge, Profiles: profiles, WorkflowRecoveryFence: panel.WorkflowRecoveryFencePath(options.Home)}
 	deps.CancelTask = options.CancelTask
 	deps.InspectTask = options.InspectTask
 	deps.LookupTask = options.LookupTask
