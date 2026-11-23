@@ -40,7 +40,19 @@
 .message-heading { display: flex; flex-shrink: 0; align-items: center; justify-content: flex-end; height: var(--shell-header-height); padding: 0 calc(var(--message-button-size) + 12px) 0 0; }
 .message-clear:focus-visible, .message-more:focus-visible { outline: 2px solid var(--color-focus); outline-offset: 2px; }
 .message-clear:disabled { cursor: not-allowed; opacity: 0.45; }
-.message-list { flex: 1; min-height: 0; overflow-x: hidden; overflow-y: auto; overscroll-behavior: contain; padding: 0 0 16px; }
+.message-list {
+  --message-scrollbar-space: 12px;
+  flex: 1;
+  min-height: 0;
+  overflow-x: hidden;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  padding-bottom: 16px;
+  /* 把浮动滚动条放进抽屉留白，同时保持卡片原有的内容边距。 */
+  margin-inline-end: calc(-1 * var(--message-scrollbar-space));
+  padding-inline-end: var(--message-scrollbar-space);
+}
 .message-list:empty { display: none; }
 .message-list[data-frozen] { overflow-y: hidden; }
 .message-item + .message-item { margin-top: 12px; }
