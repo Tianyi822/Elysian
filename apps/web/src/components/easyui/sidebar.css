@@ -1,4 +1,6 @@
-/* Extra room on wide desktops; the default rail and mobile drawer retain EasyUI density. */
+.desktop-navigation .nav-link.sidebar-row-label { font-size: 16px; line-height: 24px; }
+.desktop-navigation .nav-link .sidebar-row-icon > svg { width: 20px; height: 20px; }
+
 @media (min-width: 1440px) {
   .desktop-navigation {
     --sidebar-rail-inset: 12px;
@@ -26,4 +28,5 @@
   .desktop-navigation .sidebar-row-label { font-size: 15px; }
   .desktop-navigation .sidebar-row-icon { width: 24px; height: 24px; }
   .desktop-navigation .sidebar-row-icon > svg { width: 20px; height: 20px; }
+  .desktop-navigation .nav-link .sidebar-row-icon > svg { width: 22px; height: 22px; }
 }
