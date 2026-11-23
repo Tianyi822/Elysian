@@ -29,6 +29,7 @@ export {
   ChevronRight,
   CircleCheck,
   CircleHelp,
+  CircleMinus,
   ClipboardPaste,
   Container,
   Copy,

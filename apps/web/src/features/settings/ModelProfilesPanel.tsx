@@ -5,7 +5,7 @@ import { AGENT_MODEL_API_FORMATS, getAgentModelPreset, type AgentDiscoveredModel
 import { useGateway } from '../../adapters/GatewayProvider'
 import { useInFlightSubmit } from './useInFlightSubmit'
 import { CTL_PRIMARY, CTL_SECONDARY, CTL_FIELD } from '../../components/formControl'
-import { Download, Eye, EyeOff, Loader2, Pencil, Plus, Trash2, X } from '../../components/icons'
+import { CircleCheck, CircleMinus, Download, Eye, EyeOff, FileText, Image, Loader2, Pencil, Plus, Trash2, X, type IconComponent } from '../../components/icons'
 import { SearchInput } from '../../components/SearchInput'
 import { StatusTag } from '../../components/StatusTag'
 import { useModelSettingsStore, validateModelInput, isRevisionConflict } from '../../stores/modelSettingsStore'
@@ -26,6 +26,24 @@ const formatTokens = (value: number) => value >= 1024 * 1024 ? `${Number((value 
 const iconButton = 'inline-flex size-8 shrink-0 items-center justify-center rounded-md text-fg-muted transition-colors hover:bg-surface-raised hover:text-fg focus-visible:outline-2 focus-visible:outline-accent disabled:opacity-40'
 type ModelTableRow = { service: AgentModelService; model: AgentModelService['models'][number] }
 
+const capabilityLabel = (model: ModelTableRow['model']) => model.capabilities.image || model.capabilities.video ? '多模态' : '文本'
+
+const modelTagColors = {
+  info: 'text-info',
+  success: 'text-success',
+  neutral: 'text-fg-muted',
+}
+
+function ModelTableTag({ label, tone, icon: Icon }: { label: string; tone: keyof typeof modelTagColors; icon: IconComponent }) {
+  // At 70rem the two padded 1fr columns have room for the full labels.
+  return <>
+    <span role="img" aria-label={label} title={label} className={`inline-flex h-6 items-center align-middle @min-[70rem]/model-table:hidden ${modelTagColors[tone]}`}>
+      <Icon size={16} aria-hidden />
+    </span>
+    <span className="hidden @min-[70rem]/model-table:inline-flex"><StatusTag label={label} tone={tone} /></span>
+  </>
+}
+
 /** 服务共享地址、协议与凭据，模型保留各自修订；整个服务的修改以一次 CAS 提交。 */
 export function ModelProfilesPanel({ active = true, refreshing = false, onRefresh }: { active?: boolean; refreshing?: boolean; onRefresh?: () => void }) {
   const gateway = useGateway()
@@ -45,8 +63,11 @@ export function ModelProfilesPanel({ active = true, refreshing = false, onRefres
     { key: 'address', header: '服务地址', width: 'minmax(0,2.8fr)', accessor: ({ service }) => service.baseUrl, cell: ({ service }) => <><span className="block truncate font-mono text-xs" title={service.baseUrl}>{service.baseUrl}</span><span className="text-xs text-fg-subtle">{service.hasCredential ? '已配置 API Key' : '未配置 API Key'}</span></> },
     { key: 'context', header: '上下文', accessor: ({ model }) => model.contextTokens, cell: ({ model }) => <span className="tabular-nums text-fg-muted">{formatTokens(model.contextTokens)}</span> },
     { key: 'output', header: '输出', accessor: ({ model }) => model.outputTokens, cell: ({ model }) => <span className="tabular-nums text-fg-muted">{formatTokens(model.outputTokens)}</span> },
-    { key: 'capabilities', header: '能力', accessor: ({ model }) => model.capabilities.image || model.capabilities.video ? '多模态' : '文本', cell: ({ model }) => <StatusTag label={model.capabilities.image || model.capabilities.video ? '多模态' : '文本'} tone="info" /> },
-    { key: 'status', header: '状态', accessor: ({ model }) => model.active, cell: ({ model }) => <StatusTag label={model.active ? '已启用' : '已停用'} tone={model.active ? 'success' : 'neutral'} /> },
+    { key: 'capabilities', header: '能力', accessor: ({ model }) => capabilityLabel(model), cell: ({ model }) => {
+      const label = capabilityLabel(model)
+      return <ModelTableTag label={label} tone="info" icon={label === '多模态' ? Image : FileText} />
+    } },
+    { key: 'status', header: '状态', accessor: ({ model }) => model.active, cell: ({ model }) => <ModelTableTag label={model.active ? '已启用' : '已停用'} tone={model.active ? 'success' : 'neutral'} icon={model.active ? CircleCheck : CircleMinus} /> },
     { key: 'actions', header: '操作', sortable: false, cell: ({ service, model }) => <Button variant="ghost" size="icon" type="button" disabled={saving} onClick={() => setEditing(service)} aria-label={`编辑 ${model.model}`} className={iconButton}><Pencil aria-hidden size={14} /></Button> },
   ]
   return <div className="flex flex-col gap-3">
@@ -54,7 +75,7 @@ export function ModelProfilesPanel({ active = true, refreshing = false, onRefres
       <Button variant="primary" type="button" onClick={() => setEditing('new')} className={CTL_PRIMARY}><span className="inline-flex items-center gap-1.5"><Plus aria-hidden size={14} />新建模型配置</span></Button>
       {onRefresh ? <RefreshButton label="刷新模型配置" busy={refreshing} onPress={onRefresh} /> : null}
     </div>
-    <DataTable active={active} rows={rows} columns={columns} getRowId={row => row.model.id} getRowLabel={row => row.model.model}
+    <DataTable className="@container/model-table" active={active} rows={rows} columns={columns} getRowId={row => row.model.id} getRowLabel={row => row.model.model}
       ariaLabel="模型配置列表" query={search} onQueryChange={setSearch} filterMode="external" searchPlaceholder="搜索模型 ID、服务或地址"
       selected={selected} onSelectionChange={setSelected} selectionKey="settings-models" busy={saving}
       bulkActions={() => <TableBatchActions selectedRows={allRows.filter(row => selected.includes(row.model.id))} getRowId={row => row.model.id} getRowLabel={row => row.model.model} disabled={saving}
