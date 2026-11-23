@@ -16,7 +16,7 @@ function SessionToggle({ expanded, controls, onClick, buttonRef }: {
   buttonRef?: Ref<HTMLButtonElement>
 }) {
   const label = expanded ? '收起会话列表' : '打开会话列表'
-  return <Button variant="outline" size="icon" ref={buttonRef} type="button" className="chat-session-toggle" aria-label={label}
+  return <Button variant="outline" size="icon" pressFeedback={false} ref={buttonRef} type="button" className="chat-session-toggle" aria-label={label}
     aria-expanded={expanded} aria-controls={controls} onClick={onClick}>
     <List size={16} aria-hidden />
   </Button>

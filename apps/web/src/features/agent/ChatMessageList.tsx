@@ -1,12 +1,13 @@
 import { Fragment, type ClipboardEvent, type DragEvent, type RefObject } from 'react'
-import { Button } from '../../components/Button'
+import { Button, ButtonPressFeedback } from '../../components/Button'
 import { IconButton } from '../../components/IconButton'
-import { Bot, Image as ImageIcon, Pencil, Send, X } from '../../components/icons'
+import { Bot, Image as ImageIcon, Pencil, X } from '../../components/icons'
 import type { useImeEnterGuard } from '../../components/useImeEnterGuard'
 import type { AgentConversationAdapter } from '../../contracts/agentChat'
 import type { AgentMemoryAdapter } from '../../contracts/agentMemory'
 import type { useAgentChatStore } from '../../stores/agentChatStore'
 import { ChatMessageAttachments } from './ChatMessageAttachments'
+import { ChatEditorFrame, ChatSendButton } from './ChatEffects'
 import { ChatMessageCopy } from './ChatMessageCopy'
 import { ChatMemorySources } from './ChatMemory'
 import { ChatResponse } from './ChatResponse'
@@ -48,7 +49,7 @@ export function ChatMessageList({ api, agentMemory, chat, model, history, follow
   const { guardProps, isImeKey, editInput, dragFiles, dropFiles, pasteFiles, canResend, resend } = editor
   const session = chat.session
   const lastUserMessage = chat.messages.filter(message => message.role === 'user').at(-1)
-  return <div ref={history} className="chat-history hover-scrollbar" onScroll={event => {
+  return <ButtonPressFeedback value={false}><div ref={history} className="chat-history hover-scrollbar" onScroll={event => {
     const element = event.currentTarget
     following.current = element.scrollHeight - element.scrollTop - element.clientHeight < 24
   }}>
@@ -73,7 +74,7 @@ export function ChatMessageList({ api, agentMemory, chat, model, history, follow
         return <Fragment key={message.id}>
           {switchText && <ChatSwitchNotice text={switchText} />}
           <article className="chat-message" aria-label="你的消息">
-            {editing ? <form className="chat-message-editor panel-surface" aria-label="编辑最后一条消息" {...guardProps} onSubmit={event => { event.preventDefault(); if (!isImeKey()) resend() }} onDragOver={dragFiles} onDrop={event => dropFiles(event, true)}
+            {editing ? <ChatEditorFrame inline><form className="chat-message-editor panel-surface" aria-label="编辑最后一条消息" {...guardProps} onSubmit={event => { event.preventDefault(); if (!isImeKey()) resend() }} onDragOver={dragFiles} onDrop={event => dropFiles(event, true)}
               onKeyDown={event => {
                 if (event.key === 'Escape' && !isImeKey(event)) {
                   event.preventDefault()
@@ -100,9 +101,9 @@ export function ChatMessageList({ api, agentMemory, chat, model, history, follow
               })()}
               <div className="chat-edit-actions">
                 <IconButton label="取消编辑" disabled={chat.sending || !!session.pending} onPress={chat.cancelEdit}><X size={18} aria-hidden /></IconButton>
-                <IconButton label={session.pending ? '重试发送' : '发送'} disabled={!canResend} onPress={resend}><Send size={18} aria-hidden /></IconButton>
+                <ChatSendButton label={session.pending ? '重试发送' : '发送'} disabled={!canResend} onPress={resend} />
               </div>
-            </form> : <>
+            </form></ChatEditorFrame> : <>
               <div className="chat-message-body">
                 <p className="chat-message-text">{message.content}</p>
                 {!!message.attachments?.length && <ChatMessageAttachments attachments={message.attachments} fetchBlob={api.attachmentBlob} />}
@@ -138,5 +139,5 @@ export function ChatMessageList({ api, agentMemory, chat, model, history, follow
       </article>}
       {waitingForMessage && <ChatResponse content="" reasoning="" active onProgress={followContent} />}
     </div>}
-  </div>
+  </div></ButtonPressFeedback>
 }

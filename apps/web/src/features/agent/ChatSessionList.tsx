@@ -11,7 +11,7 @@ import { agentChatSessionKey } from '../../contracts/agentChat'
 import { useAgentChatStore } from '../../stores/agentChatStore'
 import { SessionRenameDialog } from './SessionRenameDialog'
 import { SessionRemoveDialog } from './SessionRemoveDialog'
-import { Button } from '../../components/Button'
+import { Button, ButtonPressFeedback } from '../../components/Button'
 
 type SessionRow = { id: string; title: string; active: boolean; server: boolean }
 
@@ -88,7 +88,7 @@ export function ChatSessionList({ onSelect, onNew, onRefresh, onMore, onClose, r
       rows.push({ id: key, title: key === selected ? chat.remoteTitle || '当前会话' : record.draft || '发送待确认', active: false, server: true })
     }
   }
-  return <div className="chat-session-list">
+  return <ButtonPressFeedback value={false}><div className="chat-session-list">
     <div className="chat-session-heading"><span className="text-sm font-medium">会话</span>
       <RefreshButton label="刷新会话列表" busy={refreshing} onPress={onRefresh} />
       {onClose && <IconButton label="关闭会话列表" variant="ghost" onPress={onClose}><X size={16} aria-hidden /></IconButton>}
@@ -124,5 +124,5 @@ export function ChatSessionList({ onSelect, onNew, onRefresh, onMore, onClose, r
     </div>
     {renameTarget && <SessionRenameDialog target={renameTarget} onClose={() => setRenameTarget(null)} />}
     {deleteTarget && <SessionRemoveDialog target={deleteTarget} onClose={() => setDeleteTarget(null)} />}
-  </div>
+  </div></ButtonPressFeedback>
 }

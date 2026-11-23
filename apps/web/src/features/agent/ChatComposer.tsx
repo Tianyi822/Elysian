@@ -3,7 +3,7 @@ import { Link } from 'react-router'
 import { AGENT_COMPOSER_FILE_ACCEPT } from '../../adapters/local/agentTextFiles'
 import { Button } from '../../components/Button'
 import { IconButton } from '../../components/IconButton'
-import { Brain, Hand, Loader2, Paperclip, Send, ShieldAlert, ShieldCheck, Square, type IconComponent } from '../../components/icons'
+import { Hand, Loader2, ShieldAlert, ShieldCheck, Square, type IconComponent } from '../../components/icons'
 import { RefreshButton } from '../../components/RefreshState'
 import { SelectDropdown } from '../../components/SelectDropdown'
 import type { useImeEnterGuard } from '../../components/useImeEnterGuard'
@@ -11,7 +11,9 @@ import type { AgentChatPermissionMode, AgentConversationAdapter } from '../../co
 import type { useAgentChatStore } from '../../stores/agentChatStore'
 import { ChatApprovals } from './ChatApprovals'
 import { ChatAttachment } from './ChatAttachment'
+import { ChatAttachButton, ChatEditorFrame, ChatSendButton } from './ChatEffects'
 import { ChatPlan } from './ChatPlan'
+import { ChatReasoningMenu } from './ChatReasoningMenu'
 import { ChatUserInput } from './ChatUserInput'
 import { ChatUsageIndicator } from './ChatUsageIndicator'
 import { reasoningLabel, type ChatModelOption, type useChatModels } from './useChatModels'
@@ -103,7 +105,7 @@ export function ChatComposer({ api, chat, input, model, models, status, reasonin
       submitting={chat.sending || stopping} pending={!!inputDraft?.pending}
       onAnswer={(questionId, answer) => chat.setUserInputAnswer(inputRequest, questionId, answer)}
       onSubmit={() => void chat.answerUserInput(api, inputRequest)} onCancel={() => void chat.stop(api)} /> :
-    <form className="chat-composer panel-surface" {...guardProps} onSubmit={event => { event.preventDefault(); if (!isImeKey()) send() }} aria-label="消息输入框" onDragOver={dragFiles} onDrop={event => dropFiles(event)}>
+    <ChatEditorFrame><form className="chat-composer panel-surface" {...guardProps} onSubmit={event => { event.preventDefault(); if (!isImeKey()) send() }} aria-label="消息输入框" onDragOver={dragFiles} onDrop={event => dropFiles(event)}>
       {!!session?.attachments.length && <ul aria-label="本地附件" className="hover-scrollbar flex max-h-52 flex-wrap gap-2 overflow-y-auto px-4 pt-4">{session.attachments.map(attachment => <ChatAttachment key={attachment.id} attachment={attachment} onRemove={() => chat.removeAttachment(attachment.id)} />)}</ul>}
       <label htmlFor="agent-message" className="sr-only">发送给 Ely 的消息</label>
       <textarea
@@ -120,7 +122,7 @@ export function ChatComposer({ api, chat, input, model, models, status, reasonin
         if (files.length) addFiles(files)
       }} />
       <div className="chat-composer-tools">
-        <IconButton label="添加文件" tooltipSide="top" variant="ghost" onPress={() => fileInput.current?.click()} disabled={attachmentsLocked || !api.available} className="chat-add-file"><Paperclip size={20} aria-hidden /></IconButton>
+        <ChatAttachButton onPress={() => fileInput.current?.click()} disabled={attachmentsLocked || !api.available} />
         <div className="chat-permission" data-mode={permissionMode.value} title={`${permissionMode.label}：${permissionMode.description}`}>
           <SelectDropdown ariaLabel="权限模式" value={permissionMode.value} onSelect={chat.setPermissionMode}
             items={PERMISSION_MODES.map(({ Icon, ...mode }) => ({ ...mode, icon: <Icon size={16} /> }))}
@@ -137,20 +139,16 @@ export function ChatComposer({ api, chat, input, model, models, status, reasonin
             mono
             search={models.length > 6 ? { ariaLabel: '搜索模型', placeholder: '搜索模型 ID…' } : undefined} />
         </div>
-        {reasoningLevels.length > 0 && <div className="chat-reasoning">
-          <SelectDropdown ariaLabel="选择思考等级" value={reasoningLevel}
-            items={reasoningLevels.map(level => ({ value: level, label: reasoningLabel(level) }))}
-            onSelect={value => chat.setReasoningLevel(value)} fallbackLabel="思考等级"
-            leadingIcon={<Brain size={16} aria-hidden />} align="end"
-            disabled={status !== 'ready' || !model || preferencesLocked || restoring || !!session?.pending}
-            triggerClassName="chat-select chat-reasoning-select" contentClassName="chat-composer-menu" />
-        </div>}
+        {reasoningLevels.length > 0 && <ChatReasoningMenu value={reasoningLevel}
+          levels={reasoningLevels.map(level => ({ value: level, label: reasoningLabel(level) }))}
+          onSelect={chat.setReasoningLevel}
+          disabled={status !== 'ready' || !model || preferencesLocked || restoring || !!session?.pending} />}
         {chat.sending || (finalizing && !stopping)
           ? <IconButton label={chat.sending ? '正在发送消息' : '正在保存回复'} disabled busy className="chat-send chat-pending"><Loader2 size={18} className="animate-spin motion-reduce:animate-none" aria-hidden /></IconButton>
           : liveRunId && !chat.remoteSession?.activeWorkflowId
           ? <IconButton label={stopping ? '正在停止' : '停止回复'} onPress={() => void chat.stop(api)} disabled={stopping} className="chat-send chat-stop"><Square size={16} fill="currentColor" aria-hidden /></IconButton>
-          : <IconButton label={session?.pending && !session.pending.input.replaceMessageId ? '重试发送' : '发送消息'} onPress={send} disabled={!canSend} className="chat-send"><Send size={20} aria-hidden /></IconButton>}
+          : <ChatSendButton label={session?.pending && !session.pending.input.replaceMessageId ? '重试发送' : '发送消息'} onPress={send} disabled={!canSend} />}
       </div>
-    </form>}
+    </form></ChatEditorFrame>}
   </div>
 }
