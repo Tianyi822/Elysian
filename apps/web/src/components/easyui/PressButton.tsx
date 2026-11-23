@@ -22,6 +22,8 @@ export interface PressButtonProps
   size?: PressButtonSize;
   /** Press compression strength (0-1). Higher = more compression */
   pressStrength?: number;
+  /** Enable compression and rebound on pointer or keyboard activation. */
+  pressFeedback?: boolean;
   /** Expand button to fill 100% of container width */
   fullWidth?: boolean;
   /** Preserve a compound control's geometry while sharing the press interaction. */
@@ -62,6 +64,7 @@ export const PressButton = forwardRef<HTMLButtonElement, PressButtonProps>(
       variant = 'primary',
       size = 'md',
       pressStrength = 0.04,
+      pressFeedback = true,
       fullWidth = false,
       unstyled = false,
       nativePress = false,
@@ -88,54 +91,56 @@ export const PressButton = forwardRef<HTMLButtonElement, PressButtonProps>(
   ) => {
     const reduced = useReducedMotion();
     const [isPressed, setIsPressed] = useState(false);
-    useEffect(() => { if (disabled) setIsPressed(false); }, [disabled]);
+    useEffect(() => { if (disabled || !pressFeedback) setIsPressed(false); }, [disabled, pressFeedback]);
+    const canCompress = pressFeedback && !disabled && !reduced;
     const compression = Math.min(0.06, Math.max(0.01, pressStrength));
-    const pressAnimation = {
-      scaleX: isPressed && !disabled && !reduced ? 1 - compression : 1,
-      scaleY: isPressed && !disabled && !reduced ? 1 - compression * 1.6 : 1,
-      ...(nativePress ? { scale: isPressed && !disabled && !reduced ? 0.97 : 1 } : {}),
-    };
+    const compressed = isPressed && canCompress;
+    const pressAnimation = pressFeedback ? {
+      scaleX: compressed ? 1 - compression : 1,
+      scaleY: compressed ? 1 - compression * 1.6 : 1,
+      ...(nativePress ? { scale: compressed ? 0.97 : 1 } : {}),
+    } : undefined;
     // Compound controls may also animate rotation or entry/exit. Do not replace
     // their animation or their gesture callbacks with the shared press feedback.
-    const animation = animate && typeof animate === 'object' && !Array.isArray(animate) && !('start' in animate)
+    const animation = pressAnimation && animate && typeof animate === 'object' && !Array.isArray(animate) && !('start' in animate)
       ? { ...animate, ...pressAnimation }
       : animate ?? pressAnimation;
 
     return (
       <motion.button
         data-easyui="press-button"
-        data-press-button=""
+        data-press-button={pressFeedback ? '' : undefined}
         initial={false}
         ref={ref}
         type={type}
         disabled={disabled}
-        onTapStart={nativePress ? onTapStart : (event, info) => {
-          if (!disabled && !reduced) setIsPressed(true);
+        onTapStart={nativePress || !pressFeedback ? onTapStart : (event, info) => {
+          if (canCompress) setIsPressed(true);
           onTapStart?.(event, info);
         }}
-        onTap={nativePress ? onTap : (event, info) => { setIsPressed(false); onTap?.(event, info); }}
-        onTapCancel={nativePress ? onTapCancel : (event, info) => { setIsPressed(false); onTapCancel?.(event, info); }}
+        onTap={nativePress || !pressFeedback ? onTap : (event, info) => { setIsPressed(false); onTap?.(event, info); }}
+        onTapCancel={nativePress || !pressFeedback ? onTapCancel : (event, info) => { setIsPressed(false); onTapCancel?.(event, info); }}
         onPointerDown={event => {
           onPointerDown?.(event);
-          if (nativePress && !event.defaultPrevented && event.button === 0 && !disabled && !reduced) setIsPressed(true);
+          if (nativePress && canCompress && !event.defaultPrevented && event.button === 0) setIsPressed(true);
         }}
         onPointerUp={event => { if (nativePress) setIsPressed(false); onPointerUp?.(event); }}
         onPointerCancel={event => { if (nativePress) setIsPressed(false); onPointerCancel?.(event); }}
         onPointerLeave={event => { if (nativePress) setIsPressed(false); onPointerLeave?.(event); }}
         onKeyDown={event => {
           onKeyDown?.(event);
-          if (nativePress && !event.defaultPrevented && ['Enter', ' '].includes(event.key) && !disabled && !reduced) setIsPressed(true);
+          if (nativePress && canCompress && !event.defaultPrevented && ['Enter', ' '].includes(event.key)) setIsPressed(true);
         }}
         onKeyUp={event => { if (nativePress) setIsPressed(false); onKeyUp?.(event); }}
         onBlur={event => { if (nativePress) setIsPressed(false); onBlur?.(event); }}
         animate={animation}
-        transition={reduced ? { duration: 0 } : {
+        transition={reduced ? { duration: 0 } : !pressFeedback ? transition : {
           ...(transition ?? motionTransitions.springSnappy),
           scaleX: motionTransitions.springSnappy,
           scaleY: motionTransitions.springSnappy,
           scale: motionTransitions.springSnappy,
         }}
-        whileTap={disabled || reduced || nativePress ? undefined : whileTap ?? { scale: 0.97 }}
+        whileTap={disabled || reduced || nativePress ? undefined : whileTap ?? (pressFeedback ? { scale: 0.97 } : undefined)}
         className={cn(
           !unstyled && 'relative inline-flex items-center justify-center font-medium select-none focus-ring transition-colors duration-150 cursor-pointer',
           !unstyled && variantStyles[variant],

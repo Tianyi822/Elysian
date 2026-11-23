@@ -1,4 +1,4 @@
-import { forwardRef, type ReactNode } from 'react'
+import { createContext, forwardRef, useContext, type ReactNode } from 'react'
 import { Loader2 } from 'lucide-react'
 import { PressButton, type PressButtonProps, type PressButtonVariant } from './easyui/PressButton'
 import { cn } from './easyui/utils'
@@ -30,12 +30,16 @@ const tones = {
 // Their old CSS shell must not override PressButton's shape or press transform.
 const legacyShells = new Set(['ctl', 'ctl-default', 'ctl-quiet', 'ctl-danger', 'ctl-sm', 'action-button'])
 
+/** Sets the default press feedback for a group of buttons, including portal content. */
+export const ButtonPressFeedback = createContext(true)
+
 /** All panel actions share EasyUI PressButton. Compound controls opt out of its
  * visual shell to retain their own switch/tab/menu geometry and direct children. */
 export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button({
   variant = 'primary', size = 'compact', isLoading = false, loadingText,
-  leftIcon, rightIcon, disabled, className, children, unstyled = false, ...props
+  leftIcon, rightIcon, disabled, className, children, unstyled = false, pressFeedback, ...props
 }, ref) {
+  const inheritedPressFeedback = useContext(ButtonPressFeedback)
   const tone = variant === 'default' ? 'primary' : variant === 'gradient' ? 'secondary' : variant
   const pressVariant = !['destructive', 'warning', 'success', 'link'].includes(tone)
     ? tone as PressButtonVariant : 'outline'
@@ -44,6 +48,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
   return <PressButton
     ref={ref}
     nativePress
+    pressFeedback={pressFeedback ?? inheritedPressFeedback}
     variant={pressVariant}
     size={size === 'compact' ? 'md' : size}
     unstyled={unstyled}

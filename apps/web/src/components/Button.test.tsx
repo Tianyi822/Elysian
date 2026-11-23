@@ -3,7 +3,7 @@ import * as Dialog from '@radix-ui/react-dialog'
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { describe, expect, it, vi } from 'vitest'
-import { Button } from './Button'
+import { Button, ButtonPressFeedback } from './Button'
 
 describe('共享 PressButton', () => {
   it('保留原生 ref、表单提交和 Enter／Space 单次激活', async () => {
@@ -53,17 +53,20 @@ describe('共享 PressButton', () => {
 
   it('兼容 Radix asChild 的触发、关闭和焦点归还', async () => {
     const user = userEvent.setup()
-    render(<Dialog.Root>
+    render(<ButtonPressFeedback value={false}><Dialog.Root>
       <Dialog.Trigger asChild><Button>添加规则</Button></Dialog.Trigger>
       <Dialog.Portal><Dialog.Content aria-describedby={undefined}>
         <Dialog.Title>规则表单</Dialog.Title>
         <Dialog.Close asChild><Button variant="outline">取消添加</Button></Dialog.Close>
       </Dialog.Content></Dialog.Portal>
-    </Dialog.Root>)
+    </Dialog.Root></ButtonPressFeedback>)
     const trigger = screen.getByRole('button', { name: '添加规则' })
+    expect(trigger).not.toHaveAttribute('data-press-button')
     await user.click(trigger)
     expect(screen.getByRole('dialog', { name: '规则表单' })).toBeVisible()
-    await user.click(screen.getByRole('button', { name: '取消添加' }))
+    const cancel = screen.getByRole('button', { name: '取消添加' })
+    expect(cancel).not.toHaveAttribute('data-press-button')
+    await user.click(cancel)
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     expect(trigger).toHaveFocus()
     await user.keyboard('{Enter}')
