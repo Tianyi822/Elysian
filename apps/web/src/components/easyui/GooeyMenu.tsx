@@ -8,6 +8,7 @@
 'use client';
 
 import React, { useState, useRef, useEffect, useLayoutEffect, useId, useCallback } from 'react';
+import { createPortal } from 'react-dom';
 import { motion, useReducedMotion } from 'framer-motion';
 import { Button } from '../Button';
 import { revealMenuItem } from '../dropdownScroll';
@@ -45,6 +46,8 @@ export interface GooeyMenuProps extends Omit<React.HTMLAttributes<HTMLDivElement
   optionClassName?: string | ((option: string, index: number) => string | undefined);
   /** Keep domain identities separate from visible labels, including duplicate labels. */
   getOptionLabel?: (option: string, index: number) => string;
+  getOptionDetails?: (option: string, index: number) => { description?: string; icon?: React.ReactNode };
+  portal?: boolean;
   isOptionDisabled?: (option: string, index: number) => boolean;
   menuLabel?: string;
   disabled?: boolean;
@@ -75,6 +78,16 @@ type TriggerGeometry = {
   corners: Corners;
   rtl: boolean;
 };
+
+function roundRectPath(x: number, y: number, { width, height, corners }: TriggerGeometry) {
+  const [[tlX, tlY], [trX, trY], [brX, brY], [blX, blY]] = corners;
+  const right = x + width;
+  const bottom = y + height;
+  return `M ${x + tlX} ${y} H ${right - trX} A ${trX} ${trY} 0 0 1 ${right} ${y + trY}
+    V ${bottom - brY} A ${brX} ${brY} 0 0 1 ${right - brX} ${bottom}
+    H ${x + blX} A ${blX} ${blY} 0 0 1 ${x} ${bottom - blY}
+    V ${y + tlY} A ${tlX} ${tlY} 0 0 1 ${x + tlX} ${y} Z`.replace(/\s+/g, ' ');
+}
 
 function measureTrigger(button: HTMLButtonElement): TriggerGeometry {
   // Layout dimensions stay correct inside scaled registry/demo previews.
@@ -115,6 +128,8 @@ export const GooeyMenu: React.FC<GooeyMenuProps> = ({
   align = 'start',
   optionClassName,
   getOptionLabel = option => option,
+  getOptionDetails,
+  portal = false,
   isOptionDisabled = () => false,
   menuLabel,
   disabled = false,
@@ -149,6 +164,9 @@ export const GooeyMenu: React.FC<GooeyMenuProps> = ({
   const containerRef = useRef<HTMLDivElement>(null);
   const triggerRef = useRef<HTMLButtonElement>(null);
   const listRef = useRef<HTMLUListElement>(null);
+  const contains = useCallback((target: Node | null) =>
+    containerRef.current?.contains(target) || listRef.current?.contains(target), []);
+  const renderLayer = (layer: React.ReactNode) => portal ? createPortal(layer, document.body) : layer;
   const focusListOnOpen = useRef(false);
   const [settling, setSettling] = useState(false);
   const [placement, setPlacement] = useState({ left: 0, top: 0, panelX: 0, panelY: PILL_H + GAP, width, height: options.length * ROW_H + PANEL_PAD * 2 });
@@ -255,7 +273,7 @@ export const GooeyMenu: React.FC<GooeyMenuProps> = ({
   // Close on outside click
   useEffect(() => {
     const handlePointerDown = (e: PointerEvent) => {
-      if (containerRef.current && !containerRef.current.contains(e.target as Node)) {
+      if (containerRef.current && !contains(e.target as Node)) {
         if (listRef.current?.contains(document.activeElement)) {
           triggerRef.current?.focus({ preventScroll: true });
         }
@@ -266,7 +284,7 @@ export const GooeyMenu: React.FC<GooeyMenuProps> = ({
       window.addEventListener('pointerdown', handlePointerDown);
     }
     return () => window.removeEventListener('pointerdown', handlePointerDown);
-  }, [open, setOpen]);
+  }, [contains, open, setOpen]);
 
   const enabledIndices = options.flatMap((option, index) => isOptionDisabled(option, index) ? [] : [index]);
   const move = (direction: number) => {
@@ -281,6 +299,7 @@ export const GooeyMenu: React.FC<GooeyMenuProps> = ({
     if (!open) {
       if (e.key === 'Enter' || e.key === ' ' || e.key === 'ArrowDown' || e.key === 'ArrowUp') {
         e.preventDefault();
+        typeahead.current = { text: '', at: 0 };
         const selectedIndex = options.indexOf(value ?? selected);
         setActiveIndex(e.key === 'ArrowUp' ? enabledIndices.at(-1) ?? -1
           : enabledIndices.includes(selectedIndex) ? selectedIndex : enabledIndices[0] ?? -1);
@@ -347,6 +366,9 @@ export const GooeyMenu: React.FC<GooeyMenuProps> = ({
   const surfaceLeft = Math.min(0, panelX);
   const surfaceWidth = Math.max(geometry.width, panelX + panelWidth) - surfaceLeft;
   const surfaceTop = Math.min(0, panelY);
+  const surfaceHeight = Math.max(totalHeight, geometry.height) - surfaceTop;
+  // Filter the blobs together first, then reveal the real trigger through the portal layer.
+  const surfaceClip = portal ? `path(evenodd, "M -24 -24 H ${surfaceWidth + 24} V ${surfaceHeight + 24} H -24 Z ${roundRectPath(-surfaceLeft, -surfaceTop, geometry)}")` : undefined;
   const cornerNames = ['borderTopLeftRadius', 'borderTopRightRadius', 'borderBottomRightRadius', 'borderBottomLeftRadius'] as const;
   const originCorners = Object.fromEntries(cornerNames.map((name, index) => {
     const [x, y] = geometry.corners[index]!;
@@ -363,7 +385,7 @@ export const GooeyMenu: React.FC<GooeyMenuProps> = ({
       {...props}
       ref={containerRef}
       onKeyDown={(event) => { onKeyDown?.(event); handleKeyDown(event); }}
-      onBlur={event => { if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false); }}
+      onBlur={event => { if (!contains(event.relatedTarget)) setOpen(false); }}
       data-easyui="gooey-menu"
       className={cn('easyui-gooey-menu relative inline-flex min-w-0 max-w-full flex-col items-center select-none', className)}
       style={{ width: hasCustomTrigger ? 'fit-content' : width, zIndex: open || settling ? 60 : undefined, ...style }}
@@ -389,14 +411,15 @@ export const GooeyMenu: React.FC<GooeyMenuProps> = ({
 
       <div className="relative max-w-full" style={hasCustomTrigger ? undefined : { width, height: PILL_H }}>
         {/* Gooey Surface Layer - Pure Solid Blobs for fast 60fps GPU rasterization */}
-        <div
+        {renderLayer(<div
           aria-hidden="true"
-          className="pointer-events-none fixed z-10"
+          className={cn('pointer-events-none fixed', portal ? 'z-[60]' : 'z-10')}
           style={{
             left: placement.left + surfaceLeft,
             top: placement.top + surfaceTop,
             width: surfaceWidth,
-            height: Math.max(totalHeight, geometry.height) - surfaceTop,
+            height: surfaceHeight,
+            clipPath: surfaceClip,
             visibility: active && !disabled && (open || settling) ? 'visible' : 'hidden',
             filter: reducedMotion ? 'none' : `url(#${filterId})`,
             transform: 'translateZ(0)',
@@ -434,7 +457,7 @@ export const GooeyMenu: React.FC<GooeyMenuProps> = ({
                 : SNAP_SPRING
             }
           />
-        </div>
+        </div>)}
 
         {/* Trigger Header Button */}
         <Button unstyled
@@ -481,7 +504,7 @@ export const GooeyMenu: React.FC<GooeyMenuProps> = ({
         </Button>
 
         {/* List of Options */}
-            <motion.ul
+            {renderLayer(<motion.ul
               ref={listRef}
               id={listId}
               role="listbox"
@@ -491,7 +514,7 @@ export const GooeyMenu: React.FC<GooeyMenuProps> = ({
               inert={!open}
               aria-activedescendant={open && activeIndex >= 0 ? `${listId}-opt-${activeIndex}` : undefined}
               data-testid="gooey-menu-options"
-              className="hover-scrollbar fixed z-20 m-0 list-none overflow-y-auto overscroll-contain p-0 outline-none"
+              className={cn('hover-scrollbar fixed m-0 list-none overflow-y-auto overscroll-contain p-0 outline-none', portal ? 'z-[61]' : 'z-20')}
               style={{ left: placement.left + panelX, top: placement.top + panelY, width: panelWidth, maxHeight: panelHeight,
                 visibility: active && !disabled && (open || settling) ? 'visible' : 'hidden',
                 paddingTop: PANEL_PAD, paddingBottom: PANEL_PAD, pointerEvents: open ? 'auto' : 'none', borderRadius: 22 }}
@@ -506,11 +529,16 @@ export const GooeyMenu: React.FC<GooeyMenuProps> = ({
                 const isActive = i === activeIndex;
                 const isCurrentSelected = opt === selected;
                 const optionDisabled = isOptionDisabled(opt, i);
+                const optionId = `${listId}-opt-${i}`;
+                const label = getOptionLabel(opt, i);
+                const { description, icon } = getOptionDetails?.(opt, i) ?? {};
                 return (
                   <motion.li
                     key={`${i}-${opt}`}
-                    id={`${listId}-opt-${i}`}
+                    id={optionId}
                     role="option"
+                    aria-label={label}
+                    aria-describedby={description ? `${optionId}-description` : undefined}
                     aria-selected={isCurrentSelected}
                     aria-disabled={optionDisabled || undefined}
                     onMouseEnter={() => { if (!optionDisabled) setActiveIndex(i); }}
@@ -529,14 +557,20 @@ export const GooeyMenu: React.FC<GooeyMenuProps> = ({
                     )}
                     style={{ height: ROW_H }}
                   >
-                    <span className="min-w-0 truncate" title={getOptionLabel(opt, i)}>{getOptionLabel(opt, i)}</span>
+                    {description || icon ? <span className="flex min-w-0 items-center gap-2">
+                      {icon && <span aria-hidden="true" className="shrink-0">{icon}</span>}
+                      <span className="min-w-0">
+                        <span className="block truncate leading-tight" title={label}>{label}</span>
+                        {description && <span id={`${optionId}-description`} className="line-clamp-2 text-xs leading-tight" title={description}>{description}</span>}
+                      </span>
+                    </span> : <span className="min-w-0 truncate" title={label}>{label}</span>}
                     {isCurrentSelected && (
                       <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-[var(--t-gooey-indicator)]" />
                     )}
                   </motion.li>
                 );
               })}
-            </motion.ul>
+            </motion.ul>)}
       </div>
     </div>
   );

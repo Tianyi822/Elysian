@@ -1,4 +1,5 @@
-import { useState } from 'react'
+import { useState, type ReactNode } from 'react'
+import { cn } from './easyui/utils'
 import { motion, useReducedMotion } from 'framer-motion'
 import { GooeyMenu } from './easyui/GooeyMenu'
 
@@ -6,9 +7,10 @@ import { GooeyMenu } from './easyui/GooeyMenu'
 export function GooeySelect<T extends string>({
   ariaLabel, items, value, onSelect, fallbackLabel = '请选择', disabled = false,
   active = true, className, fieldLabel,
+  leadingIcon, triggerClassName, align, portal,
 }: {
   ariaLabel: string
-  items: readonly { value: T; label: string; disabled?: boolean }[]
+  items: readonly { value: T; label: string; disabled?: boolean; description?: string; icon?: ReactNode }[]
   value?: T
   onSelect: (value: T) => void
   fallbackLabel?: string
@@ -16,6 +18,10 @@ export function GooeySelect<T extends string>({
   active?: boolean
   className?: string
   fieldLabel?: string
+  leadingIcon?: ReactNode
+  triggerClassName?: string
+  align?: 'start' | 'center' | 'end'
+  portal?: boolean
 }) {
   const [open, setOpen] = useState(false)
   const reducedMotion = useReducedMotion()
@@ -25,15 +31,19 @@ export function GooeySelect<T extends string>({
     options={items.map(item => item.value)}
     value={value ?? ''}
     getOptionLabel={(_, index) => items[index]?.label ?? fallbackLabel}
+    getOptionDetails={(_, index) => items[index]!}
     isOptionDisabled={(_, index) => Boolean(items[index]?.disabled)}
     onSelect={(_, index) => { const item = items[index]; if (item) onSelect(item.value) }}
     open={open}
     onOpenChange={setOpen}
     disabled={disabled || !items.length}
     active={active}
+    align={align}
+    portal={portal}
     triggerLabel={`${ariaLabel}：${label}`}
     menuLabel={ariaLabel}
     trigger={<>
+      {leadingIcon}
       {fieldLabel ? <span className="flex min-w-0 items-center gap-1">
         <span className="shrink-0 text-[var(--t-gooey-muted)]">{fieldLabel}</span>
         <span className="min-w-0 truncate">{label}</span>
@@ -46,7 +56,7 @@ export function GooeySelect<T extends string>({
         <path d="m6 9 6 6 6-6" />
       </motion.svg>
     </>}
-    triggerClassName="h-[var(--message-button-size,2rem)] max-w-full gap-3 rounded-full px-3 text-sm font-medium"
+    triggerClassName={cn('h-[var(--message-button-size,2rem)] max-w-full gap-3 rounded-full px-3 text-sm font-medium', triggerClassName)}
     className={className}
   />
 }
