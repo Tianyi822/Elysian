@@ -826,6 +826,34 @@ describe('基本聊天界面', () => {
     await expect(navigator.clipboard.readText()).resolves.toBe('你好，我是 Ely。')
   })
 
+  it('会话记录的工具和消息按钮关闭按压回弹，仍可用鼠标和键盘操作', async () => {
+    const user = userEvent.setup()
+    const backend = chatTestApi()
+    backend.hold()
+    const run = await backend.api.createTask('server-session', { requestId: 'static-history', content: '检查容器状态' })
+    const content = '```sh\ndocker ps\n```'
+    backend.complete(content)
+    const step = { modelRequestId: 'request-1', requestIndex: 0, startedAt: '', incomplete: false, status: 'succeeded' as const }
+    backend.timelines.set(run.id, { runId: run.id, status: 'succeeded', done: true, finalResponseId: step.modelRequestId, entries: [
+      { ...step, kind: 'reasoning', id: 'thought', text: '先查看容器' },
+      { ...step, kind: 'tool', id: 'tool-1', tool: 'docker_container_list', modelCallId: 'call-1', callIndex: 0, argumentsJson: '{}', truncated: false },
+      { ...step, kind: 'tool', id: 'tool-2', tool: 'docker_context_view', modelCallId: 'call-2', callIndex: 1, argumentsJson: '{}', truncated: false },
+      { ...step, kind: 'content', id: 'response', text: content },
+    ] })
+    renderChat(backend, '/agent?session=server-session')
+    const log = within(await screen.findByRole('log', { name: '会话消息' }))
+    await user.click(await log.findByRole('button', { name: '展开思考内容' }))
+    expect(log.getByRole('region', { name: '思考内容' })).toBeVisible()
+    const group = log.getByRole('button', { name: /工具调用（2）/ })
+    act(() => group.focus())
+    await user.keyboard('{Enter}')
+    await user.click(log.getByRole('button', { name: '展开工具 docker_container_list 详情' }))
+    expect(log.getByRole('region', { name: 'docker_container_list 详情' })).toBeVisible()
+    expect(log.getByRole('button', { name: '复制代码' })).toBeInTheDocument()
+    for (const button of log.getAllByRole('button')) expect(button).not.toHaveAttribute('data-press-button')
+    expect(screen.getByRole('button', { name: '添加文件' })).toHaveAttribute('data-press-button')
+  })
+
   it('输入法确认和 Shift+Enter 不发送，Enter 发送并显示模型答复，追问保留上下文', async () => {
     const { api } = renderChat()
     const textbox = screen.getByRole('textbox', { name: '发送给 Ely 的消息' })

@@ -23,16 +23,23 @@ const toolLabels: Record<AgentChatToolStatus, string> = {
 }
 const pending = (status: AgentChatToolStatus) => ['planned', 'waiting-approval', 'waiting-resource', 'waiting-task', 'running'].includes(status)
 const failed = (status: AgentChatToolStatus) => ['failed', 'denied', 'expired', 'revoked'].includes(status)
-function ChatTool({ entry, runId, api, onProgress }: { entry: ToolEntry; runId: string; api: AgentConversationAdapter; onProgress(): void }) {
+const showsProgress = (entry: ToolEntry) => entry.status === 'waiting-task' || !!entry.progress && (entry.status === 'running' || entry.status === 'unknown')
+const toolStatus = (entry: ToolEntry) => showsProgress(entry) && entry.progress?.state === 'unknown' ? 'unknown' : entry.status
+
+function ChatTool({ entry, runId, api, onProgress, collapsed }: {
+  entry: ToolEntry; runId: string; api: AgentConversationAdapter; onProgress(): void; collapsed: boolean
+}) {
   const [expanded, setExpanded] = useState(false)
+  const [focused, setFocused] = useState(false)
   const [result, setResult] = useState<RuntimeCall | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState(false)
   const [retry, setRetry] = useState(0)
   const regionId = useId()
   const report = useAgentChatStore(state => state.reportOperation)
+  const hidden = collapsed && !focused
   useEffect(() => {
-    if (!expanded || !entry.callId) return
+    if (hidden || !expanded || !entry.callId) return
     const controller = new AbortController()
     setLoading(true)
     setError(false)
@@ -49,13 +56,14 @@ function ChatTool({ entry, runId, api, onProgress }: { entry: ToolEntry; runId: 
       }
     }).finally(() => { if (!controller.signal.aborted) setLoading(false) })
     return () => controller.abort()
-  }, [api, runId, expanded, entry.callId, entry.modelRequestId, entry.modelCallId, entry.status, entry.endedAt, retry, report])
-  useLayoutEffect(onProgress, [expanded, result, loading, error, entry.progress, onProgress])
-  const showProgress = entry.status === 'waiting-task' || !!entry.progress && (entry.status === 'running' || entry.status === 'unknown')
-  const status = showProgress && entry.progress?.state === 'unknown' ? 'unknown' : entry.status
+  }, [api, runId, expanded, hidden, entry.callId, entry.modelRequestId, entry.modelCallId, entry.status, entry.endedAt, retry, report])
+  useLayoutEffect(onProgress, [expanded, hidden, result, loading, error, entry.progress, onProgress])
+  const status = toolStatus(entry)
   const evidence = result?.evidence ?? (result?.error ?? entry.error)?.evidence
   const Icon = status === 'succeeded' ? Check : failed(status) ? X : pending(status) ? Loader2 : Terminal
-  return <div className="chat-tool" data-status={status}>
+  return <div className="chat-tool" data-status={status} hidden={hidden}
+    onFocusCapture={() => setFocused(true)}
+    onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false) }}>
     <Button unstyled type="button" className="chat-tool-toggle" aria-expanded={expanded} aria-controls={regionId}
       aria-label={`${expanded ? '收起' : '展开'}工具 ${entry.tool} 详情`} onClick={() => setExpanded(value => !value)}>
       <ChevronRight size={14} aria-hidden className={expanded ? 'rotate-90' : undefined} />
@@ -66,7 +74,7 @@ function ChatTool({ entry, runId, api, onProgress }: { entry: ToolEntry; runId: 
       <p>{entry.resourceWait.message} · 已等待 {entry.resourceWait.elapsedSeconds} 秒</p>
       <p>{entry.resourceWait.resource}{entry.resourceWait.runId && ` · 运行 ${entry.resourceWait.runId}`}{entry.resourceWait.operationId && ` · 操作 ${entry.resourceWait.operationId}`}</p>
     </div>}
-    {showProgress && <ChatToolProgress tool={entry.tool} progress={entry.progress} unknown={status === 'unknown'} />}
+    {showsProgress(entry) && <ChatToolProgress tool={entry.tool} progress={entry.progress} unknown={status === 'unknown'} />}
     {expanded && <div id={regionId} role="region" aria-label={`${entry.tool} 详情`} className="chat-tool-details">
       <p className="text-xs text-fg-muted">参数</p>
       <pre className="chat-tool-data hover-scrollbar" tabIndex={0}>{entry.argumentsJson}</pre>
@@ -82,13 +90,49 @@ function ChatTool({ entry, runId, api, onProgress }: { entry: ToolEntry; runId: 
   </div>
 }
 
-function ChatTextSegment({ entry, text, active, copyable, quarantined, showIncomplete, onProgress }: {
-  entry: Extract<AgentChatTimelineEntry, { kind: 'reasoning' | 'content' }>; text: string; active: boolean; copyable: boolean; quarantined?: boolean; showIncomplete: boolean; onProgress(): void
+function ChatToolGroup({ entries, runId, api, onProgress }: {
+  entries: readonly ToolEntry[]; runId: string; api: AgentConversationAdapter; onProgress(): void
+}) {
+  const [expanded, setExpanded] = useState(false)
+  const regionId = useId()
+  const grouped = entries.length > 1
+  const successes = entries.filter(entry => toolStatus(entry) === 'succeeded').length
+  return <div className="chat-tool-group" data-grouped={grouped || undefined}>
+    {grouped && <Button unstyled type="button" className="chat-tool-group-toggle"
+      aria-expanded={expanded} aria-controls={regionId} onClick={() => setExpanded(value => !value)}>
+      <ChevronRight size={14} aria-hidden className={expanded ? 'rotate-90' : undefined} />
+      <span>工具调用（{entries.length}）</span>
+      {successes > 0 && <span className="chat-tool-count">成功 {successes}</span>}
+    </Button>}
+    <div id={regionId} className="chat-tool-group-entries">
+      {entries.map(entry => <ChatTool key={entry.id} entry={entry} runId={runId} api={api} onProgress={onProgress}
+        collapsed={grouped && !expanded && toolStatus(entry) === 'succeeded'} />)}
+    </div>
+  </div>
+}
+
+function groupTimelineEntries(entries: readonly AgentChatTimelineEntry[]) {
+  const groups: (Exclude<AgentChatTimelineEntry, ToolEntry> | ToolEntry[])[] = []
+  for (const entry of entries) {
+    if (entry.kind === 'tool') {
+      if (entry.tool === 'update_plan' && entry.status !== 'failed') continue
+      const previous = groups.at(-1)
+      if (Array.isArray(previous)) previous.push(entry)
+      else groups.push([entry])
+    } else {
+      groups.push(entry)
+    }
+  }
+  return groups
+}
+
+function ChatTextSegment({ entry, text, active, thinking, copyable, quarantined, showIncomplete, onProgress }: {
+  entry: Extract<AgentChatTimelineEntry, { kind: 'reasoning' | 'content' }>; text: string; active: boolean; thinking: boolean; copyable: boolean; quarantined?: boolean; showIncomplete: boolean; onProgress(): void
 }) {
   const shown = useSmoothedText(text, active && entry.status === 'running')
   useLayoutEffect(onProgress, [shown, onProgress])
   return <div className="chat-response" data-streaming={active && entry.status === 'running' || undefined}>
-    {entry.kind === 'reasoning' ? <ChatReasoning text={shown} active={active && entry.status === 'running'} /> : !!shown && <article className={`chat-message chat-message-assistant${copyable ? '' : ' chat-message-intermediate'}`} aria-label="助手回复">
+    {entry.kind === 'reasoning' ? <ChatReasoning text={shown} active={active && entry.status === 'running'} thinking={thinking} /> : !!shown && <article className={`chat-message chat-message-assistant${copyable ? '' : ' chat-message-intermediate'}`} aria-label="助手回复">
       <div className="chat-message-body"><ChatMarkdown text={shown} />
         {quarantined && <p className="mt-2 text-xs text-danger">此回复包含未核实或已撤回的资料。</p>}
       </div>
@@ -104,15 +148,17 @@ export function ChatTimeline({ timeline, answer, active, stopped, stopping, api,
   const hasFinal = timeline.entries.some(entry => entry.kind === 'content' && entry.modelRequestId === timeline.finalResponseId)
   const result = timeline.done && timeline.terminalResult && (!stopped || timeline.terminalResult.report) ? timeline.terminalResult.content : !stopped && answer?.origin === 'runtime' ? answer.content : undefined
   const modelAnswer = answer?.origin === 'runtime' || result ? undefined : answer
+  const groups = groupTimelineEntries(timeline.entries)
+  const current = groups.at(-1)
   useLayoutEffect(onProgress, [timeline.done, result, onProgress])
   return <div className="chat-timeline" aria-label="回复过程">
-    {timeline.entries.map(entry => {
+    {groups.map(entry => {
+      if (Array.isArray(entry)) return <ChatToolGroup key={entry[0]!.id} entries={entry} runId={timeline.runId} api={api} onProgress={onProgress} />
       if (entry.kind === 'user-input') return <ChatUserInputSummary key={entry.id} request={entry.userInput} />
-      if (entry.kind === 'tool' && entry.tool === 'update_plan' && entry.status !== 'failed') return null
-      if (entry.kind === 'tool') return <ChatTool key={entry.id} entry={entry} runId={timeline.runId} api={api} onProgress={onProgress} />
       const final = entry.kind === 'content' && entry.modelRequestId === timeline.finalResponseId && modelAnswer
       const hasBody = timeline.entries.some(item => item.kind === 'content' && item.modelRequestId === entry.modelRequestId)
       return <ChatTextSegment key={entry.id} entry={entry} text={final ? modelAnswer.content : entry.text} active={active && !stopping} copyable={!!final}
+        thinking={active && !stopped && !stopping && entry === current && entry.kind === 'reasoning' && entry.status === 'running'}
         quarantined={final ? modelAnswer.quarantined : undefined} showIncomplete={entry.incomplete && !stopped && (entry.kind === 'content' || !hasBody)} onProgress={onProgress} />
     })}
     {modelAnswer && !hasFinal && timeline.done && <article className="chat-message chat-message-assistant" aria-label="助手回复">

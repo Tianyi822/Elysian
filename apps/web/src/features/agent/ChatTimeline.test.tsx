@@ -132,6 +132,35 @@ describe('分段回复过程', () => {
     expect(screen.getByText('成功')).toBeInTheDocument()
   })
 
+  it('连续工具分组保留焦点、失败与展开位置，后续思考分隔下一组', async () => {
+    const user = userEvent.setup()
+    const { api } = chatTestApi()
+    api.calls.mockResolvedValue([call])
+    const failed = { ...tool, id: 't2', tool: 'docker_context_view', callId: undefined, status: 'failed' } as const
+    const unknown = { ...tool, id: 't3', tool: 'docker_container_list', callId: undefined, status: 'unknown' } as const
+    const extra = { ...tool, id: 't4', tool: 'platform_sample', callId: undefined }
+    const draw = (entries: readonly AgentChatTimelineEntry[]) => <Tooltip.Provider><ChatTimeline
+      timeline={snapshot(entries)} api={api} active stopped={false} onProgress={vi.fn()} /></Tooltip.Provider>
+    const view = render(draw([{ ...tool, status: 'running' }]))
+    await user.click(screen.getByRole('button', { name: `展开工具 ${tool.tool} 详情` }))
+    const focused = screen.getByRole('button', { name: `收起工具 ${tool.tool} 详情` })
+    view.rerender(draw([tool, failed, unknown]))
+    const group = screen.getByRole('button', { name: /工具调用（3）/ })
+    expect(group).toHaveAttribute('aria-expanded', 'false')
+    expect(focused).toHaveFocus()
+    expect(screen.getByText('失败', { selector: '.chat-tool-status' })).toBeVisible()
+    expect(screen.getByText('结果未确认', { selector: '.chat-tool-status' })).toBeVisible()
+    await user.click(group)
+    expect(await screen.findByText(/结果内容/)).toBeVisible()
+    view.rerender(draw([tool, failed, unknown, text(1, 'reasoning', '工具返回后继续思考'), extra]))
+    expect(group).toHaveAttribute('aria-expanded', 'true')
+    expect(screen.getAllByRole('button', { name: /工具调用（/ })).toEqual([group])
+    expect(screen.getByRole('button', { name: '展开工具 platform_sample 详情' })).toBeVisible()
+    await user.click(group)
+    expect(screen.queryByRole('button', { name: /docker_images_list/ })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: /docker_context_view/ })).toBeVisible()
+  })
+
   it.each(['failed', 'cancelled'] as const)('刷新可展示 %s 的未完成片段，停止仅标记一次', status => {
     const { api } = chatTestApi()
     const entries = [text(0, 'reasoning', '已收到思考'), text(0, 'content', '已收到正文')].map(entry => ({ ...entry, status, incomplete: true }))
