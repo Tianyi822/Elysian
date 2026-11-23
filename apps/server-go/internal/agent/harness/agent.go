@@ -311,7 +311,10 @@ func (a *agentExecution) Finalize(ctx context.Context, responseID string) error 
 		a.workflowOutput = output
 		m.mu.Unlock()
 	}
-	memory, err := a.consolidate(ctx, true)
+	var memory *WorkingMemory
+	if !hstate.ContinuousRun(a.run) {
+		memory, err = a.consolidate(ctx, true)
+	}
 	if err != nil && (ctx.Err() != nil || a.mustStop(err)) {
 		return err
 	}
@@ -348,7 +351,11 @@ func (a *agentExecution) commitFinal(ctx context.Context, tx sessionstore.Tx, r 
 		r.WorkflowOutputJSON = a.workflowOutput.JSON
 		r.WorkflowOutputRequestID = a.workflowOutput.RequestID
 	}
-	if a.stale {
+	if hstate.ContinuousRun(*r) {
+		// Keep the last checkpoint. The next round includes unsummarized
+		// facts and compacts them if it reaches the context threshold.
+		r.MemoryStatus = "stale"
+	} else if a.stale {
 		r.MemoryStatus = "stale"
 		r.Warning = &Failure{Code: "memory-stale", Message: "答复已保存，工作记忆整理未完成；下轮将补入未整理事实"}
 	} else {

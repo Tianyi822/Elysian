@@ -247,7 +247,8 @@ func TestContinuousRealWorkerHTTPRecoversAndCompletes(t *testing.T) {
 	m.promoteContinuousWaiters()
 	done := runtimeFinished(t, m, r.ID)
 	calls := int(invoker.count.Load())
-	if done.Status != StateSucceeded || done.Usage.Calls != 12 || calls != 12 || requests.Load() != 15 {
+	// One retry, twelve tool turns and the final answer. No trailing memory request.
+	if done.Status != StateSucceeded || done.Usage.Calls != 12 || calls != 12 || requests.Load() != 14 {
 		t.Fatalf("真实闭环失败：%+v calls=%d requests=%d", done, calls, requests.Load())
 	}
 	if err = fixture(m).waitRecords(context.Background()); err != nil {

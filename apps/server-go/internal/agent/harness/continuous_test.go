@@ -21,6 +21,53 @@ import (
 
 func continuousDeps(d *Deps) { d.LegacyAgentPolicies = false }
 
+func TestContinuousReplyCommitsWithoutFinalMemoryOrReplicaWait(t *testing.T) {
+	ctx := context.Background()
+	releaseReplica := make(chan struct{})
+	var releaseOnce atomic.Bool
+	release := func() {
+		if releaseOnce.CompareAndSwap(false, true) {
+			close(releaseReplica)
+		}
+	}
+	defer release()
+	var calls atomic.Int32
+	var priorAnswerSeen atomic.Bool
+	var blockReplica func()
+	m, session, _ := agentManager(t, func(_ context.Context, _ model.Profile, request model.Request) (model.Response, error) {
+		if request.ToolChoice == "store_working_memory" {
+			return model.Response{}, errors.New("unexpected memory consolidation")
+		}
+		if calls.Add(1) == 1 {
+			blockReplica()
+			return finalReply("检查结果正常"), nil
+		}
+		priorAnswerSeen.Store(strings.Contains(allRequestText(request), "检查结果正常"))
+		return finalReply("已继续"), nil
+	}, continuousDeps)
+	blockReplica = func() {
+		fixture(m).setRecordHook(func(string) error { <-releaseReplica; return nil })
+	}
+	first := submitAgentTest(t, m, session, "continuous-direct-first", "检查服务")
+	done := runtimeFinished(t, m, first.ID)
+	output, err := m.ChatSnapshot(ctx, first.ID)
+	if err != nil || !output.Done || output.Content != "检查结果正常" || done.Status != StateSucceeded || done.Warning != nil {
+		t.Fatalf("未直接确认答复和终态：%+v %+v %v", done, output, err)
+	}
+	records, err := m.ModelRequests(ctx, first.ID, "", 10)
+	if err != nil || len(records.Items) != 1 || records.Items[0].Purpose != "inference" {
+		t.Fatalf("答复后追加了模型请求：%+v %v", records, err)
+	}
+	release()
+	second, duplicate, err := m.ContinueTask(ctx, first.TaskID, AgentInput{RequestID: "continuous-direct-second", Content: "继续核对"})
+	if err != nil || duplicate {
+		t.Fatalf("已完成的会话不能续轮：duplicate=%v err=%v", duplicate, err)
+	}
+	if done := runtimeFinished(t, m, second.ID); done.Status != StateSucceeded || !priorAnswerSeen.Load() {
+		t.Fatalf("下轮未带上未整理的答复：%+v", done)
+	}
+}
+
 func TestContinuousModelWaitPreservesRunAndLogicalRequestAcrossRestart(t *testing.T) {
 	var offset atomic.Int64
 	base := time.Date(2026, 11, 17, 0, 0, 0, 0, time.UTC)
