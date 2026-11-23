@@ -175,7 +175,7 @@ func discoveryDomainKeywords(domain, source string) string {
 		"platform": "平台 系统 面板 占用 性能 资源 内存 RSS CPU 负载 磁盘 依赖", "panel": "面板 更新", "website": "网站 站点 部署 证书",
 		"container-app": "容器 应用 工作区 构建", "workspace": "任务 工作区 文件", "web": "网页 网址 URL HTTP HTTPS fetch 访问 读取 浏览",
 		"skill-load": "技能 SKILL 资料", "script": "技能 脚本", "bash": "命令 脚本 执行",
-		"mcp-tool": "MCP 扩展", "mcp-resource": "MCP 资料 资源", "wiki": "知识 记忆",
+		"mcp-tool": "MCP 扩展", "mcp-resource": "MCP 资料 资源",
 	}
 	return aliases[domain] + " " + aliases[source]
 }

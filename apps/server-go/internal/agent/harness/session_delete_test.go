@@ -308,7 +308,7 @@ func TestForceDeleteSchema9MigrationPreservesHistory(t *testing.T) {
 	s, _ := openRuntimeTestStore(t)
 	session, task, run := sessionStoreFixture(t, s, "migration-nine", time.Now())
 	acceptSessionTestRun(t, s, task, run, true)
-	if _, err := s.db.Exec("DROP TABLE session_task_cleanup; PRAGMA user_version=9"); err != nil {
+	if _, err := s.db.Exec("DROP TABLE session_task_cleanup; DROP TABLE context_exclusions; DROP TABLE agent_record_rebuild; PRAGMA user_version=9"); err != nil {
 		t.Fatal(err)
 	}
 	if err := migrateStore(s.db); err != nil {

@@ -223,13 +223,6 @@ func (m *Manager) checkWorkflowEnvironmentTx(ctx context.Context, tx sessionstor
 }
 
 func (m *Manager) expandWorkflowV2Node(ctx context.Context, tx sessionstore.Tx, w *WorkflowInstance, scope WorkflowScope, node *WorkflowNodeExecution, step WorkflowStepDefinition, prepared *[]workspace.Version) error {
-	parentSources, err := workflowScopeWikiSources(ctx, tx, scope)
-	if err != nil {
-		return err
-	}
-	if err = saveWorkflowWikiArtifact(ctx, tx, "workflow-node", node.ID, scope.TaskID, parentSources); err != nil {
-		return err
-	}
 	outputs, err := workflowScopeOutputs(ctx, tx, scope.ID)
 	if err != nil {
 		return err
@@ -322,16 +315,10 @@ func (m *Manager) expandWorkflowV2Node(ctx context.Context, tx sessionstore.Tx, 
 		if err = createWorkflowV2Scope(ctx, tx, childScope, m.deps.NewID); err != nil {
 			return err
 		}
-		if err = saveWorkflowWikiArtifact(ctx, tx, "workflow-scope", childScope.ID, task.ID, parentSources); err != nil {
-			return err
-		}
 		if parentMemory.Revision > 0 {
 			memory := parentMemory
 			memory.TaskID, memory.Revision, memory.Coverage = task.ID, 1, MemoryCursor{}
 			if err = saveWorkingMemory(ctx, tx, memory); err != nil {
-				return err
-			}
-			if err = saveWorkflowWikiArtifact(ctx, tx, "memory", task.ID+":1", task.ID, parentSources); err != nil {
 				return err
 			}
 		}
@@ -345,9 +332,6 @@ func (m *Manager) expandWorkflowV2Node(ctx context.Context, tx sessionstore.Tx, 
 			}
 			*prepared = append(*prepared, version)
 			if err = commitWorkspaceVersion(ctx, tx, version); err != nil {
-				return err
-			}
-			if err = saveWorkflowWikiArtifact(ctx, tx, "workspace", task.ID+":"+strconv.Itoa(version.Revision), task.ID, parentSources); err != nil {
 				return err
 			}
 		}
@@ -375,14 +359,6 @@ func (m *Manager) queueWorkflowV2Leaf(ctx context.Context, tx sessionstore.Tx, w
 	}
 	step, err := state.WorkflowScopeStep(scope, node.StepID)
 	if err != nil {
-		return err
-	}
-	sources, err := workflowScopeWikiSources(ctx, tx, scope)
-	if err != nil {
-		var issue *Error
-		if errors.As(err, &issue) {
-			return tx.FailWorkflowV2Node(ctx, w, node, &Failure{Code: issue.Code, Message: issue.Message})
-		}
 		return err
 	}
 	if node.Kind == "parallel" || node.Kind == "foreach" || node.Kind == "subworkflow" {
@@ -431,12 +407,6 @@ func (m *Manager) queueWorkflowV2Leaf(ctx context.Context, tx sessionstore.Tx, w
 	if _, err = tx.InsertWorkflowRun(ctx, run.ID, run.TaskID, run.Status, run.CreatedAt, string(raw), run.SessionID, run.RequestID, input, number, w.ID); err != nil {
 		return err
 	}
-	if err = snapshotWikiRunSpaces(ctx, tx, run.ID, run.SessionID); err != nil {
-		return err
-	}
-	if err = saveWorkflowWikiArtifact(ctx, tx, "run", run.ID, run.TaskID, sources); err != nil {
-		return err
-	}
 	node.RunID, node.Status, node.InputJSON = run.ID, run.Status, input
 	if err = saveWorkflowNode(ctx, tx, node); err != nil {
 		return err
@@ -470,17 +440,6 @@ func (m *Manager) joinWorkflowV2Node(ctx context.Context, tx sessionstore.Tx, w 
 		if child.Status != StateSucceeded {
 			return false, nil
 		}
-	}
-	artifacts := []workflowWikiArtifact{{"workflow-node", node.ID}}
-	for _, child := range children {
-		artifacts = append(artifacts, workflowWikiArtifact{"workflow-scope", child.ID})
-	}
-	sources, err := workflowWikiSources(ctx, tx, artifacts)
-	if err != nil {
-		return false, err
-	}
-	if err = saveWorkflowWikiArtifact(ctx, tx, "workflow-node", node.ID, node.TaskID, sources); err != nil {
-		return false, err
 	}
 	var value any
 	switch node.Kind {
@@ -566,14 +525,6 @@ func (m *Manager) joinWorkflowWorkspaces(ctx context.Context, tx sessionstore.Tx
 	}
 	if len(versions) == 0 {
 		return nil
-	}
-	artifacts := []workflowWikiArtifact{{"workspace", parent.TaskID + ":" + strconv.Itoa(parent.Revision)}, {"workflow-node", nodeID}}
-	for _, child := range versions {
-		artifacts = append(artifacts, workflowWikiArtifact{"workspace", child.version.TaskID + ":" + strconv.Itoa(child.version.Revision)})
-	}
-	sources, err := workflowWikiSources(ctx, tx, artifacts)
-	if err != nil {
-		return err
 	}
 	if m.deps.Workspaces == nil {
 		return bad("workspace-unavailable", "无法汇合子任务工作区")
@@ -669,7 +620,7 @@ func (m *Manager) joinWorkflowWorkspaces(ctx context.Context, tx sessionstore.Tx
 	if err = commitWorkspaceVersion(ctx, tx, version); err != nil {
 		return err
 	}
-	return saveWorkflowWikiArtifact(ctx, tx, "workspace", version.TaskID+":"+strconv.Itoa(version.Revision), version.TaskID, sources)
+	return nil
 }
 
 type workflowChildVersion struct {

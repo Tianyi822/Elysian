@@ -123,7 +123,7 @@ func capabilityMetadata(c Capability) tools.Metadata {
 			metadata.Backend = "container"
 		case "mcp-tool", "mcp-resource", "mcp-prompt":
 			metadata.Backend = "mcp"
-		case "skill-load", "wiki", toolDiscoverySource:
+		case "skill-load", toolDiscoverySource:
 			metadata.Backend = "store"
 		default:
 			metadata.Backend = "domain"
@@ -138,6 +138,9 @@ func (m *Manager) registerRunCatalog(ctx context.Context, s CapabilitySnapshot) 
 	_, native := m.deps.Tools.(registryProvider)
 	for _, capability := range append(append([]Capability{}, s.Tools...), s.Materials...) {
 		c := capability
+		if c.Source == "wiki" {
+			return bad("context-retired", "旧能力快照包含已退役的内置工具")
+		}
 		description := c.Description
 		if description == "" {
 			description = c.Name
@@ -154,7 +157,7 @@ func (m *Manager) registerRunCatalog(ctx context.Context, s CapabilitySnapshot) 
 			if err != nil {
 				return err
 			}
-			if c.Source == "builtin" || c.Source == "wiki" {
+			if c.Source == "builtin" {
 				return mcp.Validate(c.Parameters, raw)
 			}
 			if c.Source == toolDiscoverySource {
@@ -206,16 +209,6 @@ func (m *Manager) registerRunCatalog(ctx context.Context, s CapabilitySnapshot) 
 					err = nil
 				}
 				return result, err
-			}
-			if c.Source == "wiki" {
-				if err := tools.ConsumeBackend(ctx, o.DispatchID); err != nil {
-					return nil, err
-				}
-				run, err := readView(ctx, m.store).Get(ctx, o.RunID)
-				if err != nil {
-					return nil, err
-				}
-				return m.executeWikiOperation(ctx, run, o)
 			}
 			if m.deps.Catalog == nil {
 				return nil, bad("capability-unavailable", "扩展能力不可用")

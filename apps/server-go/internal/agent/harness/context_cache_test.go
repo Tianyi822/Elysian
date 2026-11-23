@@ -284,9 +284,9 @@ func TestContextFallbackReusesExactPreCompactionRequest(t *testing.T) {
 	saved := model.Request{Messages: []model.Message{{Role: "user", Content: "压缩前请求"}, {Role: "assistant", Content: "已完成"}}, Tools: []model.Tool{{Name: "docker_images_list"}}, MaxTokens: 512}
 	fallback := &contextFallback{
 		request: saved, refs: []EvidenceRef{{RunID: "run", EventSeq: "7"}}, revision: 3,
-		wikiRefs: []WikiRef{{PageID: "page", Revision: 1}}, contextItemIDs: []string{"item"},
+		contextItemIDs: []string{"item"},
 	}
-	a := &agentExecution{inferenceWikiRefs: []WikiRef{{PageID: "other", Revision: 2}}}
+	a := &agentExecution{}
 	request, refs, revision, err := a.restoreContextFallback(fallback)
 	if err != nil {
 		t.Fatal(err)
@@ -294,7 +294,7 @@ func TestContextFallbackReusesExactPreCompactionRequest(t *testing.T) {
 	if !reflect.DeepEqual(request, saved) || revision != 3 || !reflect.DeepEqual(refs, fallback.refs) {
 		t.Fatalf("回退请求被重建：request=%+v refs=%v revision=%d", request, refs, revision)
 	}
-	if !reflect.DeepEqual(a.inferenceWikiRefs, fallback.wikiRefs) || !reflect.DeepEqual(a.contextItemIDs, fallback.contextItemIDs) {
-		t.Fatalf("回退未恢复资料引用：%v %v", a.inferenceWikiRefs, a.contextItemIDs)
+	if !reflect.DeepEqual(a.contextItemIDs, fallback.contextItemIDs) {
+		t.Fatalf("回退未恢复资料引用：%v", a.contextItemIDs)
 	}
 }

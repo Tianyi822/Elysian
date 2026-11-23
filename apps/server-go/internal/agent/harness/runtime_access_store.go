@@ -120,9 +120,6 @@ func (m *Manager) DecideAccess(ctx context.Context, id string, in AccessDecision
 		if queued >= r.Limits.QueueCapacity {
 			return &Error{Status: 429, Code: "queue-full", Message: "任务队列已满，授权保持待处理"}
 		}
-		if err = m.validateWikiRun(ctx, tx, r.ID); err != nil {
-			return err
-		}
 		o, err := readOperation(ctx, tx, a.OperationID)
 		if err != nil {
 			return err

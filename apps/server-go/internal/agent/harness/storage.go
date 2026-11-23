@@ -63,14 +63,10 @@ type recoveryReader = sessionstore.ReadView
 type reportReader = sessionstore.ReadView
 type workflowQuery = sessionstore.ReadView
 type workflowTreeQuery = sessionstore.ReadView
-type wikiQuery = sessionstore.ReadView
 type contextReader = sessionstore.ReadView
 type resourceReader = sessionstore.ReadView
 
 func stamp(t time.Time) string { return t.UTC().Format(time.RFC3339Nano) }
-func (m *Manager) validateWikiRun(ctx context.Context, q sessionstore.ReadView, id string) error {
-	return q.ValidateWikiRun(ctx, id)
-}
 
 type readViewKey struct{}
 

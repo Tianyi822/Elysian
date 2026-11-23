@@ -35,8 +35,6 @@ type agentExecution struct {
 	finalMemory        *WorkingMemory
 	stale              bool
 	contextItemIDs     []string
-	sharedWikiRefs     [][]WikiRef
-	inferenceWikiRefs  []WikiRef
 	workflowOutput     *workflowAgentOutput
 	userInputError     string
 	toolCorrection     bool // 从本 Run 已持久化的失败推理重建，用于尾部状态与一次固定搜索请求。
@@ -360,9 +358,6 @@ func (a *agentExecution) commitFinal(ctx context.Context, tx sessionstore.Tx, r 
 	if err := tx.FinalizeAgent(ctx, r, a.finalAnswer, a.finalMemory); err != nil {
 		return err
 	}
-	if err := recordWikiFinal(ctx, tx, *r, a.finalMemory); err != nil {
-		return err
-	}
 	return nil
 }
 
@@ -396,10 +391,6 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 	if run.CancelRequestedAt != "" || run.Status != StateRunning {
 		m.mu.Unlock()
 		return empty, context.Canceled
-	}
-	if err = m.validateWikiRun(ctx, m.store, run.ID); err != nil {
-		m.mu.Unlock()
-		return empty, err
 	}
 	if guardErr != nil {
 		m.mu.Unlock()
@@ -442,25 +433,10 @@ func (a *agentExecution) requestModel(ctx context.Context, purpose string, reque
 			record.ToolNames = append(record.ToolNames, tool.Name)
 		}
 	}
-	record.WikiSources, err = a.modelWikiSourcesLocked(ctx, purpose, refs, revision)
-	if err != nil {
-		m.mu.Unlock()
-		return empty, err
-	}
 	if purpose == "inference" {
 		record.ContextItemIDs = append([]string(nil), a.contextItemIDs...)
 	}
 	_, err = m.store.ChangeRun(context.Background(), run.ID, "model-intent", func(tx sessionstore.Tx, r *Run) error {
-		g, e := wikiGeneration(ctx, tx, r.TaskID)
-		if e != nil {
-			return e
-		}
-		if e = saveWikiArtifact(ctx, tx, "run", r.ID, r.TaskID, r.ID, g, record.WikiSources); e != nil {
-			return e
-		}
-		if err := recordWikiRunArtifact(context.Background(), tx, *r, "model-request", record.ID); err != nil {
-			return err
-		}
 		if r.WorkflowID != "" {
 			if err := m.workflowReserveModel(context.Background(), tx, r, estimate+request.MaxTokens); err != nil {
 				return err

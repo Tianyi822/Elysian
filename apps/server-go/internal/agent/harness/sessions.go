@@ -121,7 +121,7 @@ func (m *Manager) CreateSession(ctx context.Context, input CreateSessionInput) (
 		return Session{}, bad("model-capability", "所选模型必须支持文本与工具调用")
 	}
 	now := stamp(m.deps.Now())
-	session := Session{WikiStrategy: wikiDisabledStrategy, ID: m.deps.NewID(), Title: strings.TrimSpace(input.Title), CreatedAt: now, LastActivityAt: now, ModelProfileID: profile.ID, ModelRevision: profile.Revision, LastSeq: "0"}
+	session := Session{ID: m.deps.NewID(), Title: strings.TrimSpace(input.Title), CreatedAt: now, LastActivityAt: now, ModelProfileID: profile.ID, ModelRevision: profile.Revision, LastSeq: "0"}
 	if session.Title == "" {
 		session.Title = "新会话"
 	}
@@ -342,11 +342,7 @@ func (m *Manager) Messages(ctx context.Context, id, after string, limit int) (Pa
 		if err == nil {
 			for i := range page.Items {
 				v := &page.Items[i]
-				v.Quarantined, err = wikiArtifactInvalid(ctx, m.store, "message", v.ID)
-				if err != nil {
-					break
-				}
-				v.WikiSources, err = wikiArtifactRefs(ctx, m.store, "message", v.ID)
+				v.Quarantined, err = contextExcluded(ctx, m.store, "message", v.ID)
 				if err != nil {
 					break
 				}
@@ -374,7 +370,7 @@ func (m *Manager) Memory(ctx context.Context, id string, revision int) (WorkingM
 		if last != nil {
 			memory.MemoryStatus = publicMemoryStatus(last)
 		}
-		invalid, e := wikiArtifactInvalid(ctx, m.store, "memory", id+":"+strconv.Itoa(memory.Revision))
+		invalid, e := contextExcluded(ctx, m.store, "memory", id+":"+strconv.Itoa(memory.Revision))
 		if e != nil {
 			return memory, e
 		}
@@ -576,7 +572,6 @@ func (m *Manager) submitAgent(ctx context.Context, targetID string, input AgentI
 	snapshot.RecoveryPolicy = recoveryPolicy
 	snapshot.Digest = hstate.DigestJSON(snapshot)
 	run.DriverVersion = "v2"
-	run.WikiStrategy = wikiDisabledStrategy
 	run.Snapshot = &snapshot
 	run.Selection = &input
 	run, duplicate, err := m.store.AcceptAgent(ctx, task, run, canonical, m.deps.NewID(), newTask)

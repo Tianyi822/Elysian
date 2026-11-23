@@ -63,7 +63,7 @@ func operationDecision(s CapabilitySnapshot, o Operation) (bool, string) {
 	if c.Source == "builtin" && c.Metadata.Exposure != "" && c.Metadata.Exposure != "agent" {
 		return false, "human-approval"
 	}
-	if c.Source == "wiki" || trusted(s, c) {
+	if trusted(s, c) {
 		return true, "trusted-read-only"
 	}
 	// External capabilities keep their independent explicit trust/approval rules.

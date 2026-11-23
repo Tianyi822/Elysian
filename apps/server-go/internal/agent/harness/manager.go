@@ -40,7 +40,6 @@ type Deps struct {
 	AgentLimits           Limits
 	ModelConfigError      string
 	Store                 sessionstore.SessionStore
-	EmbeddingConfigPath   string
 	Tools                 ToolInvoker
 	Limits                Limits
 	Now                   func() time.Time
@@ -139,9 +138,6 @@ func New(deps Deps) (*Manager, error) {
 	}
 	if err == nil {
 		err = (&Manager{store: s, deps: deps}).sweep(context.Background())
-	}
-	if err == nil {
-		err = (&Manager{store: s, deps: deps}).recoverWikiJobs(context.Background())
 	}
 
 	if err != nil {
@@ -312,23 +308,9 @@ func (m *Manager) Info() RuntimeInfo {
 	runtimeReady := !m.closed && !m.storageError && dispatchError == nil
 	i.Workflow = RuntimeCapability{Available: false, Reason: "工作流功能已退役"}
 	i.WorkflowV2 = i.Workflow
-	i.Wiki = RuntimeCapability{Available: runtimeReady}
-	i.ResourceLocks = i.Wiki
+	i.ResourceLocks = RuntimeCapability{Available: runtimeReady}
 	if dispatchError != nil {
-		i.Wiki.Reason = dispatchError.Error()
 		i.ResourceLocks.Reason = dispatchError.Error()
-	}
-	i.Embedding = RuntimeCapability{Reason: "尚未配置独立 Embedding 服务，本地全文检索可用"}
-	if !m.closed {
-		profiles, err := m.listEmbeddingProfiles(context.Background())
-		if err == nil {
-			for _, p := range profiles {
-				if p.Active {
-					i.Embedding = i.Wiki
-					break
-				}
-			}
-		}
 	}
 	i.Approvals.Available = !m.closed && !m.storageError && dispatchError == nil
 	if dispatchError != nil {

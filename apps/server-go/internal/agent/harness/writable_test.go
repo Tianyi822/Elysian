@@ -15,7 +15,7 @@ func TestAgentWritableGuardRechecksRecordFault(t *testing.T) {
 	result, done := make(chan error, 1), make(chan struct{})
 	go func() {
 		defer close(done)
-		_, err := m.UpdateWikiSpace(context.Background(), "global", 1, "新名称")
+		_, err := m.PutWorkflowDefinition(context.Background(), "", 0, WorkflowDefinition{})
 		result <- err
 	}()
 	defer func() { unblock(); <-done }()
@@ -27,7 +27,7 @@ func TestAgentWritableGuardRechecksRecordFault(t *testing.T) {
 
 func TestAgentWritableRejectsClosedRecordFaultStorageAndDispatch(t *testing.T) {
 	update := func(m *Manager) error {
-		_, err := m.UpdateWikiSpace(context.Background(), "global", 1, "新名称")
+		_, err := m.PutWorkflowDefinition(context.Background(), "", 0, WorkflowDefinition{})
 		return err
 	}
 	t.Run("closed", func(t *testing.T) {

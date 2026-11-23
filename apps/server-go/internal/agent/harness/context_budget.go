@@ -131,12 +131,10 @@ type contextFallback struct {
 	request        model.Request
 	refs           []EvidenceRef
 	revision       int
-	wikiRefs       []WikiRef
 	contextItemIDs []string
 }
 
 func (a *agentExecution) restoreContextFallback(fallback *contextFallback) (model.Request, []EvidenceRef, int, error) {
-	a.inferenceWikiRefs = fallback.wikiRefs
 	a.contextItemIDs = fallback.contextItemIDs
 	return fallback.request, fallback.refs, fallback.revision, nil
 }

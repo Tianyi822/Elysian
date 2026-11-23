@@ -254,7 +254,7 @@ func operationResourceClaims(snapshot CapabilitySnapshot, o Operation) ([]Resour
 			}
 		}
 		complete = true
-	case "skill-load", "wiki", toolDiscoverySource:
+	case "skill-load", toolDiscoverySource:
 		complete = true
 	case "script", BashSource, BashExec, BashScript:
 		// Script and Bash execution always exports and replaces the complete

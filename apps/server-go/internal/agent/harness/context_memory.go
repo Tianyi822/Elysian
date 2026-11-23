@@ -6,7 +6,6 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
-	"strconv"
 
 	"elysian/server/internal/agent/harness/model"
 	"elysian/server/internal/agent/harness/sessionstore"
@@ -157,9 +156,6 @@ func (a *agentExecution) consolidatePrepared(ctx context.Context, final bool, pr
 				return context.Canceled
 			}
 			if err := saveWorkingMemory(context.Background(), tx, result); err != nil {
-				return err
-			}
-			if err := recordWikiRunArtifact(context.Background(), tx, *r, "memory", r.TaskID+":"+strconv.Itoa(result.Revision)); err != nil {
 				return err
 			}
 			r.MemoryStatus = "updated"

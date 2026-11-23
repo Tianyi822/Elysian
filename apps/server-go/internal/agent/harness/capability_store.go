@@ -168,19 +168,6 @@ func (m *Manager) snapshotWithMode(ctx context.Context, e Environment, modern bo
 		}
 	}
 	seen := map[string]bool{}
-	if disabled, _ := ctx.Value(wikiDisabledContextKey{}).(bool); !disabled {
-		spaces, err := m.wikiSessionSpacesLocked(ctx, e.SessionID)
-		if err != nil {
-			return s, err
-		}
-		if len(spaces) > 0 {
-			if modern {
-				s.Tools = append(s.Tools, wikiNavigationCapabilities()...)
-			} else {
-				s.Tools = append(s.Tools, wikiCapabilities()...)
-			}
-		}
-	}
 
 	for _, c := range s.Materials {
 		if c.Name == toolSearchName || c.Source == toolDiscoverySource || c.Name == userInputTool || c.Source == userInputSource || c.Name == planTool || c.Source == planSource || c.Source == taskHistorySource {
@@ -487,9 +474,6 @@ func (m *Manager) Decide(ctx context.Context, id, decision string) (Approval, er
 			return &Error{Status: 409, Code: "run-state-conflict", Message: "运行已不在审批等待状态"}
 		}
 		if decision == "approved" {
-			if err = m.validateWikiRun(ctx, tx, r.ID); err != nil {
-				return err
-			}
 			var count int
 			if err = tx.QueuedRunCount(ctx, &count); err != nil {
 				return err

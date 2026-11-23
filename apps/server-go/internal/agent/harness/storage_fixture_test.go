@@ -360,7 +360,7 @@ func fixtureRawWrite(s *store, ctx context.Context, fn func(*sql.Tx) error) erro
 	return tx.Commit()
 }
 
-const schemaVersion = 11
+const schemaVersion = 12
 const schema = `
 CREATE TABLE IF NOT EXISTS tasks (
  id TEXT PRIMARY KEY, request_id TEXT NOT NULL UNIQUE, input TEXT NOT NULL, document TEXT NOT NULL
@@ -582,19 +582,6 @@ func migrateStore(db *sql.DB) error {
 }
 
 var fixtureStores []*store
-
-func readWikiJob(ctx context.Context, q *sql.DB, id string) (WikiJob, error) {
-	var raw, input string
-	e := q.QueryRowContext(ctx, "SELECT document,input FROM wiki_jobs WHERE id=?", id).Scan(&raw, &input)
-	if e != nil {
-		return WikiJob{}, e
-	}
-	var stored storedWikiJob
-	e = json.Unmarshal([]byte(raw), &stored)
-	stored.Input = input
-	stored.WikiJob.Response = stored.Response
-	return stored.WikiJob, e
-}
 
 // embeddingSchema is deliberately SQLite-only. Vectors are JSON arrays so the
 // page revision and its digest remain the authoritative index key; an optional

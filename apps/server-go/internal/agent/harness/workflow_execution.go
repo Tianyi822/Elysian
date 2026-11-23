@@ -159,7 +159,7 @@ func (m *Manager) workflowContextFacts(ctx context.Context, r Run) ([]factGroup,
 		if r.ScopeID != "" && a.ScopeID != r.ScopeID {
 			continue
 		}
-		invalid, e := wikiArtifactInvalid(ctx, m.store, "run", a.RunID)
+		invalid, e := contextExcluded(ctx, m.store, "run", a.RunID)
 		if e != nil {
 			return nil, e
 		}

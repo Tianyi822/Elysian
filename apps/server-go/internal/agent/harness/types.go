@@ -61,8 +61,6 @@ func DefaultAgentLimits() Limits {
 
 type RuntimeInfo struct {
 	StorageHealth     *StorageHealth       `json:"storageHealth,omitempty"`
-	Wiki              RuntimeCapability    `json:"wiki"`
-	Embedding         RuntimeCapability    `json:"embedding"`
 	WorkflowV2        RuntimeCapability    `json:"workflowV2"`
 	ResourceLocks     RuntimeCapability    `json:"resourceLocks"`
 	ExecutionRuntimes RuntimeCapability    `json:"executionRuntimes"`

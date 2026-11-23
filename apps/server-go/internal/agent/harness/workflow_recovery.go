@@ -379,11 +379,6 @@ func (m *Manager) recoverWorkflows(ctx context.Context) error {
 		return err
 	}
 	err = writeStore(m.store, ctx, "workflow-startup", func(tx sessionstore.Tx) error {
-		if fence {
-			if err := m.freezeWikiJobsForMaintenance(ctx, tx); err != nil {
-				return err
-			}
-		}
 		runs, e := tx.WorkflowRuns(ctx)
 		if e != nil {
 			return e
@@ -412,6 +407,13 @@ func (m *Manager) recoverWorkflows(ctx context.Context) error {
 			return e
 		}
 		for _, w := range list {
+			excluded, err := contextExcluded(ctx, tx, "workflow", w.ID)
+			if err != nil {
+				return err
+			}
+			if excluded {
+				continue
+			}
 			if e = tx.FailWorkflowActiveBudget(ctx, &w, nil); e != nil {
 				return e
 			}

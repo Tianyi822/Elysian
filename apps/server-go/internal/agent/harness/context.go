@@ -63,7 +63,7 @@ func (a *agentExecution) contextFactsRead(ctx context.Context, loadImages bool) 
 	if err != nil {
 		return memory, nil, nil, err
 	}
-	invalid, err := wikiArtifactInvalid(ctx, m.store, "memory", a.run.TaskID+":"+strconv.Itoa(memory.Revision))
+	invalid, err := contextExcluded(ctx, m.store, "memory", a.run.TaskID+":"+strconv.Itoa(memory.Revision))
 	if err != nil {
 		return memory, nil, nil, err
 	}
@@ -112,12 +112,12 @@ func (a *agentExecution) rebuildFactGroups(ctx context.Context, memoryCoverage M
 		if run.SupersededByRunID != "" {
 			continue
 		}
-		invalid, e := wikiArtifactInvalid(ctx, m.store, "run", run.ID)
+		invalid, e := contextExcluded(ctx, m.store, "run", run.ID)
 		if e != nil {
 			return nil, e
 		}
 		if invalid {
-			groups = append(groups, factGroup{cursor: MemoryCursor{RunNumber: run.RunNumber, EventSeq: run.LastSeq}, refs: []EvidenceRef{{RunID: run.ID, EventSeq: run.LastSeq}}, messages: []model.Message{otherContextMessage("user", "历史运行 "+run.ID+" 的知识来源已撤回，内容已隔离；执行凭据仍留存，不能据此重试外部动作。")}})
+			groups = append(groups, factGroup{cursor: MemoryCursor{RunNumber: run.RunNumber, EventSeq: run.LastSeq}, refs: []EvidenceRef{{RunID: run.ID, EventSeq: run.LastSeq}}, messages: []model.Message{otherContextMessage("user", "历史运行 "+run.ID+" 的历史上下文已隔离；执行凭据仍留存，不能据此重试外部动作。")}})
 			continue
 		}
 		if run.RunNumber > a.run.RunNumber {
@@ -361,9 +361,8 @@ func (a *agentExecution) sharedContextHistory(ctx context.Context) ([]model.Mess
 		return nil, err
 	}
 	var shared []model.Message
-	a.sharedWikiRefs = nil
 	for i := len(messages) - 1; i >= 0; i-- {
-		invalid, e := wikiArtifactInvalid(ctx, m.store, "message", messages[i].ID)
+		invalid, e := contextExcluded(ctx, m.store, "message", messages[i].ID)
 		if e != nil {
 			return nil, e
 		}
@@ -373,11 +372,6 @@ func (a *agentExecution) sharedContextHistory(ctx context.Context) ([]model.Mess
 		if a.run.ScopeID != "" {
 			continue
 		} // 分支只继承父快照，不读取兄弟公开输出。
-		refs, e := wikiArtifactRefs(ctx, m.store, "message", messages[i].ID)
-		if e != nil {
-			return nil, e
-		}
-		a.sharedWikiRefs = append(a.sharedWikiRefs, refs)
 		prefix := "其他任务公开对话：\n"
 		if messages[i].Origin == "runtime" {
 			prefix = "其他任务运行时结果（运行状态说明）：\n"
@@ -455,15 +449,6 @@ func (a *agentExecution) buildContext(ctx context.Context) (model.Request, []Evi
 			return model.Request{}, nil, memory.Revision, err
 		}
 		base = append(base, instructions...)
-		a.manager.mu.Lock()
-		wikiMessages, navigationRefs, wikiErr := a.wikiRecallLocked(ctx)
-		a.manager.mu.Unlock()
-		if wikiErr != nil {
-			return model.Request{}, nil, memory.Revision, wikiErr
-		}
-		for i := range wikiMessages {
-			wikiMessages[i].EstimatedBreakdown = &model.ContextBreakdown{Other: estimateContextText(wikiMessages[i].Content)}
-		}
 		refs = append(refs, instructionRefs...)
 		a.contextItemIDs = itemIDs
 		request := model.Request{Tools: visibleTools, ReasoningLevel: a.runReasoningLevel(), MaxTokens: a.outputLimit(a.runReasoningLevel())}
@@ -478,11 +463,10 @@ func (a *agentExecution) buildContext(ctx context.Context) (model.Request, []Evi
 
 		// 装配阶段写入当前模型的字节→token 比例：fits 循环只做本地换算，不发官方计数请求。
 		request.EstimateRatio = a.estimateRatio()
-		sharedStart := 0
 		rebuild := false
 		// 尾部当前状态消息不参与裁剪：它承载本轮输入与最新计划，必须随每次请求保留。
 		compose := func() []model.Message {
-			messages := append(append(append(append([]model.Message{}, base...), wikiMessages...), shared...), taskMessages...)
+			messages := append(append(append([]model.Message{}, base...), shared...), taskMessages...)
 			return append(messages, status...)
 		}
 		for {
@@ -491,25 +475,9 @@ func (a *agentExecution) buildContext(ctx context.Context) (model.Request, []Evi
 				if !state.ContinuousRun(a.run) && fallback != nil && a.run.Usage.Tokens+estimateRequestTokens(request) > a.run.Limits.TokenBudget {
 					return a.restoreContextFallback(fallback)
 				}
-				a.manager.mu.Lock()
-				if a.run.WikiStrategy == wikiNavigationStrategy {
-					a.inferenceWikiRefs = nil
-					if len(wikiMessages) != 0 {
-						a.inferenceWikiRefs = navigationRefs
-					}
-				} else {
-					a.inferenceWikiRefs, err = a.wikiRecallSourcesLocked(ctx, len(wikiMessages))
-				}
-				a.manager.mu.Unlock()
-				if err != nil {
-					return model.Request{}, nil, memory.Revision, err
-				}
-				for _, sources := range a.sharedWikiRefs[sharedStart:] {
-					a.inferenceWikiRefs = state.MergeWikiRefs(a.inferenceWikiRefs, sources)
-				}
 				request.EstimatedBreakdown = estimateFittedContext(request, a.run.Snapshot)
 				fixed := request
-				fixed.Messages = append(append(append([]model.Message{}, base...), wikiMessages...), shared...)
+				fixed.Messages = append(append([]model.Message{}, base...), shared...)
 				fixed.Messages = append(fixed.Messages, status...)
 				if !compacted && a.proactiveCompactionEligible() && a.proactiveCompactionUseful(request, fixed) && compactableFacts(groups) {
 					prepared, compactErr := a.prepareConsolidation(ctx, false)
@@ -519,7 +487,6 @@ func (a *agentExecution) buildContext(ctx context.Context) (model.Request, []Evi
 					if compactErr == nil && a.canProactivelyCompact(request, prepared.request) {
 						saved := contextFallback{
 							request: request, refs: append([]EvidenceRef(nil), refs...), revision: memory.Revision,
-							wikiRefs: append([]WikiRef(nil), a.inferenceWikiRefs...), contextItemIDs: append([]string(nil), a.contextItemIDs...),
 						}
 						if request.EstimatedBreakdown != nil {
 							breakdown := *request.EstimatedBreakdown
@@ -542,11 +509,6 @@ func (a *agentExecution) buildContext(ctx context.Context) (model.Request, []Evi
 			}
 			if len(shared) > 0 {
 				shared = shared[1:]
-				sharedStart++
-				continue
-			}
-			if len(wikiMessages) > 0 {
-				wikiMessages = wikiMessages[:len(wikiMessages)-1]
 				continue
 			}
 			break

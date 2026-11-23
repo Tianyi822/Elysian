@@ -132,7 +132,7 @@ func TestWorkflowV4MigrationKeepsActiveV1ApprovalSemantics(t *testing.T) {
 					t.Fatalf("迁移改写旧%s事实: %v", item.table, err)
 				}
 			}
-			for _, table := range []string{"workflow_scopes", "workflow_nodes", "resource_rules", "resource_leases", "wiki_pages", "wiki_embedding_requests"} {
+			for _, table := range []string{"workflow_scopes", "workflow_nodes", "resource_rules", "resource_leases", "context_exclusions", "agent_record_rebuild"} {
 				var count int
 				if err = upgraded.db.QueryRow("SELECT COUNT(*) FROM " + table).Scan(&count); err != nil || count != 0 {
 					t.Fatalf("新表%s未正确创建: %d %v", table, count, err)

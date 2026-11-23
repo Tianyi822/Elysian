@@ -194,7 +194,6 @@ func newRuntimeRouter(service runtimeService, unavailableReason string) http.Han
 		registerAgentRoutes(r, service)
 		registerCapabilityRoutes(r, service)
 		registerExtensionRoutes(r, service)
-		registerWikiRoutes(r, service)
 		registerResourceRuleRoutes(r, service)
 	})
 	r.NotFound(func(w http.ResponseWriter, req *http.Request) {

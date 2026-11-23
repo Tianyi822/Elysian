@@ -12,9 +12,6 @@ func (m *Manager) sweep(ctx context.Context) error {
 	if err := m.store.Sweep(ctx, m.deps.Limits.RetentionDays); err != nil {
 		return err
 	}
-	if err := m.sweepEmbeddingRequests(ctx); err != nil {
-		return err
-	}
 	if m.deps.Workspaces == nil {
 		return nil
 	}

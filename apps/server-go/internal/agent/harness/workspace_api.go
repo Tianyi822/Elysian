@@ -18,7 +18,6 @@ type WorkspaceView struct {
 	Path        string            `json:"path,omitempty"`
 	Content     []byte            `json:"content,omitempty"`
 	Quarantined bool              `json:"quarantined,omitempty"`
-	WikiSources []WikiRef         `json:"wikiSources,omitempty"`
 }
 
 // workspaceViewMaxBytes 限制 JSON 单文件读取的返回体大小：Content 会整体进入内存
@@ -74,12 +73,8 @@ func (m *Manager) Workspace(ctx context.Context, taskID, path string) (Workspace
 		current, err = readWorkspaceVersion(ctx, m.store, taskID)
 	}
 	var quarantined bool
-	var sources []WikiRef
 	if err == nil {
-		quarantined, err = wikiArtifactInvalid(ctx, m.store, "workspace", state.WorkspaceWikiKey(current))
-	}
-	if err == nil {
-		sources, err = wikiArtifactRefs(ctx, m.store, "workspace", state.WorkspaceWikiKey(current))
+		quarantined, err = contextExcluded(ctx, m.store, "workspace", workspaceContextKey(current))
 	}
 	m.mu.Unlock()
 	if err != nil {
@@ -93,7 +88,7 @@ func (m *Manager) Workspace(ctx context.Context, taskID, path string) (Workspace
 		if current.Revision > 0 && current != version {
 			return WorkspaceView{}, storageFailure(errors.New("工作区归档与数据库指针不一致"))
 		}
-		return WorkspaceView{Version: version, Path: path, Content: content, Quarantined: quarantined, WikiSources: sources}, nil
+		return WorkspaceView{Version: version, Path: path, Content: content, Quarantined: quarantined}, nil
 	}
 	snapshot, err := backend.List(ctx, taskID, current.Revision)
 	if err != nil {
@@ -102,7 +97,7 @@ func (m *Manager) Workspace(ctx context.Context, taskID, path string) (Workspace
 	if current.Revision > 0 && snapshot.Version != current {
 		return WorkspaceView{}, storageFailure(errors.New("工作区归档与数据库指针不一致"))
 	}
-	return WorkspaceView{Version: snapshot.Version, Files: snapshot.Files, Quarantined: quarantined, WikiSources: sources}, nil
+	return WorkspaceView{Version: snapshot.Version, Files: snapshot.Files, Quarantined: quarantined}, nil
 }
 
 func (m *Manager) WriteWorkspace(ctx context.Context, taskID string, expectedRevision int, path string, reader io.Reader) (workspace.Version, error) {
@@ -163,7 +158,7 @@ func (m *Manager) mutateWorkspace(ctx context.Context, taskID string, expectedRe
 		if err := commitWorkspaceVersion(ctx, tx, version); err != nil {
 			return err
 		}
-		return carryWorkspaceWiki(ctx, tx, version)
+		return carryWorkspaceContext(ctx, tx, version)
 	})
 	// 事务错误可能是提交结果未确认，保留不可变候选，不擅自删除潜在已引用版本。
 	if err != nil {

@@ -263,7 +263,7 @@ func TestUserInputSchemaMigrationAndRoutes(t *testing.T) {
 	if err := m.Close(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	_, err := fixture(m).db.Exec("DROP TABLE user_inputs; DROP TABLE session_authorizations; PRAGMA user_version=7")
+	_, err := fixture(m).db.Exec("DROP TABLE user_inputs; DROP TABLE session_authorizations; DROP TABLE context_exclusions; DROP TABLE agent_record_rebuild; PRAGMA user_version=7")
 	if err == nil {
 		err = migrateStore(fixture(m).db)
 	}

@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
-	"strconv"
 	"time"
 
 	"elysian/server/internal/agent/execution"
@@ -70,9 +69,6 @@ func (a *agentExecution) validateProposal(name string, args json.RawMessage) err
 		}
 	}
 	if c.Source == "builtin" {
-		return mcp.Validate(c.Parameters, args)
-	}
-	if c.Source == "wiki" {
 		return mcp.Validate(c.Parameters, args)
 	}
 	if c.Source == toolDiscoverySource {
@@ -289,7 +285,12 @@ func (a *agentExecution) resolveInvocationLocked(ctx, dbCtx context.Context, exe
 	var raw string
 	err := m.store.OperationInvocation(dbCtx, run.ID, originID, index, &raw)
 	if err == nil {
-		err = json.Unmarshal([]byte(raw), o)
+		if err = json.Unmarshal([]byte(raw), o); err != nil {
+			return storageFailure(err)
+		}
+		if err = requireOperationWorkspace(dbCtx, m.store, *o); err != nil {
+			return err
+		}
 	} else if errors.Is(err, sessionstore.ErrNotFound) {
 		err = nil
 		if err = toolTokenBudget(run); err == nil {
@@ -312,10 +313,8 @@ func (a *agentExecution) resolveInvocationLocked(ctx, dbCtx context.Context, exe
 			return storageFailure(readErr)
 		}
 		o.WorkspaceRevision = v.Revision
-		if c.Source == "script" {
-			if err = m.inheritWorkspaceWikiLocked(dbCtx, run, v); err != nil {
-				return err
-			}
+		if err = requireOperationWorkspace(dbCtx, m.store, *o); err != nil {
+			return err
 		}
 		if preparer, ok := m.deps.Catalog.(operationPreparer); ok {
 			if a.run.Snapshot.AuthorizationMode == AuthorizationOnDemand {
@@ -595,9 +594,6 @@ func (a *agentExecution) recordOperationDispatchLocked(ctx, dbCtx context.Contex
 			if err := validateOperationIdentity(dbCtx, tx, *o); err != nil {
 				return err
 			}
-		}
-		if err := recordWikiRunArtifact(dbCtx, tx, *r, "operation", o.ID); err != nil {
-			return err
 		}
 		if r.CancelRequestedAt != "" || r.Status != StateRunning {
 			return context.Canceled
@@ -890,32 +886,7 @@ func (a *agentExecution) settleOperationResult(ctx, dbCtx context.Context, execu
 			if err := commitWorkspaceVersion(dbCtx, tx, *result.r.Workspace); err != nil {
 				return err
 			}
-			refs, e := wikiArtifactRefs(dbCtx, tx, "run", r.ID)
-			if e != nil {
-				return e
-			}
-			baseRefs, e := wikiArtifactRefs(dbCtx, tx, "workspace", r.TaskID+":"+strconv.Itoa(result.r.Workspace.BaseRevision))
-			if e != nil {
-				return e
-			}
-			refs = state.MergeWikiRefs(refs, baseRefs)
-			// 即使派发后来源撤回，也保留文件事实并隔离其来源，不丢弃外部结果。
-			key := r.TaskID + ":" + strconv.Itoa(result.r.Workspace.Revision)
-			if _, e = tx.InsertOperationArtifact(dbCtx, key, r.TaskID, r.ID); e != nil {
-				return e
-			}
-			for _, ref := range refs {
-				if _, e = tx.InsertOperationDependency(dbCtx, key, ref.PageID, ref.Revision, ref.Digest); e != nil {
-					return e
-				}
-			}
-			if invalid, e := wikiArtifactInvalid(dbCtx, tx, "run", r.ID); e != nil {
-				return e
-			} else if invalid {
-				if _, e = tx.InvalidateOperationArtifact(dbCtx, key); e != nil {
-					return e
-				}
-			}
+
 		}
 		if !c.ReadOnly || state.ExternalOperation(o) || result.r.Unknown {
 			if result.r.Unknown {

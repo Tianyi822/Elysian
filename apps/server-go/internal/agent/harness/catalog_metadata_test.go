@@ -12,7 +12,7 @@ import (
 )
 
 func TestCapabilityMetadataDeclaresImplementationBackend(t *testing.T) {
-	for source, backend := range map[string]string{"workspace": "workspace", "script": "container", BashSource: "container", BashExec: "container", BashScript: "container", "mcp-tool": "mcp", "mcp-resource": "mcp", "mcp-prompt": "mcp", "builtin": "domain", "wiki": "store", "skill-load": "store"} {
+	for source, backend := range map[string]string{"workspace": "workspace", "script": "container", BashSource: "container", BashExec: "container", BashScript: "container", "mcp-tool": "mcp", "mcp-resource": "mcp", "mcp-prompt": "mcp", "builtin": "domain", "skill-load": "store"} {
 		metadata := capabilityMetadata(Capability{Name: "fixture", Source: source, ReadOnly: true})
 		if metadata.Version != "1" || metadata.Backend != backend || !metadata.ReadOnly {
 			t.Fatalf("source=%s metadata=%+v", source, metadata)

@@ -41,10 +41,6 @@ func unsettledRun(ctx context.Context, q sessionstore.ReadView, id string) (bool
 	return readView(ctx, q).UnsettledRun(ctx, id)
 }
 
-func saveEmbeddingRequest(ctx context.Context, tx sessionstore.Tx, record EmbeddingRequest) error {
-	return tx.SaveEmbeddingRequest(ctx, record)
-}
-
 func settleOperationProtection(ctx context.Context, tx sessionstore.Tx, id string, ended string, unknown bool) error {
 	return tx.SettleOperationProtection(ctx, id, ended, unknown)
 }
@@ -117,10 +113,6 @@ func readWorkflowScope(ctx context.Context, q sessionstore.ReadView, id string) 
 	return readView(ctx, q).ReadWorkflowScope(ctx, id)
 }
 
-func saveWorkflowWikiArtifact(ctx context.Context, tx sessionstore.Tx, kind string, id string, taskID string, refs []WikiRef) error {
-	return tx.SaveWorkflowWikiArtifact(ctx, kind, id, taskID, refs)
-}
-
 func saveWorkingMemory(ctx context.Context, tx sessionstore.Tx, memory WorkingMemory) error {
 	return tx.SaveWorkingMemory(ctx, memory)
 }
@@ -171,54 +163,6 @@ func cancelUserInputs(ctx context.Context, tx sessionstore.Tx, runID string, end
 
 func saveUserInput(ctx context.Context, tx sessionstore.Tx, q UserInputRequest) error {
 	return tx.SaveUserInput(ctx, q)
-}
-
-func saveWikiArtifact(ctx context.Context, tx sessionstore.Tx, kind string, id string, taskID string, runID string, generation int, refs []WikiRef) error {
-	return tx.SaveWikiArtifact(ctx, kind, id, taskID, runID, generation, refs)
-}
-
-func validateWikiSources(ctx context.Context, q sessionstore.ReadView, refs []WikiRef) error {
-	return readView(ctx, q).ValidateWikiSources(ctx, refs)
-}
-
-func wikiArtifactInvalid(ctx context.Context, q sessionstore.ReadView, kind string, id string) (bool, error) {
-	return readView(ctx, q).WikiArtifactInvalid(ctx, kind, id)
-}
-
-func wikiArtifactRefs(ctx context.Context, q sessionstore.ReadView, kind string, id string) ([]WikiRef, error) {
-	return readView(ctx, q).WikiArtifactRefs(ctx, kind, id)
-}
-
-func wikiGeneration(ctx context.Context, q sessionstore.ReadView, taskID string) (int, error) {
-	return readView(ctx, q).WikiGeneration(ctx, taskID)
-}
-
-func snapshotWikiWorkflow(ctx context.Context, tx sessionstore.Tx, w WorkflowInstance) error {
-	return tx.SnapshotWikiWorkflow(ctx, w)
-}
-
-func snapshotWikiRunSpaces(ctx context.Context, tx sessionstore.Tx, runID string, sessionID string) error {
-	return tx.SnapshotWikiRunSpaces(ctx, runID, sessionID)
-}
-
-func saveWikiJob(ctx context.Context, tx sessionstore.Tx, job WikiJob) error {
-	return tx.SaveWikiJob(ctx, job)
-}
-
-func recordWikiFinal(ctx context.Context, tx sessionstore.Tx, r Run, memory *WorkingMemory) error {
-	return tx.RecordWikiFinal(ctx, r, memory)
-}
-
-func recordWikiRunArtifact(ctx context.Context, tx sessionstore.Tx, r Run, kind string, id string) error {
-	return tx.RecordWikiRunArtifact(ctx, r, kind, id)
-}
-
-func publishWikiPage(ctx context.Context, tx sessionstore.Tx, p *WikiPage, expected int) error {
-	return tx.PublishWikiPage(ctx, p, expected)
-}
-
-func carryWorkspaceWiki(ctx context.Context, tx sessionstore.Tx, version workspace.Version) error {
-	return tx.CarryWorkspaceWiki(ctx, version)
 }
 
 func latestMemory(ctx context.Context, q sessionstore.ReadView, task string) (WorkingMemory, error) {

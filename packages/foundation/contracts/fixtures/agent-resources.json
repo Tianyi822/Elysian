@@ -1,0 +1,82 @@
+{
+  "rule": {
+    "name": "固定数据库写入",
+    "enabled": true,
+    "complete": true,
+    "selector": {
+      "source": "mcp-tool",
+      "ref": {
+        "id": "server-one",
+        "revision": 2
+      },
+      "originalName": "database_update",
+      "catalogDigest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+    },
+    "mappings": [
+      {
+        "kind": "database",
+        "authority": "primary",
+        "access": "write",
+        "pointer": "/database"
+      }
+    ],
+    "id": "rule-one",
+    "revision": 1,
+    "digest": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "createdAt": "2026-10-10T00:00:00Z"
+  },
+  "lease": {
+    "id": "lease-one",
+    "runId": "run-one",
+    "operationId": "operation-one",
+    "scopeId": "scope-one",
+    "state": "unknown",
+    "claims": [
+      {
+        "kind": "database",
+        "authority": "primary",
+        "key": "production",
+        "access": "write"
+      }
+    ],
+    "createdAt": "2026-10-10T00:00:00Z",
+    "evidence": "远端是否停止仍需核验"
+  },
+  "probeLease": {
+    "id": "probe-lease-one",
+    "source": "mcp-probe",
+    "serverId": "server-one",
+    "serverRevision": 2,
+    "containerId": "container-one",
+    "scopeId": "probe-scope-one",
+    "state": "unknown",
+    "claims": [
+      {
+        "kind": "database",
+        "authority": "primary",
+        "key": "production",
+        "access": "write"
+      }
+    ],
+    "createdAt": "2026-10-10T00:00:00Z",
+    "evidence": "需独立核实探测容器已经停止"
+  },
+  "workspaceView": {
+    "version": {
+      "taskId": "task-one",
+      "revision": 2,
+      "baseRevision": 1,
+      "bytes": 5,
+      "fileCount": 1,
+      "digest": "workspace-digest"
+    },
+    "files": [
+      {
+        "path": "notes.txt",
+        "size": 5,
+        "digest": "file-digest"
+      }
+    ],
+    "quarantined": true
+  }
+}

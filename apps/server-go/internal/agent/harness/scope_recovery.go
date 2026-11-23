@@ -288,9 +288,6 @@ func (m *Manager) recoverWorkflowV2(ctx context.Context, w WorkflowInstance, inp
 			if err = saveWorkflowAttempt(ctx, tx, a); err != nil {
 				return err
 			}
-			if err = recordWikiRunArtifact(ctx, tx, run, "workflow-node", node.ID); err != nil {
-				return err
-			}
 			node.Status, node.OutputJSON, node.EndedAt = StateSucceeded, input.OutputJSON, a.EndedAt
 			w.Usage.ResultBytes += len(input.OutputJSON)
 		default:

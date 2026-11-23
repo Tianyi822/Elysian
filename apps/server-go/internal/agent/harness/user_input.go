@@ -179,9 +179,6 @@ func (m *Manager) AnswerUserInput(ctx context.Context, runID, inputID string, in
 		if count >= r.Limits.QueueCapacity {
 			return &Error{Status: 429, Code: "queue-full", Message: "任务队列已满，问题保持待回答"}
 		}
-		if e := m.validateWikiRun(ctx, tx, r.ID); e != nil {
-			return e
-		}
 		var call Call
 		if e := tx.UserInputCall(ctx, q.CallID, r.ID, &raw); e != nil {
 			return e

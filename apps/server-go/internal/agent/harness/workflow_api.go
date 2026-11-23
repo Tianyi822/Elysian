@@ -184,9 +184,6 @@ func (m *Manager) CreateWorkflow(ctx context.Context, input CreateWorkflowInput)
 		if _, err := tx.InsertWorkflow(ctx, w.ID, w.RequestID, canonical, w.SessionID, w.Status, w.ReadyAt, string(b)); err != nil {
 			return err
 		}
-		if err := snapshotWikiWorkflow(ctx, tx, w); err != nil {
-			return err
-		}
 		if state.WorkflowV2(w) {
 			if err := createWorkflowV2Root(ctx, tx, w, d, m.deps.NewID); err != nil {
 				return err
@@ -324,9 +321,6 @@ func (m *Manager) promoteWorkflows(ctx context.Context) error {
 			}
 			b, _ := json.Marshal(run)
 			if _, e = tx.InsertWorkflowRun(ctx, run.ID, run.TaskID, run.Status, run.CreatedAt, string(b), run.SessionID, run.RequestID, input, number, w.ID); e != nil {
-				return e
-			}
-			if e = snapshotWikiRunSpaces(ctx, tx, run.ID, run.SessionID); e != nil {
 				return e
 			}
 			a := WorkflowAttempt{WorkflowID: w.ID, StepID: step.ID, Number: attempt, RunID: run.ID, RunNumber: number, Status: run.Status, InputJSON: input, CreatedAt: run.CreatedAt}

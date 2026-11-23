@@ -54,7 +54,7 @@ func configureLoadingBudget(s *CapabilitySnapshot, run Run, level string) error 
 		if residentCapability(c) {
 			resident += definitionTokens(c)
 		}
-		if c.Source == "builtin" || c.Source == "workspace" || c.Source == "wiki" || isBashSource(c.Source) {
+		if c.Source == "builtin" || c.Source == "workspace" || isBashSource(c.Source) {
 			builtin += definitionTokens(c)
 			eager = append(eager, c.Name)
 		}
