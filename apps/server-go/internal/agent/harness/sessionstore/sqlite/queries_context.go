@@ -145,6 +145,9 @@ func (v *view) TaskHistory(ctx context.Context, taskID string, cursor int64, run
  LEFT JOIN calls c ON c.run_id=e.run_id AND c.id=json_extract(e.document,'$.callId')
  LEFT JOIN model_requests m ON m.run_id=e.run_id AND m.id=json_extract(e.document,'$.data.modelRequestId')
  WHERE r.task_id=? AND COALESCE(json_extract(r.document,'$.supersededByRunId'),'')='' AND e.rowid>?
+ AND NOT EXISTS(SELECT 1 FROM context_exclusions x WHERE
+     (x.kind='run' AND x.id=e.run_id) OR (x.kind='model-request' AND x.id=m.id)
+       OR (x.kind='operation' AND x.id=json_extract(c.document,'$.operationId')))
  AND (?='' OR (e.run_id=? AND e.seq=?)) AND (?='' OR instr(e.document,?)>0 OR instr(c.document,?)>0 OR instr(m.document,?)>0)
  ORDER BY e.rowid LIMIT 21`, taskID, cursor, runID, runID, seq, keyword, keyword, keyword, keyword)
 		if err != nil {
@@ -167,4 +170,17 @@ func (v *view) TaskHistoryInvocationExists(ctx context.Context, runID string, mo
 	return normalizeError("TaskHistoryInvocationExists", v.read(ctx, "TaskHistoryInvocationExists", func(ctx context.Context) error {
 		return v.query(ctx).QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM calls WHERE run_id=? AND json_extract(document,'$.modelRequestId')=? AND json_extract(document,'$.modelCallId')=?)", runID, modelRequestID, modelCallID).Scan(found)
 	}), v.tx != nil)
+}
+
+func (v *view) ContextExcluded(ctx context.Context, kind, id string) (bool, error) {
+	return viewValue(ctx, v, "ContextExcluded", func(ctx context.Context) (bool, error) {
+		var excluded bool
+		err := v.query(ctx).QueryRowContext(ctx, "SELECT EXISTS(SELECT 1 FROM context_exclusions WHERE kind=? AND id=?)", kind, id).Scan(&excluded)
+		return excluded, err
+	})
+}
+
+func (v *transaction) CopyContextExclusion(ctx context.Context, kind, from, to string) error {
+	_, err := v.tx.ExecContext(ctx, "INSERT OR IGNORE INTO context_exclusions(kind,id) SELECT kind,? FROM context_exclusions WHERE kind=? AND id=?", to, kind, from)
+	return normalizeError("CopyContextExclusion", err, true)
 }

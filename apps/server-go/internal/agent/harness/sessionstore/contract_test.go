@@ -34,12 +34,12 @@ func openContractStore(t *testing.T, fault func(string, string) error) (sessions
 func acceptContractRun(t *testing.T, store sessionstore.SessionStore) (sessionstore.Task, sessionstore.Run) {
 	t.Helper()
 	now := contractTime.Format(time.RFC3339Nano)
-	session := sessionstore.Session{ID: "session", CreatedAt: now, LastActivityAt: now, LastSeq: "0", ModelProfileID: "model", ModelRevision: 1, WikiStrategy: "disabled/v1"}
+	session := sessionstore.Session{ID: "session", CreatedAt: now, LastActivityAt: now, LastSeq: "0", ModelProfileID: "model", ModelRevision: 1}
 	if err := store.CreateSession(context.Background(), session); err != nil {
 		t.Fatal(err)
 	}
 	task := sessionstore.Task{ID: "task", SessionID: session.ID, RequestID: "request", Kind: "agent", DriverVersion: "v2", CreatedAt: now, Goal: "验证存储边界"}
-	run := sessionstore.Run{ID: "run", SessionID: session.ID, TaskID: task.ID, RequestID: task.RequestID, DriverVersion: "v2", Status: "queued", CreatedAt: now, LastSeq: "0", Input: task.Goal, BudgetPolicy: "resource-budget/v2", RecoveryPolicy: "evidence-recovery/v2", WikiStrategy: "disabled/v1", Limits: sessionstore.Limits{QueueCapacity: 8}, Model: &model.Profile{ID: "model", Revision: 1}}
+	run := sessionstore.Run{ID: "run", SessionID: session.ID, TaskID: task.ID, RequestID: task.RequestID, DriverVersion: "v2", Status: "queued", CreatedAt: now, LastSeq: "0", Input: task.Goal, BudgetPolicy: "resource-budget/v2", RecoveryPolicy: "evidence-recovery/v2", Limits: sessionstore.Limits{QueueCapacity: 8}, Model: &model.Profile{ID: "model", Revision: 1}}
 	accepted, duplicate, err := store.AcceptAgent(context.Background(), task, run, "canonical", "message", true)
 	if err != nil || duplicate {
 		t.Fatalf("接受请求失败：%+v %t %v", accepted, duplicate, err)

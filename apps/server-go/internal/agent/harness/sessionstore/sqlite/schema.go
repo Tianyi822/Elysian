@@ -13,7 +13,8 @@ import (
 // v8 保存可恢复的用户澄清请求。
 // v9 保存运行时授权，并为独立 MCP 探测补齐独立 JSONL 归属。
 // v10 保存强制删除后的域任务取消清单。
-const schemaVersion = 11
+// v12 retires the knowledge tables and records resumable replica replacements.
+const schemaVersion = 12
 
 const capabilitySchema = `
 CREATE TABLE workspace_cleanup (task_id TEXT PRIMARY KEY);
@@ -95,7 +96,7 @@ func migrateStore(db *sql.DB) error {
 	if version > schemaVersion {
 		return errors.New("运行数据库版本高于当前程序，拒绝降级打开")
 	}
-	if version == schemaVersion {
+	if version >= 11 {
 		return nil
 	}
 	tx, err := db.Begin()
@@ -156,8 +157,12 @@ func migrateStore(db *sql.DB) error {
 			return err
 		}
 	}
-	if _, err = tx.Exec(wikiSchema); err != nil {
-		return err
+	specs := recordSpecs
+	if version != 0 {
+		if _, err = tx.Exec(wikiSchema); err != nil {
+			return err
+		}
+		specs = append(append([]recordSpec(nil), recordSpecs...), retiredWikiRecordSpecs...)
 	}
 	if _, err = tx.Exec(resourceSchema); err != nil {
 		return err
@@ -180,13 +185,13 @@ func migrateStore(db *sql.DB) error {
 			return err
 		}
 		if version >= 6 {
-			if err = migrateProbeRecordOwners(tx); err != nil {
+			if err = migrateProbeRecordOwners(tx, specs); err != nil {
 				return err
 			}
 		}
 	}
 	if version < 6 {
-		if err = migrateRecordOutbox(tx); err != nil {
+		if err = migrateRecordOutbox(tx, specs); err != nil {
 			return err
 		}
 	}
@@ -201,7 +206,7 @@ func migrateStore(db *sql.DB) error {
 		}
 	}
 	if version < 11 {
-		for _, spec := range recordSpecs {
+		for _, spec := range specs {
 			if _, err = tx.Exec("DROP TRIGGER IF EXISTS agent_record_" + spec.table + "_update"); err != nil {
 				return err
 			}
@@ -213,39 +218,17 @@ func migrateStore(db *sql.DB) error {
 		}
 	}
 
+	if version == 0 {
+		if _, err = tx.Exec(retirementSchema + "PRAGMA user_version=12"); err != nil {
+			return err
+		}
+		return tx.Commit()
+	}
 	if _, err = tx.Exec("PRAGMA user_version=11"); err != nil {
 		return err
 	}
 	return tx.Commit()
 }
-
-const wikiSchema = `
-CREATE TABLE IF NOT EXISTS wiki_spaces(id TEXT PRIMARY KEY,name TEXT NOT NULL,kind TEXT NOT NULL,document TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS wiki_space_revisions(id TEXT NOT NULL,revision INTEGER NOT NULL,document TEXT NOT NULL,PRIMARY KEY(id,revision));
-CREATE TABLE IF NOT EXISTS wiki_cleared_sources(run_id TEXT PRIMARY KEY,cleared_at TEXT NOT NULL);
-CREATE UNIQUE INDEX IF NOT EXISTS wiki_global_space ON wiki_spaces(kind) WHERE kind='global';
-CREATE TABLE IF NOT EXISTS wiki_pages(id TEXT PRIMARY KEY,space_id TEXT NOT NULL REFERENCES wiki_spaces(id),slug TEXT NOT NULL,
- current_revision INTEGER NOT NULL,status TEXT NOT NULL,document TEXT NOT NULL,UNIQUE(space_id,slug));
-CREATE TABLE IF NOT EXISTS wiki_page_revisions(page_id TEXT NOT NULL REFERENCES wiki_pages(id),revision INTEGER NOT NULL,
- digest TEXT NOT NULL,document TEXT NOT NULL,PRIMARY KEY(page_id,revision));
-CREATE TABLE IF NOT EXISTS wiki_candidates(id TEXT PRIMARY KEY,space_id TEXT NOT NULL REFERENCES wiki_spaces(id),state TEXT NOT NULL,
- origin_kind TEXT NOT NULL,origin_id TEXT NOT NULL,document TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS wiki_session_spaces(session_id TEXT PRIMARY KEY REFERENCES sessions(id) ON DELETE CASCADE,document TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS wiki_run_spaces(run_id TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,document TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS wiki_visible_pages(owner_kind TEXT NOT NULL,owner_id TEXT NOT NULL,page_id TEXT NOT NULL,revision INTEGER NOT NULL,digest TEXT NOT NULL,PRIMARY KEY(owner_kind,owner_id,page_id));
-CREATE TABLE IF NOT EXISTS wiki_recalls(run_id TEXT PRIMARY KEY REFERENCES runs(id) ON DELETE CASCADE,document TEXT NOT NULL);
-CREATE TABLE IF NOT EXISTS wiki_task_contexts(task_id TEXT PRIMARY KEY REFERENCES tasks(id) ON DELETE CASCADE,generation INTEGER NOT NULL DEFAULT 0);
-CREATE TABLE IF NOT EXISTS wiki_artifacts(kind TEXT NOT NULL,id TEXT NOT NULL,task_id TEXT NOT NULL DEFAULT '',run_id TEXT NOT NULL DEFAULT '',
- generation INTEGER NOT NULL DEFAULT 0,invalidated INTEGER NOT NULL DEFAULT 0,PRIMARY KEY(kind,id));
-CREATE INDEX IF NOT EXISTS wiki_artifacts_task ON wiki_artifacts(task_id,invalidated);
-CREATE TABLE IF NOT EXISTS wiki_dependencies(kind TEXT NOT NULL,id TEXT NOT NULL,page_id TEXT NOT NULL,revision INTEGER NOT NULL,digest TEXT NOT NULL,
- PRIMARY KEY(kind,id,page_id,revision),FOREIGN KEY(kind,id) REFERENCES wiki_artifacts(kind,id) ON DELETE CASCADE);
-CREATE INDEX IF NOT EXISTS wiki_dependencies_page ON wiki_dependencies(page_id,revision);
-CREATE TABLE IF NOT EXISTS wiki_jobs(id TEXT PRIMARY KEY,kind TEXT NOT NULL,origin_kind TEXT NOT NULL,origin_id TEXT NOT NULL,
- state TEXT NOT NULL,document TEXT NOT NULL,input TEXT NOT NULL,UNIQUE(kind,origin_kind,origin_id));
-CREATE INDEX IF NOT EXISTS wiki_jobs_state ON wiki_jobs(state);
-CREATE VIRTUAL TABLE IF NOT EXISTS wiki_fts USING fts5(page_id UNINDEXED,space_id UNINDEXED,title,body,tokenize='unicode61');
-` + embeddingSchema
 
 const workflowSchema = `
 CREATE TABLE workflow_definitions(id TEXT NOT NULL, revision INTEGER NOT NULL, document TEXT NOT NULL, PRIMARY KEY(id,revision));

@@ -6,7 +6,6 @@ import (
 
 // Session 固定用户选择的模型版本；登录 Cookie 不属于会话历史。
 type Session struct {
-	WikiStrategy     string       `json:"wikiStrategy,omitempty"`
 	ActiveWorkflowID string       `json:"activeWorkflowId,omitempty"`
 	ID               string       `json:"id"`
 	Title            string       `json:"title"`
@@ -87,7 +86,6 @@ type Message struct {
 	Origin            string              `json:"origin,omitempty"`
 	ReplacesMessageID string              `json:"replacesMessageId,omitempty"`
 	Quarantined       bool                `json:"quarantined,omitempty"`
-	WikiSources       []WikiRef           `json:"wikiSources,omitempty"`
 	Attachments       []MessageAttachment `json:"attachments,omitempty"`
 	RunConfig         *MessageRunConfig   `json:"runConfig,omitempty"`
 	ID                string              `json:"id"`
@@ -139,7 +137,6 @@ type ModelRequestRecord struct {
 	// Reasoning 是本次请求仍在生成的展示文本，不表示已确认响应。
 	Reasoning       string          `json:"reasoning,omitempty"`
 	Content         string          `json:"content,omitempty"`
-	WikiSources     []WikiRef       `json:"wikiSources,omitempty"`
 	ContextItemIDs  []string        `json:"contextItemIds,omitempty"`
 	ID              string          `json:"id"`
 	RunID           string          `json:"runId"`

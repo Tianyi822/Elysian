@@ -4,7 +4,6 @@ import (
 	"context"
 	"time"
 
-	"elysian/server/internal/agent/harness/model"
 	"elysian/server/internal/agent/harness/state"
 	"elysian/server/internal/agent/harness/workspace"
 	"elysian/server/internal/agent/tools"
@@ -60,25 +59,6 @@ type LoadedToolRecord struct {
 	Document []byte
 }
 
-type WikiAffectedTask struct {
-	TaskID string
-}
-
-type WikiTextMatch struct {
-	PageID string
-}
-
-type WikiEmbeddingMatch struct {
-	PageID   string
-	Revision int
-	Digest   string
-	Vector   string
-}
-
-type WikiSpaceDocument struct {
-	Document string
-}
-
 type WorkspaceCleanupTask struct {
 	TaskID string
 }
@@ -89,7 +69,7 @@ type ReadView interface {
 	SessionReader
 	OperationReader
 	WorkflowReader
-	WikiReader
+	ContextExcluded(ctx context.Context, kind, id string) (bool, error)
 }
 
 // Tx 同时保存运行检查点、会话占用、调用证据和恢复屏障。
@@ -100,7 +80,7 @@ type Tx interface {
 	SessionWriter
 	OperationWriter
 	WorkflowWriter
-	WikiWriter
+	CopyContextExclusion(ctx context.Context, kind, from, to string) error
 }
 
 type RunReader interface {
@@ -272,9 +252,6 @@ type OperationWriter interface {
 	CommitWorkspaceVersion(ctx context.Context, version workspace.Version) error
 	InsertEnvironment(ctx context.Context, id string, revision int, document string) (AffectedRows, error)
 	RevokeCapability(ctx context.Context, kind string, id string, revision int, reason string, now string) (AffectedRows, error)
-	InsertOperationArtifact(ctx context.Context, key string, taskID string, runID string) (AffectedRows, error)
-	InsertOperationDependency(ctx context.Context, key string, pageID string, revision int, digest string) (AffectedRows, error)
-	InvalidateOperationArtifact(ctx context.Context, key string) (AffectedRows, error)
 	InsertContextItem(ctx context.Context, id string, runID string, taskID string, document string) (AffectedRows, error)
 	InsertResourceRule(ctx context.Context, id string, revision int, document string) (AffectedRows, error)
 	EnqueueWorkspaceCleanup(ctx context.Context, taskID string) (AffectedRows, error)
@@ -304,9 +281,6 @@ type WorkflowReader interface {
 	WorkflowRunCount(ctx context.Context, taskID string, count *int) error
 	ChildWorkflowScopes(ctx context.Context, nodeID string) ([]WorkflowScope, error)
 	PriorWorkflowRuns(ctx context.Context, workflowID string, activeRunID string) ([]Run, error)
-	WikiDependentWorkflows(ctx context.Context, pageID string) ([]WorkflowInstance, error)
-	WikiDependentNodes(ctx context.Context, workflowID string, pageID string) ([]WorkflowNodeExecution, error)
-	ActiveWikiWorkflows(ctx context.Context, pageID string) ([]WorkflowInstance, error)
 	WorkflowExists(ctx context.Context, id string, count *int) error
 	WorkflowDefinitionRevision(ctx context.Context, id string, count *int) error
 	WorkflowRequest(ctx context.Context, requestID string, document *string, document2 *string) error
@@ -333,8 +307,6 @@ type WorkflowWriter interface {
 	CreateWorkflowV2Scope(ctx context.Context, scope WorkflowScope, newID func() string) error
 	SaveWorkflowNode(ctx context.Context, node *WorkflowNodeExecution) error
 	SaveWorkflowScope(ctx context.Context, scope WorkflowScope) error
-	SaveWorkflowWikiArtifact(ctx context.Context, kind string, id string, taskID string, refs []WikiRef) error
-	SnapshotWikiWorkflow(ctx context.Context, w WorkflowInstance) error
 	ReleaseWorkflowSession(ctx context.Context, w WorkflowInstance) error
 	FailWorkflowActiveBudget(ctx context.Context, w *WorkflowInstance, current *Run) error
 	SyncWorkflowRun(ctx context.Context, r *Run) error
@@ -357,64 +329,6 @@ type WorkflowWriter interface {
 	InsertWorkflow(ctx context.Context, workflowID string, requestID string, canonical string, sessionID string, status string, readyAt string, document string) (AffectedRows, error)
 }
 
-type WikiReader interface {
-	ValidateWikiRun(context.Context, string) error
-	ValidateWikiSources(ctx context.Context, refs []WikiRef) error
-	WikiArtifactInvalid(ctx context.Context, kind string, id string) (bool, error)
-	WikiArtifactRefs(ctx context.Context, kind string, id string) ([]WikiRef, error)
-	WikiGeneration(ctx context.Context, taskID string) (int, error)
-	ListWikiPages(context.Context, string, bool) ([]WikiPage, error)
-	ListWikiCandidates(context.Context, string, string) ([]WikiCandidate, error)
-	EmbeddingRequests(context.Context, int64, int) (Page[EmbeddingRequest], error)
-	PendingEmbeddingRequests(ctx context.Context) ([]EmbeddingRequest, error)
-	WikiRecallRecord(ctx context.Context, runID string, document *string) error
-	RunWikiSelection(ctx context.Context, runID string, document *string) error
-	RunWikiPages(ctx context.Context, runID string) ([]WikiPage, error)
-	WikiAffectedTasks(ctx context.Context, pageID string) ([]WikiAffectedTask, error)
-	WikiAffectedRuns(ctx context.Context, pageID string) ([]Run, error)
-	InvalidWikiRuns(ctx context.Context) ([]Run, error)
-	WikiTextMatches(ctx context.Context, value string, spaceID string) ([]WikiTextMatch, error)
-	WikiEmbeddingMatches(ctx context.Context, id string, revision int) ([]WikiEmbeddingMatch, error)
-	RecoverableWikiJobs(ctx context.Context) ([]StoredWikiJob, error)
-	WikiDirectory(ctx context.Context, space string, value int, offset int64) ([]WikiPage, error)
-	WikiPageRevisions(ctx context.Context, space string, id string) ([]WikiPage, error)
-	WikiVisiblePages(ctx context.Context, runID string) ([]WikiPage, error)
-	WikiSourcesCleared(ctx context.Context, runID string, count *int) error
-	WikiSessionSelection(ctx context.Context, id string, document *string) error
-	WikiPageRevision(ctx context.Context, space string, id string, revision int, document *string) error
-	WikiSpaceRecord(ctx context.Context, id string, document *string) error
-	WikiSpaces(ctx context.Context) ([]WikiSpaceDocument, error)
-	WikiSpaceCount(ctx context.Context, count *int) error
-	DefaultWikiSpace(ctx context.Context, document *string) error
-	WikiPageRecord(ctx context.Context, id string, document *string) error
-	WikiRevisionDigest(ctx context.Context, pageID string, revision int, document *string) error
-	WikiExportPages(ctx context.Context, id string) ([]WikiPage, error)
-	WikiCandidateRecord(ctx context.Context, id string, document *string) error
-	WikiPageBySlug(ctx context.Context, pageID string, spaceID string, document *string) error
-}
-
-type WikiWriter interface {
-	SaveEmbeddingRequest(ctx context.Context, record EmbeddingRequest) error
-	SaveWikiArtifact(ctx context.Context, kind string, id string, taskID string, runID string, generation int, refs []WikiRef) error
-	SnapshotWikiRunSpaces(ctx context.Context, runID string, sessionID string) error
-	SaveWikiJob(ctx context.Context, job WikiJob) error
-	RecordWikiFinal(ctx context.Context, r Run, memory *WorkingMemory) error
-	RecordWikiRunArtifact(ctx context.Context, r Run, kind string, id string) error
-	PublishWikiPage(ctx context.Context, p *WikiPage, expected int) error
-	CarryWorkspaceWiki(ctx context.Context, version workspace.Version) error
-	FinishEmbeddingRequest(ctx context.Context, now string) (AffectedRows, error)
-	SaveWikiRecall(ctx context.Context, runID string, document string) (AffectedRows, error)
-	InvalidateWikiArtifacts(ctx context.Context, pageID string, value string) (AffectedRows, error)
-	AdvanceWikiGeneration(ctx context.Context, taskID string) (AffectedRows, error)
-	RetireInvalidWikiCandidates(ctx context.Context) (AffectedRows, error)
-	InsertWikiSpaceRevision(ctx context.Context, id string, revision int, raw string) (AffectedRows, error)
-	UpdateWikiSpace(ctx context.Context, name string, document string, id string) (AffectedRows, error)
-	InsertWikiSpace(ctx context.Context, id string, name string, kind string, raw string) (AffectedRows, error)
-	SaveWikiSessionSelection(ctx context.Context, sessionID string, raw string) (AffectedRows, error)
-	InsertWikiCandidate(ctx context.Context, id string, spaceID string, status string, originKind string, originID string, raw string) (AffectedRows, error)
-	UpdateWikiCandidate(ctx context.Context, status string, doc string, id string) (AffectedRows, error)
-}
-
 // Commands 提供完整的持久化动作；接收请求时原子核对 requestId、canonical 输入、
 // 目标会话和任务。相同输入返回原 Run，变参或更换目标返回冲突，均不重复追加消息。
 type Commands interface {
@@ -426,9 +340,4 @@ type Commands interface {
 	CreateSession(ctx context.Context, session Session) error
 	Recover(ctx context.Context, freezeContinuous bool) error
 	Create(ctx context.Context, t Task, r Run, input string) error
-}
-
-type StoredWikiJob struct {
-	WikiJob
-	Response *model.Response `json:"response,omitempty"`
 }

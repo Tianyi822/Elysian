@@ -503,16 +503,9 @@ func (s *store) finishWorkflowV2Run(ctx context.Context, tx *sql.Tx, r *Run) err
 	if err = saveWorkflowAttempt(ctx, tx, a); err != nil {
 		return err
 	}
-	invalidSource, err := recordWorkflowV2RunOutput(ctx, tx, *r, node)
-	if err != nil {
-		return err
-	}
 	node.OutputJSON, node.EndedAt, node.Status = output, r.EndedAt, StateSucceeded
 	if err = saveWorkflowNode(ctx, tx, &node); err != nil {
 		return err
-	}
-	if invalidSource {
-		return s.failWorkflowV2Node(ctx, tx, &w, &node, &Failure{Code: "wiki-context-invalidated", Message: "已完成结果的来源已撤回，保留事实但停止后续推进"})
 	}
 	if !state.Terminal(w.Status) {
 		if err = s.advanceWorkflowV2Scope(ctx, tx, &w, &scope, node, step, r.WorkflowNext); err != nil {
@@ -537,17 +530,6 @@ func (s *store) advanceWorkflowV2Scope(ctx context.Context, tx *sql.Tx, w *Workf
 		}
 		if err != nil {
 			return s.failWorkflowV2Node(ctx, tx, w, &node, &Failure{Code: "workflow-output", Message: "作用域最终输出不符合固定契约"})
-		}
-		refs, err := workflowScopeWikiSources(ctx, tx, *scope)
-		if err == nil {
-			err = saveWorkflowWikiArtifact(ctx, tx, "workflow-scope", scope.ID, scope.TaskID, refs)
-		}
-		if err != nil {
-			var issue *Error
-			if errors.As(err, &issue) {
-				return s.failWorkflowV2Node(ctx, tx, w, &node, &Failure{Code: issue.Code, Message: issue.Message})
-			}
-			return err
 		}
 		scope.OutputJSON, scope.Status, scope.EndedAt = output, StateSucceeded, stamp(s.now())
 		pending, err := readDocuments[WorkflowNodeExecution](ctx, tx, "SELECT document FROM workflow_nodes WHERE scope_id=? AND state='pending'", scope.ID)
@@ -780,93 +762,8 @@ func (s *store) failWorkflowV2Budget(ctx context.Context, tx *sql.Tx, w *Workflo
 	return s.releaseWorkflowSession(ctx, tx, *w)
 }
 
-func saveWorkflowWikiArtifact(ctx context.Context, tx *sql.Tx, kind, id, taskID string, refs []WikiRef) error {
-	generation, err := wikiGeneration(ctx, tx, taskID)
-	if err != nil {
-		return err
-	}
-	return saveWikiArtifact(ctx, tx, kind, id, taskID, "", generation, refs)
-}
-
 // Completed execution facts are retained even if withdrawal races with result
 // delivery. They are marked invalid and cannot become a subsequent input.
-func recordWorkflowV2RunOutput(ctx context.Context, tx *sql.Tx, run Run, node WorkflowNodeExecution) (bool, error) {
-	refs, err := wikiArtifactRefs(ctx, tx, "run", run.ID)
-	if err != nil {
-		return false, err
-	}
-	invalid, err := wikiArtifactInvalid(ctx, tx, "run", run.ID)
-	if err != nil {
-		return false, err
-	}
-	if !invalid {
-		if err = validateWikiRun(ctx, tx, run.ID); err != nil {
-			if _, ok := err.(*Error); !ok {
-				return false, err
-			}
-			invalid = true
-		}
-	}
-	if !invalid {
-		return false, recordWikiRunArtifact(ctx, tx, run, "workflow-node", node.ID)
-	}
-	if _, err = tx.ExecContext(ctx, `INSERT INTO wiki_artifacts(kind,id,task_id,run_id,invalidated) VALUES('workflow-node',?,?,?,1) ON CONFLICT(kind,id) DO UPDATE SET invalidated=1`, node.ID, node.TaskID, run.ID); err != nil {
-		return false, err
-	}
-	for _, ref := range refs {
-		if _, err = tx.ExecContext(ctx, "INSERT OR IGNORE INTO wiki_dependencies(kind,id,page_id,revision,digest) VALUES('workflow-node',?,?,?,?)", node.ID, ref.PageID, ref.Revision, ref.Digest); err != nil {
-			return false, err
-		}
-	}
-	return true, nil
-}
-
-type workflowWikiArtifact struct{ kind, id string }
-
-func workflowWikiSources(ctx context.Context, q wikiQuery, artifacts []workflowWikiArtifact) ([]WikiRef, error) {
-	refs := []WikiRef{}
-	for _, artifact := range artifacts {
-		invalid, err := wikiArtifactInvalid(ctx, q, artifact.kind, artifact.id)
-		if err != nil {
-			return nil, err
-		}
-		if invalid {
-			return nil, &Error{Status: 409, Code: "wiki-context-invalidated", Message: "工作流输入、工作记忆、文件或前序结果引用的 Wiki 来源已撤回"}
-		}
-		inherited, err := wikiArtifactRefs(ctx, q, artifact.kind, artifact.id)
-		if err != nil {
-			return nil, err
-		}
-		refs = state.MergeWikiRefs(refs, inherited)
-	}
-	return refs, validateWikiSources(ctx, q, refs)
-}
-
-func workflowScopeWikiSources(ctx context.Context, q workflowTreeQuery, scope WorkflowScope) ([]WikiRef, error) {
-	artifacts := []workflowWikiArtifact{{"workflow-scope", scope.ID}}
-	nodes, err := readDocuments[WorkflowNodeExecution](ctx, q, "SELECT document FROM workflow_nodes WHERE scope_id=? AND state='succeeded' ORDER BY rowid", scope.ID)
-	if err != nil {
-		return nil, err
-	}
-	for _, node := range nodes {
-		artifacts = append(artifacts, workflowWikiArtifact{"workflow-node", node.ID})
-	}
-	memory, err := latestMemory(ctx, q, scope.TaskID)
-	if err != nil {
-		return nil, err
-	}
-	if memory.Revision > 0 {
-		artifacts = append(artifacts, workflowWikiArtifact{"memory", scope.TaskID + ":" + strconv.Itoa(memory.Revision)})
-	}
-	version, err := readWorkspaceVersion(ctx, q, scope.TaskID)
-	if err != nil {
-		return nil, err
-	}
-	if version.Revision > 0 {
-		artifacts = append(artifacts, workflowWikiArtifact{"workspace", scope.TaskID + ":" + strconv.Itoa(version.Revision)})
-	}
-	return workflowWikiSources(ctx, q, artifacts)
-}
 
 func latestMemory(ctx context.Context, q workflowQuery, task string) (WorkingMemory, error) {
 	var v WorkingMemory

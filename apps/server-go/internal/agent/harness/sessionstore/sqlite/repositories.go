@@ -66,11 +66,6 @@ func (v *view) UnsettledRun(ctx context.Context, id string) (bool, error) {
 	return viewValue(ctx, v, "UnsettledRun", func(ctx context.Context) (bool, error) { return unsettledRun(ctx, v.query(ctx), id) })
 }
 
-func (v *transaction) SaveEmbeddingRequest(ctx context.Context, record EmbeddingRequest) error {
-	err := saveEmbeddingRequest(ctx, v.tx, record)
-	return normalizeError("SaveEmbeddingRequest", err, true)
-}
-
 func (v *transaction) ReplaceLastMessage(ctx context.Context, task *Task, run *Run, replacement *Message) error {
 	err := v.store.replaceLastMessage(ctx, v.tx, task, run, replacement)
 	return normalizeError("ReplaceLastMessage", err, true)
@@ -212,11 +207,6 @@ func (v *view) ReadWorkflowNode(ctx context.Context, id string) (WorkflowNodeExe
 
 func (v *view) ReadWorkflowScope(ctx context.Context, id string) (WorkflowScope, error) {
 	return viewValue(ctx, v, "ReadWorkflowScope", func(ctx context.Context) (WorkflowScope, error) { return readWorkflowScope(ctx, v.query(ctx), id) })
-}
-
-func (v *transaction) SaveWorkflowWikiArtifact(ctx context.Context, kind string, id string, taskID string, refs []WikiRef) error {
-	err := saveWorkflowWikiArtifact(ctx, v.tx, kind, id, taskID, refs)
-	return normalizeError("SaveWorkflowWikiArtifact", err, true)
 }
 
 func (v *view) SessionsByActivity(ctx context.Context, cursorRaw string, n int) (Page[Session], error) {
@@ -413,67 +403,6 @@ func (v *transaction) SaveUserInput(ctx context.Context, q UserInputRequest) err
 	return normalizeError("SaveUserInput", err, true)
 }
 
-func (v *transaction) SaveWikiArtifact(ctx context.Context, kind string, id string, taskID string, runID string, generation int, refs []WikiRef) error {
-	err := saveWikiArtifact(ctx, v.tx, kind, id, taskID, runID, generation, refs)
-	return normalizeError("SaveWikiArtifact", err, true)
-}
-
-func (v *view) ValidateWikiSources(ctx context.Context, refs []WikiRef) error {
-	err := v.read(ctx, "ValidateWikiSources", func(ctx context.Context) error {
-		var readErr error
-		readErr = validateWikiSources(ctx, v.query(ctx), refs)
-		return readErr
-	})
-	return normalizeError("ValidateWikiSources", err, v.tx != nil)
-}
-
-func (v *view) WikiArtifactInvalid(ctx context.Context, kind string, id string) (bool, error) {
-	return viewValue(ctx, v, "WikiArtifactInvalid", func(ctx context.Context) (bool, error) { return wikiArtifactInvalid(ctx, v.query(ctx), kind, id) })
-}
-
-func (v *view) WikiArtifactRefs(ctx context.Context, kind string, id string) ([]WikiRef, error) {
-	return viewValue(ctx, v, "WikiArtifactRefs", func(ctx context.Context) ([]WikiRef, error) { return wikiArtifactRefs(ctx, v.query(ctx), kind, id) })
-}
-
-func (v *view) WikiGeneration(ctx context.Context, taskID string) (int, error) {
-	return viewValue(ctx, v, "WikiGeneration", func(ctx context.Context) (int, error) { return wikiGeneration(ctx, v.query(ctx), taskID) })
-}
-
-func (v *transaction) SnapshotWikiWorkflow(ctx context.Context, w WorkflowInstance) error {
-	err := snapshotWikiWorkflow(ctx, v.tx, w)
-	return normalizeError("SnapshotWikiWorkflow", err, true)
-}
-
-func (v *transaction) SnapshotWikiRunSpaces(ctx context.Context, runID string, sessionID string) error {
-	err := snapshotWikiRunSpaces(ctx, v.tx, runID, sessionID)
-	return normalizeError("SnapshotWikiRunSpaces", err, true)
-}
-
-func (v *transaction) SaveWikiJob(ctx context.Context, job WikiJob) error {
-	err := saveWikiJob(ctx, v.tx, job)
-	return normalizeError("SaveWikiJob", err, true)
-}
-
-func (v *transaction) RecordWikiFinal(ctx context.Context, r Run, memory *WorkingMemory) error {
-	err := recordWikiFinal(ctx, v.tx, r, memory)
-	return normalizeError("RecordWikiFinal", err, true)
-}
-
-func (v *transaction) RecordWikiRunArtifact(ctx context.Context, r Run, kind string, id string) error {
-	err := recordWikiRunArtifact(ctx, v.tx, r, kind, id)
-	return normalizeError("RecordWikiRunArtifact", err, true)
-}
-
-func (v *transaction) PublishWikiPage(ctx context.Context, p *WikiPage, expected int) error {
-	err := publishWikiPage(ctx, v.tx, p, expected)
-	return normalizeError("PublishWikiPage", err, true)
-}
-
-func (v *transaction) CarryWorkspaceWiki(ctx context.Context, version workspace.Version) error {
-	err := carryWorkspaceWiki(ctx, v.tx, version)
-	return normalizeError("CarryWorkspaceWiki", err, true)
-}
-
 func (v *transaction) ReleaseWorkflowSession(ctx context.Context, w WorkflowInstance) error {
 	err := v.store.releaseWorkflowSession(ctx, v.tx, w)
 	return normalizeError("ReleaseWorkflowSession", err, true)
@@ -552,15 +481,6 @@ func (v *view) ReadWorkspaceVersion(ctx context.Context, taskID string) (workspa
 	return viewValue(ctx, v, "ReadWorkspaceVersion", func(ctx context.Context) (workspace.Version, error) {
 		return readWorkspaceVersion(ctx, v.query(ctx), taskID)
 	})
-}
-
-func (v *view) ValidateWikiRun(ctx context.Context, id string) error {
-	err := v.read(ctx, "ValidateWikiRun", func(ctx context.Context) error {
-		var readErr error
-		readErr = validateWikiRun(ctx, v.query(ctx), id)
-		return readErr
-	})
-	return normalizeError("ValidateWikiRun", err, v.tx != nil)
 }
 
 func (v *Store) Sweep(ctx context.Context, days int) error {

@@ -14,8 +14,6 @@ type WorkflowBody = state.WorkflowBody
 
 type WorkflowOutputBinding = state.WorkflowOutputBinding
 
-type EmbeddingProfile = state.EmbeddingProfile
-type EmbeddingProfileInput = state.EmbeddingProfileInput
 type WorkflowSubworkflow = state.WorkflowSubworkflow
 type WorkflowCondition = state.WorkflowCondition
 type WorkflowParallel = state.WorkflowParallel
@@ -47,13 +45,6 @@ type ResourceSelector = state.ResourceSelector
 type ResourceMapping = state.ResourceMapping
 type ResourceRuleInput = state.ResourceRuleInput
 type ToolInventory = state.ToolInventory
-type WikiPageInput = state.WikiPageInput
-type WikiCandidate = state.WikiCandidate
-type WikiSearchHit = state.WikiSearchHit
-type WikiSearchResult = state.WikiSearchResult
-type WikiCheck = state.WikiCheck
-type WikiExport = state.WikiExport
-type WikiExtractionInput = state.WikiExtractionInput
 type AttachmentRecord = state.AttachmentRecord
 type WorkflowExecutionTree = state.WorkflowExecutionTree
 type WorkflowLimits = state.WorkflowLimits
@@ -112,18 +103,6 @@ CREATE INDEX IF NOT EXISTS resource_leases_run ON resource_leases(run_id);
 `
 
 type ResourceClaim = state.ResourceClaim
-
-const wikiPageLimit = 10000
-
-type WikiSpace = state.WikiSpace
-
-type WikiRef = state.WikiRef
-
-type WikiEvidence = state.WikiEvidence
-
-type WikiPage = state.WikiPage
-
-type WikiJob = state.WikiJob
 
 type WorkflowScope = state.WorkflowScope
 

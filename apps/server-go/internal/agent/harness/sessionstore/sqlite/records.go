@@ -85,14 +85,6 @@ var recordSpecs = []recordSpec{
 	{"workflow_recoveries", "ROW.workflow_id || ':' || ROW.request_id", "(SELECT session_id FROM workflow_instances WHERE id=ROW.workflow_id)", "''"},
 	{"workflow_scopes", "ROW.id", "(SELECT session_id FROM workflow_instances WHERE id=ROW.workflow_id)", "''"},
 	{"workflow_nodes", "ROW.id", "(SELECT session_id FROM workflow_instances WHERE id=ROW.workflow_id)", "''"},
-	{"wiki_session_spaces", "ROW.session_id", "ROW.session_id", "''"},
-	{"wiki_run_spaces", "ROW.run_id", "(SELECT session_id FROM runs WHERE id=ROW.run_id)", "ROW.run_id"},
-	{"wiki_recalls", "ROW.run_id", "(SELECT session_id FROM runs WHERE id=ROW.run_id)", "ROW.run_id"},
-	{"wiki_task_contexts", "ROW.task_id", "(SELECT session_id FROM tasks WHERE id=ROW.task_id)", "''"},
-	{"wiki_visible_pages", "ROW.owner_kind || ':' || ROW.owner_id || ':' || ROW.page_id", "CASE WHEN ROW.owner_kind='workflow' THEN (SELECT session_id FROM workflow_instances WHERE id=ROW.owner_id) ELSE (SELECT session_id FROM runs WHERE id=ROW.owner_id) END", "CASE WHEN ROW.owner_kind='run' THEN ROW.owner_id ELSE '' END"},
-	{"wiki_artifacts", "ROW.kind || ':' || ROW.id", "COALESCE((SELECT session_id FROM tasks WHERE id=ROW.task_id),(SELECT session_id FROM runs WHERE id=ROW.run_id))", "ROW.run_id"},
-	{"wiki_dependencies", "ROW.kind || ':' || ROW.id || ':' || ROW.page_id || ':' || ROW.revision", "(SELECT t.session_id FROM wiki_artifacts a JOIN tasks t ON t.id=a.task_id WHERE a.kind=ROW.kind AND a.id=ROW.id)", "(SELECT run_id FROM wiki_artifacts WHERE kind=ROW.kind AND id=ROW.id)"},
-	{"wiki_jobs", "ROW.id", "(SELECT session_id FROM tasks WHERE id=json_extract(ROW.document,'$.taskId'))", "COALESCE(json_extract(ROW.document,'$.runId'),'')"},
 }
 
 func recordExpr(expr, row string) string { return strings.ReplaceAll(expr, "ROW", row) }
@@ -130,11 +122,11 @@ func recordInsertSQL(spec recordSpec, row, action, from string) string {
  OR (COALESCE(%s,'')='' AND EXISTS(SELECT 1 FROM runs WHERE id=%s AND session_id='')) OR (%s)`, probe, session, probe, key, session, session, run, spec.table, key, action, recordDocument(spec.table, row), from, session, session, session, run, probe)
 }
 
-func migrateRecordOutbox(tx *sql.Tx) error {
+func migrateRecordOutbox(tx *sql.Tx, specs []recordSpec) error {
 	if _, err := tx.Exec(recordSchema); err != nil {
 		return err
 	}
-	for _, spec := range recordSpecs {
+	for _, spec := range specs {
 		// Existing v5 rows are current-state snapshots, not invented history.
 		if _, err := tx.Exec(recordInsertSQL(spec, "x", "snapshot", "FROM "+spec.table+" AS x") + " ORDER BY x.rowid"); err != nil {
 			return fmt.Errorf("记录旧 %s 状态快照失败：%w", spec.table, err)
@@ -162,12 +154,12 @@ func installBatchTaskRecordTrigger(tx *sql.Tx) error {
 // v9 widens the outbox owner CHECK without modifying existing sequences or
 // documents. JSONL bytes and watermarks remain valid; only previously omitted
 // standalone probe leases receive current-state snapshots.
-func migrateProbeRecordOwners(tx *sql.Tx) error {
+func migrateProbeRecordOwners(tx *sql.Tx, specs []recordSpec) error {
 	var previousSequence int64
 	if err := tx.QueryRow("SELECT COALESCE(MAX(seq),0) FROM sqlite_sequence WHERE name='agent_record_outbox'").Scan(&previousSequence); err != nil {
 		return err
 	}
-	for _, spec := range recordSpecs {
+	for _, spec := range specs {
 		for _, action := range []string{"insert", "update"} {
 			if _, err := tx.Exec("DROP TRIGGER IF EXISTS agent_record_" + spec.table + "_" + action); err != nil {
 				return err
@@ -192,7 +184,7 @@ CREATE TRIGGER agent_record_mark_dirty AFTER INSERT ON agent_record_outbox BEGIN
 END;`); err != nil {
 		return err
 	}
-	for _, spec := range recordSpecs {
+	for _, spec := range specs {
 		if err := installRecordTriggers(tx, spec); err != nil {
 			return err
 		}
@@ -460,20 +452,10 @@ func (s *store) reconcileRecordOwner(owner recordOwner, verifyAll bool) error {
 			break
 		}
 		for _, entry := range batch {
-			line, sequence, raw := entry.line, entry.sequence, entry.raw
-			encoded, err := json.Marshal(json.RawMessage(raw))
+			b, err := encodeRecord(owner, entry)
 			if err != nil {
 				return err
 			}
-			line.Version, line.Owner, line.OwnerID, line.Document = 1, owner.kind, owner.id, encoded
-			line.Sequence = strconv.FormatInt(sequence, 10)
-			digest := sha256.Sum256(encoded)
-			line.Digest = hex.EncodeToString(digest[:])
-			b, err := json.Marshal(line)
-			if err != nil {
-				return err
-			}
-			b = append(b, '\n')
 			if !appending {
 				actual := make([]byte, len(b))
 				n, readErr := io.ReadFull(reader, actual)
@@ -504,7 +486,7 @@ func (s *store) reconcileRecordOwner(owner recordOwner, verifyAll bool) error {
 				}
 				offset += int64(len(b))
 			}
-			lastSeq = sequence
+			lastSeq = entry.sequence
 		}
 	}
 	if !appending {
@@ -614,4 +596,21 @@ func (s *store) recordBatch(owner recordOwner, after int64) ([]recordEntry, erro
 		size += len(e.raw)
 	}
 	return batch, rows.Err()
+}
+
+func encodeRecord(owner recordOwner, entry recordEntry) ([]byte, error) {
+	encoded, err := json.Marshal(json.RawMessage(entry.raw))
+	if err != nil {
+		return nil, err
+	}
+	line := entry.line
+	line.Version, line.Owner, line.OwnerID, line.Document = 1, owner.kind, owner.id, encoded
+	line.Sequence = strconv.FormatInt(entry.sequence, 10)
+	digest := sha256.Sum256(encoded)
+	line.Digest = hex.EncodeToString(digest[:])
+	b, err := json.Marshal(line)
+	if err != nil {
+		return nil, err
+	}
+	return append(b, '\n'), nil
 }

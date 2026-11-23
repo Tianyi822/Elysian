@@ -11,7 +11,6 @@ import (
 	"os"
 	"path/filepath"
 	"strconv"
-	"strings"
 	"testing"
 	"time"
 )
@@ -149,7 +148,7 @@ func TestAgentRecordsTransactionalMessagesAndFacts(t *testing.T) {
 	for _, line := range lines {
 		seen[line.Type] = true
 	}
-	for _, kind := range []string{"sessions", "tasks", "runs", "run_events", "messages", "calls", "model_requests", "operations", "approvals", "execution_barriers", "wiki_run_spaces"} {
+	for _, kind := range []string{"sessions", "tasks", "runs", "run_events", "messages", "calls", "model_requests", "operations", "approvals", "execution_barriers"} {
 		if !seen[kind] {
 			t.Errorf("missing persisted fact %s", kind)
 		}
@@ -359,21 +358,5 @@ func TestAgentRecordsRetentionAndCleanupRecovery(t *testing.T) {
 	}
 	if runtimeStoreCount(t, reopened, "agent_record_cleanup") != 0 {
 		t.Fatal("record cleanup did not finish")
-	}
-}
-
-func TestAgentRecordsDoNotReviveDeletedWikiOwners(t *testing.T) {
-	s, _ := openRuntimeTestStore(t)
-	if err := s.write(context.Background(), "orphan-wiki-job", func(tx *sql.Tx) error {
-		_, err := tx.Exec(`INSERT INTO wiki_jobs VALUES('job','extraction','run','deleted-run','interrupted',?, '')`, `{"id":"job","runId":"deleted-run","taskId":"deleted-task"}`)
-		return err
-	}); err != nil {
-		t.Fatal(err)
-	}
-	if count := runtimeStoreCount(t, s, "agent_record_outbox"); count != 0 {
-		t.Fatalf("orphan wiki recovery recreated records for an expired owner: %d", count)
-	}
-	if strings.Contains(filepath.Base(s.recordsRoot), "sqlite") {
-		t.Fatal("record directory must be separate from the database file")
 	}
 }

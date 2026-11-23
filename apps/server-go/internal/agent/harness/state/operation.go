@@ -552,7 +552,6 @@ var DomainBoundaries = map[string]string{
 	"skill-load":    "已选技能的资料加载",
 	"mcp-tool":      "已接入 MCP 工具的搜索与调用",
 	"mcp-resource":  "MCP 资源读取",
-	"wiki":          "知识库页面检索",
 	"script":        "技能脚本执行（非只读）",
 	"bash":          "受控命令执行（非只读）",
 }

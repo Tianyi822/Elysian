@@ -59,7 +59,6 @@ type Run struct {
 	BudgetPolicy     string            `json:"budgetPolicy,omitempty"`
 	BudgetStop       *BudgetStop       `json:"budgetStop,omitempty"`
 	Continuation     *Continuation     `json:"continuation,omitempty"` // 只读投影，不作为持久授权。
-	WikiStrategy     string            `json:"wikiStrategy,omitempty"`
 	Plan             *RunPlan          `json:"plan,omitempty"`
 
 	SupersededByRunID        string `json:"supersededByRunId,omitempty"`

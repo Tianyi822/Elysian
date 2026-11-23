@@ -339,7 +339,7 @@ func ExternalOperation(o Operation) bool {
 	// the same parent transaction, so they do not represent an external system
 	// side effect. A workspace write still gets a barrier from ReadOnly=false;
 	// reads must not become unknown external operations on cancellation.
-	return o.Capability.Source != "builtin" && o.Capability.Source != "skill-load" && o.Capability.Source != "wiki" && o.Capability.Source != "workspace" && o.Capability.Source != toolDiscoverySource
+	return o.Capability.Source != "builtin" && o.Capability.Source != "skill-load" && o.Capability.Source != "workspace" && o.Capability.Source != toolDiscoverySource
 }
 
 func ResourceWaitConflict(o Operation, lease ResourceLease) (string, bool) {

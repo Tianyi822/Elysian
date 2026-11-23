@@ -65,19 +65,8 @@ func saveSession(ctx context.Context, tx *sql.Tx, session Session) error {
 
 func (s *store) createSession(ctx context.Context, session Session) error {
 	return s.write(ctx, "create-session", func(tx *sql.Tx) error {
-		if err := saveSession(ctx, tx, session); err != nil {
-			return err
-		}
-		if session.WikiStrategy != wikiNavigationStrategy {
-			return nil
-		}
-		space, err := ensureGlobalWikiSpace(ctx, tx, stamp(s.now()))
-		if err != nil {
-			return err
-		}
-		raw, _ := json.Marshal(WikiSpaceSelection{SpaceID: space.ID})
-		_, err = tx.ExecContext(ctx, "INSERT INTO wiki_session_spaces(session_id,document) VALUES(?,?)", session.ID, string(raw))
-		return err
+		return saveSession(ctx, tx, session)
+
 	})
 }
 
@@ -239,11 +228,6 @@ func (s *store) acceptAgent(ctx context.Context, task Task, run Run, canonical, 
 		if _, err = tx.ExecContext(ctx, "INSERT INTO runs(id,task_id,state,created_at,document,session_id,request_id,canonical_input,run_number) VALUES(?,?,?,?,?,?,?,?,?)", run.ID, task.ID, run.Status, run.CreatedAt, string(raw), session.ID, run.RequestID, canonical, run.RunNumber); err != nil {
 			return err
 		}
-		if run.WikiStrategy != wikiDisabledStrategy {
-			if err = snapshotWikiRunSpaces(ctx, tx, run.ID, session.ID); err != nil {
-				return err
-			}
-		}
 		session.ActiveRunID, session.Notices = run.ID, nil
 		if err = saveSession(ctx, tx, session); err != nil {
 			return err
@@ -364,12 +348,6 @@ func (s *store) deleteSessionRows(ctx context.Context, tx *sql.Tx, id string) er
 	if err := purgeRecordOwner(ctx, tx, recordOwner{kind: "session", id: id}); err != nil {
 		return err
 	}
-	if _, err := tx.ExecContext(ctx, "INSERT OR IGNORE INTO wiki_cleared_sources(run_id,cleared_at) SELECT id,? FROM runs WHERE session_id=?", stamp(s.now()), id); err != nil {
-		return err
-	}
-	if _, err := tx.ExecContext(ctx, "DELETE FROM wiki_visible_pages WHERE (owner_kind='run' AND owner_id IN (SELECT id FROM runs WHERE session_id=?)) OR (owner_kind='workflow' AND owner_id IN (SELECT id FROM workflow_instances WHERE session_id=?))", id, id); err != nil {
-		return err
-	}
 	if _, err := tx.ExecContext(ctx, "INSERT OR IGNORE INTO workspace_cleanup(task_id) SELECT id FROM tasks WHERE session_id=?", id); err != nil {
 		return err
 	}
@@ -445,7 +423,7 @@ func (s *store) saveStoppedReply(ctx context.Context, tx *sql.Tx, run Run) error
 	if err = s.appendMessage(ctx, tx, &message); err != nil {
 		return err
 	}
-	return recordWikiRunArtifact(ctx, tx, run, "message", message.ID)
+	return nil
 }
 
 func interruptModelRequests(ctx context.Context, tx *sql.Tx, runID string, now time.Time) error {
@@ -849,10 +827,7 @@ func (s *store) replaceLastMessage(ctx context.Context, tx *sql.Tx, task *Task, 
 		return err
 	}
 	before, after := task.ID+":"+strconv.Itoa(old.InitialMemoryRevision), task.ID+":"+strconv.Itoa(memory.Revision)
-	if _, err = tx.ExecContext(ctx, "INSERT INTO wiki_artifacts(kind,id,task_id,run_id,generation,invalidated) SELECT kind,?,task_id,run_id,generation,invalidated FROM wiki_artifacts WHERE kind='memory' AND id=?", after, before); err != nil {
-		return err
-	}
-	if _, err = tx.ExecContext(ctx, "INSERT INTO wiki_dependencies(kind,id,page_id,revision,digest) SELECT kind,?,page_id,revision,digest FROM wiki_dependencies WHERE kind='memory' AND id=?", after, before); err != nil {
+	if _, err = tx.ExecContext(ctx, "INSERT INTO context_exclusions(kind,id) SELECT kind,? FROM context_exclusions WHERE kind='memory' AND id=?", after, before); err != nil {
 		return err
 	}
 

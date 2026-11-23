@@ -141,6 +141,10 @@ func openStore(path string, now func() time.Time, connectors ...driver.Connector
 		s.close()
 		return nil, err
 	}
+	if err = s.migrateRetiredData(); err != nil {
+		s.close()
+		return nil, err
+	}
 	if err = s.prepareRecords(); err == nil {
 		err = s.reconcileRecords(true)
 	}
@@ -169,6 +173,10 @@ func (s *store) close() error {
 // 已回滚、数据库不引用任何候选；Commit 失败则提交结果未确认，数据库可能已经
 // 引用候选版本，错误以 unconfirmedCommit 包装返回，清理路径必须保留候选。
 func (s *store) write(ctx context.Context, op string, fn func(*sql.Tx) error) (writeErr error) {
+	return s.writeTransaction(ctx, op, true, fn)
+}
+
+func (s *store) writeTransaction(ctx context.Context, op string, publish bool, fn func(*sql.Tx) error) (writeErr error) {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
@@ -244,6 +252,9 @@ func (s *store) write(ctx context.Context, op string, fn func(*sql.Tx) error) (w
 	if s.failAfterCommit != nil {
 		err, s.failAfterCommit = s.failAfterCommit, nil
 		return &unconfirmedCommit{op: op, err: err}
+	}
+	if !publish {
+		return nil // Startup migration reconciles the replaced files before opening.
 	}
 	// A committed SQLite transaction remains successful when its JSONL copy
 	// fails. Freeze new dispatch at the external-call gates, but keep accepting
