@@ -227,24 +227,27 @@ func (s *Service) descriptors() []tools.Descriptor {
 		description := "审批后对已授权的安全容器执行 " + action
 		version := "2"
 		if action == "remove" {
-			description += "；支持停止态受管数据库容器及专属卷删除，无需先删除逻辑库；保留登记、兄弟库和容器卷身份核验"
-			version = "3"
+			description = "按本轮授权删除指定本机容器；通用容器须已停止，保留卷；受管数据库经登记、兄弟库和专属卷身份核验；面板自身与内部容器拒绝"
+			version = "4"
 		}
 		descriptors = append(descriptors, tools.Descriptor{Name: "docker_container_" + action, Description: description, Parameters: tools.Schema{Type: tools.SchemaObject, Required: []string{"id"}, Properties: map[string]tools.Schema{"id": text}}, Metadata: tools.Metadata{Domain: "docker", Action: action, Effect: "write", Exposure: "agent", ResourceType: "docker-container", ResourceKeyArgument: "id", Version: version}, Handler: func(c *kardia.Context, args tools.Arguments) (any, error) {
 			id, _ := tools.StringArg(args, "id")
 			lifetime := tools.Lifetime(c)
 			frozen := tools.FrozenMetadata(lifetime)
 			if action == "remove" {
-				remove := s.deps.Agent.Remove
-				if frozen.Version == "1" {
-					remove = s.deps.Agent.LegacyRemove
+				remove := s.deps.Agent.LegacyRemove
+				switch frozen.Version {
+				case "2", "3":
+					remove = s.deps.Agent.ManagedRemove
+				case "4":
+					remove = s.deps.Agent.Remove
 				}
 				if err := remove(lifetime, id); err != nil {
 					return nil, agentBusinessError(err)
 				}
 				return map[string]bool{"removed": true}, nil
 			}
-			perform := s.deps.Agent.Action
+			perform := s.deps.Agent.ManagedAction
 			if frozen.Version == "1" {
 				perform = s.deps.Agent.LegacyAction
 			}
@@ -308,17 +311,22 @@ func (s *Service) descriptors() []tools.Descriptor {
 	})
 	descriptors = append(descriptors, tools.Descriptor{
 		Name:        "docker_container_logs",
-		Description: "只读读取面板纳管容器的最近日志（stdout 与 stderr 合并、带时间戳）；缺省 100 行最多 500 行、结果上限 64 KiB 保最新；需完整 64 位容器 ID，未纳管容器拒绝",
+		Description: "只读读取指定本机容器的最近日志，含用户自装容器；面板自身与内部容器拒绝。日志可能含应用打印的凭据；缺省 100 行，最多 500 行及 64 KiB，需完整容器 ID",
 		Parameters: tools.Schema{Type: tools.SchemaObject, Required: []string{"id"}, Properties: map[string]tools.Schema{
 			"id":   text,
 			"tail": {Type: tools.SchemaInteger, Description: "读取行数，1 至 500，缺省 100"},
 		}},
-		Metadata:    tools.Metadata{Domain: "docker", Action: "logs", Effect: "read", Exposure: "agent", ReadOnly: true, Default: true, ResourceType: "docker-container", ResourceKeyArgument: "id", Version: "1"},
+		Metadata:    tools.Metadata{Domain: "docker", Action: "logs", Effect: "read", Exposure: "agent", ReadOnly: true, Default: true, ResourceType: "docker-container", ResourceKeyArgument: "id", Version: "2"},
 		SearchNames: []string{"容器日志", "查看日志", "排查容器", "container logs"},
 		Handler: func(c *kardia.Context, args tools.Arguments) (any, error) {
 			id, _ := tools.StringArg(args, "id")
 			tail, _ := tools.IntArg(args, "tail")
-			value, err := s.deps.Agent.Logs(tools.Lifetime(c), id, tail)
+			ctx := tools.Lifetime(c)
+			read := s.deps.Agent.LegacyLogs
+			if tools.FrozenMetadata(ctx).Version == "2" {
+				read = s.deps.Agent.Logs
+			}
+			value, err := read(ctx, id, tail)
 			return value, agentBusinessError(err)
 		},
 	})
@@ -326,8 +334,8 @@ func (s *Service) descriptors() []tools.Descriptor {
 	descriptors = append(descriptors, s.execDescriptor())
 	descriptors = append(descriptors, s.imageDescriptors()...)
 	descriptors = append(descriptors, s.registryDescriptors()...)
-	// 新增定义只追加到尾部（ADR-0055）：power 是生命周期收敛后的唯一新增入口。
-	return append(descriptors, s.powerDescriptor())
+	descriptors = append(descriptors, s.powerDescriptor())
+	return append(descriptors, s.hostContainerDescriptors()...)
 }
 
 // powerDescriptor 把 start/stop/restart 三个生命周期动作收敛为单一入口；
@@ -336,22 +344,33 @@ func (s *Service) powerDescriptor() tools.Descriptor {
 	text := tools.Schema{Type: tools.SchemaString}
 	return tools.Descriptor{
 		Name:        "docker_container_power",
-		Description: "审批后对已授权的安全容器执行 start、stop 或 restart；受管数据库与网站容器先按所属领域登记核验再路由",
+		Description: "按本轮授权启停或重启指定本机容器，含用户自装容器；受管数据库与网站按所属域登记路由；面板自身与内部容器拒绝",
 		Parameters: tools.Schema{Type: tools.SchemaObject, Required: []string{"id", "action"}, Properties: map[string]tools.Schema{
 			"id": text,
 			"action": {Type: tools.SchemaString, Enum: tools.EnumOf("start", "stop", "restart"),
 				Description: "生命周期动作，三选一；每次动作单独审批"},
 		}},
-		Metadata:    tools.Metadata{Domain: "docker", Action: "power", Effect: "write", Exposure: "agent", ResourceType: "docker-container", ResourceKeyArgument: "id", Version: "1"},
+		Metadata:    tools.Metadata{Domain: "docker", Action: "power", Effect: "write", Exposure: "agent", ResourceType: "docker-container", ResourceKeyArgument: "id", Version: "2"},
 		SearchNames: []string{"启动容器", "停止容器", "重启容器", "容器启停", "start container", "stop container", "restart container"},
 		Handler: func(c *kardia.Context, args tools.Arguments) (any, error) {
 			id, _ := tools.StringArg(args, "id")
 			action, _ := tools.StringArg(args, "action")
-			container, err := s.deps.Agent.Action(tools.Lifetime(c), id, action)
+			ctx := tools.Lifetime(c)
+			if tools.FrozenMetadata(ctx).Version != "2" {
+				container, err := s.deps.Agent.ManagedAction(ctx, id, action)
+				if err != nil {
+					return nil, agentBusinessError(err)
+				}
+				return containerSummary(container), nil
+			}
+			container, notes, err := s.deps.Agent.ActionWithNotes(ctx, id, action)
 			if err != nil {
 				return nil, agentBusinessError(err)
 			}
-			return containerSummary(container), nil
+			return struct {
+				ContainerSummary
+				domaindocker.AgentTargetNotes
+			}{containerSummary(container), notes}, nil
 		},
 	}
 }
@@ -411,11 +430,25 @@ func (s *Service) handleContextView(access *kardia.Context, _ tools.Arguments) (
 	}
 	policy := s.Policy(access)
 	id := s.SelfContainerID(access)
+	runtime := "unknown"
+	if id != "" {
+		runtime = "container"
+	}
+	if s.deps.Agent != nil {
+		runtime = s.deps.Agent.PanelRuntime()
+	}
+	notes := map[string]string{
+		"host":      "面板直接运行在宿主机，没有自身容器 ID",
+		"container": "已识别面板自身容器",
+		"unknown":   "面板运行位置未能确认，扩展容器路径暂不可用",
+	}
 	return map[string]any{
 		"mount_root":        policy.MountRoot,
 		"reserved_ports":    append([]int{}, policy.ReservedPorts...),
 		"self_container_id": id,
 		"identified":        id != "",
+		"panel_runtime":     runtime,
+		"runtime_note":      notes[runtime],
 	}, nil
 }
 
@@ -440,7 +473,7 @@ func limitList[T any](values []T, limit int) []T {
 
 func (s *Service) execDescriptor() tools.Descriptor {
 	text := tools.Schema{Type: tools.SchemaString}
-	return tools.Descriptor{Name: "docker_container_exec", Description: "在精确受管容器中执行argv命令。受管数据库容器禁止任意argv。requestId精确重试复用。异步等待由系统监视器完成。", SearchNames: []string{"执行容器命令", "数据库", "逻辑库", "MySQL 建库", "MariaDB 建库", "Redis 清空", "建库", "删库", "容器exec"}, Parameters: tools.Schema{Type: tools.SchemaObject, Required: []string{"id", "requestId"}, Properties: map[string]tools.Schema{"id": text, "requestId": {Type: tools.SchemaString, Pattern: "^[a-f0-9]{64}$", Description: "64 位小写十六进制稳定请求标识；精确重试复用原值与完整参数"}, "argv": {Type: tools.SchemaArray, Items: &text}, "workdir": text}}, Metadata: tools.Metadata{Domain: "docker", Backend: "domain", Action: "exec", Effect: "execute", Exposure: "agent", ResourceType: "docker-container", ResourceKeyArgument: "id", Version: "3", Async: true, TaskDomain: domaindocker.ContainerOperationDomain, TaskRequestArgument: "requestId"}, Handler: func(c *kardia.Context, args tools.Arguments) (any, error) {
+	return tools.Descriptor{Name: "docker_container_exec", Description: "按本轮授权在指定本机容器中执行 argv，含用户自装容器；面板自身、内部容器、受管数据库和网站拒绝。回执标注目标风险；相同请求复用 requestId，异步等待真实终态", SearchNames: []string{"执行容器命令", "数据库", "逻辑库", "MySQL 建库", "MariaDB 建库", "Redis 清空", "建库", "删库", "容器exec"}, Parameters: tools.Schema{Type: tools.SchemaObject, Required: []string{"id", "requestId"}, Properties: map[string]tools.Schema{"id": text, "requestId": {Type: tools.SchemaString, Pattern: "^[a-f0-9]{64}$", Description: "64 位小写十六进制稳定请求标识；精确重试复用原值与完整参数"}, "argv": {Type: tools.SchemaArray, Items: &text}, "workdir": text}}, Metadata: tools.Metadata{Domain: "docker", Backend: "domain", Action: "exec", Effect: "execute", Exposure: "agent", ResourceType: "docker-container", ResourceKeyArgument: "id", Version: "4", Async: true, TaskDomain: domaindocker.ContainerOperationDomain, TaskRequestArgument: "requestId"}, Handler: func(c *kardia.Context, args tools.Arguments) (any, error) {
 		raw, err := json.Marshal(args)
 		if err != nil {
 			return nil, err
@@ -449,7 +482,12 @@ func (s *Service) execDescriptor() tools.Descriptor {
 		if err := json.Unmarshal(raw, &input); err != nil {
 			return nil, err
 		}
-		task, err := s.deps.Agent.SubmitExec(tools.Lifetime(c), input)
+		ctx := tools.Lifetime(c)
+		submit := s.deps.Agent.ManagedSubmitExec
+		if tools.FrozenMetadata(ctx).Version == "4" {
+			submit = s.deps.Agent.SubmitExec
+		}
+		task, err := submit(ctx, input)
 		if err != nil {
 			return nil, agentBusinessError(err)
 		}

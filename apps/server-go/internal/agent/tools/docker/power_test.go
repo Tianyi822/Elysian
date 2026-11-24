@@ -18,7 +18,7 @@ func TestPowerDescriptorConvergesLifecycleActions(t *testing.T) {
 	if !ok {
 		t.Fatal("docker_container_power 未注册")
 	}
-	if power.Metadata != (tools.Metadata{Domain: "docker", Backend: "domain", Action: "power", Effect: "write", Exposure: "agent", ResourceType: "docker-container", ResourceKeyArgument: "id", Version: "1"}) {
+	if power.Metadata != (tools.Metadata{Domain: "docker", Backend: "domain", Action: "power", Effect: "write", Exposure: "agent", ResourceType: "docker-container", ResourceKeyArgument: "id", Version: "2"}) {
 		t.Fatalf("power 元数据不符：%+v", power.Metadata)
 	}
 	properties, _ := power.Parameters["properties"].(map[string]any)
