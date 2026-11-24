@@ -133,3 +133,51 @@ export function autoContainerName(
   }
   return name
 }
+
+export type ContainerRecreateMount = {
+  kind: 'bind' | 'volume' | 'tmpfs'
+  source: string
+  target: string
+  readOnly: boolean
+}
+
+export type ContainerRecreatePatch = {
+  imageId?: string
+  ports?: readonly PortMapping[]
+  env?: readonly { key: string; value?: string; remove?: boolean }[]
+  mounts?: readonly ContainerRecreateMount[]
+}
+
+export type ContainerRecreateChange = { field: string; before?: string; after?: string }
+export type ContainerRecreatePreview = {
+  planId: string
+  revision: string
+  id: string
+  expiresAt: string
+  changes: readonly ContainerRecreateChange[]
+  running: boolean
+  writableChanges: number | null
+  retainedMountTargets?: readonly string[]
+  healthWaitSeconds?: number
+}
+export type ContainerRecreateInput = Pick<ContainerRecreatePreview, 'planId' | 'revision' | 'id'> & { requestId: string }
+export type ContainerRecreateTask = {
+  id: string
+  requestId: string
+  target: string
+  state: 'running' | 'succeeded' | 'failed' | 'unknown'
+  stage: string
+  message?: string
+  recreate: { name: string; backupName: string; candidateId?: string }
+}
+export type ContainerRecreateConfig = {
+  container: Container
+  argv: readonly string[]
+  mounts: readonly ContainerRecreateMount[]
+  composeProject?: string
+  composeService?: string
+  composeManaged?: boolean
+  composeWorkspace?: string
+  blockedReason?: string
+  latest?: ContainerRecreateTask
+}
