@@ -118,6 +118,7 @@ func Assemble(deps Deps) (Stack, error) {
 		available:      true,
 		socketReady:    true,
 		service:        service,
+		agent:          agent,
 		operationGuard: agent.CheckContainerMutation,
 		eventsHub:      hub,
 		transport:      transport,

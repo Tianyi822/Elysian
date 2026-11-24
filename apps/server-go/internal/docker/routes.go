@@ -43,6 +43,7 @@ type routerDeps struct {
 	socketReady             bool
 	socketUnavailableReason string
 	service                 *dockerService
+	agent                   *AgentFacade
 	operationGuard          seam.ContainerOperationGuard
 	eventsHub               *eventsHub
 	transport               seam.DockerTransport
@@ -72,6 +73,7 @@ func newRouter(deps routerDeps) chi.Router {
 	r.Use(middleware.EndpointErrorHandler)
 
 	service := deps.service
+	registerRecreateRoutes(r, deps.agent)
 
 	r.Get("/status", func(w http.ResponseWriter, _ *http.Request) {
 		shared.SendJSON(w, http.StatusOK, statusBody{OK: true})

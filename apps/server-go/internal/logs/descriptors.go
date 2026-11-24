@@ -427,6 +427,9 @@ var operationDescriptors = map[string]*opDescriptor{
 	"POST /api/docker/containers/:id/restart": {
 		category: "containers", action: "重启容器", targetFn: containerTarget,
 	},
+	"POST /api/docker/containers/:id/recreate": {
+		category: "containers", action: "提交容器重建", targetFn: containerTarget,
+	},
 	"DELETE /api/docker/containers/:id": {
 		category: "containers", action: "删除容器", targetFn: containerTarget,
 	},
