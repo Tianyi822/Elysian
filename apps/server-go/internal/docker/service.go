@@ -63,6 +63,7 @@ type serviceDeps struct {
 	mountRoot       string
 	reservedPorts   []int
 	selfContainerID string
+	panelRuntime    string
 	onRestarting    func(containerID string)
 	mkdir           func(path string, mode os.FileMode) error
 	realpath        func(path string) (string, error)

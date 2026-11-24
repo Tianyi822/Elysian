@@ -88,6 +88,7 @@ func Assemble(deps Deps) (Stack, error) {
 		mountRoot:       mountRoot,
 		reservedPorts:   assemblyReservedPorts(deps.ReservedPorts),
 		selfContainerID: selfID,
+		panelRuntime:    detectPanelRuntime(selfID, deps.Mode == config.ModeDocker),
 		onRestarting:    func(containerID string) { hub.NotifyRestarting(containerID) },
 		mkdir: func(path string, mode os.FileMode) error {
 			return os.Mkdir(path, mode)

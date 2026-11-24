@@ -75,3 +75,44 @@ func readCgroupText() string {
 	}
 	return string(boot) + "\n" + string(self)
 }
+
+// PanelRuntime reports how the panel itself is running, independently of Engine reachability.
+func (a *AgentFacade) PanelRuntime() string {
+	if a == nil || a.service == nil {
+		return "unknown"
+	}
+	if a.service.deps.selfContainerID != "" {
+		return "container"
+	}
+	if a.service.deps.panelRuntime != "" {
+		return a.service.deps.panelRuntime
+	}
+	return "host"
+}
+
+func detectPanelRuntime(selfID string, configuredContainer bool) string {
+	if selfID != "" {
+		return "container"
+	}
+	for _, marker := range []string{"/.dockerenv", "/run/.containerenv"} {
+		if _, err := os.Stat(marker); !os.IsNotExist(err) {
+			configuredContainer = true
+		}
+	}
+	cgroup := readCgroupText()
+	if cgroup == "" {
+		return "unknown"
+	}
+	return classifyPanelRuntime(configuredContainer, cgroup)
+}
+
+func classifyPanelRuntime(containerEvidence bool, cgroup string) string {
+	cgroup = strings.ToLower(cgroup)
+	for _, marker := range []string{"/docker/", "docker-", "kubepods", "/containerd/", "cri-containerd-", "libpod-", "/lxc/"} {
+		containerEvidence = containerEvidence || strings.Contains(cgroup, marker)
+	}
+	if containerEvidence {
+		return "unknown"
+	}
+	return "host"
+}
