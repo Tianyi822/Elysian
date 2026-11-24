@@ -31,6 +31,8 @@ type AgentFacade struct {
 	closed             bool
 	databaseContainers seam.AgentDatabaseContainers
 	websiteContainers  seam.AgentWebsiteContainers
+	recreateMu         sync.Mutex
+	recreatePlans      map[string]recreatePlan
 	operationMu        sync.Mutex
 	operations         map[string]ContainerOperationTask
 	operationRoot      string

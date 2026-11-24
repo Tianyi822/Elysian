@@ -28,13 +28,16 @@ func validContainerObservation(t ContainerOperationTask) bool {
 }
 
 func containerOperationBlocks(t ContainerOperationTask) bool {
-	return (t.State == "running" || t.State == "unknown") && t.Resolution == nil && !(validContainerObservation(t) && t.Observation.ExitCode == 0)
+	return !validRecreateObservation(t) && (t.State == "running" || t.State == "unknown") && t.Resolution == nil && !(validContainerObservation(t) && t.Observation.ExitCode == 0)
 }
 
 func (a *AgentFacade) ObserveContainerOperation(ctx context.Context, id string) (ContainerOperationTask, error) {
 	task, err := a.InspectContainerOperation(ctx, id)
 	if err != nil {
 		return task, err
+	}
+	if task.Recreate != nil {
+		return a.ObserveRecreate(ctx, task)
 	}
 	if task.State != "unknown" || task.ExecID == "" || task.Observation != nil || task.Resolution != nil || a.service == nil {
 		return task, nil

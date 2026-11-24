@@ -36,6 +36,7 @@ type ContainerExecInput struct {
 }
 
 type ContainerOperationTask struct {
+	Recreate            *RecreateRecord                `json:"recreate,omitempty"`
 	ExecObservedRunning bool                           `json:"execObservedRunning,omitempty"`
 	Observation         *ContainerOperationObservation `json:"observation,omitempty"`
 	ID                  string                         `json:"id"`
@@ -161,6 +162,10 @@ func (a *AgentFacade) updateContainerOperation(id string, update func(*Container
 }
 
 func (a *AgentFacade) submitContainerOperation(requestID, target string, input any, run func(context.Context, string) (any, error)) (ContainerOperationTask, error) {
+	return a.submitContainerOperationWithRecreate(requestID, target, input, nil, run)
+}
+
+func (a *AgentFacade) submitContainerOperationWithRecreate(requestID, target string, input any, meta *RecreateRecord, run func(context.Context, string) (any, error)) (ContainerOperationTask, error) {
 	if !agentOperationIDPattern.MatchString(requestID) {
 		return ContainerOperationTask{}, &AgentError{Code: "docker-operation-invalid", Message: "容器操作需要稳定的64位小写十六进制requestId", NotDispatched: true}
 	}
@@ -186,11 +191,11 @@ func (a *AgentFacade) submitContainerOperation(requestID, target string, input a
 		return task, nil
 	}
 	for _, task := range a.operations {
-		if task.Target == target && containerOperationBlocks(task) {
+		if containerOperationBlocks(task) && operationMatchesContainer(task, target, "") {
 			return ContainerOperationTask{}, shared.InvalidRequest("此容器已有进行中或结果未确认的操作")
 		}
 	}
-	task := ContainerOperationTask{ID: id, RequestID: requestID, Target: target, Digest: digest, State: "running", Stage: "accepted", UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
+	task := ContainerOperationTask{ID: id, RequestID: requestID, Target: target, Digest: digest, State: "running", Stage: "accepted", Recreate: meta, UpdatedAt: time.Now().UTC().Format(time.RFC3339Nano)}
 	if err := a.publishContainerOperationLocked(id, task); err != nil {
 		return ContainerOperationTask{}, err
 	}
@@ -325,6 +330,14 @@ func (a *AgentFacade) submitExec(ctx context.Context, input ContainerExecInput, 
 	})
 }
 
+func operationMatchesContainer(task ContainerOperationTask, id, name string) bool {
+	if id != "" && task.Target == id || name != "" && task.Target == "name:"+name {
+		return true
+	}
+	r := task.Recreate
+	return r != nil && (id != "" && r.CandidateID == id || name != "" && (name == r.Name || name == r.CandidateName || name == r.BackupName))
+}
+
 // CheckContainerMutation shares the persistent task barrier with page services.
 // It does not consume a dispatch authorization or mutate task state.
 func (a *AgentFacade) CheckContainerMutation(ctx context.Context, id, name, ownRequestID string) error {
@@ -341,11 +354,11 @@ func (a *AgentFacade) CheckContainerMutation(ctx context.Context, id, name, ownR
 		if task.RequestID == ownRequestID || !containerOperationBlocks(task) {
 			continue
 		}
-		if id != "" && task.Target == id || name != "" && task.Target == "name:"+name {
+		if operationMatchesContainer(task, id, name) {
 			a.operationMu.Unlock()
 			return shared.Conflict("此容器有进行中或结果未确认的操作，请先核实实际状态")
 		}
-		needsName = needsName || strings.HasPrefix(task.Target, "name:")
+		needsName = needsName || task.Recreate != nil || strings.HasPrefix(task.Target, "name:")
 	}
 	a.operationMu.Unlock()
 	if id != "" && name == "" && needsName {
