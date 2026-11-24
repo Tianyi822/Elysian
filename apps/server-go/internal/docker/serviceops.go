@@ -11,6 +11,7 @@ import (
 	"sync"
 
 	"elysian/server/internal/contract"
+	"elysian/server/internal/seam"
 	"elysian/server/internal/shared"
 )
 
@@ -38,6 +39,10 @@ func (s *dockerService) tryLockAction(id string) (func(), error) {
 // Action start/stop/restart：inspect 自检 → paused 拦截 →（restart 先推 restarting
 // 事件，必须在 Engine 动作之前）→ Engine 动作（304 视为成功）→ inspect 回读。
 func (s *dockerService) Action(ctx context.Context, id, action string) (contract.Container, error) {
+	return s.actionWithGuard(ctx, id, action, nil)
+}
+
+func (s *dockerService) actionWithGuard(ctx context.Context, id, action string, guard seam.ContainerOperationGuard) (contract.Container, error) {
 	release, err := s.tryLockAction(id)
 	if err != nil {
 		return contract.Container{}, err
@@ -50,6 +55,11 @@ func (s *dockerService) Action(ctx context.Context, id, action string) (contract
 	if err != nil {
 		return contract.Container{}, err
 	}
+	targetID, releaseCanonical, err := s.lockMutationTarget(ctx, id, preInspect, guard)
+	if err != nil {
+		return contract.Container{}, err
+	}
+	defer releaseCanonical()
 	if (action == "stop" || action == "restart") && selfInspectCheck(preInspect, s.deps.selfContainerID) {
 		return contract.Container{}, &shared.InvalidRequestError{Status: http.StatusBadRequest, Message: actionSelfMessage}
 	}
@@ -58,11 +68,11 @@ func (s *dockerService) Action(ctx context.Context, id, action string) (contract
 	}
 
 	if action == "restart" && s.deps.onRestarting != nil {
-		s.deps.onRestarting(id)
+		s.deps.onRestarting(targetID)
 	}
 
 	var query url.Values
-	actionPath := "/containers/" + encodeEngineID(id) + "/" + action
+	actionPath := "/containers/" + encodeEngineID(targetID) + "/" + action
 	if action == "stop" {
 		query = url.Values{"t": {"10"}}
 	}
@@ -77,11 +87,40 @@ func (s *dockerService) Action(ctx context.Context, id, action string) (contract
 		return contract.Container{}, fmt.Errorf("容器%s失败（HTTP %d）", action, status)
 	}
 
-	postInspect, err := s.inspectContainerByID(ctx, id, actionTimeout)
+	postInspect, err := s.inspectContainerByID(ctx, targetID, actionTimeout)
 	if err != nil {
 		return contract.Container{}, err
 	}
 	return mapContainer(postInspect)
+}
+
+// lockMutationTarget uses the real ID for the operation ledger and shares the
+// update worker's lock even when the HTTP caller addressed a container by name.
+func (s *dockerService) lockMutationTarget(ctx context.Context, requested string, value any, guard seam.ContainerOperationGuard) (string, func(), error) {
+	release := func() {}
+	if guard == nil {
+		return requested, release, nil
+	}
+	id, err := requireID(value, "容器")
+	if err != nil {
+		return "", nil, err
+	}
+	if agentOperationIDPattern.MatchString(requested) && requested != id {
+		return "", nil, shared.InvalidRequest("容器详情与请求 ID 不匹配")
+	}
+	row, _ := asRecord(value)
+	name := strings.TrimPrefix(agentText(row, "Name"), "/")
+	if id != requested {
+		release, err = s.tryLockAction(id)
+		if err != nil {
+			return "", nil, err
+		}
+	}
+	if err := guard(ctx, id, name, ""); err != nil {
+		release()
+		return "", nil, err
+	}
+	return id, release, nil
 }
 
 // containerRemovalProtection 与 Docker 页展示共用归属保护，不暴露原始标签。
@@ -126,6 +165,10 @@ func containerRemovalStateConflict(inspect any) string {
 
 // RemoveContainer 删除前重查归属和状态；引擎无 force 的 DELETE 保护检查后的启动竞争。
 func (s *dockerService) RemoveContainer(ctx context.Context, id string) error {
+	return s.removeWithGuard(ctx, id, nil)
+}
+
+func (s *dockerService) removeWithGuard(ctx context.Context, id string, guard seam.ContainerOperationGuard) error {
 	release, err := s.tryLockAction(id)
 	if err != nil {
 		return err
@@ -136,6 +179,11 @@ func (s *dockerService) RemoveContainer(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
+	_, releaseCanonical, err := s.lockMutationTarget(ctx, id, inspect, guard)
+	if err != nil {
+		return err
+	}
+	defer releaseCanonical()
 	if status, reason := containerRemovalProtection(inspect, s.deps.selfContainerID); reason != "" {
 		return &shared.InvalidRequestError{Status: status, Message: reason}
 	}

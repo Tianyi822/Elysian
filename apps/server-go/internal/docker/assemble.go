@@ -109,19 +109,20 @@ func Assemble(deps Deps) (Stack, error) {
 		})
 	}
 
-	router := newRouter(routerDeps{
-		available:    true,
-		socketReady:  true,
-		service:      service,
-		eventsHub:    hub,
-		transport:    transport,
-		execSessions: sessions,
-		logs:         deps.Logs,
-	})
 	agent := &AgentFacade{service: service, authorize: deps.AgentAuthorize, portOpener: deps.PortOpener, operationRoot: deps.AgentOperationRoot}
 	if deps.AgentCredentialsPath != "" {
 		agent.credentials = newAgentCredentialStore(deps.AgentCredentialsPath)
 	}
+	router := newRouter(routerDeps{
+		available:      true,
+		socketReady:    true,
+		service:        service,
+		operationGuard: agent.CheckContainerMutation,
+		eventsHub:      hub,
+		transport:      transport,
+		execSessions:   sessions,
+		logs:           deps.Logs,
+	})
 	return Stack{
 		Agent:  agent,
 		Router: router,

@@ -43,6 +43,7 @@ type routerDeps struct {
 	socketReady             bool
 	socketUnavailableReason string
 	service                 *dockerService
+	operationGuard          seam.ContainerOperationGuard
 	eventsHub               *eventsHub
 	transport               seam.DockerTransport
 	execSessions            *execSessions
@@ -133,7 +134,7 @@ func newRouter(deps routerDeps) chi.Router {
 			middleware.WriteError(w, shared.InvalidRequest("容器 ID 格式无效"))
 			return
 		}
-		container, err := service.Action(req.Context(), id, action)
+		container, err := service.actionWithGuard(req.Context(), id, action, deps.operationGuard)
 		if err != nil {
 			middleware.WriteError(w, err)
 			return
@@ -169,7 +170,7 @@ func newRouter(deps routerDeps) chi.Router {
 			middleware.WriteError(w, shared.InvalidRequest("容器 ID 格式无效"))
 			return
 		}
-		if err := service.RemoveContainer(req.Context(), id); err != nil {
+		if err := service.removeWithGuard(req.Context(), id, deps.operationGuard); err != nil {
 			middleware.WriteError(w, err)
 			return
 		}
