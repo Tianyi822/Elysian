@@ -24,10 +24,12 @@ export function ChatApprovals({ api, runId, onChanged, onCancel }: { api?: Agent
       if (approval.kind === 'workflow-gate') return null
       const operation = approval.operation
       const grant = operation.execution?.grant
-      if (approval.access) return <RuntimeAccessCard key={approval.id} title={operation.capability.source === 'mcp' ? operation.capability.originalName ?? operation.capability.name : operation.capability.name} access={approval.access} operation={operation}
+      const targetLabel = approval.target && [approval.target.label, ...approval.target.notes].join(' · ')
+      if (approval.access) return <RuntimeAccessCard key={approval.id} title={operation.capability.source === 'mcp' ? operation.capability.originalName ?? operation.capability.name : operation.capability.name} access={approval.access} operation={operation} targetLabel={targetLabel}
         busy={acting || loading || !!errorMessage} confirmed={approval.status === 'approved'} pending={pending[approval.id]} onDecision={decision => void decideAccess(approval, decision, onChanged)} onCancel={onCancel} />
       return <div key={approval.id} className="border-b border-line py-2 last:border-0">
         <div className="break-all font-medium">{operation.capability.name}</div>
+        {targetLabel && <p className="mt-1 break-words text-fg-muted">目标：{targetLabel}</p>}
         <pre aria-label="完整操作参数" className="hover-scrollbar my-2 max-h-48 overflow-auto whitespace-pre-wrap break-all rounded-md bg-surface-raised p-2 font-mono text-xs">{operation.argumentsJson}</pre>
         {operation.fileChanges?.map(change => <div key={change.path} aria-label={`文件变更 ${change.path}`} className="my-2 min-w-0 border-y border-line py-2">
           <code className="block break-all font-medium">{change.path}</code>

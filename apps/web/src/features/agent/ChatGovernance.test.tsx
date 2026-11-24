@@ -19,6 +19,19 @@ const governance = (): AgentChatGovernance => ({ decideAccess: vi.fn(async () =>
 beforeEach(async () => { useMessageStore.getState().clear(); sessionStorage.clear() })
 
 describe('聊天审批和执行范围', () => {
+  it.each([false, true])('在原始参数前显示 Docker 目标，按需授权为 %s', async (onDemand) => {
+    const api = governance()
+    vi.mocked(api.approvals).mockResolvedValueOnce([{
+      ...approval,
+      target: { kind: 'docker-container', key: 'a'.repeat(64), label: 'frp', notes: ['非面板创建的用户容器', '特权'] },
+      ...(onDemand ? { access: { ...access, kind: 'platform' as const } } : {}),
+    }])
+    render(<ChatApprovals api={api} runId="run" onChanged={vi.fn()} onCancel={vi.fn()} />)
+    const target = await screen.findByText('目标：frp · 非面板创建的用户容器 · 特权')
+    const args = screen.getByLabelText('完整操作参数')
+    expect(target.compareDocumentPosition(args) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy()
+  })
+
   it('读取失败显示重试，重试过程中不误显示空列表', async () => {
     const api = governance()
     let resolve!: (rows: readonly AgentApproval[]) => void

@@ -1,5 +1,5 @@
 import { parseGrant, parseProfile } from './executionParse'
-import type { AgentApproval, AgentCapability, AgentRuntimeAccess } from '@elysian/contracts'
+import type { AgentApproval, AgentApprovalTarget, AgentCapability, AgentRuntimeAccess } from '@elysian/contracts'
 import type { AgentChatGovernance } from '../../../contracts/agentChat'
 import { agentPathPart, defaultAgentHttpClient } from './agentShared'
 
@@ -58,7 +58,16 @@ export function parseApproval(value: unknown): AgentApproval {
     const e = row(o.execution)
     operation.execution = { profile: parseProfile(e.profile), ...(e.grant ? { grant: parseGrant(e.grant) } : {}), scriptDigest: text(e.scriptDigest) }
   }
-  return { ...r, id: text(r.id), runId: text(r.runId), operationId: text(r.operationId), createdAt: text(r.createdAt), expiresAt: text(r.expiresAt), operation, ...(r.access === undefined ? {} : { access: parseRuntimeAccess(r.access) }) } as AgentApproval
+  const { target: rawTarget, ...approval } = r
+  let target: AgentApprovalTarget | undefined
+  if (rawTarget !== undefined && typeof rawTarget === 'object' && rawTarget !== null) {
+    const candidate = rawTarget as Row
+    if (candidate.kind === 'docker-container' && typeof candidate.key === 'string' && typeof candidate.label === 'string'
+      && Array.isArray(candidate.notes) && candidate.notes.every(note => typeof note === 'string')) {
+      target = { kind: candidate.kind, key: candidate.key, label: candidate.label, notes: candidate.notes }
+    }
+  }
+  return { ...approval, ...(target ? { target } : {}), id: text(r.id), runId: text(r.runId), operationId: text(r.operationId), createdAt: text(r.createdAt), expiresAt: text(r.expiresAt), operation, ...(r.access === undefined ? {} : { access: parseRuntimeAccess(r.access) }) } as AgentApproval
 }
 
 export function createAgentChatGovernance({ requestAgentJson } = defaultAgentHttpClient): AgentChatGovernance {

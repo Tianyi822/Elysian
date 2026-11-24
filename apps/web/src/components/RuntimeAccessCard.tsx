@@ -29,13 +29,14 @@ export function RuntimeAccessDetails({ access, operation, profile = operation?.e
   </div>
 }
 
-export function RuntimeAccessCard({ title, access, operation, profile, busy = false, confirmed = false, pending, onDecision, onCancel, children }: {
+export function RuntimeAccessCard({ title, access, operation, profile, targetLabel, busy = false, confirmed = false, pending, onDecision, onCancel, children }: {
   title: string; access: AgentRuntimeAccess; operation?: AgentOperation; busy?: boolean; confirmed?: boolean
-  profile?: AgentExecutionProfile
+  profile?: AgentExecutionProfile; targetLabel?: string
   pending?: AgentAccessDecisionInput; onDecision(decision: AgentAccessDecisionInput['decision']): void; onCancel(): void; children?: ReactNode
 }) {
   return <section aria-label={`权限申请 ${title}`} className="space-y-3 rounded-lg border border-line bg-surface p-3">
     <h3 className="break-all text-sm font-medium">{title}</h3>
+    {targetLabel && <p className="break-words text-xs text-fg-muted">目标：{targetLabel}</p>}
     <RuntimeAccessDetails access={access} operation={operation} profile={profile} />
     {operation?.preparation?.error && <p role="status" className="text-xs text-danger">{operation.preparation.error}</p>}
     {operation?.fileChanges?.map(change => <details key={change.path} className="border-t border-line pt-2 text-xs"><summary className="cursor-pointer break-all">文件变更：{change.path}</summary><div className="mt-2 grid min-w-0 gap-2 sm:grid-cols-2">{(['before', 'after'] as const).map(side => {

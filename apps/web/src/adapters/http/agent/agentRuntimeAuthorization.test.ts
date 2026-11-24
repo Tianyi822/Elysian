@@ -19,6 +19,13 @@ describe('运行时授权 HTTP 契约', () => {
     expect(() => parseRuntimeAccess({ ...access, runtime: { name: 'Bash', image: 'image', platform: 'linux/amd64', requiresDownload: 'yes' } })).toThrow()
   })
 
+  it('保留可选 Docker 目标且兼容旧审批和不完整展示数据', () => {
+    const target = { kind: 'docker-container', key: 'c'.repeat(64), label: 'frp', notes: ['特权'] }
+    expect(parseApproval({ ...approval, target })).toMatchObject({ target })
+    expect(parseApproval(approval)).not.toHaveProperty('target')
+    expect(parseApproval({ ...approval, target: { ...target, notes: [42] } })).not.toHaveProperty('target')
+  })
+
   it('逐次确认透传精确幂等请求，不提供会话授权管理', async () => {
     const fetch = vi.fn().mockResolvedValueOnce(Response.json(approval))
     vi.stubGlobal('fetch', fetch)
