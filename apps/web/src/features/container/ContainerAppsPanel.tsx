@@ -1,5 +1,6 @@
 import * as Dialog from '@radix-ui/react-dialog'
 import { useEffect, useState } from 'react'
+import { useLocation } from 'react-router'
 import { Plus, X } from '../../components/icons'
 import { LoadingOrb } from '../../components/LoadingOrb'
 import { validateContainerAppDisplayName, validateContainerAppSlug } from '@elysian/contracts'
@@ -24,6 +25,7 @@ import { Button } from '../../components/Button'
  */
 export function ContainerAppsPanel() {
   const gateway = useGateway()
+  const { hash } = useLocation()
   const status = useContainerAppsStore((s) => s.status)
   const errorMessage = useContainerAppsStore((s) => s.errorMessage)
   const apps = useContainerAppsStore((s) => s.apps)
@@ -35,6 +37,11 @@ export function ContainerAppsPanel() {
   useEffect(() => {
     void load(gateway, { silent: true })
   }, [gateway, load])
+
+  useEffect(() => {
+    if (status !== 'ready' || !hash.startsWith('#workspace-')) return
+    document.getElementById(hash.slice(1))?.scrollIntoView({ block: 'nearest' })
+  }, [hash, status])
 
   const docker = isDockerRuntime()
   const fileCount = apps.reduce((total, app) => total + app.files.length, 0)

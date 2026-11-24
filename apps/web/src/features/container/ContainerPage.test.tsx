@@ -605,19 +605,20 @@ describe('容器详情面板', () => {
     expect(dialog.textContent).toContain('运行中')
     expect(dialog.textContent).toContain('postgres:16.4')
     expect(dialog.textContent).toContain('sha256:2c9e55f0b7a3')
-    expect(dialog.textContent).toContain('5432 → 15432/tcp')
-    expect(dialog.textContent).toContain('POSTGRES_DB=elysian')
-    expect(dialog.textContent).toContain('POSTGRES_USER=ops')
-    expect(dialog.textContent).toContain('/srv/elysian/data/pg → /var/lib/postgresql/data')
+    expect(dialog.textContent).toContain('TCP · 5432')
+    expect(dialog.textContent).toContain('15432')
+    expect(dialog.textContent).toContain('POSTGRES_DBelysian')
+    expect(dialog.textContent).toContain('POSTGRES_USERops')
+    expect(dialog.textContent).toContain('/srv/elysian/data/pg')
+    expect(dialog.textContent).toContain('/var/lib/postgresql/data')
     expect(dialog.textContent).toContain('除非手动停止')
     expect(dialog.textContent).toContain('postgres -c shared_buffers=256MB')
 
-    // 七个分节各自成块：圆角描边卡片，节标题为三级标题。
-    const headings = within(dialog).getAllByRole('heading', { level: 3 })
-    expect(headings).toHaveLength(7)
-    for (const heading of headings) {
-      expect(heading.closest('section')).toHaveClass('panel-surface')
+    for (const label of ['基本信息', '镜像', '端口映射', '环境变量', '挂载', '启动命令']) {
+      expect(within(dialog).getByRole('button', { name: label })).toHaveAttribute('aria-expanded', 'true')
     }
+    expect(within(dialog).getByRole('button', { name: '复制命令' })).toBeInTheDocument()
+    expect(screen.queryByRole('button', { name: '消息' })).not.toBeInTheDocument()
   })
 
   it('Esc 关闭面板回到列表', async () => {

@@ -92,7 +92,7 @@ export function ContainerAppWorkspaceCard({
   }
 
   return (
-    <li aria-label={`工作区 ${app.displayName}`} className="h-full">
+    <li id={`workspace-${app.slug}`} aria-label={`工作区 ${app.displayName}`} className="h-full">
       <div className="relative rounded-xl h-full" aria-busy={batchBusy}>
         <article className="flex h-full flex-col gap-3 panel-surface px-4 py-3.5">
           <header className="flex flex-wrap items-start justify-between gap-2">

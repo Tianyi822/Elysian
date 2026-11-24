@@ -71,6 +71,5 @@
 .shell-own-header { padding-right: calc(var(--message-edge) + var(--shell-action-space)); }
 .shell-terminal-header { margin-right: calc(var(--shell-action-space) + var(--message-edge) - 16px); }
 
-.shell-detail-header { padding-right: calc(var(--shell-action-space) + var(--message-edge) - 20px); }
 @media (min-width: 768px) { .shell-first-row { margin-right: var(--shell-action-space); } }
 @media (max-width: 767px) { .shell-terminal-dialog-header { padding-right: calc(var(--shell-action-space) + 16px); } }
