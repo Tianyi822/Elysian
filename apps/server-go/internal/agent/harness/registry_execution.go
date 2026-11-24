@@ -48,7 +48,7 @@ func (m *Manager) authorizeDispatch(ctx context.Context, s CapabilitySnapshot, o
 	if err != nil {
 		return nil, err
 	}
-	binding := tools.AuthorizationBinding{OperationID: o.ID, DispatchID: o.DispatchID, Tool: o.Capability.Name, ArgumentsDigest: tools.ArgumentsDigest(args), SnapshotDigest: s.Digest, CatalogID: s.Digest}
+	binding := tools.AuthorizationBinding{RunID: o.RunID, OperationID: o.ID, DispatchID: o.DispatchID, Tool: o.Capability.Name, ArgumentsDigest: tools.ArgumentsDigest(args), SnapshotDigest: s.Digest, CatalogID: s.Digest}
 	authorized, err := m.toolAuthority.Authorize(ctx, binding, o, func(checkCtx context.Context) error {
 		guardErr := m.checkDispatchGuard()
 		if err := m.store.DispatchError(); err != nil {

@@ -12,6 +12,7 @@ import (
 // AuthorizationBinding identifies one committed dispatch. No field is supplied
 // by a model; the harness constructs it from its authoritative operation row.
 type AuthorizationBinding struct {
+	RunID           string
 	OperationID     string
 	DispatchID      string
 	Tool            string
@@ -105,6 +106,13 @@ func Revalidate(ctx context.Context) error {
 		return errors.New("工具调用尚未获准进入执行阶段")
 	}
 	return t.verify(ctx)
+}
+
+func AuthorizedRunID(ctx context.Context) string {
+	if t := ticket(ctx); t != nil && t.registry.Load() {
+		return t.binding.RunID
+	}
+	return ""
 }
 
 func Payload(ctx context.Context) any {
