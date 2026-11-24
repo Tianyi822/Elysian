@@ -7,7 +7,7 @@ import { GooeyMenu } from './easyui/GooeyMenu'
 export function GooeySelect<T extends string>({
   ariaLabel, items, value, onSelect, fallbackLabel = '请选择', disabled = false,
   active = true, className, fieldLabel,
-  leadingIcon, triggerClassName, align, portal,
+  leadingIcon, triggerClassName, align, portal, width,
 }: {
   ariaLabel: string
   items: readonly { value: T; label: string; disabled?: boolean; description?: string; icon?: ReactNode }[]
@@ -22,12 +22,15 @@ export function GooeySelect<T extends string>({
   triggerClassName?: string
   align?: 'start' | 'center' | 'end'
   portal?: boolean
+  /** 面板宽度，缺省沿用组件默认值；说明较长的菜单用它给折行的说明留出每行字数。 */
+  width?: number
 }) {
   const [open, setOpen] = useState(false)
   const reducedMotion = useReducedMotion()
   const label = items.find(item => item.value === value)?.label ?? fallbackLabel
 
   return <GooeyMenu
+    width={width}
     options={items.map(item => item.value)}
     value={value ?? ''}
     getOptionLabel={(_, index) => items[index]?.label ?? fallbackLabel}

@@ -134,3 +134,100 @@ describe('EasyUI 收纳导航 GooeySelect', () => {
     expect(onSelect).toHaveBeenCalledExactlyOnceWith('session-a')
   })
 })
+
+const modelItems = [
+  { value: 'gpt-5', label: 'gpt-5', description: 'gpt-5' },
+  { value: 'qwen3:32b', label: 'qwen3:32b', description: 'qwen3:32b' },
+]
+
+const permissionItems = [
+  { value: 'ask', label: '请求批准', description: '需要批准的操作，按服务端规则请求确认。' },
+  { value: 'assist', label: '帮我批准', description: '自动批准可恢复的工作区写入，以及无宿主写权限、无出网的隔离执行。' },
+  { value: 'full', label: '完全开放', description: '自动批准已启用能力所需的操作与运行时权限，系统禁区与资源限制继续生效。' },
+]
+
+describe('GooeySelect 带说明的选项', () => {
+  const ROW = 44
+  const ROOMY_ROW = 72
+  const ROW_GAP = 4
+  const PANEL_PAD = 10
+
+  /** jsdom 没有布局：把说明报成两行高，模拟在面板宽度内折行的说明。 */
+  function installWrappedDescriptions() {
+    const original = HTMLElement.prototype.getBoundingClientRect
+    HTMLElement.prototype.getBoundingClientRect = function () {
+      const rect = original.call(this)
+      if (!this.id.endsWith('-description')) return rect
+      return { ...rect, height: 30, bottom: rect.top + 30, toJSON: () => ({}) } as DOMRect
+    }
+    return () => { HTMLElement.prototype.getBoundingClientRect = original }
+  }
+
+  async function openWrappedPermissionMenu() {
+    const user = userEvent.setup()
+    const restore = installWrappedDescriptions()
+    render(<GooeySelect ariaLabel="权限模式" width={336} items={permissionItems} value="ask" onSelect={() => {}} />)
+    await user.click(screen.getByRole('button', { name: '权限模式：请求批准' }))
+    return restore
+  }
+
+  it('说明只有一行时保持上游的行高与面板尺寸', async () => {
+    const user = userEvent.setup()
+    render(<GooeySelect ariaLabel="选择模型" items={modelItems} value="gpt-5" onSelect={() => {}} />)
+    await user.click(screen.getByRole('button', { name: '选择模型：gpt-5' }))
+    const list = screen.getByRole('listbox')
+    for (const option of screen.getAllByRole('option')) expect(option).toHaveStyle({ minHeight: `${ROW}px` })
+    expect(list).toHaveStyle({ width: '306px', maxHeight: `${2 * ROW + PANEL_PAD * 2}px` })
+    expect(list).not.toHaveClass('space-y-1')
+  })
+
+  it('说明折行时选项统一撑高并彼此留出间隔，不再被单行行高挤压', async () => {
+    const restore = await openWrappedPermissionMenu()
+    try {
+      for (const label of ['请求批准', '帮我批准', '完全开放']) {
+        const option = screen.getByRole('option', { name: label })
+        // 一行标题、4px 间隔、两行 12px/16px 说明，加上下各 8px 内距。
+        expect(parseFloat(option.style.minHeight), label).toBeGreaterThanOrEqual(19.4 + 4 + 32 + 16)
+      }
+      expect(screen.getByRole('listbox')).toHaveClass('space-y-1')
+    } finally {
+      restore()
+    }
+  })
+
+  it('说明折行时面板高度正好容下选项，上下留白对称', async () => {
+    const restore = await openWrappedPermissionMenu()
+    try {
+      const maxHeight = `${ROOMY_ROW * permissionItems.length + ROW_GAP * (permissionItems.length - 1) + PANEL_PAD * 2}px`
+      expect(screen.getByRole('listbox')).toHaveStyle({ width: '336px', maxHeight })
+      expect(screen.getByTestId('gooey-menu-surface')).toHaveStyle({ width: '336px', height: maxHeight })
+    } finally {
+      restore()
+    }
+  })
+
+  it('说明折行时圆点留在标题行末尾，选中与否都占同一列', async () => {
+    const restore = await openWrappedPermissionMenu()
+    try {
+      for (const label of ['请求批准', '帮我批准', '完全开放']) {
+        const titleRow = screen.getByRole('option', { name: label }).querySelector('span.block')!.parentElement!
+        expect(titleRow.lastElementChild, label).toHaveAttribute('aria-hidden', 'true')
+      }
+    } finally {
+      restore()
+    }
+  })
+
+  it('只有单行标签的菜单保持上游的行高、面板宽度与面板高度', async () => {
+    const user = userEvent.setup()
+    render(<Harness />)
+    await user.click(screen.getByRole('button', { name: '安全页签：防火墙' }))
+    for (const option of screen.getAllByRole('option')) {
+      expect(option).toHaveStyle({ height: `${ROW}px` })
+      // 单行选项只在选中时才出现末尾的圆点，未选中的末尾仍是文字。
+      if (option.getAttribute('aria-selected') !== 'true') expect(option.lastElementChild).not.toHaveAttribute('aria-hidden', 'true')
+    }
+    expect(screen.getByRole('listbox')).toHaveStyle({ maxHeight: `${items.length * ROW + PANEL_PAD * 2}px`, width: '306px' })
+    expect(screen.getByRole('listbox')).not.toHaveClass('space-y-1')
+  })
+})

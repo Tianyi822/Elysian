@@ -64,6 +64,12 @@ const PILL_H = 56;
 const GAP = 12;
 const ROW_H = 44;
 const PANEL_PAD = 10;
+const ROW_GAP = 4;
+/**
+ * 说明折行时的选项统一高度：上下 8px 内距、一行标题、4px 间隔和至多两行 12px/16px 说明。
+ * 说明不足两行时内容居中，面板高度因此可以按它精确算出。
+ */
+const DETAILED_ROW_H = 72;
 
 const DROP_SPRING = { type: 'spring', stiffness: 240, damping: 17, mass: 1 } as const;
 const GROW_SPRING = { type: 'spring', stiffness: 210, damping: 22, mass: 1 } as const;
@@ -169,7 +175,15 @@ export const GooeyMenu: React.FC<GooeyMenuProps> = ({
   const renderLayer = (layer: React.ReactNode) => portal ? createPortal(layer, document.body) : layer;
   const focusListOnOpen = useRef(false);
   const [settling, setSettling] = useState(false);
-  const [placement, setPlacement] = useState({ left: 0, top: 0, panelX: 0, panelY: PILL_H + GAP, width, height: options.length * ROW_H + PANEL_PAD * 2 });
+  // The surface and the list share one height, so options are counted before layout.
+  const hasDescriptions = options.some((option, index) => Boolean(getOptionDetails?.(option, index)?.description));
+  const [wrappedDescriptions, setWrappedDescriptions] = useState(false);
+  // Descriptions that wrap at the current panel width get the roomy layout; single-line ones keep the upstream row.
+  const roomy = hasDescriptions && wrappedDescriptions;
+  const naturalHeight = PANEL_PAD * 2 + options.reduce((sum, option, index) =>
+    sum + (roomy && getOptionDetails?.(option, index)?.description ? DETAILED_ROW_H : ROW_H), 0)
+    + (roomy ? (options.length - 1) * ROW_GAP : 0);
+  const [placement, setPlacement] = useState({ left: 0, top: 0, panelX: 0, panelY: PILL_H + GAP, width, height: naturalHeight });
   const typeahead = useRef({ text: '', at: 0 });
   const previousValue = useRef(value);
   const [geometry, setGeometry] = useState<TriggerGeometry>({
@@ -224,7 +238,6 @@ export const GooeyMenu: React.FC<GooeyMenuProps> = ({
       const left = Math.max(8, Math.min(rect.left + preferredX, viewportWidth - panelWidth - 8));
       const below = Math.max(0, viewportHeight - rect.bottom - GAP - 8);
       const above = Math.max(0, rect.top - GAP - 8);
-      const naturalHeight = options.length * ROW_H + PANEL_PAD * 2;
       const placeAbove = naturalHeight > below && above > below;
       const height = Math.min(naturalHeight, placeAbove ? above : below);
       const next = { left: rect.left, top: rect.top, panelX: left - rect.left,
@@ -243,7 +256,18 @@ export const GooeyMenu: React.FC<GooeyMenuProps> = ({
       window.visualViewport?.removeEventListener('resize', measure);
       window.removeEventListener('scroll', onScroll, true);
     };
-  }, [open, width, align, geometry, options.length, setOpen]);
+  }, [open, width, align, geometry, naturalHeight, setOpen]);
+
+  useLayoutEffect(() => {
+    const list = listRef.current;
+    if (!hasDescriptions || !list) return;
+    // The hidden list is still laid out at the panel width, so this also settles before the first opening.
+    const wrapped = [...list.querySelectorAll<HTMLElement>('[role="option"]')].some((option) => {
+      const description = option.querySelector<HTMLElement>('[id$="-description"]');
+      return !!description && description.getBoundingClientRect().height > (parseFloat(getComputedStyle(description).lineHeight) || 0) + 1;
+    });
+    setWrappedDescriptions(wrapped);
+  }, [width, hasDescriptions, placement.width]);
 
   useEffect(() => {
     if (open && focusListOnOpen.current) {
@@ -514,7 +538,7 @@ export const GooeyMenu: React.FC<GooeyMenuProps> = ({
               inert={!open}
               aria-activedescendant={open && activeIndex >= 0 ? `${listId}-opt-${activeIndex}` : undefined}
               data-testid="gooey-menu-options"
-              className={cn('hover-scrollbar fixed m-0 list-none overflow-y-auto overscroll-contain p-0 outline-none', portal ? 'z-[61]' : 'z-20')}
+              className={cn('hover-scrollbar fixed m-0 list-none overflow-y-auto overscroll-contain p-0 outline-none', roomy && 'space-y-1', portal ? 'z-[61]' : 'z-20')}
               style={{ left: placement.left + panelX, top: placement.top + panelY, width: panelWidth, maxHeight: panelHeight,
                 visibility: active && !disabled && (open || settling) ? 'visible' : 'hidden',
                 paddingTop: PANEL_PAD, paddingBottom: PANEL_PAD, pointerEvents: open ? 'auto' : 'none', borderRadius: 22 }}
@@ -532,6 +556,7 @@ export const GooeyMenu: React.FC<GooeyMenuProps> = ({
                 const optionId = `${listId}-opt-${i}`;
                 const label = getOptionLabel(opt, i);
                 const { description, icon } = getOptionDetails?.(opt, i) ?? {};
+                const roomyRow = roomy && Boolean(description);
                 return (
                   <motion.li
                     key={`${i}-${opt}`}
@@ -549,14 +574,31 @@ export const GooeyMenu: React.FC<GooeyMenuProps> = ({
                     }}
                     className={cn(
                       'mx-[10px] flex shrink-0 cursor-pointer items-center justify-between gap-3 rounded-[14px] px-[12px] text-[15.5px] transition-colors duration-150 ease-out select-none motion-reduce:transition-none',
+                      roomyRow && 'py-2',
                       isActive
                         ? 'bg-[var(--t-gooey-active)] text-[var(--t-gooey-fg)]'
                         : 'text-[var(--t-gooey-muted)] hover:text-[var(--t-gooey-fg)] bg-transparent',
                       optionDisabled && 'cursor-not-allowed opacity-40',
                       typeof optionClassName === 'function' ? optionClassName(opt, i) : optionClassName
                     )}
-                    style={{ height: ROW_H }}
+                    style={description ? { minHeight: roomyRow ? DETAILED_ROW_H : ROW_H } : { height: ROW_H }}
                   >
+                    {roomyRow ? (
+                      // 说明折行的选项：标题一行、说明至多两行。圆点留在标题行末尾并始终占位，
+                      // 选中与否都不改变说明的折行，也不随内容在行内的居中偏移。
+                      <span className="flex min-w-0 flex-1 items-start gap-2">
+                        {icon && <span aria-hidden="true" className="mt-0.5 shrink-0">{icon}</span>}
+                        <span className="min-w-0 flex-1">
+                          <span className="flex items-center justify-between gap-3">
+                            <span className="block min-w-0 truncate leading-tight" title={label}>{label}</span>
+                            <span aria-hidden="true" className="grid w-1.5 shrink-0 place-items-center">
+                              {isCurrentSelected && <span className="size-1.5 rounded-full bg-[var(--t-gooey-indicator]]" />}
+                            </span>
+                          </span>
+                          <span id={`${optionId}-description`} className="mt-1 line-clamp-2 text-xs leading-4 text-balance" title={description}>{description}</span>
+                        </span>
+                      </span>
+                    ) : <>
                     {description || icon ? <span className="flex min-w-0 items-center gap-2">
                       {icon && <span aria-hidden="true" className="shrink-0">{icon}</span>}
                       <span className="min-w-0">
@@ -567,6 +609,7 @@ export const GooeyMenu: React.FC<GooeyMenuProps> = ({
                     {isCurrentSelected && (
                       <span aria-hidden="true" className="size-1.5 shrink-0 rounded-full bg-[var(--t-gooey-indicator)]" />
                     )}
+                    </>}
                   </motion.li>
                 );
               })}

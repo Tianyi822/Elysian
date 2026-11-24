@@ -127,7 +127,8 @@ export function ChatComposer({ api, chat, input, model, models, status, reasonin
       <div className="chat-composer-tools">
         <ChatAttachButton onPress={() => fileInput.current?.click()} disabled={attachmentsLocked || !api.available} />
         <div className="chat-permission" data-mode={permissionMode.value} title={`${permissionMode.label}：${permissionMode.description}`}>
-          <GooeySelect portal ariaLabel="权限模式" value={permissionMode.value} onSelect={chat.setPermissionMode}
+          {/* 说明较长：面板加宽到 336px，最短的一条说明正好排成一行，不再只剩两三个字折行。 */}
+          <GooeySelect portal ariaLabel="权限模式" width={336} value={permissionMode.value} onSelect={chat.setPermissionMode}
             items={PERMISSION_MODES.map(({ Icon, ...mode }) => ({ ...mode, icon: <Icon size={16} className={mode.value === 'full' ? 'text-danger' : undefined} /> }))}
             leadingIcon={<PermissionIcon size={16} aria-hidden />}
             disabled={preferencesLocked} triggerClassName="chat-select chat-permission-select" />
