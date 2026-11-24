@@ -1,5 +1,5 @@
 import { createContext, forwardRef, useContext, type ReactNode } from 'react'
-import { Loader2 } from 'lucide-react'
+import { LoadingOrb } from './LoadingOrb'
 import { PressButton, type PressButtonProps, type PressButtonVariant } from './easyui/PressButton'
 import { cn } from './easyui/utils'
 
@@ -64,7 +64,7 @@ export const Button = forwardRef<HTMLButtonElement, ButtonProps>(function Button
     )}
     {...props}
   >
-    {isLoading ? <Loader2 aria-hidden className={cn('shrink-0 animate-spin motion-reduce:animate-none', size === 'sm' || size === 'compact' ? 'size-3' : 'size-4')} /> : leftIcon}
+    {isLoading ? <LoadingOrb size={size === 'sm' || size === 'compact' ? 12 : 16} inverted={!unstyled && tone === 'primary'} /> : leftIcon}
     {isLoading && loadingText ? loadingText : children}
     {!isLoading && rightIcon}
   </PressButton>

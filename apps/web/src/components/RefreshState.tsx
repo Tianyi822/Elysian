@@ -4,7 +4,7 @@ import * as Tooltip from '@radix-ui/react-tooltip'
 import { Button } from './Button'
 import { cn } from './easyui/utils'
 
-/** 区域刷新按钮：请求完成前旋转并禁用；旧内容原位保留，首次读取才显示加载态。 */
+/** 区域刷新按钮在请求期间显示加载标记并禁用，旧内容原位保留。 */
 
 export function RefreshButton({
   onPress,
@@ -14,7 +14,7 @@ export function RefreshButton({
   className,
 }: {
   onPress: () => void
-  /** 刷新在途：图标旋转、按钮禁用、读屏播报忙。 */
+  /** 刷新在途时显示加载标记、禁用按钮并播报忙碌状态。 */
   busy?: boolean
   label?: string
   disabled?: boolean
@@ -25,7 +25,7 @@ export function RefreshButton({
       <Tooltip.Trigger asChild>
         <Button size="icon" variant="outline" aria-label={label} aria-busy={busy || undefined} onClick={onPress}
           isLoading={busy} disabled={disabled}
-          className={cn(className, 'size-8 shrink-0 rounded-full text-fg-muted hover:text-fg motion-reduce:[&_svg]:animate-none')}
+          className={cn(className, 'size-8 shrink-0 rounded-full text-fg-muted hover:text-fg')}
           leftIcon={<RefreshCw size={14} aria-hidden />} />
       </Tooltip.Trigger>
       <Tooltip.Portal>

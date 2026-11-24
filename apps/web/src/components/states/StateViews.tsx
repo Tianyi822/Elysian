@@ -1,4 +1,5 @@
-import { Inbox, Loader2, Lock, TriangleAlert } from '../icons'
+import { Inbox, Lock, TriangleAlert } from '../icons'
+import { LoadingOrb } from '../LoadingOrb'
 import { CTL_SECONDARY } from '../formControl'
 import type { ReactNode } from 'react'
 import { useFeedbackMessage } from '../useFeedbackMessage'
@@ -16,7 +17,7 @@ export function LoadingState({ label = '加载中…' }: { label?: string }) {
       aria-live="polite"
       className="flex items-center justify-center gap-2 panel-surface p-6 text-sm text-fg-muted"
     >
-      <Loader2 aria-hidden size={16} className="animate-spin" />
+      <LoadingOrb size={24} />
       {label}
     </div>
   )
