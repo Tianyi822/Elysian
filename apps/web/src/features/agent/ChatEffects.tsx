@@ -3,7 +3,6 @@ import { BorderBeam } from 'border-beam'
 import { useReducedMotion } from 'framer-motion'
 import { Liquid } from 'liquid-gooey'
 import { MetalFx } from 'metal-fx'
-import { ThinkingOrb } from 'thinking-orbs'
 import { IconButton } from '../../components/IconButton'
 import { ArrowUp, Paperclip } from '../../components/icons'
 
@@ -98,12 +97,4 @@ export function ChatAttachButton({ disabled, onPress }: { disabled: boolean; onP
       <Paperclip size={18} aria-hidden />
     </IconButton>
   </div>
-}
-
-export function ChatThinkingOrb({ state }: { state: 'working' | 'solving' }) {
-  return <span className="chat-thinking-orb" aria-hidden="true">
-    {typeof CanvasRenderingContext2D === 'undefined' ? <span className="chat-thinking-static" /> : (
-      <ThinkingOrb size={20} theme="auto" state={state} />
-    )}
-  </span>
 }

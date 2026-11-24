@@ -19,11 +19,12 @@ describe('异步工具进度', () => {
     expect(screen.getByText('等待资源')).toBeInTheDocument()
     expect(screen.getByText(/已等待 46 秒/)).toBeInTheDocument()
     expect(screen.getByText(/运行 old-run · 操作 old-operation/)).toBeInTheDocument()
+    expect(view.container.querySelector('[data-loading-orb="connecting"]')).toHaveAttribute('data-paused', 'true')
     expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
     view.rerender(<ChatTimeline timeline={{ ...snapshot({ ...entry, status: 'not-executed', resourceWait: { ...entry.resourceWait!, unknown: true, message: '此前操作结果待核实' } }), status: 'interrupted', done: true }} api={api} active={false} stopped={false} onProgress={vi.fn()} />)
     expect(screen.getByText('未执行')).toBeInTheDocument()
     expect(screen.getByText(/此前操作结果待核实/)).toBeInTheDocument()
-    expect(document.querySelector('.chat-tool-status-icon')).not.toHaveClass('animate-spin')
+    expect(view.container.querySelector('[data-loading-orb]')).not.toBeInTheDocument()
     expect(api.calls).not.toHaveBeenCalled()
   })
   it('未展开也显示当前镜像层的真实进度，切层不继承旧比例，完成后保留展开的结果', async () => {
@@ -68,11 +69,12 @@ describe('异步工具进度', () => {
     const draw = (entry: Tool) => <ChatTimeline timeline={snapshot(entry)} api={api} active stopped={false} onProgress={vi.fn()} />
     const view = render(draw(tool))
     expect(screen.getByRole('progressbar')).not.toHaveAttribute('aria-valuenow')
+    expect(view.container.querySelector('[data-loading-orb="connecting"]')).not.toHaveAttribute('data-paused')
     const message = 'Docker 连续 5 分钟未返回拉取数据，结果未确认，禁止重新拉取或换源重投'
     view.rerender(draw({ ...tool, progress: { state: 'unknown', message } }))
     expect(screen.queryByRole('progressbar')).not.toBeInTheDocument()
     expect(screen.getByText('结果未确认')).toBeInTheDocument()
     expect(screen.getByRole('status')).toHaveTextContent(message)
-    expect(document.querySelector('.chat-tool-status-icon')).not.toHaveClass('animate-spin')
+    expect(view.container.querySelector('[data-loading-orb]')).not.toBeInTheDocument()
   })
 })

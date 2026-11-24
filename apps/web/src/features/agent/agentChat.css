@@ -161,9 +161,6 @@
 .chat-tool-data { max-height: 256px; min-width: 0; overflow: auto; overscroll-behavior: contain; white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px 10px; border-radius: 8px; background: var(--t-code-bg); color: var(--t-code-fg); font-size: 12px; line-height: 1.65; }
 .chat-response[data-streaming] .chat-markdown > * { animation: chat-text-appear 160ms ease-out; }
 .chat-response-waiting { display: flex; align-items: center; height: 32px; padding-inline: 8px; color: var(--t-fg-muted); }
-.chat-thinking-orb { display: grid; place-items: center; width: 20px; height: 20px; flex: none; }
-.chat-thinking-orb canvas { width: 100%; height: 100%; }
-.chat-thinking-static { width: 10px; height: 10px; border: 1px dotted currentColor; border-radius: 50%; }
 @keyframes chat-thought-roll { from { opacity: 0.5; transform: translateY(55%); } to { opacity: 1; transform: translateY(0); } }
 @keyframes chat-text-appear { from { opacity: 0.5; } to { opacity: 1; } }
 .chat-thought-content { max-height: 192px; overflow-y: auto; overscroll-behavior: contain; margin: 6px 0 0 6px; padding: 2px 12px 2px 16px; border-left: 1px solid var(--t-panel-line); white-space: pre-wrap; overflow-wrap: anywhere; }

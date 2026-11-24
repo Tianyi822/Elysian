@@ -2,7 +2,7 @@ import { useId, useLayoutEffect, useRef, useState } from 'react'
 import { ChevronRight } from '../../components/icons'
 import { mediaQuery } from '../../utils/mediaQuery'
 import { Button } from '../../components/Button'
-import { ChatThinkingOrb } from './ChatEffects'
+import { LoadingOrb } from '../../components/LoadingOrb'
 
 /** 收起只显示最新一行；展开在有界区域内跟随更新，手动上滚时保留阅读位置。 */
 export function ChatReasoning({ text, active = false, thinking = false }: { text: string; active?: boolean; thinking?: boolean }) {
@@ -32,7 +32,7 @@ export function ChatReasoning({ text, active = false, thinking = false }: { text
       onClick={() => { following.current = true; setExpanded(value => !value) }}
     >
       <ChevronRight size={14} aria-hidden className={expanded ? 'rotate-90' : undefined} />
-      {thinking && <ChatThinkingOrb state="solving" />}
+      {thinking && <LoadingOrb size={20} />}
       {expanded ? <span>思考内容</span> : <span ref={preview} className="chat-thought-preview"><span key={lineNumber} className="chat-thought-line">{latestLine}</span></span>}
     </Button>
     {expanded && <div

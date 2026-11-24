@@ -10,6 +10,7 @@ describe('回复过渡', () => {
     const view = render(response(''))
     const indicator = screen.getByRole('status', { name: '等待模型回复' })
     expect(indicator).toHaveClass('chat-response-waiting')
+    expect(indicator.querySelector('[data-loading-orb="connecting"]')).toBeInTheDocument()
     const container = indicator.parentElement
     view.rerender(response('第一段输出'))
     expect(await screen.findByText('第一段输出')).toBeInTheDocument()
@@ -34,9 +35,9 @@ describe('回复过渡', () => {
     const draw = (content: string) => <ChatResponse content={content} reasoning="先核对结果" active onProgress={onProgress} />
     const view = render(draw(''))
     const thought = await screen.findByRole('button', { name: '展开思考内容' })
-    expect(thought.querySelector('.chat-thinking-orb')).toHaveAttribute('aria-hidden', 'true')
+    expect(thought.querySelector('[data-loading-orb="connecting"]')).toHaveAttribute('aria-hidden', 'true')
     view.rerender(draw('核对完成'))
-    expect(thought.querySelector('.chat-thinking-orb')).toBeNull()
+    expect(thought.querySelector('[data-loading-orb]')).toBeNull()
     expect(await screen.findByText('核对完成')).toBeInTheDocument()
   })
 

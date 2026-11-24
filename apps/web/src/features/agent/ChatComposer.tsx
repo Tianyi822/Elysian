@@ -4,7 +4,8 @@ import { AGENT_COMPOSER_FILE_ACCEPT } from '../../adapters/local/agentTextFiles'
 import { Button } from '../../components/Button'
 import { GooeySelect } from '../../components/GooeySelect'
 import { IconButton } from '../../components/IconButton'
-import { Brain, Hand, Loader2, ShieldAlert, ShieldCheck, Square, type IconComponent } from '../../components/icons'
+import { Brain, Hand, ShieldAlert, ShieldCheck, Square, type IconComponent } from '../../components/icons'
+import { LoadingOrb } from '../../components/LoadingOrb'
 import { RefreshButton } from '../../components/RefreshState'
 import type { useImeEnterGuard } from '../../components/useImeEnterGuard'
 import type { AgentChatPermissionMode, AgentConversationAdapter } from '../../contracts/agentChat'
@@ -91,7 +92,7 @@ export function ChatComposer({ api, chat, input, model, models, status, reasonin
     {chat.inputError && <p role="alert" className="mb-3 text-xs text-danger">{chat.inputError}</p>}
     {inputHints.length > 0 && <div role="status" className="mb-3 space-y-1 text-xs text-fg-muted">{[...new Set(inputHints)].map(hint => <p key={hint}>{hint}</p>)}</div>}
     {stopping && <p role="status" className="mb-3 text-xs text-fg-muted">正在停止…</p>}
-    {chat.uploadingAttachments && <p role="status" className="mb-3 flex items-center gap-2 text-xs text-fg-muted"><Loader2 size={13} className="animate-spin motion-reduce:animate-none" aria-hidden />正在处理文件…</p>}
+    {chat.uploadingAttachments && <p role="status" className="mb-3 flex items-center gap-2 text-xs text-fg-muted"><LoadingOrb size={13} />正在处理文件…</p>}
     {readError && <div className="mb-3 flex items-start justify-between gap-3 text-xs text-danger">
       <p role="alert">{readError}</p>
       <RefreshButton label={retryReadLabel} busy={chat.refreshing || status === 'loading'} onPress={retryReads} />
@@ -144,7 +145,7 @@ export function ChatComposer({ api, chat, input, model, models, status, reasonin
           disabled={modelSelectionLocked} leadingIcon={<Brain size={16} aria-hidden />}
           triggerClassName="chat-select" className="shrink-0" />}
         {chat.sending
-          ? <IconButton label="正在发送消息" disabled busy className="chat-send chat-pending"><Loader2 size={18} className="animate-spin motion-reduce:animate-none" aria-hidden /></IconButton>
+          ? <IconButton label="正在发送消息" disabled busy className="chat-send chat-pending"><LoadingOrb size={18} /></IconButton>
           : liveRunId && !finalizing && !chat.remoteSession?.activeWorkflowId
           ? <IconButton label={stopping ? '正在停止' : '停止回复'} onPress={() => void chat.stop(api)} disabled={stopping} className="chat-send chat-stop"><Square size={16} fill="currentColor" aria-hidden /></IconButton>
           : <ChatSendButton label={session?.pending && !session.pending.input.replaceMessageId ? '重试发送' : '发送消息'} onPress={send} disabled={!canSend} />}

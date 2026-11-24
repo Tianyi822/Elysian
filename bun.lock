@@ -36,7 +36,6 @@
         "react-router": "^7",
         "remark-gfm": "^4.0.1",
         "tailwind-merge": "3.6.0",
-        "thinking-orbs": "0.3.2",
         "zustand": "^5.0.15",
       },
       "devDependencies": {
@@ -704,8 +703,6 @@
     "tailwindcss": ["tailwindcss@4.3.3", "https://registry.npmmirror.com/tailwindcss/-/tailwindcss-4.3.3.tgz", {}, "sha512-gOhV3P7ufE62QDGg1zVaTgCR+EtPv92k2nIhVcVKcLmxT1sUBsQGhnZj175j+MqRt4zLF7ic+sCYjfhxMxj7YQ=="],
 
     "tapable": ["tapable@2.3.3", "https://registry.npmmirror.com/tapable/-/tapable-2.3.3.tgz", {}, "sha512-uxc/zpqFg6x7C8vOE7lh6Lbda8eEL9zmVm/PLeTPBRhh1xCgdWaQ+J1CUieGpIfm2HdtsUpRv+HshiasBMcc6A=="],
-
-    "thinking-orbs": ["thinking-orbs@0.3.2", "https://registry.npmmirror.com/thinking-orbs/-/thinking-orbs-0.3.2.tgz", { "peerDependencies": { "react": ">=18.0.0" } }, "sha512-QZFeBaPEzqhjiZoXy961EvDgaXk2WgXacF3Rbz+Sj5IfzDzBvTC86vdREUHniBffYibJFKSwbfllxLUdI/Xv6g=="],
 
     "tinybench": ["tinybench@6.1.4", "https://registry.npmmirror.com/tinybench/-/tinybench-6.1.4.tgz", {}, "sha512-9APumHG7r4yOk4X4WlkmE71aZcv1gvin1czO3OQ1U9iJcFA5Ja/ygyb0vPOVHTthFozUYs8CLoLUlM8grb2lTQ=="],
 

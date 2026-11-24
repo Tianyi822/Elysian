@@ -1,6 +1,7 @@
 import { useId, useLayoutEffect, useState } from 'react'
 import { RUNTIME_RUN_STATUS_LABELS, type AgentRunPlan, type RuntimeRunStatus } from '@elysian/contracts'
-import { Check, ChevronRight, ListTodo, Loader2, Minus } from '../../components/icons'
+import { Check, ChevronRight, ListTodo, Minus } from '../../components/icons'
+import { LoadingOrb } from '../../components/LoadingOrb'
 import './chatPlan.css'
 import { Button } from '../../components/Button'
 
@@ -34,9 +35,9 @@ export function ChatPlan({ plan, status, budgetStopped = false, stopping = false
     {expanded && <div id={id} role="region" aria-label="任务步骤" className="chat-plan-details hover-scrollbar" tabIndex={0}>
       <ol>
         {plan.steps.map(step => {
-          const Icon = step.status === 'completed' ? Check : step.status === 'in_progress' ? Loader2 : Minus
+          const Icon = step.status === 'completed' ? Check : Minus
           return <li key={step.id} data-status={step.status}>
-            <Icon size={14} aria-hidden className={step.status === 'in_progress' && running ? 'animate-spin motion-reduce:animate-none' : undefined} />
+            {step.status === 'in_progress' ? <LoadingOrb size={14} paused={!running} className="mt-[3px]" /> : <Icon size={14} aria-hidden />}
             <span className="chat-plan-title">{step.title}</span>
             <span className="chat-plan-step-status">{labels[step.status]}</span>
           </li>

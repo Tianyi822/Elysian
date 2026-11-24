@@ -1,7 +1,8 @@
 import { useEffect, useId, useLayoutEffect, useState } from 'react'
 import { RUNTIME_RUN_STATUS_LABELS, type AgentChatTimelineEntry, type AgentChatTimelineSnapshot, type AgentChatToolStatus, type AgentMessage, type RuntimeCall } from '@elysian/contracts'
 import type { AgentConversationAdapter } from '../../contracts/agentChat'
-import { Check, ChevronRight, Loader2, Terminal, X } from '../../components/icons'
+import { Check, ChevronRight, Terminal, X } from '../../components/icons'
+import { LoadingOrb } from '../../components/LoadingOrb'
 import { RefreshButton } from '../../components/RefreshState'
 import { useAgentChatStore } from '../../stores/agentChatStore'
 import { ChatMarkdown } from '../../components/ChatMarkdown'
@@ -60,14 +61,15 @@ function ChatTool({ entry, runId, api, onProgress, collapsed }: {
   useLayoutEffect(onProgress, [expanded, hidden, result, loading, error, entry.progress, onProgress])
   const status = toolStatus(entry)
   const evidence = result?.evidence ?? (result?.error ?? entry.error)?.evidence
-  const Icon = status === 'succeeded' ? Check : failed(status) ? X : pending(status) ? Loader2 : Terminal
+  const Icon = status === 'succeeded' ? Check : failed(status) ? X : Terminal
   return <div className="chat-tool" data-status={status} hidden={hidden}
     onFocusCapture={() => setFocused(true)}
     onBlurCapture={event => { if (!event.currentTarget.contains(event.relatedTarget)) setFocused(false) }}>
     <Button unstyled type="button" className="chat-tool-toggle" aria-expanded={expanded} aria-controls={regionId}
       aria-label={`${expanded ? '收起' : '展开'}工具 ${entry.tool} 详情`} onClick={() => setExpanded(value => !value)}>
       <ChevronRight size={14} aria-hidden className={expanded ? 'rotate-90' : undefined} />
-      <Icon size={14} aria-hidden className={`chat-tool-status-icon${status === 'running' || status === 'waiting-task' ? ' animate-spin motion-reduce:animate-none' : ''}`} />
+      {pending(status) ? <LoadingOrb size={14} paused={status !== 'running' && status !== 'waiting-task'} />
+        : <Icon size={14} aria-hidden className="chat-tool-status-icon" />}
       <span className="chat-tool-name">{entry.tool}</span><span className="chat-tool-status">{toolLabels[status]}</span>
     </Button>
     {entry.resourceWait && <div className="text-xs text-fg-muted" role="status">
@@ -78,7 +80,7 @@ function ChatTool({ entry, runId, api, onProgress, collapsed }: {
     {expanded && <div id={regionId} role="region" aria-label={`${entry.tool} 详情`} className="chat-tool-details">
       <p className="text-xs text-fg-muted">参数</p>
       <pre className="chat-tool-data hover-scrollbar" tabIndex={0}>{entry.argumentsJson}</pre>
-      {loading && <Loader2 size={14} className="animate-spin motion-reduce:animate-none" role="status" aria-label="读取工具结果" />}
+      {loading && <LoadingOrb size={14} label="读取工具结果" />}
       {error && <RefreshButton label="重试读取工具详情" onPress={() => setRetry(value => value + 1)} busy={loading} />}
       {result?.result !== undefined && <><p className="text-xs text-fg-muted">结果</p><pre className="chat-tool-data hover-scrollbar" tabIndex={0}>{typeof result.result === 'string' ? result.result : JSON.stringify(result.result, null, 2)}</pre></>}
       {(entry.truncated || result?.truncated) && <p className="text-xs text-fg-muted">结果已截断</p>}
