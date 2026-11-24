@@ -15,12 +15,15 @@ function renderTokens(nodes: readonly RootContent[]): ReactNode {
   })
 }
 
-/** 已完成的代码块不随后续流式文字重新着色或挂载。 */
-export const ChatCodeBlock = memo(function ChatCodeBlock({ value, language }: { value: string; language: string }) {
-  const content = useMemo(() => {
+export const HighlightedCode = memo(function HighlightedCode({ value, language }: { value: string; language: string }) {
+  return useMemo(() => {
     const tree = highlightCode(value, language)
     return tree ? renderTokens(tree.children) : value
   }, [value, language])
+})
+
+/** 已完成的代码块不随后续流式文字重新着色或挂载。 */
+export const ChatCodeBlock = memo(function ChatCodeBlock({ value, language }: { value: string; language: string }) {
   const { copied, copy } = useClipboardCopy()
 
   return <div className="chat-code-block">
@@ -30,6 +33,6 @@ export const ChatCodeBlock = memo(function ChatCodeBlock({ value, language }: { 
         {copied ? <Check size={14} aria-hidden /> : <Copy size={14} aria-hidden />}
       </IconButton>
     </div>
-    <pre className="hover-scrollbar" tabIndex={0}><code className={language ? `language-${language}` : undefined}>{content}</code></pre>
+    <pre className="hover-scrollbar" tabIndex={0}><code className={language ? `language-${language}` : undefined}><HighlightedCode value={value} language={language} /></code></pre>
   </div>
 })

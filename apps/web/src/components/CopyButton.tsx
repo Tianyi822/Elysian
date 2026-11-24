@@ -24,14 +24,17 @@ function notifyCopyFailed(error: unknown): void {
  */
 export function useClipboardCopy(): {
   copied: boolean
+  error: string
   copy(value: string, label: string): Promise<void>
 } {
   const [copied, setCopied] = useState(false)
+  const [error, setError] = useState('')
   const timerRef = useRef<number | undefined>(undefined)
 
   useEffect(() => () => window.clearTimeout(timerRef.current), [])
 
   const copy = async (value: string, label: string) => {
+    setError('')
     try {
       await writeClipboardText(value)
       window.clearTimeout(timerRef.current)
@@ -39,11 +42,12 @@ export function useClipboardCopy(): {
       timerRef.current = window.setTimeout(() => setCopied(false), FEEDBACK_MS)
       useMessageStore.getState().notify({ tone: 'success', message: `已复制${label}` })
     } catch (error) {
+      setError('浏览器拒绝了剪贴板访问，请选择文本手动复制。')
       notifyCopyFailed(error)
     }
   }
 
-  return { copied, copy }
+  return { copied, copy, error }
 }
 
 /**
