@@ -126,7 +126,7 @@ func TestContextToolSearchDisciplineAndDomainBoundaries(t *testing.T) {
 	}}
 	a := &agentExecution{run: Run{DriverVersion: "v2", Snapshot: &snapshot, Task: &Task{}}}
 	system := baseContext(a, WorkingMemory{}, agentSystem, nil)[0].Content
-	for _, want := range []string{"同一子目标连续搜索不超过两次", `"notes"`, "不含逐容器资源统计", "该能力或数据不可得"} {
+	for _, want := range []string{"同一子目标连续搜索不超过两次", `"notes"`, "逐容器统计", "该能力或数据不可得"} {
 		if !strings.Contains(system, want) {
 			t.Errorf("按需加载系统提示词缺少 %q：%s", want, system)
 		}

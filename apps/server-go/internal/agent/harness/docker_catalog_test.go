@@ -57,7 +57,12 @@ func dockerCatalogBridge(t *testing.T, configure ...func(*domaindocker.AgentFaca
 		case "/version":
 			_, _ = w.Write([]byte(`{"ApiVersion":"1.44"}`))
 		case "/containers/json":
-			_, _ = w.Write([]byte(`[]`))
+			hostname, _ := os.Hostname()
+			if len(hostname) == 12 {
+				_ = json.NewEncoder(w).Encode([]map[string]string{{"Id": hostname + strings.Repeat("0", 52)}})
+			} else {
+				_, _ = w.Write([]byte(`[]`))
+			}
 		case "/images/json":
 			_ = json.NewEncoder(w).Encode([]any{map[string]any{"Id": "sha256:" + strings.Repeat("a", 64), "Size": 1024, "Created": 1, "RepoTags": []string{"mysql:8.4", "local-nginx:1.27"}, "RepoDigests": []string{"mysql@sha256:" + strings.Repeat("a", 64)}}})
 		case "/containers/" + strings.Repeat("c", 64) + "/json":
@@ -285,12 +290,19 @@ func TestDockerDetailsExecuteThroughKardiaWithExactAuthorization(t *testing.T) {
 					return searchReply(test.name), nil
 				case 2:
 					response := toolReply(test.name)
-					response.ToolCalls[0].Arguments, _ = json.Marshal(map[string]string{"id": test.id})
+					arguments := map[string]any{"id": test.id}
+					if test.name == "docker_container_inspect" {
+						arguments["detail"] = true
+					}
+					response.ToolCalls[0].Arguments, _ = json.Marshal(arguments)
 					return response, nil
 				default:
 					text := allRequestText(request)
 					if !strings.Contains(text, test.want) || strings.Contains(text, "secret-command") || strings.Contains(text, "secret-token") {
 						t.Errorf("invalid detail projection: %s", text)
+					}
+					if test.name == "docker_container_inspect" && !strings.Contains(text, `"envKeys":["TOKEN"]`) {
+						t.Errorf("version 5 inspection lost its detail projection: %s", text)
 					}
 					return finalReply("已核对本地对象"), nil
 				}
@@ -398,6 +410,7 @@ func TestDockerAutomaticCatalogNeverAddsUnreviewedOrHumanTools(t *testing.T) {
 		"docker_container_inspect", "docker_image_inspect", "docker_container_create_restricted", "docker_container_create_service",
 		"docker_container_power", "docker_container_remove",
 		"docker_image_search", "docker_image_tags", "docker_image_pull", "docker_image_pull_get", "docker_image_pull_cancel", "docker_container_logs", "docker_image_remove", "docker_container_exec",
+		"docker_container_stats", "docker_networks_list", "docker_volumes_list", "docker_container_update",
 	}
 	var registered []tools.PublicSchema
 	for _, name := range audited {
