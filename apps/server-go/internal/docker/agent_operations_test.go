@@ -411,7 +411,7 @@ func TestLegacyDockerLifecycleDoesNotGainDatabaseTargets(t *testing.T) {
 	if err := facade.LegacyRemove(context.Background(), strings.Repeat("c", 64)); err == nil || bridge.calls != 0 {
 		t.Fatal("legacy removal used new database bridge")
 	}
-	if err := facade.Remove(context.Background(), strings.Repeat("c", 64)); err != nil || bridge.calls != 1 {
+	if err := facade.ManagedRemove(context.Background(), strings.Repeat("c", 64)); err != nil || bridge.calls != 1 {
 		t.Fatalf("version-2 removal did not use shared database implementation: %v", err)
 	}
 }

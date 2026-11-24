@@ -57,15 +57,26 @@ func (a *AgentFacade) check(ctx context.Context) error {
 }
 
 func (a *AgentFacade) Action(ctx context.Context, id, action string) (contract.Container, error) {
-	return a.action(ctx, id, action, true)
+	return a.action(ctx, id, action, scopeHost, nil)
+}
+
+// ManagedAction 保留 power v1 的目标范围：Agent 模板容器与按登记路由的数据库、网站容器。
+func (a *AgentFacade) ManagedAction(ctx context.Context, id, action string) (contract.Container, error) {
+	return a.action(ctx, id, action, scopeManaged, nil)
 }
 
 // LegacyAction preserves the target restrictions of accepted version-1 tools.
 func (a *AgentFacade) LegacyAction(ctx context.Context, id, action string) (contract.Container, error) {
-	return a.action(ctx, id, action, false)
+	return a.action(ctx, id, action, scopeTemplates, nil)
 }
 
-func (a *AgentFacade) action(ctx context.Context, id, action string, databases bool) (contract.Container, error) {
+func (a *AgentFacade) ActionWithNotes(ctx context.Context, id, action string) (contract.Container, AgentTargetNotes, error) {
+	var notes AgentTargetNotes
+	container, err := a.action(ctx, id, action, scopeHost, &notes)
+	return container, notes, err
+}
+
+func (a *AgentFacade) action(ctx context.Context, id, action string, scope agentScope, notes *AgentTargetNotes) (contract.Container, error) {
 	if err := a.check(ctx); err != nil {
 		return contract.Container{}, err
 	}
@@ -75,7 +86,21 @@ func (a *AgentFacade) action(ctx context.Context, id, action string, databases b
 	if err := a.CheckContainerMutation(ctx, id, "", ""); err != nil {
 		return contract.Container{}, agentRejected(err)
 	}
-	if databases && a.databaseContainers != nil {
+	var inspected any
+	if scope == scopeHost {
+		value, err := a.inspectHostTarget(ctx, id)
+		if err != nil {
+			return contract.Container{}, agentRejected(err)
+		}
+		if err := readableAgentTarget(value, a.service.deps.selfContainerID); err != nil {
+			return contract.Container{}, agentRejected(err)
+		}
+		inspected = value
+		if notes != nil {
+			*notes = describeAgentTarget(value, a.service.deps.selfContainerID)
+		}
+	}
+	if scope >= scopeManaged && a.databaseContainers != nil {
 		handled, err := a.databaseContainers.Lifecycle(ctx, id, action)
 		if handled || err != nil {
 			if err != nil {
@@ -90,7 +115,7 @@ func (a *AgentFacade) action(ctx context.Context, id, action string, databases b
 	}
 	// 网站容器与数据库容器同法：v2 生命周期按所属领域登记核验后路由；
 	// v1 旧快照保持原有受限目标语义，不获得网站路由。
-	if databases && a.websiteContainers != nil {
+	if scope >= scopeManaged && a.websiteContainers != nil {
 		handled, err := a.websiteContainers.Lifecycle(ctx, id, action)
 		if handled || err != nil {
 			if err != nil {
@@ -103,11 +128,21 @@ func (a *AgentFacade) action(ctx context.Context, id, action string, databases b
 			return mapContainer(value)
 		}
 	}
-	target, err := a.safeTarget(ctx, id)
+	var target string
+	var err error
+	if scope == scopeHost {
+		target, err = a.operableTargetInspect(inspected)
+	} else {
+		target, err = a.safeTarget(ctx, id)
+	}
 	if err != nil {
 		return contract.Container{}, agentRejected(err)
 	}
-	container, err := a.service.Action(ctx, target, action)
+	var guard seam.ContainerOperationGuard
+	if scope == scopeHost {
+		guard = a.CheckContainerMutation
+	}
+	container, err := a.service.actionWithGuard(ctx, target, action, guard)
 	if err != nil {
 		return contract.Container{}, agentRejected(err)
 	}
@@ -115,44 +150,80 @@ func (a *AgentFacade) action(ctx context.Context, id, action string, databases b
 }
 
 func (a *AgentFacade) Remove(ctx context.Context, id string) error {
-	return a.remove(ctx, id, true)
+	return a.remove(ctx, id, scopeHost)
+}
+
+// ManagedRemove 保留 remove v2/v3 的目标范围，v4 起放开到非面板容器。
+func (a *AgentFacade) ManagedRemove(ctx context.Context, id string) error {
+	return a.remove(ctx, id, scopeManaged)
 }
 
 func (a *AgentFacade) LegacyRemove(ctx context.Context, id string) error {
-	return a.remove(ctx, id, false)
+	return a.remove(ctx, id, scopeTemplates)
 }
 
-func (a *AgentFacade) remove(ctx context.Context, id string, databases bool) error {
+func (a *AgentFacade) remove(ctx context.Context, id string, scope agentScope) error {
 	if err := a.check(ctx); err != nil {
 		return agentRejected(err)
 	}
 	if err := a.CheckContainerMutation(ctx, id, "", ""); err != nil {
 		return agentRejected(err)
 	}
-	if databases && a.databaseContainers != nil {
+	var inspected any
+	if scope == scopeHost {
+		value, err := a.inspectHostTarget(ctx, id)
+		if err != nil {
+			return agentRejected(err)
+		}
+		if err := readableAgentTarget(value, a.service.deps.selfContainerID); err != nil {
+			return agentRejected(err)
+		}
+		inspected = value
+	}
+	if scope >= scopeManaged && a.databaseContainers != nil {
 		handled, err := a.databaseContainers.Lifecycle(ctx, id, "remove")
 		if handled || err != nil {
 			return err
 		}
 	}
-	target, err := a.safeTarget(ctx, id)
+	var target string
+	var err error
+	if scope == scopeHost {
+		target, err = a.operableTargetInspect(inspected)
+	} else {
+		target, err = a.safeTarget(ctx, id)
+	}
 	if err != nil {
 		return agentRejected(err)
 	}
-	return agentRejected(a.service.RemoveContainer(ctx, target))
+	var guard seam.ContainerOperationGuard
+	if scope == scopeHost {
+		guard = a.CheckContainerMutation
+	}
+	return agentRejected(a.service.removeWithGuard(ctx, target, guard))
 }
 
 func (a *AgentFacade) safeTarget(ctx context.Context, id string) (string, error) {
-	if len(id) != 64 {
-		return "", shared.InvalidRequest("Agent 容器操作必须使用完整 ID")
-	}
-	if _, err := hex.DecodeString(id); err != nil {
-		return "", shared.InvalidRequest("容器 ID 无效")
-	}
-	value, err := a.service.inspectContainerByID(ctx, id, actionTimeout)
+	value, err := a.inspectAgentTarget(ctx, id)
 	if err != nil {
 		return "", err
 	}
+	return a.safeTargetInspect(value)
+}
+
+// inspectAgentTarget 校验完整 64 位容器 ID 并读取 inspect，供各类目标核验共用。
+func (a *AgentFacade) inspectAgentTarget(ctx context.Context, id string) (any, error) {
+	if len(id) != 64 {
+		return nil, shared.InvalidRequest("Agent 容器操作必须使用完整 ID")
+	}
+	if _, err := hex.DecodeString(id); err != nil {
+		return nil, shared.InvalidRequest("容器 ID 无效")
+	}
+	return a.service.inspectContainerByID(ctx, id, actionTimeout)
+}
+
+// safeTargetInspect 是 Agent 模板容器与域归属容器的既有核验，语义不变。
+func (a *AgentFacade) safeTargetInspect(value any) (string, error) {
 	r, ok := asRecord(value)
 	if !ok {
 		return "", errors.New("容器身份无效")
