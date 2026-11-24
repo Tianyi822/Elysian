@@ -10,6 +10,9 @@ import (
 )
 
 func dockerLegacyOperation(schema tools.PublicSchema) Operation {
+	if previous, ok := restoreHostScopeSchema(schema); ok {
+		schema = previous
+	}
 	if previous, ok := previousDockerReceiptSchema(schema); ok {
 		schema = previous
 	}
@@ -200,5 +203,49 @@ func TestRetiredDatabaseEraDockerCatalogsStayCompatible(t *testing.T) {
 	tampered := frozenOperation(retiredInspectSchema("3"), `{"id":"`+strings.Repeat("c", 64)+`","unapproved":true}`)
 	if legacyDockerContainerCatalogCompatible(tampered, inspect) {
 		t.Fatal("越权参数不得通过退役还原")
+	}
+}
+
+func TestDockerHostScopeCatalogRestoresOnlyPublishedSnapshots(t *testing.T) {
+	id, requestID := strings.Repeat("c", 64), strings.Repeat("a", 64)
+	for _, test := range []struct {
+		name, version, description, arguments string
+	}{
+		{"logs", "1", "只读读取面板纳管容器的最近日志（stdout 与 stderr 合并、带时间戳）；缺省 100 行最多 500 行、结果上限 64 KiB 保最新；需完整 64 位容器 ID，未纳管容器拒绝", `{"id":"` + id + `","tail":5}`},
+		{"power", "1", "审批后对已授权的安全容器执行 start、stop 或 restart；受管数据库与网站容器先按所属领域登记核验再路由", `{"id":"` + id + `","action":"restart"}`},
+		{"remove", "3", "审批后对已授权的安全容器执行 remove；支持停止态受管数据库容器及专属卷删除，无需先删除逻辑库；保留登记、兄弟库和容器卷身份核验", `{"id":"` + id + `"}`},
+		{"exec", "3", "在精确受管容器中执行argv命令。受管数据库容器禁止任意argv。requestId精确重试复用。异步等待由系统监视器完成。", `{"id":"` + id + `","requestId":"` + requestID + `","argv":["true"]}`},
+		{"inspect", "4", "只读查看本机指定完整 ID 容器的状态、镜像、端口、启动时间与重启策略；不返回环境变量、启动命令或挂载内容", `{"id":"` + id + `"}`},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			current := currentSchemaByName(t, "docker_container_"+test.name)
+			var previous tools.PublicSchema
+			raw, _ := json.Marshal(current)
+			_ = json.Unmarshal(raw, &previous)
+			previous.Metadata.Version, previous.Description = test.version, test.description
+			delete(previous.Parameters["properties"].(map[string]any), "detail")
+			op := frozenOperation(previous, test.arguments)
+			if !legacyDockerContainerCatalogCompatible(op, current) {
+				t.Fatal("已发布目录未正确还原")
+			}
+			for _, mutate := range []func(*tools.PublicSchema){
+				func(s *tools.PublicSchema) { s.Metadata.ResourceKeyArgument = "name" },
+				func(s *tools.PublicSchema) { s.Description += "异动" },
+				func(s *tools.PublicSchema) { s.Parameters["additionalProperties"] = true },
+			} {
+				var changed tools.PublicSchema
+				_ = json.Unmarshal(raw, &changed)
+				mutate(&changed)
+				if legacyDockerContainerCatalogCompatible(op, changed) {
+					t.Fatal("未审核的目录差异不应兼容")
+				}
+			}
+			if test.name == "inspect" {
+				op.ArgumentsJSON = `{"id":"` + id + `","detail":true}`
+				if legacyDockerContainerCatalogCompatible(op, current) {
+					t.Fatal("冻结 inspect 接受了扩展参数")
+				}
+			}
+		})
 	}
 }

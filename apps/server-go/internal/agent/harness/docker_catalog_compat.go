@@ -11,10 +11,18 @@ import (
 // 只接受 Docker 数据库接缝启用前后约定的精确元数据差异。
 // 冻结元数据使旧处理器仍执行原路径，不把新语义施加给旧审批。
 func legacyDockerContainerCatalogCompatible(operation Operation, current tools.PublicSchema) bool {
-	if legacyDockerContainerCatalogCore(operation, current) {
-		return true
+	if previous, ok := restoreHostScopeSchema(current); ok {
+		frozen := operation.Capability
+		var parameters map[string]any
+		if frozen.Source == "builtin" && frozen.Name == previous.Name && frozen.ReadOnly == previous.Metadata.ReadOnly &&
+			json.Unmarshal(frozen.Parameters, &parameters) == nil && mcp.Validate(frozen.Parameters, json.RawMessage(operation.ArgumentsJSON)) == nil &&
+			hstate.DigestJSON(tools.PublicSchema{Name: frozen.Name, Description: frozen.Description, Parameters: parameters, Metadata: frozen.Metadata}) == frozen.CatalogDigest &&
+			hstate.DigestJSON(previous) == frozen.CatalogDigest {
+			return true
+		}
+		current = previous
 	}
-	return legacyDockerRetiredDatabaseCatalogCompatible(operation, current)
+	return legacyDockerContainerCatalogCore(operation, current) || legacyDockerRetiredDatabaseCatalogCompatible(operation, current)
 }
 
 // 逻辑库退役前的冻结文案（升 v3／v4 与 env 说明回退之前的目录）。
