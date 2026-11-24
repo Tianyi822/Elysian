@@ -93,11 +93,15 @@ func agentTaskInspector(sites *websites.AgentFacade, apps *containerapps.AgentFa
 			if task.RequestID != ref.RequestID || ref.Target != "" && ref.Target != task.Target || ref.Digest != "" && ref.Digest != task.Digest {
 				return tools.TaskStatus{}, errors.New("容器操作请求身份不匹配")
 			}
+			task = docker.RecreateTaskStatus(task)
 			terminal := task.State == "succeeded" || task.State == "failed"
 			outcome := taskOutcome(terminal, task.State == "failed", task.State == "running")
 			status := normalizedTaskStatus(outcome, task.State, docker.AgentOperationReceipt(task), task.ErrorCode, task.Message, agentTaskProgress(task.State, terminal, task.Message, task.UpdatedAt, "正在执行容器操作"))
 			if task.State == "failed" {
 				status.Evidence = &tools.ExecutionEvidence{Execution: "finished", Changes: "none", Recovery: "correct", Stage: task.Stage}
+			}
+			if task.ErrorCode == "docker-recreate-rolled-back" {
+				status.Evidence = &tools.ExecutionEvidence{Execution: "finished", Changes: "confirmed", Recovery: "correct", Stage: "rolled-back"}
 			}
 			if task.Stage == "preflight-rejected" {
 				status.Evidence = &tools.ExecutionEvidence{Execution: "not-started", Changes: "none", Recovery: "correct", Stage: "preflight"}
