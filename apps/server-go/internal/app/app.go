@@ -16,6 +16,7 @@ package app
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io/fs"
@@ -237,15 +238,51 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 		legacy := database.LegacyTaskLedger{StateDir: paths.StateDir}
 		inspect := agentTaskInspector(websiteDeps.AgentFacade, appAgent, stack.Agent, legacy)
 		var describeTarget func(context.Context, string) (harness.ApprovalTarget, error)
+		var describeRecreate func(context.Context, string, string) []string
 		if stack.Agent != nil {
+			describeRecreate = func(ctx context.Context, runID, arguments string) []string {
+				if ctx.Err() != nil {
+					return nil
+				}
+				var input docker.RecreateInput
+				if json.Unmarshal([]byte(arguments), &input) != nil {
+					return nil
+				}
+				preview, ok := stack.Agent.RecreatePreviewForApproval(input, "agent:"+runID)
+				if !ok {
+					return []string{"重建预览已失效，请重新预览"}
+				}
+				notes := []string{"沿用原启动命令。原容器保留为停用恢复副本"}
+				if preview.Running {
+					notes = append(notes, "切换期间服务短暂停止")
+				}
+				if preview.HealthWaitSeconds > 0 {
+					notes = append(notes, fmt.Sprintf("新容器健康核验最多等待 %d 秒", preview.HealthWaitSeconds))
+				}
+				for _, target := range preview.RetainedMountTargets {
+					notes = append(notes, "沿用挂载 · "+target)
+				}
+				for _, change := range preview.Changes {
+					line := change.Field
+					if change.Before != "" {
+						line += " · 原值 " + change.Before
+					}
+					if change.After != "" {
+						line += " · 目标 " + change.After
+					}
+					notes = append(notes, line)
+				}
+				return notes
+			}
 			describeTarget = func(ctx context.Context, id string) (harness.ApprovalTarget, error) {
 				target, err := stack.Agent.DescribeContainer(ctx, id)
 				return harness.ApprovalTarget{Kind: "docker-container", Key: id, Label: target.Name, Notes: target.Notes}, err
 			}
 		}
 		return assembleProductionHarness(config, views, harnessAssemblyOptions{
-			DescribeTarget: describeTarget,
-			Paths:          paths.Default, Home: paths.ElysianHome, Plugins: plugins,
+			DescribeTarget:   describeTarget,
+			DescribeRecreate: describeRecreate,
+			Paths:            paths.Default, Home: paths.ElysianHome, Plugins: plugins,
 			CancelTask:  agentTaskCanceller(websiteDeps.AgentFacade, appAgent, stack.Agent, legacy),
 			InspectTask: inspect, VerifyTask: agentTaskVerifier(stack.Agent),
 			LookupTask:    agentTaskLookup(websiteDeps.AgentFacade, appAgent, stack.Agent, legacy),

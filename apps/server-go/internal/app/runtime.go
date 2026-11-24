@@ -71,17 +71,18 @@ func newProductionHarness(cfg *config.Config, views seam.DockerViews) (http.Hand
 }
 
 type harnessAssemblyOptions struct {
-	DescribeTarget func(context.Context, string) (harness.ApprovalTarget, error)
-	Paths          paths.ElysianPaths
-	Home           string
-	NewManager     func(harness.Deps) (http.Handler, func(context.Context) error, error)
-	Recover        func(context.Context, *execution.Executor) error
-	Plugins        []*kardia.Plugin
-	CancelTask     func(context.Context, tools.TaskReference) error
-	InspectTask    func(context.Context, tools.TaskReference) (tools.TaskStatus, error)
-	LookupTask     func(context.Context, tools.TaskReference) (tools.TaskReference, error)
-	VerifyTask     func(context.Context, tools.TaskVerification) (tools.TaskReference, error)
-	ReconcileTask  func(context.Context, tools.TaskReconciliation) error
+	DescribeRecreate func(context.Context, string, string) []string
+	DescribeTarget   func(context.Context, string) (harness.ApprovalTarget, error)
+	Paths            paths.ElysianPaths
+	Home             string
+	NewManager       func(harness.Deps) (http.Handler, func(context.Context) error, error)
+	Recover          func(context.Context, *execution.Executor) error
+	Plugins          []*kardia.Plugin
+	CancelTask       func(context.Context, tools.TaskReference) error
+	InspectTask      func(context.Context, tools.TaskReference) (tools.TaskStatus, error)
+	LookupTask       func(context.Context, tools.TaskReference) (tools.TaskReference, error)
+	VerifyTask       func(context.Context, tools.TaskVerification) (tools.TaskReference, error)
+	ReconcileTask    func(context.Context, tools.TaskReconciliation) error
 }
 
 func assembleProductionHarness(cfg *config.Config, views seam.DockerViews, options harnessAssemblyOptions) (_ http.Handler, _ func(context.Context) error, resultErr error) {
@@ -126,6 +127,7 @@ func assembleProductionHarness(cfg *config.Config, views seam.DockerViews, optio
 	register(store.Close)
 	deps := harness.Deps{Store: store, Tools: bridge, Profiles: profiles, WorkflowRecoveryFence: panel.WorkflowRecoveryFencePath(options.Home)}
 	deps.DescribeTarget = options.DescribeTarget
+	deps.DescribeRecreate = options.DescribeRecreate
 	deps.CancelTask = options.CancelTask
 	deps.InspectTask = options.InspectTask
 	deps.LookupTask = options.LookupTask

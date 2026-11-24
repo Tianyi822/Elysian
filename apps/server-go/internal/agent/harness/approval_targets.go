@@ -60,7 +60,7 @@ func (m *Manager) approvalResponses(ctx context.Context, approvals []Approval) [
 			continue
 		}
 		switch c.Name {
-		case "docker_container_power", "docker_container_remove", "docker_container_exec", "docker_container_update",
+		case "docker_container_power", "docker_container_remove", "docker_container_exec", "docker_container_update", "docker_container_recreate",
 			"docker_container_start", "docker_container_stop", "docker_container_restart":
 		default:
 			continue
@@ -82,6 +82,11 @@ func (m *Manager) approvalResponses(ctx context.Context, approvals []Approval) [
 			}
 			target = &description
 			targets[id] = target
+		}
+		if target != nil && c.Name == "docker_container_recreate" && m.deps.DescribeRecreate != nil {
+			copy := *target
+			copy.Notes = append(append([]string(nil), target.Notes...), m.deps.DescribeRecreate(ctx, o.RunID, o.ArgumentsJSON)...)
+			target = &copy
 		}
 		out[i].target = target
 	}
