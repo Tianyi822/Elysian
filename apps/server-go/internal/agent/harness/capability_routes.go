@@ -66,7 +66,11 @@ func registerCapabilityRoutes(r chi.Router, service runtimeService) {
 			return
 		}
 		v, e := m.ApprovalsByRun(req.Context(), req.URL.Query().Get("workflowId"), req.URL.Query().Get("runId"))
-		respond(w, v, e)
+		if e != nil {
+			respond(w, v, e)
+			return
+		}
+		respond(w, m.approvalResponses(req.Context(), v), nil)
 	}))
 	r.Get("/tools", wrap(func(m *Manager, w http.ResponseWriter, req *http.Request) {
 		if _, e := runtimeQuery(req, 50, "sessionId", "domain", "available"); e != nil {

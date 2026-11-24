@@ -24,6 +24,7 @@ type ToolInvoker interface {
 }
 
 type Deps struct {
+	DescribeTarget        func(context.Context, string) (ApprovalTarget, error)
 	LegacyAgentPolicies   bool // compatibility builds and legacy-policy regression fixtures only
 	VerifyTask            func(context.Context, tools.TaskVerification) (tools.TaskReference, error)
 	InspectTask           func(context.Context, tools.TaskReference) (tools.TaskStatus, error)

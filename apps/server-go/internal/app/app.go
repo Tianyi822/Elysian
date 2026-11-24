@@ -236,8 +236,16 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 	factory := harnessFactory(func(config *config.Config, views seam.DockerViews) (http.Handler, func(context.Context) error, error) {
 		legacy := database.LegacyTaskLedger{StateDir: paths.StateDir}
 		inspect := agentTaskInspector(websiteDeps.AgentFacade, appAgent, stack.Agent, legacy)
+		var describeTarget func(context.Context, string) (harness.ApprovalTarget, error)
+		if stack.Agent != nil {
+			describeTarget = func(ctx context.Context, id string) (harness.ApprovalTarget, error) {
+				target, err := stack.Agent.DescribeContainer(ctx, id)
+				return harness.ApprovalTarget{Kind: "docker-container", Key: id, Label: target.Name, Notes: target.Notes}, err
+			}
+		}
 		return assembleProductionHarness(config, views, harnessAssemblyOptions{
-			Paths: paths.Default, Home: paths.ElysianHome, Plugins: plugins,
+			DescribeTarget: describeTarget,
+			Paths:          paths.Default, Home: paths.ElysianHome, Plugins: plugins,
 			CancelTask:  agentTaskCanceller(websiteDeps.AgentFacade, appAgent, stack.Agent, legacy),
 			InspectTask: inspect, VerifyTask: agentTaskVerifier(stack.Agent),
 			LookupTask:    agentTaskLookup(websiteDeps.AgentFacade, appAgent, stack.Agent, legacy),
