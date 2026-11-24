@@ -11,6 +11,9 @@ import type {
   ContainerBuildState,
   ContainerBuildTask,
   ContainerCreateInput,
+  ContainerRecreateConfig,
+  ContainerRecreatePreview,
+  ContainerRecreateTask,
   ComposeCheckResult,
   ContainerImage,
   ImagePullProgress,
@@ -717,6 +720,42 @@ async function readImagePullStream(response: Response, onProgress?: (progress: I
 }
 
 /** Docker 运行时的容器只读 adapter：list、listImages 与 createPolicy 走 /api/docker。 */
+function parseRecreateTask(value: unknown): ContainerRecreateTask {
+  const row = asObject(value, '重建任务响应无效')
+  const record = asObject(row.recreate, '重建任务身份无效')
+  if (typeof row.id !== 'string' || typeof row.requestId !== 'string' || typeof row.target !== 'string' ||
+    typeof row.stage !== 'string' || !['running', 'succeeded', 'failed', 'unknown'].includes(String(row.state)) ||
+    typeof record.name !== 'string' || typeof record.backupName !== 'string' ||
+    (record.candidateId !== undefined && typeof record.candidateId !== 'string') ||
+    (row.message !== undefined && typeof row.message !== 'string')) throw new Error('重建任务响应无效')
+  return row as ContainerRecreateTask
+}
+
+function parseRecreateConfig(value: unknown): ContainerRecreateConfig {
+  const row = asObject(value, '容器配置响应无效')
+  if (!Array.isArray(row.argv) || !row.argv.every(arg => typeof arg === 'string') ||
+    !Array.isArray(row.mounts) || !row.mounts.every(item => {
+      const mount = asObject(item, '容器挂载响应无效')
+      return ['bind', 'volume', 'tmpfs'].includes(String(mount.kind)) && typeof mount.source === 'string' &&
+        typeof mount.target === 'string' && typeof mount.readOnly === 'boolean'
+    }) || ['blockedReason', 'composeProject', 'composeService', 'composeWorkspace'].some(key => row[key] !== undefined && typeof row[key] !== 'string') ||
+    (row.composeManaged !== undefined && typeof row.composeManaged !== 'boolean')) throw new Error('容器配置响应无效')
+  return { ...row, container: parseContainer(row.container), ...(row.latest === undefined ? {} : { latest: parseRecreateTask(row.latest) }) } as ContainerRecreateConfig
+}
+
+function parseRecreatePreview(value: unknown): ContainerRecreatePreview {
+  const row = asObject(value, '重建预览响应无效')
+  if (typeof row.planId !== 'string' || typeof row.revision !== 'string' || typeof row.id !== 'string' || typeof row.expiresAt !== 'string' ||
+    typeof row.running !== 'boolean' || (row.writableChanges !== null && !Number.isInteger(row.writableChanges)) ||
+    (row.healthWaitSeconds !== undefined && !Number.isInteger(row.healthWaitSeconds)) ||
+    (row.retainedMountTargets !== undefined && (!Array.isArray(row.retainedMountTargets) || !row.retainedMountTargets.every(item => typeof item === 'string'))) ||
+    !Array.isArray(row.changes) || !row.changes.every(item => {
+      const change = asObject(item, '重建差异响应无效')
+      return typeof change.field === 'string' && ['before', 'after'].every(key => change[key] === undefined || typeof change[key] === 'string')
+    })) throw new Error('重建预览响应无效')
+  return row as ContainerRecreatePreview
+}
+
 export function createHttpContainersAdapter(
   baseUrl = '/api/docker',
   options: { createEventSource?: EventSourceFactory } = {},
@@ -726,6 +765,23 @@ export function createHttpContainersAdapter(
   return {
     async list() {
       return parseContainerListResponse(await requestJson(`${baseUrl}/containers`))
+    },
+
+    async recreateConfig(id, signal) {
+      return parseRecreateConfig(await requestJson(`${baseUrl}/containers/${encodeURIComponent(id)}/recreate`, { signal }))
+    },
+    async previewRecreate(id, patch) {
+      return parseRecreatePreview(await requestJson(`${baseUrl}/containers/${encodeURIComponent(id)}/recreate/preview`, {
+        method: 'POST', body: JSON.stringify(patch),
+      }))
+    },
+    async submitRecreate(input) {
+      return parseRecreateTask(await requestJson(`${baseUrl}/containers/${encodeURIComponent(input.id)}/recreate`, {
+        method: 'POST', body: JSON.stringify(input),
+      }))
+    },
+    async recreateTask(requestId, signal) {
+      return parseRecreateTask(await requestJson(`${baseUrl}/recreate-tasks/${encodeURIComponent(requestId)}`, { signal }))
     },
 
     async listImages() {

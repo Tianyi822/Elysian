@@ -39,6 +39,11 @@ import type {
   ContainerBuildSubmitInput,
   ContainerBuildTask,
   ContainerCreateInput,
+  ContainerRecreateConfig,
+  ContainerRecreateInput,
+  ContainerRecreatePatch,
+  ContainerRecreatePreview,
+  ContainerRecreateTask,
   ComposeCheckResult,
   ContainerImage,
   ImagePullProgress,
@@ -161,6 +166,10 @@ export interface ContainerAdapter {
   removeContainer(containerId: string): Promise<void>
   /** 创建容器：Docker 运行时创建真实容器，本地演示追加内存数据集并推 container/created。 */
   create(input: ContainerCreateInput): Promise<Container>
+  recreateConfig?(id: string, signal?: AbortSignal): Promise<ContainerRecreateConfig>
+  previewRecreate?(id: string, patch: ContainerRecreatePatch): Promise<ContainerRecreatePreview>
+  submitRecreate?(input: ContainerRecreateInput): Promise<ContainerRecreateTask>
+  recreateTask?(requestId: string, signal?: AbortSignal): Promise<ContainerRecreateTask>
   /**
    * 容器工作区：随容器一起上传的配置文件的存放、内容读写、compose 路径自检
    * 与镜像构建（ADR-0021）。面板只落盘并回显真实路径，不执行 docker compose；
