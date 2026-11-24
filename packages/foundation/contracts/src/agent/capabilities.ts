@@ -138,7 +138,10 @@ type AgentApprovalCommon = {
   decidedAt?: string
   decision?: AgentApprovalDecision
 }
+export type AgentApprovalTarget = { kind: 'docker-container'; key: string; label: string; notes: string[] }
+
 export type AgentOperationApproval = AgentApprovalCommon & {
+  target?: AgentApprovalTarget
   /** 运行时申请；确认同时授予范围与批准本次操作。旧审批不携带。 */
   access?: AgentRuntimeAccess
   kind?: '' | 'operation'
