@@ -345,6 +345,9 @@ func mapContainer(inspect any) (contract.Container, error) {
 			if !ok {
 				return contract.Container{}, errors.New("容器详情格式无效：环境变量行必须是字符串")
 			}
+			if envKeyPattern.MatchString(lineStr) {
+				continue
+			} // Docker unset directive.
 			key, value, err := parseEnvLine(lineStr)
 			if err != nil {
 				return contract.Container{}, err
