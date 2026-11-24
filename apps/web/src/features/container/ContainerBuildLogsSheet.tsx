@@ -1,6 +1,7 @@
 import * as Dialog from '@radix-ui/react-dialog'
 import { useEffect, useMemo } from 'react'
-import { Loader2, ScrollText, TriangleAlert, X } from '../../components/icons'
+import { ScrollText, TriangleAlert, X } from '../../components/icons'
+import { LoadingOrb } from '../../components/LoadingOrb'
 import { CONTAINER_BUILD_STATE_LABELS, isContainerBuildActive } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { IconButton } from '../../components/IconButton'
@@ -80,7 +81,7 @@ export function ContainerBuildLogsSheet({
           <div className="flex min-h-0 flex-1 flex-col px-4 py-3">
             {!logs ? (
               <p role="status" className="flex items-center justify-center gap-2 py-10 text-sm text-fg-muted">
-                <Loader2 aria-hidden size={15} className="animate-spin" />
+                <LoadingOrb size={15} />
                 正在读取构建日志…
               </p>
             ) : logs.errorMessage ? (

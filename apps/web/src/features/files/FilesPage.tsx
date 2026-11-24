@@ -4,7 +4,8 @@ import { FILE_KIND_LABELS } from '@elysian/contracts'
 import type { FileEntry, FileSearchResult } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { formatDateTime } from '../../components/format'
-import { ArrowUpFromLine, File, Folder, Loader2 } from '../../components/icons'
+import { ArrowUpFromLine, File, Folder } from '../../components/icons'
+import { LoadingOrb } from '../../components/LoadingOrb'
 import { DataTable, type DataTableColumn } from '../../components/DataTable'
 import { EmptyState, ErrorState, LoadingState } from '../../components/states/StateViews'
 import { StaleDataBanner } from '../../components/states/StaleDataBanner'
@@ -387,7 +388,7 @@ function DirectorySizeCell({ dirPath, name }: { dirPath: string; name: string })
   if (computing) {
     return (
       <span className="inline-flex items-center gap-1.5 text-fg-muted">
-        <Loader2 aria-hidden size={13} className="shrink-0 animate-spin motion-reduce:animate-none" />
+        <LoadingOrb size={13} />
         计算中
       </span>
     )

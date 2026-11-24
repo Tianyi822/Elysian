@@ -1,6 +1,7 @@
 import * as Dialog from '@radix-ui/react-dialog'
 import { useEffect, useState } from 'react'
-import { Loader2, Plus, X } from '../../components/icons'
+import { Plus, X } from '../../components/icons'
+import { LoadingOrb } from '../../components/LoadingOrb'
 import { validateContainerAppDisplayName, validateContainerAppSlug } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { isDockerRuntime } from '../../utils/isDockerRuntime'
@@ -212,7 +213,7 @@ function CreateAppDialog({ onClose }: { onClose: () => void }) {
             取消
           </Button>
           <Button variant="primary" type="button" onClick={submit} disabled={creating} className={`${CTL_PRIMARY} gap-1.5 px-3`}>
-            {creating ? <Loader2 aria-hidden size={13} className="animate-spin" /> : null}
+            {creating ? <LoadingOrb size={13} /> : null}
             {creating ? '创建中…' : '创建工作区'}
           </Button>
         </div>

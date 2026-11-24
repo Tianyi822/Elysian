@@ -1,5 +1,6 @@
 import { ConfirmDialog } from '../../components/ConfirmDialog'
-import { Loader2, Trash2 } from '../../components/icons'
+import { Trash2 } from '../../components/icons'
+import { LoadingOrb } from '../../components/LoadingOrb'
 import { useState, type ReactNode } from 'react'
 import type { Container, ContainerImage } from '@elysian/contracts'
 import { imageUsageCount } from '../../contracts/containerViews'
@@ -107,7 +108,7 @@ export function ImageTable({
         {pullingImage ? (
           <div className="border-t border-line px-4 py-3" aria-label="镜像拉取状态">
             <div className="flex items-center gap-2 text-sm text-fg-muted">
-              <Loader2 aria-hidden size={14} className="shrink-0 animate-spin text-accent-fg" />
+              <LoadingOrb size={14} />
               <div className="min-w-0 flex-1 font-mono text-fg"><ImageReferenceLabel {...pullingImage} /></div>
               <Button variant="destructive"
                 type="button"

@@ -58,7 +58,6 @@ export {
   LayoutDashboard,
   List,
   ListTodo,
-  Loader2,
   Lock,
   LogOut,
   Maximize2,

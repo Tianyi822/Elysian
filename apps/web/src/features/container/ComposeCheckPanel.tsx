@@ -1,6 +1,7 @@
 import type { ComposeReference } from '@elysian/contracts'
 import { COMPOSE_REFERENCE_KIND_LABELS } from '@elysian/contracts'
-import { Check, CircleCheck, Copy, Loader2, TriangleAlert, X } from '../../components/icons'
+import { Check, CircleCheck, Copy, TriangleAlert, X } from '../../components/icons'
+import { LoadingOrb } from '../../components/LoadingOrb'
 import { IconButton } from '../../components/IconButton'
 import { RefreshButton } from '../../components/RefreshState'
 import { useClipboardCopy } from '../../components/CopyButton'
@@ -100,7 +101,7 @@ export function ComposeCheckPanel({
 
       {check.status === 'loading' ? (
         <p role="status" className="mt-2 flex items-center gap-1.5 text-xs text-fg-muted">
-          <Loader2 aria-hidden size={13} className="animate-spin" />
+          <LoadingOrb size={13} />
           正在扫描引用路径…
         </p>
       ) : check.errorMessage ? (

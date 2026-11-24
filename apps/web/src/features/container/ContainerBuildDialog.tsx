@@ -3,7 +3,8 @@ import type { ContainerApp, ContainerBuildSubmitInput } from '@elysian/contracts
 import { Button } from '../../components/Button'
 import { ConfirmDialog } from '../../components/ConfirmDialog'
 import { CTL_PRIMARY, CTL_SECONDARY } from '../../components/formControl'
-import { Hammer, Loader2, TriangleAlert, X } from '../../components/icons'
+import { Hammer, TriangleAlert, X } from '../../components/icons'
+import { LoadingOrb } from '../../components/LoadingOrb'
 import { isDockerRuntime } from '../../utils/isDockerRuntime'
 import { ContainerBuildFields } from './ContainerBuildFields'
 import { formatWorkspaceSize } from './formatWorkspaceSize'
@@ -84,7 +85,7 @@ export function ContainerBuildDialog({ app, onClose }: { app: ContainerApp; onCl
                 disabled={previewDisabled}
                 className={`${CTL_PRIMARY} gap-1.5 px-3`}
               >
-                {previewing ? <Loader2 aria-hidden size={13} className="animate-spin" /> : null}
+                {previewing ? <LoadingOrb size={13} /> : null}
                 {previewing ? '预览中…' : '预览构建'}
               </Button>
               <Button variant="primary"
@@ -161,7 +162,7 @@ function ConfirmBuildDialog({
         className: 'w-[min(30rem,calc(100vw-2rem))] p-4 shadow-xl',
       }}
       busy={submitting}
-      confirmLabel={submitting ? <><Loader2 aria-hidden size={13} className="animate-spin" />提交中…</> : '确认并开始构建'}
+      confirmLabel={submitting ? <><LoadingOrb size={13} />提交中…</> : '确认并开始构建'}
       cancelClassName="px-3" confirmClassName="gap-1.5 px-3"
       onClose={onCancel} onConfirm={onConfirm}
     >

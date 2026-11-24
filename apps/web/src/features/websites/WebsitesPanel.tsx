@@ -73,11 +73,12 @@ function ProxyStatusBanner({
       <Button variant="warning"
         type="button"
         onClick={onReconcile}
-        disabled={reconciling}
+        isLoading={reconciling}
+        loadingText="正在重新下发…"
+        leftIcon={<RefreshCw aria-hidden size={12} />}
         className="action-button gap-1.5 border border-warning/50 px-3 py-1.5 font-medium text-warning transition-colors hover:bg-warning/20 disabled:cursor-not-allowed disabled:opacity-50"
       >
-        <RefreshCw aria-hidden size={12} className={reconciling ? 'animate-spin' : undefined} />
-        {reconciling ? '正在重新下发…' : '重新下发反向代理配置'}
+        重新下发反向代理配置
       </Button>
     </div>
   )

@@ -1,5 +1,5 @@
 import * as Dialog from '@radix-ui/react-dialog'
-import { Loader2 } from '../../components/icons'
+import { LoadingOrb } from '../../components/LoadingOrb'
 import { CTL_PRIMARY } from '../../components/formControl'
 import { formatEntrySize } from './filesListing'
 import { useFilesStore } from '../../stores/filesStore'
@@ -23,7 +23,7 @@ export function FileDownloadDialog() {
           <Dialog.Title className="text-sm font-semibold">下载「{download.name}」</Dialog.Title>
           <p className="mt-2 break-all font-mono text-xs text-fg-muted">{download.path}</p>
           <p role={download.status === 'error' ? 'alert' : 'status'} className={`mt-4 flex items-center gap-2 text-sm ${download.status === 'error' ? 'text-danger' : 'text-fg-muted'}`}>
-            {preparing ? <Loader2 aria-hidden size={15} className="animate-spin" /> : null}
+            {preparing ? <LoadingOrb size={15} /> : null}
             {preparing ? (download.directory ? '正在打包为 tar.gz…' : '正在准备下载…')
               : download.status === 'started' ? '已开始下载，请在浏览器中查看下载进度。'
                 : download.status === 'cancelled' ? '已取消准备下载。' : download.errorMessage}

@@ -1,6 +1,7 @@
 import * as Dialog from '@radix-ui/react-dialog'
 import { useEffect, useState } from 'react'
-import { Check, Loader2, TriangleAlert, X } from '../../components/icons'
+import { Check, TriangleAlert, X } from '../../components/icons'
+import { LoadingOrb } from '../../components/LoadingOrb'
 import { containerAppFilePath } from '@elysian/contracts'
 import type { ContainerAppFile } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
@@ -155,7 +156,7 @@ export function ContainerAppEditorSheet({
           <div className="flex min-h-0 flex-1 flex-col px-4 py-3">
             {loaded.kind === 'loading' ? (
               <p role="status" className="flex items-center justify-center gap-2 py-10 text-sm text-fg-muted">
-                <Loader2 aria-hidden size={15} className="animate-spin" />
+                <LoadingOrb size={15} />
                 正在读取文件内容…
               </p>
             ) : loaded.kind === 'error' ? (
@@ -196,7 +197,7 @@ export function ContainerAppEditorSheet({
                 onClick={submit}
                 className={`${CTL_PRIMARY} gap-1.5 px-3`}
               >
-                {saving ? <Loader2 aria-hidden size={13} className="animate-spin" /> : <Check aria-hidden size={13} />}
+                {saving ? <LoadingOrb size={13} /> : <Check aria-hidden size={13} />}
                 {saving ? '保存中…' : '保存'}
               </Button>
             </div>

@@ -6,7 +6,8 @@ import { ConfirmDialog } from '../../components/ConfirmDialog'
 import { CTL_CARD_ACTION, CTL_SECONDARY } from '../../components/formControl'
 import { formatDateTime } from '../../components/format'
 import { IconButton } from '../../components/IconButton'
-import { ChevronDown, ChevronRight, Folder, Hammer, Loader2, Trash2, TriangleAlert, Upload } from '../../components/icons'
+import { ChevronDown, ChevronRight, Folder, Hammer, Trash2, TriangleAlert, Upload } from '../../components/icons'
+import { LoadingOrb } from '../../components/LoadingOrb'
 import { RefreshButton } from '../../components/RefreshState'
 import { useFeedbackMessage } from '../../components/useFeedbackMessage'
 import { useSilentPolling } from '../../components/useSilentPolling'
@@ -203,7 +204,7 @@ export function ContainerAppWorkspaceCard({
                   </div>
                 ) : buildList?.status === 'loading' ? (
                   <p role="status" className="flex items-center justify-center gap-2 py-4 text-xs text-fg-muted">
-                    <Loader2 aria-hidden size={13} className="animate-spin" />
+                    <LoadingOrb size={13} />
                     正在读取构建任务…
                   </p>
                 ) : builds.length === 0 ? (

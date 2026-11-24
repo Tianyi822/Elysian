@@ -4,7 +4,8 @@ import type { ContainerImage, DatabaseContainerEngine, ImagePullProgress } from 
 import { useGateway } from '../../adapters/GatewayProvider'
 import { DIALOG_FORM_ACTION_CLASS, DIALOG_FORM_FIELD_CLASS, DIALOG_FORM_LABEL_CLASS, FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
 import { SelectDropdown } from '../../components/SelectDropdown'
-import { Loader2, X } from '../../components/icons'
+import { X } from '../../components/icons'
+import { LoadingOrb } from '../../components/LoadingOrb'
 import { useDatabaseStore } from '../../stores/databaseStore'
 import { useContainersStore } from '../../stores/containersStore'
 import { formatBytes } from '../../utils/formatBytes'
@@ -253,7 +254,7 @@ export function RealDatabaseCreateDialog({ engine }: { engine: DatabaseContainer
           <div className="ml-auto flex gap-2">
             <Button variant="outline" type="button" disabled={busy} onClick={close} className={DIALOG_FORM_ACTION_CLASS}>取消</Button>
             <Button variant="outline" type="button" disabled={!canSubmit} onClick={submit} className={DIALOG_FORM_ACTION_CLASS + ' bg-surface-raised'}>
-              {creating ? <Loader2 aria-hidden size={13} className="mr-1.5 animate-spin" /> : null}
+              {creating ? <LoadingOrb size={13} className="mr-1.5" /> : null}
               {creating ? '处理中…' : '创建并启动'}
             </Button>
           </div>

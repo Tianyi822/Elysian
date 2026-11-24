@@ -5,7 +5,8 @@ import { AGENT_MODEL_API_FORMATS, getAgentModelPreset, type AgentDiscoveredModel
 import { useGateway } from '../../adapters/GatewayProvider'
 import { useInFlightSubmit } from './useInFlightSubmit'
 import { CTL_PRIMARY, CTL_SECONDARY, CTL_FIELD } from '../../components/formControl'
-import { CircleCheck, CircleMinus, Download, Eye, EyeOff, FileText, Image, Loader2, Pencil, Plus, Trash2, X, type IconComponent } from '../../components/icons'
+import { CircleCheck, CircleMinus, Download, Eye, EyeOff, FileText, Image, Pencil, Plus, Trash2, X, type IconComponent } from '../../components/icons'
+import { LoadingOrb } from '../../components/LoadingOrb'
 import { SearchInput } from '../../components/SearchInput'
 import { StatusTag } from '../../components/StatusTag'
 import { useModelSettingsStore, validateModelInput, isRevisionConflict } from '../../stores/modelSettingsStore'
@@ -215,7 +216,7 @@ function ModelServiceDialog({ service, visible, onClose }: { service?: AgentMode
               <div className="mt-1.5 text-xs text-fg-subtle">{service?.hasCredential ? '必填；留空沿用现有 API Key，输入新值则替换，已有凭据不回显。' : '必填；保存后只写入不回显。'}</div>
             </Field>
             <div className="flex flex-col gap-2">
-              <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs font-medium text-fg-muted">模型列表 <span className="text-fg-subtle">({models.length})</span></span><div className="flex flex-wrap items-center gap-2"><Button variant="outline" type="button" disabled={fetchingModels} onClick={() => void discoverModels()} className={CTL_SECONDARY}><span className="inline-flex items-center gap-1">{fetchingModels ? <Loader2 aria-hidden size={13} className="animate-spin motion-reduce:animate-none" /> : <Download aria-hidden size={13} />}{fetchingModels ? '获取中…' : '获取模型'}</span></Button><Button variant="outline" type="button" disabled={models.length >= 64} onClick={() => appendDraftModels(() => [blankModel()], true)} className={CTL_SECONDARY}><span className="inline-flex items-center gap-1"><Plus aria-hidden size={13} />添加模型</span></Button></div></div>
+              <div className="flex flex-wrap items-center justify-between gap-2"><span className="text-xs font-medium text-fg-muted">模型列表 <span className="text-fg-subtle">({models.length})</span></span><div className="flex flex-wrap items-center gap-2"><Button variant="outline" type="button" disabled={fetchingModels} onClick={() => void discoverModels()} className={CTL_SECONDARY}><span className="inline-flex items-center gap-1">{fetchingModels ? <LoadingOrb size={13} /> : <Download aria-hidden size={13} />}{fetchingModels ? '获取中…' : '获取模型'}</span></Button><Button variant="outline" type="button" disabled={models.length >= 64} onClick={() => appendDraftModels(() => [blankModel()], true)} className={CTL_SECONDARY}><span className="inline-flex items-center gap-1"><Plus aria-hidden size={13} />添加模型</span></Button></div></div>
               {fetchingModels && <p role="status" className="text-xs text-fg-subtle">正在读取服务提供的模型列表…</p>}
               {catalog !== undefined && <div role="region" aria-label="可选模型" className="flex flex-col gap-2 border-y border-line py-3">
                 <div className="flex items-center justify-between gap-2"><span className="text-xs text-fg-muted">可选模型（{catalog.length}）</span><Button variant="ghost" size="icon" type="button" aria-label="收起可选模型" onClick={() => setCatalog(undefined)} className={iconButton}><X aria-hidden size={14} /></Button></div>

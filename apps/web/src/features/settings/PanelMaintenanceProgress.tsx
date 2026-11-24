@@ -1,7 +1,8 @@
 import { useMemo } from 'react'
 import { PANEL_TASK_PHASE_LABELS, PANEL_UPDATE_SOURCE_LABELS, panelTaskIsActive } from '@elysian/contracts'
 import type { PanelTask } from '@elysian/contracts'
-import { Check, Download, Loader2 } from '../../components/icons'
+import { Check, Download } from '../../components/icons'
+import { LoadingOrb } from '../../components/LoadingOrb'
 import { StepPanels, Stepper, type Step } from '../../components/easyui/Stepper'
 
 type MaintenanceStep = Step & { key: string; phases: string[] }
@@ -181,7 +182,7 @@ export function PanelMaintenanceProgress({ task, logs = '', paused = false }: { 
         {downloading && !moving ? <span>等待进度同步</span> : null}
       </div>
       <p className="mt-2 truncate font-mono text-[0.625rem] text-fg-subtle">{download.fileName}</p>
-    </div> : downloading ? <p className="flex items-center gap-2 text-xs text-fg-muted">{moving ? <Loader2 size={14} aria-hidden className="motion-safe:animate-spin" /> : <Download size={14} aria-hidden />}正在获取安装包信息，等待下载数据…</p> : null}
+    </div> : downloading ? <p className="flex items-center gap-2 text-xs text-fg-muted"><LoadingOrb size={14} paused={!moving} />正在获取安装包信息，等待下载数据…</p> : null}
 
     {task.kind === 'update' && download?.status === 'ready' ? <section aria-label="安装包校验结果" className="rounded-lg border border-success/30 bg-success/5 p-3">
       <h3 className="flex items-center gap-2 text-xs font-medium text-fg"><Check size={14} className="text-success" aria-hidden />安装包校验通过</h3>

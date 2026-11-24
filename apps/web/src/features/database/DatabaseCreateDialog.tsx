@@ -3,7 +3,8 @@ import { ChipGroup } from '../../components/ChipGroup'
 import { useEffect, useRef, useState } from 'react'
 import type { DragEvent } from 'react'
 import { DIALOG_FORM_ACTION_CLASS, DIALOG_FORM_FIELD_CLASS, DIALOG_FORM_LABEL_CLASS } from '../../components/formControl'
-import { File, Loader2, Upload, X } from '../../components/icons'
+import { File, Upload, X } from '../../components/icons'
+import { LoadingOrb } from '../../components/LoadingOrb'
 import { useGateway } from '../../adapters/GatewayProvider'
 import { useDatabaseStore } from '../../stores/databaseStore'
 import { RealDatabaseCreateDialog } from './RealDatabaseCreateDialog'
@@ -157,7 +158,7 @@ export function DatabaseCreateDialog() {
           <div className="ml-auto flex gap-2">
             <Button variant="outline" type="button" onClick={closeCreate} disabled={creating} className={DIALOG_FORM_ACTION_CLASS}>取消</Button>
             <Button variant="outline" type="button" onClick={submit} disabled={disabled} className={DIALOG_FORM_ACTION_CLASS + ' bg-surface-raised'}>
-              {creating ? <Loader2 aria-hidden size={13} className="mr-1.5 animate-spin" /> : null}
+              {creating ? <LoadingOrb size={13} className="mr-1.5" /> : null}
               {creating ? draft.fileSource === 'upload' ? '上传中…' : '创建中…'
                 : draft.fileSource === 'upload' ? '上传并创建' : '创建'}
             </Button>

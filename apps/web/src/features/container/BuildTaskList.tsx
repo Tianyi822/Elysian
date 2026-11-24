@@ -3,24 +3,17 @@ import { Button } from '../../components/Button'
 import { CTL_DANGER, CTL_SECONDARY } from '../../components/formControl'
 import { formatDateTime } from '../../components/format'
 import { IconButton } from '../../components/IconButton'
-import { CircleCheck, Loader2, RotateCw, ScrollText, Square, Timer, TriangleAlert } from '../../components/icons'
+import { CircleCheck, RotateCw, ScrollText, Square, TriangleAlert } from '../../components/icons'
+import { LoadingOrb } from '../../components/LoadingOrb'
 import { CopyPathButton } from './CopyPathButton'
 
 /** 状态一律「文字 + 颜色 + 图标」：颜色只作辅助，语义由文字承担。 */
 function BuildStateBadge({ state }: { state: ContainerBuildTask['state'] }) {
   const label = CONTAINER_BUILD_STATE_LABELS[state]
-  if (state === 'queued') {
+  if (state === 'queued' || state === 'building') {
     return (
       <span className="inline-flex items-center gap-1 text-xs text-fg-muted">
-        <Timer aria-hidden size={12} />
-        {label}
-      </span>
-    )
-  }
-  if (state === 'building') {
-    return (
-      <span className="inline-flex items-center gap-1 text-xs text-fg-muted">
-        <Loader2 aria-hidden size={12} className="animate-spin motion-reduce:animate-none" />
+        <LoadingOrb size={12} paused={state === 'queued'} />
         {label}
       </span>
     )
