@@ -225,6 +225,9 @@ func (a *AgentFacade) submitContainerOperation(requestID, target string, input a
 					if safe.NotDispatched || safe.NoBusinessEffect {
 						t.State = "failed"
 					}
+					if safe.NotDispatched {
+						t.Stage = "preflight-rejected"
+					}
 				}
 				return
 			}
@@ -262,10 +265,23 @@ func (a *AgentFacade) SubmitService(ctx context.Context, input AgentServiceCreat
 }
 
 func (a *AgentFacade) SubmitExec(ctx context.Context, input ContainerExecInput) (ContainerOperationTask, error) {
+	return a.submitExec(ctx, input, scopeHost)
+}
+
+// ManagedSubmitExec 保留 exec v1–v3 的目标范围：只认 Agent 模板容器。
+func (a *AgentFacade) ManagedSubmitExec(ctx context.Context, input ContainerExecInput) (ContainerOperationTask, error) {
+	return a.submitExec(ctx, input, scopeManaged)
+}
+
+func (a *AgentFacade) submitExec(ctx context.Context, input ContainerExecInput, scope agentScope) (ContainerOperationTask, error) {
 	if err := a.check(ctx); err != nil {
 		return ContainerOperationTask{}, agentSubmitRejected(err)
 	}
-	if prior, found, err := a.existingContainerOperation(input.RequestID, input.ID, input); found || err != nil {
+	identity := any(input)
+	if scope == scopeHost {
+		identity = ScopedContainerOperationInput("exec/v4", input)
+	}
+	if prior, found, err := a.existingContainerOperation(input.RequestID, input.ID, identity); found || err != nil {
 		return prior, agentSubmitRejected(err)
 	}
 	if _, err := agentObjectID(input.ID, false); err != nil {
@@ -288,7 +304,11 @@ func (a *AgentFacade) SubmitExec(ctx context.Context, input ContainerExecInput) 
 	if len(input.Argv) == 0 || input.Argv[0] == "" {
 		return ContainerOperationTask{}, agentSubmitRejected(shared.InvalidRequest("容器命令不能为空"))
 	}
-	if a.databaseContainers != nil {
+	if scope == scopeHost {
+		if err := a.checkDomainExecOrUpdate(ctx, input.ID, true); err != nil {
+			return ContainerOperationTask{}, agentSubmitRejected(err)
+		}
+	} else if a.databaseContainers != nil {
 		registered, err := a.databaseContainers.Registered(ctx, input.ID)
 		if err != nil {
 			return ContainerOperationTask{}, agentSubmitRejected(err)
@@ -297,10 +317,12 @@ func (a *AgentFacade) SubmitExec(ctx context.Context, input ContainerExecInput) 
 			return ContainerOperationTask{}, agentSubmitRejected(shared.InvalidRequest("受管数据库容器不支持执行任意命令"))
 		}
 	}
-	if _, err := a.safeTarget(ctx, input.ID); err != nil {
+	if _, err := a.targetForScope(ctx, input.ID, scope); err != nil {
 		return ContainerOperationTask{}, agentSubmitRejected(err)
 	}
-	return a.submitContainerOperation(input.RequestID, input.ID, input, func(ctx context.Context, id string) (any, error) { return a.executeContainerCommand(ctx, id, input) })
+	return a.submitContainerOperation(input.RequestID, input.ID, identity, func(ctx context.Context, id string) (any, error) {
+		return a.executeContainerCommand(ctx, id, input, scope)
+	})
 }
 
 // CheckContainerMutation shares the persistent task barrier with page services.

@@ -68,8 +68,19 @@ func (o *execOutput) consume(chunk []byte) {
 	}
 }
 
-func (a *AgentFacade) executeContainerCommand(ctx context.Context, taskID string, input ContainerExecInput) (any, error) {
-	if _, err := a.safeTarget(ctx, input.ID); err != nil {
+func (a *AgentFacade) executeContainerCommand(ctx context.Context, taskID string, input ContainerExecInput, scope agentScope) (any, error) {
+	// 派发前按同一冻结范围复查目标：受理与执行之间容器可能被替换。
+	var value any
+	if scope == scopeHost {
+		var err error
+		value, err = a.inspectHostTarget(ctx, input.ID)
+		if err != nil {
+			return nil, workerPreflightFailure(err)
+		}
+		if _, err := a.operableTargetInspect(value); err != nil {
+			return nil, workerPreflightFailure(err)
+		}
+	} else if _, err := a.safeTarget(ctx, input.ID); err != nil {
 		return nil, err
 	}
 	body, _ := json.Marshal(map[string]any{"AttachStdin": false, "AttachStdout": true, "AttachStderr": true, "Tty": false, "Privileged": false, "Cmd": input.Argv, "WorkingDir": input.Workdir})
@@ -134,5 +145,10 @@ func (a *AgentFacade) executeContainerCommand(ctx context.Context, taskID string
 		stderr = stderr[:(64<<10)-len(stdout)]
 		output.truncated = true
 	}
-	return map[string]any{"id": input.ID, "exitCode": *status.ExitCode, "stdout": stdout, "stderr": stderr, "truncated": output.truncated}, nil
+	result := map[string]any{"id": input.ID, "exitCode": *status.ExitCode, "stdout": stdout, "stderr": stderr, "truncated": output.truncated}
+	if scope == scopeHost {
+		notes := describeAgentTarget(value, a.service.deps.selfContainerID)
+		result["ownership"], result["exposure"] = notes.Ownership, notes.Exposure
+	}
+	return result, nil
 }

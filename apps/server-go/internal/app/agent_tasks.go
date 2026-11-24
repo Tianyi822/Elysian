@@ -99,6 +99,9 @@ func agentTaskInspector(sites *websites.AgentFacade, apps *containerapps.AgentFa
 			if task.State == "failed" {
 				status.Evidence = &tools.ExecutionEvidence{Execution: "finished", Changes: "none", Recovery: "correct", Stage: task.Stage}
 			}
+			if task.Stage == "preflight-rejected" {
+				status.Evidence = &tools.ExecutionEvidence{Execution: "not-started", Changes: "none", Recovery: "correct", Stage: "preflight"}
+			}
 			if task.Stage == "not-accepted" {
 				status.Evidence = &tools.ExecutionEvidence{Execution: "not-started", Changes: "none", Recovery: "correct", Stage: "preflight", Suggestion: "修正参数并重新审批后使用新的请求编号提交"}
 			}

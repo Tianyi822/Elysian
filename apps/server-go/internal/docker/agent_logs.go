@@ -27,10 +27,19 @@ type agentLogFrame struct {
 	Line      string `json:"line"`
 }
 
-// Logs 只读纳管容器最近日志：stdout 与 stderr 合并、带时间戳，缺省 100 行、最多 500 行、
-// 结果上限 64 KiB（超出保最新）。非 follow 瞬时读取。拒绝与失败转固定业务错误透出。
+// Logs 读取容器最近日志（v2 起覆盖非面板容器）：stdout 与 stderr 合并、带时间戳，缺省 100 行、
+// 最多 500 行、结果上限 64 KiB（超出保最新）。非 follow 瞬时读取。拒绝与失败转固定业务错误透出。
 func (a *AgentFacade) Logs(ctx context.Context, id string, tail int) (map[string]any, error) {
-	value, err := a.containerLogs(ctx, id, tail)
+	return a.logs(ctx, id, tail, scopeHost)
+}
+
+// LegacyLogs 保留 logs v1 的范围：只读面板纳管容器。
+func (a *AgentFacade) LegacyLogs(ctx context.Context, id string, tail int) (map[string]any, error) {
+	return a.logs(ctx, id, tail, scopeManaged)
+}
+
+func (a *AgentFacade) logs(ctx context.Context, id string, tail int, scope agentScope) (map[string]any, error) {
+	value, err := a.containerLogs(ctx, id, tail, scope)
 	if err == nil {
 		return value, nil
 	}
@@ -44,7 +53,7 @@ func (a *AgentFacade) Logs(ctx context.Context, id string, tail int) (map[string
 	return nil, &AgentError{Code: "docker-logs-failed", Message: "读取容器日志失败"}
 }
 
-func (a *AgentFacade) containerLogs(ctx context.Context, id string, tail int) (map[string]any, error) {
+func (a *AgentFacade) containerLogs(ctx context.Context, id string, tail int, scope agentScope) (map[string]any, error) {
 	if err := a.check(ctx); err != nil {
 		return nil, err
 	}
@@ -60,18 +69,30 @@ func (a *AgentFacade) containerLogs(ctx context.Context, id string, tail int) (m
 	if tail < 1 || tail > agentLogTailMax {
 		return nil, shared.InvalidRequest("日志行数必须在 1 至 500 之间")
 	}
-	value, err := a.service.inspectContainerByID(ctx, id, actionTimeout)
+	inspect := func(ctx context.Context, id string) (any, error) {
+		return a.service.inspectContainerByID(ctx, id, actionTimeout)
+	}
+	if scope == scopeHost {
+		inspect = a.inspectHostTarget
+	}
+	value, err := inspect(ctx, id)
 	if err != nil {
 		return nil, err
 	}
-	r, ok := asRecord(value)
-	if !ok {
-		return nil, errors.New("容器身份无效")
-	}
-	cfg, _ := asRecord(mustGet(r, "Config"))
-	labels, _ := asRecord(mustGet(cfg, "Labels"))
-	if labels == nil || mustGet(labels, labelManaged) != labelTrueValue || selfInspectCheck(value, a.service.deps.selfContainerID) {
-		return nil, shared.InvalidRequest("Agent 只读取面板纳管容器的日志")
+	if scope == scopeHost {
+		if err := readableAgentTarget(value, a.service.deps.selfContainerID); err != nil {
+			return nil, err
+		}
+	} else {
+		r, ok := asRecord(value)
+		if !ok {
+			return nil, errors.New("容器身份无效")
+		}
+		cfg, _ := asRecord(mustGet(r, "Config"))
+		labels, _ := asRecord(mustGet(cfg, "Labels"))
+		if labels == nil || mustGet(labels, labelManaged) != labelTrueValue || selfInspectCheck(value, a.service.deps.selfContainerID) {
+			return nil, shared.InvalidRequest("Agent 只读取面板纳管容器的日志")
+		}
 	}
 	response, err := a.service.deps.transport.Request(ctx, seam.EngineRequest{
 		Method:   http.MethodGet,

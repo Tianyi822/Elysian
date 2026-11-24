@@ -56,15 +56,20 @@ func TestLogsReturnsTimestampedLinesAndTruncates(t *testing.T) {
 	}
 }
 
-func TestLogsRejectsUnmanagedAndBadTail(t *testing.T) {
+func TestLegacyLogsKeepManagedOnlyScopeAndRejectBadTail(t *testing.T) {
+	// logs v1 冻结在旧快照里：未纳管容器仍然拒绝，不因升级扩权。日志请求已录制，
+	// 拒绝只能来自范围核验本身。
 	unmanaged := newServiceFacade(t, func(call engineCall) (int, string, bool) {
-		if call.Method == http.MethodGet && strings.HasSuffix(call.Path, "/json") {
-			return http.StatusOK, `{"Id":"` + strings.Repeat("c", 64) + `","Config":{"Labels":{}},"HostConfig":{},"Mounts":[]}`, true
+		switch {
+		case call.Method == http.MethodGet && strings.HasSuffix(call.Path, "/json"):
+			return http.StatusOK, hostScopeInspect(strings.Repeat("c", 64), nil, nil), true
+		case call.Method == http.MethodGet && strings.HasSuffix(call.Path, "/logs"):
+			return http.StatusOK, "", true
 		}
 		return 0, "", false
 	}, &recordingPortOpener{})
-	if _, err := unmanaged.Logs(context.Background(), strings.Repeat("c", 64), 100); err == nil {
-		t.Fatal("未纳管容器应被拒绝")
+	if _, err := unmanaged.LegacyLogs(context.Background(), strings.Repeat("c", 64), 100); err == nil || !strings.Contains(err.Error(), "只读取面板纳管容器") {
+		t.Fatalf("logs v1 不应放开未纳管容器：%v", err)
 	}
 	managed := newServiceFacade(t, func(call engineCall) (int, string, bool) {
 		if call.Method == http.MethodGet && strings.HasSuffix(call.Path, "/json") {
