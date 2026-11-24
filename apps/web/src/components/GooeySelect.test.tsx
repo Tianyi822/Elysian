@@ -146,6 +146,18 @@ const permissionItems = [
   { value: 'full', label: '完全开放', description: '自动批准已启用能力所需的操作与运行时权限，系统禁区与资源限制继续生效。' },
 ]
 
+/** 读出融合表面当前的内联缩放；framer-motion 写 scaleX(..) scaleY(..)，等于 1 的那一个会省略。 */
+function collapsedScale(surface: HTMLElement) {
+  const transform = surface.style.transform
+  if (!transform) return { x: 1, y: 1 }
+  if (transform.startsWith('matrix')) {
+    const [a, , , d] = transform.slice('matrix('.length, -1).split(',').map(Number)
+    return { x: a!, y: d! }
+  }
+  const value = (axis: string) => Number(new RegExp(`scale${axis}\\(([^)]+)\\)`).exec(transform)?.[1] ?? 1)
+  return { x: value('X'), y: value('Y') }
+}
+
 describe('GooeySelect 带说明的选项', () => {
   const ROW = 44
   const ROOMY_ROW = 72
@@ -179,6 +191,26 @@ describe('GooeySelect 带说明的选项', () => {
     for (const option of screen.getAllByRole('option')) expect(option).toHaveStyle({ minHeight: `${ROW}px` })
     expect(list).toHaveStyle({ width: '306px', maxHeight: `${2 * ROW + PANEL_PAD * 2}px` })
     expect(list).not.toHaveClass('space-y-1')
+  })
+
+  it('选项在关闭状态下才加载完成时，收起的面板按最新内容缩放，首次展开从按钮大小起步', async () => {
+    const { rerender } = render(<GooeySelect ariaLabel="选择模型" items={[]} onSelect={() => {}} />)
+    rerender(<GooeySelect ariaLabel="选择模型" items={modelItems} value="gpt-5" onSelect={() => {}} />)
+    // jsdom 没有布局，触发器保持默认的 56px 高；面板高是两行 44px 加上下各 10px 内距。
+    await waitFor(() => expect(collapsedScale(screen.getByTestId('gooey-menu-surface')).y).toBeCloseTo(56 / (2 * ROW + PANEL_PAD * 2), 4))
+  })
+
+  it('说明折行的菜单在关闭时就按折行后的高度收起，首次展开同样从按钮大小起步', async () => {
+    const restore = installWrappedDescriptions()
+    try {
+      render(<GooeySelect ariaLabel="权限模式" width={336} items={permissionItems} value="ask" onSelect={() => {}} />)
+      const surface = screen.getByTestId('gooey-menu-surface')
+      const roomyHeight = ROOMY_ROW * permissionItems.length + ROW_GAP * (permissionItems.length - 1) + PANEL_PAD * 2
+      await waitFor(() => expect(surface).toHaveStyle({ height: `${roomyHeight}px` }))
+      await waitFor(() => expect(collapsedScale(surface).y).toBeCloseTo(56 / roomyHeight, 4))
+    } finally {
+      restore()
+    }
   })
 
   it('说明折行时选项统一撑高并彼此留出间隔，不再被单行行高挤压', async () => {

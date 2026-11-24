@@ -71,10 +71,16 @@ const ROW_GAP = 4;
  */
 const DETAILED_ROW_H = 72;
 
-const DROP_SPRING = { type: 'spring', stiffness: 240, damping: 17, mass: 1 } as const;
-const GROW_SPRING = { type: 'spring', stiffness: 210, damping: 22, mass: 1 } as const;
-const SNAP_SPRING = { type: 'spring', stiffness: 240, damping: 20, mass: 0.9 } as const;
-const ROW_SPRING = { type: 'spring', stiffness: 420, damping: 26 } as const;
+/**
+ * 弹出动作的四组弹簧。刚度沿用上游，速度不变；阻尼比都在 0.8 以上，
+ * 面板滑到位即停，只留极小的回弹，不再冲过目标二十多像素再折返。
+ */
+export const GOOEY_SPRINGS = {
+  drop: { type: 'spring', stiffness: 240, damping: 25, mass: 1 },
+  grow: { type: 'spring', stiffness: 210, damping: 25, mass: 1 },
+  snap: { type: 'spring', stiffness: 240, damping: 24, mass: 0.9 },
+  row: { type: 'spring', stiffness: 420, damping: 34 },
+} as const;
 
 type Corner = [number, number];
 type Corners = [Corner, Corner, Corner, Corner];
@@ -383,7 +389,10 @@ export const GooeyMenu: React.FC<GooeyMenuProps> = ({
     triggerRef.current?.focus({ preventScroll: true });
   };
 
-  const panelHeight = Math.max(1, placement.height);
+  // While hidden the surface follows the natural height, so the next opening starts from the trigger size
+  // even when options or wrapped descriptions changed after the last opening.
+  const surfaceVisible = open || settling;
+  const panelHeight = Math.max(1, surfaceVisible ? placement.height : naturalHeight);
   const panelWidth = placement.width;
   const { panelX, panelY } = placement;
   const totalHeight = panelY + panelHeight + 24;
@@ -476,9 +485,9 @@ export const GooeyMenu: React.FC<GooeyMenuProps> = ({
             }
             onAnimationComplete={() => { if (!open) setSettling(false); }}
             transition={
-              reducedMotion ? { duration: 0 } : open
-                ? { ...DROP_SPRING, scaleX: { ...GROW_SPRING, delay: 0.05 }, scaleY: { ...GROW_SPRING, delay: 0.05 } }
-                : SNAP_SPRING
+              reducedMotion || !surfaceVisible ? { duration: 0 } : open
+                ? { ...GOOEY_SPRINGS.drop, scaleX: { ...GOOEY_SPRINGS.grow, delay: 0.05 }, scaleY: { ...GOOEY_SPRINGS.grow, delay: 0.05 } }
+                : GOOEY_SPRINGS.snap
             }
           />
         </div>)}
@@ -569,8 +578,8 @@ export const GooeyMenu: React.FC<GooeyMenuProps> = ({
                     onMouseEnter={() => { if (!optionDisabled) setActiveIndex(i); }}
                     onClick={() => choose(i)}
                     variants={{
-                      open: { opacity: 1, y: 0, transition: reducedMotion ? { duration: 0 } : ROW_SPRING },
-                      closed: { opacity: 0, y: reducedMotion ? 0 : -10, transition: reducedMotion ? { duration: 0 } : SNAP_SPRING },
+                      open: { opacity: 1, y: 0, transition: reducedMotion ? { duration: 0 } : GOOEY_SPRINGS.row },
+                      closed: { opacity: 0, y: reducedMotion ? 0 : -10, transition: reducedMotion ? { duration: 0 } : GOOEY_SPRINGS.snap },
                     }}
                     className={cn(
                       'mx-[10px] flex shrink-0 cursor-pointer items-center justify-between gap-3 rounded-[14px] px-[12px] text-[15.5px] transition-colors duration-150 ease-out select-none motion-reduce:transition-none',
