@@ -34,7 +34,6 @@ export function ChatSessionPane({ api, loadSessions, onNew, onSelect, children }
   const shell = useShellLayout()
   const [listCollapsed, setListCollapsed] = useState(true)
   const [wide, setWide] = useState(() => mediaQuery('(min-width: 1100px)')?.matches ?? false)
-  const [listRefreshing, setListRefreshing] = useState(false)
   const listTrigger = useRef<HTMLButtonElement>(null)
   const listDrawer = useRef<HTMLDivElement>(null)
   const restoreListFocus = useRef(false)
@@ -60,9 +59,9 @@ export function ChatSessionPane({ api, loadSessions, onNew, onSelect, children }
     setListCollapsed(true)
     shell.closeConversationDrawer()
   }
-  const refreshList = () => { setListRefreshing(true); void loadSessions(api, { userInitiated: true }).finally(() => setListRefreshing(false)) }
   const list = <ChatSessionList onSelect={onSelect} onNew={onNew}
-    onRefresh={refreshList} onMore={() => { void loadSessions(api, { more: true, userInitiated: true }) }} refreshing={listRefreshing}
+    onRetry={() => { void loadSessions(api, { userInitiated: true }) }}
+    onMore={() => { void loadSessions(api, { more: true, userInitiated: true }) }}
     onClose={closeList} />
   // 会话栏默认收起，与主导航互不联动；手动展开后两栏可同开。
   const showSidebar = wide && !listCollapsed
@@ -81,7 +80,7 @@ export function ChatSessionPane({ api, loadSessions, onNew, onSelect, children }
     <Dialog.Root open={shell.conversationDrawerOpen} onOpenChange={shell.setConversationDrawerOpen}>
       <Dialog.Portal>
         <Dialog.Overlay className="fixed inset-0 z-40 bg-overlay motion-reduce:animate-none data-[state=open]:animate-drawer-overlay-in data-[state=closed]:animate-drawer-overlay-out" />
-        <Dialog.Content ref={listDrawer} id="chat-session-drawer" aria-describedby={undefined} className="chat-session-drawer panel-surface fixed inset-y-0 left-0 z-50 flex flex-col rounded-none shadow-xl will-change-transform motion-reduce:animate-none data-[state=open]:animate-drawer-panel-in data-[state=closed]:animate-drawer-panel-out"
+        <Dialog.Content ref={listDrawer} id="chat-session-drawer" aria-describedby={undefined} className="chat-session-drawer fixed inset-y-0 left-0 z-50 flex flex-col shadow-xl will-change-transform motion-reduce:animate-none data-[state=open]:animate-drawer-panel-in data-[state=closed]:animate-drawer-panel-out"
           onOpenAutoFocus={event => { event.preventDefault(); listDrawer.current?.focus() }}
           onCloseAutoFocus={event => { event.preventDefault(); if (!shell.navigationOpen) focusListTrigger() }}>
           <Dialog.Title className="sr-only">会话列表</Dialog.Title>{list}

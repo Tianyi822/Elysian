@@ -16,7 +16,7 @@ beforeEach(() => {
 
 function renderList(backend: ReturnType<typeof chatTestApi>, onRender?: ProfilerOnRenderCallback) {
   const list = <ChatSessionList onNew={() => {}} onSelect={() => {}}
-    onRefresh={() => { void useAgentChatStore.getState().loadSessions(backend.api) }} onMore={() => {}} refreshing={false} />
+    onRetry={() => { void useAgentChatStore.getState().loadSessions(backend.api) }} onMore={() => {}} />
   return render(<Tooltip.Provider>{onRender ? <Profiler id="chat-sessions" onRender={onRender}>{list}</Profiler> : list}</Tooltip.Provider>)
 }
 
@@ -26,6 +26,7 @@ it('输入区错误不重渲染会话列表，草稿标题仍跟随输入', asyn
   const rendered = vi.fn<ProfilerOnRenderCallback>()
   renderList(backend, rendered)
   expect(screen.getByRole('button', { name: '新会话', current: 'page' })).toBeInTheDocument()
+  expect(screen.queryByRole('button', { name: '刷新会话列表' })).not.toBeInTheDocument()
   expect(rendered).toHaveBeenCalled()
   rendered.mockClear()
 

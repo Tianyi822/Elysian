@@ -1,26 +1,24 @@
-import { TOOLTIP_CONTENT_CLASS } from '../../components/tooltipStyles'
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import * as DropdownMenu from '@radix-ui/react-dropdown-menu'
 import * as Tooltip from '@radix-ui/react-tooltip'
+import { motion, useReducedMotion } from 'framer-motion'
 import { useShallow } from 'zustand/react/shallow'
-import { Pencil, Plus, X } from '../../components/icons'
-import { RefreshButton } from '../../components/RefreshState'
+import { Button, ButtonPressFeedback } from '../../components/Button'
+import { Badge } from '../../components/easyui/Badge'
 import { IconButton } from '../../components/IconButton'
+import { MessageSquare, Pencil, Plus, Trash2, X } from '../../components/icons'
 import { LoadingState } from '../../components/states/StateViews'
+import { TOOLTIP_CONTENT_CLASS } from '../../components/tooltipStyles'
 import { agentChatSessionKey } from '../../contracts/agentChat'
 import { useAgentChatStore } from '../../stores/agentChatStore'
 import { SessionRenameDialog } from './SessionRenameDialog'
 import { SessionRemoveDialog } from './SessionRemoveDialog'
-import { Button, ButtonPressFeedback } from '../../components/Button'
 
 type SessionRow = { id: string; title: string; active: boolean; server: boolean }
 
 
 /**
- * 服务端会话行的编辑入口：hover 或键盘聚焦行内任意控件时经 CSS 显现（不占布局空间）。
- * 触发按钮同时是完整名称 Tooltip 与编辑菜单的触发器——指针与键盘同一入口；
- * 行右侧是完整名称弹窗的位置，编辑菜单因此向下弹出、右缘对齐图标；
- * 菜单浮层 Portal 到 body，抽屉内也能正常弹出并在关闭时归还焦点。
+ * 编辑菜单向下打开，让出会话标题 Tooltip 的右侧位置。
  */
 function SessionRowEditMenu({ row, sending, onRename, onDelete }: {
   row: SessionRow
@@ -32,8 +30,7 @@ function SessionRowEditMenu({ row, sending, onRename, onDelete }: {
     <Tooltip.Root>
       <Tooltip.Trigger asChild>
         <DropdownMenu.Trigger asChild>
-          <Button variant="outline" type="button" aria-label="编辑会话"
-            className="icon-button chat-session-edit text-fg-subtle hover:bg-surface-raised hover:text-fg">
+          <Button unstyled type="button" aria-label="编辑会话" className="chat-session-icon chat-session-edit">
             <Pencil size={14} aria-hidden />
           </Button>
         </DropdownMenu.Trigger>
@@ -46,22 +43,23 @@ function SessionRowEditMenu({ row, sending, onRename, onDelete }: {
     </Tooltip.Root>
     <DropdownMenu.Portal>
       <DropdownMenu.Content side="bottom" align="end" sideOffset={4} className="chat-session-menu">
-        <DropdownMenu.Item className="chat-session-menu-item" disabled={sending} onSelect={() => onRename(row)}>重命名</DropdownMenu.Item>
+        <DropdownMenu.Item className="chat-session-menu-item" disabled={sending} onSelect={() => onRename(row)}>
+          <Pencil size={14} aria-hidden />重命名
+        </DropdownMenu.Item>
         <DropdownMenu.Item className="chat-session-menu-item chat-session-menu-remove" onSelect={() => onDelete(row)}>
-          <span>删除会话</span>
+          <Trash2 size={14} aria-hidden />删除会话
         </DropdownMenu.Item>
       </DropdownMenu.Content>
     </DropdownMenu.Portal>
   </DropdownMenu.Root>
 }
 
-export function ChatSessionList({ onSelect, onNew, onRefresh, onMore, onClose, refreshing }: {
+export function ChatSessionList({ onSelect, onNew, onRetry, onMore, onClose }: {
   onSelect: (key: string) => void
   onNew: () => void
-  onRefresh: () => void
+  onRetry: () => void
   onMore: () => void
   onClose?: () => void
-  refreshing: boolean
 }) {
   const chat = useAgentChatStore(useShallow(state => ({
     selected: state.session && agentChatSessionKey(state.session),
@@ -75,6 +73,8 @@ export function ChatSessionList({ onSelect, onNew, onRefresh, onMore, onClose, r
   })))
   const [renameTarget, setRenameTarget] = useState<SessionRow | null>(null)
   const [deleteTarget, setDeleteTarget] = useState<SessionRow | null>(null)
+  const selectionId = useId()
+  const reduceMotion = useReducedMotion()
   const selected = chat.selected
   const loading = chat.listStatus === 'loading'
   const local = new Map(chat.localSessions.map(row => [agentChatSessionKey(row), row]))
@@ -89,37 +89,56 @@ export function ChatSessionList({ onSelect, onNew, onRefresh, onMore, onClose, r
     }
   }
   return <ButtonPressFeedback value={false}><div className="chat-session-list">
-    <div className="chat-session-heading"><span className="text-sm font-medium">会话</span>
-      <RefreshButton label="刷新会话列表" busy={refreshing} onPress={onRefresh} />
-      {onClose && <IconButton label="关闭会话列表" variant="ghost" onPress={onClose}><X size={16} aria-hidden /></IconButton>}
-    </div>
-    <Button variant="outline" type="button" className="chat-new chat-session-new" disabled={chat.sending} onClick={onNew}><Plus size={15} aria-hidden />新会话</Button>
+    <header className="chat-session-heading">
+      <h2>会话</h2>
+      {onClose && <IconButton asChild label="关闭会话列表">
+        <Button unstyled type="button" aria-label="关闭会话列表" className="chat-session-icon" onClick={onClose}>
+          <X size={16} aria-hidden />
+        </Button>
+      </IconButton>}
+    </header>
+    <Button size="sm" type="button" className="chat-session-new" disabled={chat.sending}
+      leftIcon={<Plus size={16} aria-hidden />} onClick={onNew}>新会话</Button>
     <div className="chat-session-rows hover-scrollbar">
       {loading && !rows.length ? <LoadingState label="正在读取会话…" /> : <>
-        {chat.listErrorMessage && <div role="alert" className="space-y-2 px-3 py-5 text-sm text-fg-muted">
-          <p>会话暂时无法读取</p><p className="text-xs">{chat.listErrorMessage}</p>
-          <Button variant="outline" type="button" disabled={loading} onClick={onRefresh}>重试读取会话列表</Button>
+        {chat.listErrorMessage && <div role="alert" className="chat-session-error">
+          <p className="font-medium">会话暂时无法读取</p>
+          <p className="text-xs text-fg-muted">{chat.listErrorMessage}</p>
+          <Button variant="outline" size="sm" type="button" disabled={loading} onClick={onRetry}>重试读取会话列表</Button>
         </div>}
         {!rows.length && !chat.listErrorMessage && <p className="px-3 py-5 text-sm text-fg-muted">暂无会话</p>}
-        {rows.map(row => <div className="chat-session-item" key={row.id}>
-          <Tooltip.Root>
-            <Tooltip.Trigger asChild>
-              <Button unstyled type="button" className="chat-session-row" disabled={chat.sending}
-                aria-current={row.id === selected ? 'page' : undefined} onClick={() => onSelect(row.id)}>
-                <span className="truncate">{row.title}</span>
-                {local.get(row.id)?.pending ? <span className="chat-session-status">发送待确认</span> : row.active ? <span className="chat-session-status">运行中</span> : null}
-              </Button>
-            </Tooltip.Trigger>
-            <Tooltip.Portal>
-              <Tooltip.Content side="right" sideOffset={4} className={`${TOOLTIP_CONTENT_CLASS} max-w-[16rem] break-words`}>
-                {row.title}
-              </Tooltip.Content>
-            </Tooltip.Portal>
-          </Tooltip.Root>
-          {row.server && <SessionRowEditMenu row={row} sending={chat.sending}
-            onRename={setRenameTarget} onDelete={setDeleteTarget} />}
-        </div>)}
-        {chat.listHasMore && <Button variant="outline" className="chat-session-more" type="button" disabled={loading} onClick={onMore}>{loading ? '正在读取…' : '加载更多'}</Button>}
+        {rows.length > 0 && <ul className="chat-session-items" role="list">
+          {rows.map(row => {
+            const current = row.id === selected
+            const pending = !!local.get(row.id)?.pending
+            return <li className="chat-session-item" key={row.id} data-editable={row.server || undefined}>
+              <Tooltip.Root>
+                <Tooltip.Trigger asChild>
+                  <Button unstyled type="button" className="chat-session-row" disabled={chat.sending}
+                    aria-current={current ? 'page' : undefined} onClick={() => onSelect(row.id)}>
+                    {current && <motion.span aria-hidden className="chat-session-selection"
+                      layoutId={reduceMotion ? undefined : selectionId}
+                      transition={{ type: 'spring', stiffness: 420, damping: 36, mass: 0.8 }} />}
+                    <MessageSquare aria-hidden size={16} className="chat-session-row-icon" />
+                    <span className="chat-session-copy">
+                      <span className="truncate">{row.title}</span>
+                      {(pending || row.active) && <Badge className="h-[18px] px-1.5 text-[11px]" dot animateChanges={false}
+                        tone={pending ? 'warning' : 'neutral'}>{pending ? '发送待确认' : '运行中'}</Badge>}
+                    </span>
+                  </Button>
+                </Tooltip.Trigger>
+                <Tooltip.Portal>
+                  <Tooltip.Content side="right" sideOffset={4} className={`${TOOLTIP_CONTENT_CLASS} max-w-[16rem] break-words`}>
+                    {row.title}
+                  </Tooltip.Content>
+                </Tooltip.Portal>
+              </Tooltip.Root>
+              {row.server && <SessionRowEditMenu row={row} sending={chat.sending}
+                onRename={setRenameTarget} onDelete={setDeleteTarget} />}
+            </li>
+          })}
+        </ul>}
+        {chat.listHasMore && <Button variant="ghost" className="chat-session-more" type="button" isLoading={loading} loadingText="正在读取…" onClick={onMore}>加载更多</Button>}
       </>}
     </div>
     {renameTarget && <SessionRenameDialog target={renameTarget} onClose={() => setRenameTarget(null)} />}

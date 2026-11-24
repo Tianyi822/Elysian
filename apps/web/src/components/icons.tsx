@@ -63,6 +63,7 @@ export {
   Maximize2,
   MemoryStick,
   Menu,
+  MessageSquare,
   Minus,
   Monitor,
   MoreHorizontal,
