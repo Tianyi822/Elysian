@@ -23,9 +23,12 @@
     "PeekCard.tsx": "src/components/ui/PeekCard.tsx",
     "Sidebar.tsx": "src/components/ui/sidebar.tsx",
     "Stepper.tsx": "src/components/ui/stepper.tsx",
-    "ThinkingOrb.tsx": "src/components/ui/ThinkingOrb.tsx"
+    "ThinkingOrb.tsx": "src/components/ui/ThinkingOrb.tsx",
+    "Sheet.tsx": "src/components/ui/sheet.tsx",
+    "SmoothAccordion.tsx": "src/components/ui/SmoothAccordion.tsx"
   },
   "adaptations": [
+    "Adapt Sheet and SmoothAccordion to the container detail drawer. Preserve the right-side spring and swipe dismissal, use Radix for modal focus and the shared ScrollArea for the body, and apply semantic colors and reduced-motion support. Use full viewport width on phones.",
     "Adapt Login's centered title and circular mark, 448px card with 24px corners, and stacked 40px fields with 14px corners to the supplied EasyUI preview and Elysian theme tokens. Leave native username/password handling, IME protection, validation, notices and session navigation with the existing login page. Omit email, remember-device, social and signup controls. The login help uses an opt-in login-themed Peek Card; retain upstream appearance and motion for system load.",
     "Take the custom-content Peek Card from EasyUI for system-load details. Retain the 288/320px panel, measured 19.6px corners, 8px gap, 16px padding, black surface, border and shadow, 0.96 scale and signed 6px/4px travel, snappy spring entrance and 120ms exit. Use Radix for the existing click trigger, viewport collision placement, Escape and focus restoration; the portal escapes the sidebar drawer, and exiting content is inert. Preserve all live diagnostic content and honor reduced motion.",
     "Use 16px labels and 20px icons on desktop navigation links. From 1440px use a 64px brand area, 36px mark, 40px navigation/footer rows, 22px navigation icons, 20px footer icons and 4px row gaps. Retain the compact EasyUI drawer density.",
@@ -59,6 +62,8 @@
     "Copy the official Sidebar source for desktop and mobile navigation. Keep the 248px default expanded width, 56px collapsed width, and width spring (420 stiffness, 36 damping, 0.8 mass). From 1024px an accessible separator adjusts the expanded width from 248px to 352px, and AppShell saves completed adjustments as a browser preference. Retain 56px default header, 36px default rows, 8px navigation padding, 2px row gaps, 8px item corners, the moving hover pill, shared-layout active pill, 150ms label fade, bottom collapse button, icon tooltips, 17rem/85vw mobile drawer, 2px overlay blur and left-swipe thresholds. Split shell/panel/drawer exports so AppShell retains its existing global-versus-chat collapse states, mutually exclusive navigation/conversation drawers and route-owned focus restoration. Retain React Router anchor semantics through renderLink and add optional per-item attributes/actions for the existing pointer and keyboard reorder implementation; keep one persistent preference list, pinned dashboard, drag cancellation, mounted links and focus. Exclude reorder handles from horizontal drawer dragging. Use non-nested Radix Dialog for focus trapping, Escape, outside dismissal and scroll lock; hide/inert exiting drawer contents while preserving official spring transitions. Scope exact upstream neutral palettes through sidebar theme tokens; adapt load, theme, follow-system and account actions to the official row/icon geometry without changing values or session/logout behavior. Reuse unstyled panel Button, Radix Tooltip portals, resilient size observation and reduced-motion fallbacks. Keep the desktop toggle mounted, close mobile navigation on crossing the desktop breakpoint and preserve editor/terminal shortcuts. Remove the old fixed-inner-width clipping/translated-toggle stylesheet and active-link border."
   ],
   "fileRevisions": {
+    "Sheet.tsx": "7a819403862a6e79fd6b40bfc67f8432798f50df",
+    "SmoothAccordion.tsx": "7a819403862a6e79fd6b40bfc67f8432798f50df",
     "DataTable.tsx": "39206704aea017738282f706cf42796a44baa9cb",
     "GooeyMenu.tsx": "a4d68b641d39b0782cc83103cc407760da2fce4b",
     "Login.tsx": "f2287ce01ae6b6e7be28ca8d6a803dff91a20c96",
