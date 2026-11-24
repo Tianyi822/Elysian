@@ -42,6 +42,15 @@ func (b *websiteContainerBridge) rows(ctx context.Context, id string) ([]Website
 	return result, nil
 }
 
+// Registered checks whether an exact container ID belongs to a website.
+func (b *websiteContainerBridge) Registered(ctx context.Context, id string) (bool, error) {
+	if err := b.check(ctx); err != nil {
+		return false, err
+	}
+	rows, err := b.rows(ctx, id)
+	return len(rows) > 0, err
+}
+
 // Lifecycle 只承接 start/stop/restart；remove 保持 website_remove 专属入口，不在此路由。
 func (b *websiteContainerBridge) Lifecycle(ctx context.Context, id, action string) (bool, error) {
 	if action != "start" && action != "stop" && action != "restart" {

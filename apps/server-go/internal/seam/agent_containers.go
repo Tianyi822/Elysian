@@ -30,6 +30,7 @@ type AgentDatabaseContainers interface {
 // container belongs to a registered website project and runs the action.
 type AgentWebsiteContainers interface {
 	Lifecycle(context.Context, string, string) (bool, error)
+	Registered(context.Context, string) (bool, error)
 }
 
 // ContainerOperationGuard checks pending and unknown operations before a domain
