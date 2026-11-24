@@ -12,17 +12,25 @@ import (
 // Approval 待审批操作（pending/approved/denied/expired/revoked；kind=workflow-gate
 // 属已退役工作流，TUI 过滤不展示）。Access 非空即运行时授权卡（once/denied；旧决定保留 session 兼容
 // 三选），否则为普通审批（approved/denied）。
+type ApprovalTarget struct {
+	Kind  string   `json:"kind"`
+	Key   string   `json:"key"`
+	Label string   `json:"label"`
+	Notes []string `json:"notes"`
+}
+
 type Approval struct {
-	ID          string     `json:"id"`
-	RunID       string     `json:"runId"`
-	OperationID string     `json:"operationId"`
-	Status      string     `json:"status"`
-	Kind        string     `json:"kind,omitempty"`
-	Decision    string     `json:"decision,omitempty"`
-	CreatedAt   string     `json:"createdAt"`
-	ExpiresAt   string     `json:"expiresAt"`
-	Access      *AccessReq `json:"access,omitempty"`
-	Operation   Operation  `json:"operation"`
+	Target      *ApprovalTarget `json:"target,omitempty"`
+	ID          string          `json:"id"`
+	RunID       string          `json:"runId"`
+	OperationID string          `json:"operationId"`
+	Status      string          `json:"status"`
+	Kind        string          `json:"kind,omitempty"`
+	Decision    string          `json:"decision,omitempty"`
+	CreatedAt   string          `json:"createdAt"`
+	ExpiresAt   string          `json:"expiresAt"`
+	Access      *AccessReq      `json:"access,omitempty"`
+	Operation   Operation       `json:"operation"`
 }
 
 // Operation 审批关联的操作事实（参数、文件变更、资源声明与执行镜像）。

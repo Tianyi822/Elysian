@@ -152,8 +152,21 @@ func (s *chatState) renderApprovalList(b *strings.Builder, m Model) {
 	b.WriteString("\n")
 }
 
+func renderApprovalTarget(b *strings.Builder, target *client.ApprovalTarget, width int) {
+	if target == nil || target.Label == "" {
+		return
+	}
+	label := "目标：" + safeText(target.Label)
+	for _, note := range target.Notes {
+		label += " · " + safeText(note)
+	}
+	b.WriteString(metaStyle.Render(wrapPlain(label, width)))
+	b.WriteString("\n")
+}
+
 // renderApprovalSummary 卡片摘要：参数预览与危险提示。
 func renderApprovalSummary(b *strings.Builder, approval client.Approval, width int) {
+	renderApprovalTarget(b, approval.Target, width)
 	if summary := argumentSummary(approval.Operation.ArgumentsJSON); summary != "" {
 		b.WriteString(metaStyle.Render(truncateCells("参数："+summary, width)))
 		b.WriteString("\n")
@@ -168,6 +181,7 @@ func renderApprovalSummary(b *strings.Builder, approval client.Approval, width i
 
 // renderApprovalDetail 卡片详情：完整参数、文件变更、资源声明、执行镜像与授权范围。
 func renderApprovalDetail(b *strings.Builder, approval client.Approval, width int) {
+	renderApprovalTarget(b, approval.Target, width)
 	operation := approval.Operation
 	b.WriteString(metaStyle.Render("完整参数："))
 	b.WriteString("\n")
