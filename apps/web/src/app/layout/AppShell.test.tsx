@@ -269,7 +269,7 @@ describe('模板外壳', () => {
 
       const shifted = nav.querySelector<HTMLElement>('[data-nav-item="/docker"]')
       const dragged = nav.querySelector<HTMLElement>('[data-nav-item="/security"]')
-      expect(shifted?.style.transform).toBe('translateY(-44px)')
+      expect(shifted?.style.transform).toBe('translateY(-48px)')
       expect(shifted?.className).toContain('transition-transform')
       expect(dragged?.style.transform).toBe('translateY(56px)')
       expect(dragged?.className).not.toContain('transition-transform')
@@ -540,13 +540,13 @@ describe('侧边栏登出', () => {
   })
 })
 
-/** jsdom 没有布局，拖拽槽位按固定行高模拟：每项 40px，间距并进 44px 的步长。 */
+/** jsdom 没有布局，拖拽槽位按 1440px 起的固定行高模拟：每项 40px，8px 行距并进 48px 的步长。 */
 function installNavRects() {
   const original = HTMLElement.prototype.getBoundingClientRect
   HTMLElement.prototype.getBoundingClientRect = function () {
     const index = this.getAttribute('data-nav-index')
     if (index === null) return original.call(this)
-    const top = Number(index) * 44
+    const top = Number(index) * 48
     return {
       x: 0,
       y: top,

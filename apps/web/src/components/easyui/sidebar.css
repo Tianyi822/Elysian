@@ -39,7 +39,8 @@
 
   .desktop-navigation .sidebar-rail { padding-inline: var(--sidebar-rail-inset); }
   .desktop-navigation [data-sidebar-hover] { inset-inline: var(--sidebar-rail-inset); }
-  .desktop-navigation .sidebar-row-group { row-gap: 4px; }
+  .desktop-navigation .sidebar-row-group { row-gap: 8px; }
+  .desktop-navigation .sidebar-rail > :not(:last-child) { margin-block-end: 8px; }
   .desktop-navigation .sidebar-row { height: 40px; }
   .desktop-navigation .sidebar-row-action { align-self: stretch; }
   .desktop-navigation:not([data-collapsed]) .sidebar-row { padding-inline-start: var(--sidebar-row-inset); }
