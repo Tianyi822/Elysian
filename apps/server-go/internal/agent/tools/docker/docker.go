@@ -335,7 +335,8 @@ func (s *Service) descriptors() []tools.Descriptor {
 	descriptors = append(descriptors, s.imageDescriptors()...)
 	descriptors = append(descriptors, s.registryDescriptors()...)
 	descriptors = append(descriptors, s.powerDescriptor())
-	return append(descriptors, s.hostContainerDescriptors()...)
+	descriptors = append(descriptors, s.hostContainerDescriptors()...)
+	return append(descriptors, s.recreateDescriptors()...)
 }
 
 // powerDescriptor 把 start/stop/restart 三个生命周期动作收敛为单一入口；
