@@ -17,7 +17,7 @@ func ordinaryDockerTool(s tools.PublicSchema) bool {
 		"docker_container_inspect", "docker_image_inspect", "docker_container_create_restricted", "docker_container_create_service",
 		"docker_container_power", "docker_container_remove",
 		"docker_image_search", "docker_image_tags", "docker_image_pull", "docker_image_pull_get", "docker_image_pull_cancel", "docker_container_logs", "docker_image_remove", "docker_container_exec",
-		"docker_container_stats", "docker_networks_list", "docker_volumes_list", "docker_container_update":
+		"docker_container_stats", "docker_networks_list", "docker_volumes_list", "docker_container_update", "docker_container_recreate_preview", "docker_container_recreate":
 		return true
 	}
 	return false
