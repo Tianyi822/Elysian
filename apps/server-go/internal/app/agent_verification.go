@@ -7,6 +7,7 @@ import (
 
 	"elysian/server/internal/agent/jsonvalue"
 	"elysian/server/internal/agent/tools"
+	tooldocker "elysian/server/internal/agent/tools/docker"
 	"elysian/server/internal/docker"
 )
 
@@ -15,7 +16,7 @@ func agentTaskVerifier(containers *docker.AgentFacade) func(context.Context, too
 		if v.OperationID == "" || v.DispatchID == "" || v.Task.Domain != docker.ContainerOperationDomain || v.Task.RequestID == "" || v.Task.ID != "" {
 			return v.Task, errors.New("缺少可核实的原始提交身份")
 		}
-		input, target, err := containerOperationInput(v.Tool, v.ArgumentsJSON, v.Task.RequestID)
+		input, target, err := containerOperationInputVersion(v.Tool, v.ToolVersion, v.ArgumentsJSON, v.Task.RequestID)
 		if err != nil {
 			return v.Task, err
 		}
@@ -40,6 +41,10 @@ type execReceiptInput struct {
 }
 
 func containerOperationInput(tool, raw, requestID string) (any, string, error) {
+	return containerOperationInputVersion(tool, "", raw, requestID)
+}
+
+func containerOperationInputVersion(tool, version, raw, requestID string) (any, string, error) {
 	switch tool {
 	case "docker_container_exec":
 		var input execReceiptInput
@@ -47,7 +52,25 @@ func containerOperationInput(tool, raw, requestID string) (any, string, error) {
 			return nil, "", err
 		}
 		if input.RequestID == requestID {
+			if version == "4" {
+				return docker.ScopedContainerOperationInput("exec/v4", input.ContainerExecInput), input.ID, nil
+			}
 			return input, input.ID, nil
+		}
+	case "docker_container_update":
+		if version != "1" {
+			break
+		}
+		args, err := jsonvalue.Object([]byte(raw))
+		if err != nil {
+			return nil, "", err
+		}
+		input, err := tooldocker.DecodeContainerUpdate(args)
+		if err != nil {
+			return nil, "", err
+		}
+		if input.RequestID == requestID {
+			return docker.ScopedContainerOperationInput("update/v1", input), input.ID, nil
 		}
 	case "docker_container_create_service":
 		var input docker.AgentServiceCreateInput

@@ -168,3 +168,26 @@ func TestLegacyDatabaseChangeKeepsOriginalDockerReceiptDigest(t *testing.T) {
 		t.Fatalf("old Docker receipt reconciliation: %v", err)
 	}
 }
+
+func TestAgentVerifierSealsCanonicalContainerUpdateIdentity(t *testing.T) {
+	containers := verificationContainerFacade(t, filepath.Join(t.TempDir(), "tasks"))
+	requestID, target := strings.Repeat("a", 64), strings.Repeat("b", 64)
+	verify := agentTaskVerifier(containers)
+	request := tools.TaskVerification{
+		OperationID: "operation", DispatchID: "dispatch", Tool: "docker_container_update", ToolVersion: "1",
+		Task:          tools.TaskReference{Domain: docker.ContainerOperationDomain, RequestID: requestID},
+		ArgumentsJSON: `{"id":"` + target + `","requestId":"` + requestID + `","pidsLimit":0,"cpuMillis":5e2}`,
+	}
+	sealed, err := verify(t.Context(), request)
+	if err != nil || sealed.Target != target || sealed.Digest == "" {
+		t.Fatalf("update seal: %+v %v", sealed, err)
+	}
+	request.ArgumentsJSON = `{"id":"` + target + `","requestId":"` + requestID + `","cpuMillis":500,"pidsLimit":0.0}`
+	if again, err := verify(t.Context(), request); err != nil || again != sealed {
+		t.Fatalf("same canonical request did not match: %+v %v", again, err)
+	}
+	request.ArgumentsJSON = `{"id":"` + target + `","requestId":"` + requestID + `","cpuMillis":500}`
+	if _, err := verify(t.Context(), request); err == nil {
+		t.Fatal("omitting an explicit zero reused the sealed identity")
+	}
+}

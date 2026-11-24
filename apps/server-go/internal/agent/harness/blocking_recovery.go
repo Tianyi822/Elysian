@@ -139,5 +139,6 @@ func supportsMissingTaskVerification(c Capability) bool {
 	version := c.Metadata.Version
 	return c.Source == "builtin" && c.Metadata.Async &&
 		(c.Name == "docker_container_create_service" && version == "3" ||
-			c.Name == "docker_container_exec" && (version == "2" || version == "3"))
+			c.Name == "docker_container_exec" && (version == "2" || version == "3" || version == "4") ||
+			c.Name == "docker_container_update" && version == "1")
 }

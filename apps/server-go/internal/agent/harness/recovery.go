@@ -318,7 +318,7 @@ func (m *Manager) verifyMissingTask(ctx context.Context, expected Operation) (to
 		if o.Task.Domain != "docker-container-operation" || !supportsMissingTaskVerification(o.Capability) {
 			return bad("verification-unsupported", "旧工具没有经过审核的提交前无变更契约")
 		}
-		v = tools.TaskVerification{OperationID: o.ID, DispatchID: o.DispatchID, Task: *o.Task, Tool: o.Capability.Name, ArgumentsJSON: o.ArgumentsJSON}
+		v = tools.TaskVerification{OperationID: o.ID, DispatchID: o.DispatchID, Task: *o.Task, Tool: o.Capability.Name, ToolVersion: o.Capability.Metadata.Version, ArgumentsJSON: o.ArgumentsJSON}
 		if o.Recovery == nil {
 			o.Recovery = &RunRecovery{OperationID: o.ID, Tool: o.Capability.Name, StartedAt: stamp(m.deps.Now()), Deadline: stamp(m.deps.Now().Add(recoveryWindow)), Status: "verifying", Message: "正在核实未受理提交并封存原请求"}
 		}

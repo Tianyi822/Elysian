@@ -17,5 +17,6 @@ type TaskVerification struct {
 	DispatchID    string
 	Task          TaskReference
 	Tool          string
+	ToolVersion   string
 	ArgumentsJSON string
 }
