@@ -57,6 +57,11 @@ func containerOperationInputVersion(tool, version, raw, requestID string) (any, 
 			}
 			return input, input.ID, nil
 		}
+	case "docker_container_recreate":
+		var input docker.RecreateInput
+		if version == "1" && json.Unmarshal([]byte(raw), &input) == nil && input.RequestID == requestID {
+			return docker.RecreateOperationIdentity(input), input.ID, nil
+		}
 	case "docker_container_update":
 		if version != "1" {
 			break
