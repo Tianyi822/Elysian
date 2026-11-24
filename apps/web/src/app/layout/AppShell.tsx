@@ -145,6 +145,7 @@ export function AppShell() {
               <Sidebar drawer onNavigate={closeNavigation} />
             </SidebarDrawer>
 
+            <MessageCenter />
             <div className="relative flex min-h-0 flex-1">
               <main
                 className={
@@ -173,7 +174,6 @@ export function AppShell() {
                   <Outlet />
                 </Suspense>
               </main>
-              <MessageCenter />
             </div>
           </div>
         </div>

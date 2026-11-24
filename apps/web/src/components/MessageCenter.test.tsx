@@ -30,7 +30,7 @@ describe('全局消息组件', () => {
       : a.id === b.id ? 0 : a.id < b.id ? 1 : -1)
     expect(within(panel).getAllByRole('listitem').map(item => item.dataset.messageId)).toEqual(expected.map(item => item.id))
     expect(panel.querySelector('time')?.textContent).toMatch(/^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$/)
-    expect(screen.getByRole('button', { name: '消息' })).not.toHaveAttribute('data-unread')
+    expect(document.querySelector('.message-trigger')).not.toHaveAttribute('data-unread')
   })
   it('打开列表直接显示已加载的记录，并保留 EasyUI Alert 色调和原文', async () => {
     renderCenter()
@@ -57,30 +57,33 @@ describe('全局消息组件', () => {
     }
     expect(within(list).queryByRole('alert')).not.toBeInTheDocument()
   })
-  it('空列表禁用清空，F8 打开、Escape 关闭并返回焦点', async () => {
+  it('F8 不打开消息，空列表禁用清空，Escape 归还焦点', async () => {
     renderCenter()
     fireEvent.keyDown(window, { key: 'F8' })
-    const panel = await screen.findByRole('dialog', { name: '消息' })
+    expect(screen.queryByRole('dialog', { name: '消息' })).not.toBeInTheDocument()
+    expect(screen.getByRole('button', { name: '消息' })).not.toHaveAttribute('aria-keyshortcuts')
+    const panel = await openCenter()
     expect(within(panel).getByRole('button', { name: '清空全部消息' })).toBeDisabled()
     await waitFor(() => expect(within(panel).getByText('暂无消息')).toBeInTheDocument())
     fireEvent.keyDown(document.activeElement!, { key: 'Escape' })
     await waitFor(() => expect(screen.queryByRole('dialog')).not.toBeInTheDocument())
     await waitFor(() => expect(screen.getByRole('button', { name: '消息' })).toHaveFocus())
   })
-  it('业务弹窗内可鼠标打开消息，关闭后保留草稿与焦点', async () => {
+  it('业务弹窗隔离消息入口，关闭后恢复未读入口', async () => {
     const user = userEvent.setup()
     render(<Tooltip.Provider><MessageCenter /><Dialog.Root><Dialog.Trigger>打开表单</Dialog.Trigger><Dialog.Portal><Dialog.Overlay /><Dialog.Content aria-describedby={undefined}><Dialog.Title>编辑项目</Dialog.Title><input aria-label="项目名称" /><button type="button" onClick={() => useMessageStore.getState().notify({ tone: 'danger', message: '保存失败' })}>保存</button></Dialog.Content></Dialog.Portal></Dialog.Root></Tooltip.Provider>)
     await user.click(screen.getByRole('button', { name: '打开表单' }))
     const input = screen.getByRole('textbox', { name: '项目名称' })
     await user.type(input, '保留草稿')
     await user.click(screen.getByRole('button', { name: '保存' }))
+    expect(screen.queryByRole('button', { name: '消息' })).not.toBeInTheDocument()
+    expect(screen.queryByRole('dialog', { name: '消息' })).not.toBeInTheDocument()
+    expect(input).toHaveValue('保留草稿')
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(screen.getByRole('button', { name: '消息' })).toHaveAttribute('data-unread', 'true'))
     const panel = await openCenter()
     expect(within(panel).getByText('保存失败')).toBeInTheDocument()
-    await user.keyboard('{Escape}')
-    await waitFor(() => expect(screen.queryByRole('dialog', { name: '消息' })).not.toBeInTheDocument())
-    expect(screen.getByRole('dialog', { name: '编辑项目' })).toBeInTheDocument()
-    expect(input).toHaveValue('保留草稿')
-    await waitFor(() => expect(screen.getByRole('button', { name: '保存' })).toHaveFocus())
+
   })
   it('清空只等待当前可见项，包含部分可见项，不等待屏幕外历史', async () => {
     renderCenter()
@@ -121,11 +124,12 @@ describe('全局消息组件', () => {
     })
     await userEvent.click(within(panel).getByRole('button', { name: '清空全部消息' }))
     await waitFor(() => expect(useMessageStore.getState().messages).toHaveLength(0))
-    await userEvent.click(screen.getByRole('button', { name: '消息' }))
+    await userEvent.click(within(panel).getByRole('button', { name: '关闭消息' }))
+    await waitFor(() => expect(screen.queryByRole('dialog', { name: '消息' })).not.toBeInTheDocument())
     const reopened = await openCenter()
     await act(async () => { release(); await pendingClear.mock.results[0]!.value; await new Promise(resolve => setTimeout(resolve, 20)) })
     expect(reopened).toBeInTheDocument()
-    expect(screen.getByRole('button', { name: '消息' })).toHaveAttribute('aria-expanded', 'true')
+    expect(document.querySelector('.message-trigger')).toHaveAttribute('aria-expanded', 'true')
   })
   it('减少动态效果时直接清空退出，不等待可见项错峰', async () => {
     const media = window.matchMedia
@@ -143,7 +147,7 @@ describe('全局消息组件', () => {
   it('浮层进入与退出只做位移：祖先的透明度动画会让背景模糊采不到页面', () => {
     const css = readFileSync('src/components/messageCenter.css', 'utf8')
     for (const name of ['message-panel-in', 'message-panel-out']) {
-      const frame = css.match(new RegExp(`@keyframes ${name} \\{[^}]*\\{([^}]*)\\}`))
+      const frame = css.match(new RegExp(String.raw`@keyframes ${name} \{[^}]*\{([^}]*)\}`))
       expect(frame, `缺少 @keyframes ${name}`).not.toBeNull()
       expect(frame![1], `${name} 不得动 opacity`).not.toMatch(/opacity/)
     }

@@ -2,7 +2,6 @@ import { TOOLTIP_CONTENT_CLASS } from './tooltipStyles'
 import * as Dialog from '@radix-ui/react-dialog'
 import * as Tooltip from '@radix-ui/react-tooltip'
 import { useEffect, useId, useMemo, useRef, useState } from 'react'
-import { createPortal } from 'react-dom'
 import type { CSSProperties } from 'react'
 import { useMessageStore } from '../stores/messageStore'
 import type { FeedbackMessage, MessageTone } from '../contracts/messages'
@@ -11,6 +10,8 @@ import { NotificationBell } from './easyui/NotificationBell'
 import { Alert, AlertDescription, AlertTitle } from './easyui/Alert'
 import './messageCenter.css'
 import { Button } from './Button'
+import { IconButton } from './IconButton'
+import { X } from './icons'
 
 const UNEXPECTED_ERROR = '页面操作发生异常，请重试；若仍失败，请刷新页面。'
 const TONE_LABELS: Record<MessageTone, string> = {
@@ -45,7 +46,7 @@ function MessageItem({ message, unsaved, delay }: { message: FeedbackMessage; un
   </li>
 }
 
-/** 常驻辅助层：业务弹窗仍可保留表单，消息使用独立的上层焦点域。 */
+/** 消息入口属于应用框架，消息历史用独立弹层。 */
 export function MessageCenter() {
   const state = useMessageStore()
   const [open, setOpen] = useState(false)
@@ -54,7 +55,6 @@ export function MessageCenter() {
   const panel = useRef<HTMLDivElement>(null)
   const trigger = useRef<HTMLButtonElement>(null)
   const list = useRef<HTMLOListElement>(null)
-  const returnFocus = useRef<HTMLElement | null>(null)
   const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined)
   const mounted = useRef(true)
   const interaction = useRef(0)
@@ -73,7 +73,6 @@ export function MessageCenter() {
     interaction.current += 1
     clearTimeout(timer.current)
     if (next) {
-      returnFocus.current = document.activeElement instanceof HTMLElement && document.activeElement !== trigger.current && document.activeElement !== document.body ? document.activeElement : returnFocus.current
       setSnapshot(null)
       setPhase('idle')
       void useMessageStore.getState().load()
@@ -85,19 +84,12 @@ export function MessageCenter() {
   useEffect(() => {
     mounted.current = true
     const unsubscribe = useMessageStore.getState().subscribe()
-    const keyboard = (event: KeyboardEvent) => {
-      if (event.key !== 'F8') return
-      event.preventDefault()
-      event.stopPropagation()
-      changeOpen(!openRef.current)
-    }
     const report = () => {
       const current = useMessageStore.getState()
       const last = current.messages.at(-1)
       if (last?.message === UNEXPECTED_ERROR && Date.now() - Date.parse(last.occurredAt) < 30_000) return
       current.notify({ tone: 'danger', message: UNEXPECTED_ERROR })
     }
-    window.addEventListener('keydown', keyboard, true)
     window.addEventListener('error', report)
     window.addEventListener('unhandledrejection', report)
     return () => {
@@ -105,7 +97,6 @@ export function MessageCenter() {
       unsubscribe()
       clearTimeout(timer.current)
       useMessageStore.getState().setViewing(false)
-      window.removeEventListener('keydown', keyboard, true)
       window.removeEventListener('error', report)
       window.removeEventListener('unhandledrejection', report)
     }
@@ -126,28 +117,28 @@ export function MessageCenter() {
       useMessageStore.getState().setViewing(true)
       return
     }
-    setPhase('clearing')
     const reduced = (window.matchMedia?.('(prefers-reduced-motion: reduce)').matches ?? false)
-    const duration = reduced || !visible.length ? 0 : 180 + Math.min(270, (visible.length - 1) * 45)
+    if (reduced || !visible.length) {
+      changeOpen(false)
+      return
+    }
+    setPhase('clearing')
+    const duration = 180 + Math.min(270, (visible.length - 1) * 45)
     timer.current = setTimeout(() => changeOpen(false), duration)
   }
 
-  return createPortal(<section aria-live="off" className="message-center" data-message-center>
+  return <>
+    <section className="message-center" data-message-center>
     <Tooltip.Root>
       <Tooltip.Trigger asChild>
-        <NotificationBell ref={trigger} aria-label="消息" aria-keyshortcuts="F8" aria-haspopup="dialog"
-          style={{ pointerEvents: 'auto' }}
+        <NotificationBell ref={trigger} aria-label="消息" aria-haspopup="dialog"
           isOpen={open} onOpenChange={changeOpen} unread={state.unread} arrivalKey={state.announcement?.id}
           aria-controls={open ? contentId : undefined}
-          className="message-trigger"
-          onPointerDown={event => {
-            // 此入口在底层业务 Dialog 之外；保留其草稿，避免 outside 事件关闭底层弹窗。
-            event.stopPropagation()
-            returnFocus.current = document.activeElement instanceof HTMLElement && document.activeElement !== trigger.current && document.activeElement !== document.body ? document.activeElement : null
-          }} />
+          className="message-trigger" />
       </Tooltip.Trigger>
-      <Tooltip.Portal><Tooltip.Content side="bottom" sideOffset={6} className={TOOLTIP_CONTENT_CLASS}>消息（F8）<Tooltip.Arrow className="fill-surface-raised" /></Tooltip.Content></Tooltip.Portal>
+      <Tooltip.Content side="bottom" sideOffset={6} className={TOOLTIP_CONTENT_CLASS}>消息<Tooltip.Arrow className="fill-surface-raised" /></Tooltip.Content>
     </Tooltip.Root>
+    </section>
     <div className="sr-only" aria-live={state.announcement?.tone === 'danger' ? 'assertive' : 'polite'} aria-atomic="true">
       {state.announcement && <span key={state.announcement.id + state.announcement.occurredAt}>新消息：{state.announcement.message}</span>}
     </div>
@@ -155,17 +146,19 @@ export function MessageCenter() {
       <Dialog.Portal>
         <Dialog.Content ref={panel} id={contentId} aria-describedby={undefined} className="message-panel"
           style={snapshot ? { height: snapshot.height || undefined } : undefined}
+          onOpenAutoFocus={event => {
+            event.preventDefault()
+            panel.current?.focus({ preventScroll: true })
+          }}
           onCloseAutoFocus={event => {
             event.preventDefault()
-            const previous = returnFocus.current
-            if (previous?.isConnected) previous.focus()
-            else trigger.current?.focus()
-          }}
-          onInteractOutside={event => { if (event.target instanceof Node && trigger.current?.contains(event.target)) event.preventDefault() }}>
+            trigger.current?.focus({ preventScroll: true })
+          }}>
           <div className="message-heading">
             <Dialog.Title className="sr-only">消息</Dialog.Title>
             <Button variant="outline" type="button" className="message-clear" disabled={phase !== 'idle' || !displayed.length}
               onClick={() => { void clear() }}>清空全部消息</Button>
+            <IconButton label="关闭消息" variant="ghost" onPress={() => changeOpen(false)}><X size={16} aria-hidden /></IconButton>
           </div>
           {displayError && <div role="alert" className="mx-3 mb-2 flex items-start gap-2 text-xs leading-5 text-danger">
             <span className="min-w-0 flex-1">{displayError}</span>
@@ -190,5 +183,5 @@ export function MessageCenter() {
         </Dialog.Content>
       </Dialog.Portal>
     </Dialog.Root>
-  </section>, document.body)
+  </>
 }
