@@ -1,5 +1,5 @@
 import * as Dialog from '@radix-ui/react-dialog'
-import { useState } from 'react'
+import { useRef, useState } from 'react'
 import {
   FIREWALL_ADDRESS_FAMILIES,
   FIREWALL_DIRECTIONS,
@@ -54,6 +54,8 @@ const SCAN_FIELDS = [
 export function FirewallRuleDialog() {
   const gateway = useGateway()
   const dialogRule = useFirewallStore((s) => s.dialogRule)
+  const dockerRuleDraft = useFirewallStore((s) => s.dockerRuleDraft)
+  const opener = useRef(document.activeElement)
   const saving = useFirewallStore((s) => s.saving)
   const operationError = useFirewallStore((s) => s.operationError)
   const closeDialog = useFirewallStore((s) => s.closeDialog)
@@ -75,7 +77,12 @@ export function FirewallRuleDialog() {
           source: editing.source === '所有IP' ? '' : editing.source,
           note: editing.note ?? '',
         }
-      : { protocol: 'tcp', port: '', family: 'ipv4', policy: 'allow', direction: 'inbound', source: '', note: '' },
+      : {
+          protocol: dockerRuleDraft?.protocol ?? 'tcp',
+          port: dockerRuleDraft ? String(dockerRuleDraft.port) : '',
+          family: dockerRuleDraft?.family ?? 'ipv4',
+          policy: 'allow', direction: 'inbound', source: '', note: '',
+        },
   )
   const [portError, setPortError] = useState<string | undefined>(undefined)
   const [scanChoice, setScanChoice] = useState<boolean | undefined>(undefined)
@@ -142,6 +149,12 @@ export function FirewallRuleDialog() {
           // 点外部一律不关：填好的配置不该因为一次误点丢掉。Esc 与「关闭」「取消」仍可退出。
           onPointerDownOutside={(event) => event.preventDefault()}
           onInteractOutside={(event) => event.preventDefault()}
+          onCloseAutoFocus={(event) => {
+            if (dockerRuleDraft && opener.current instanceof HTMLElement && opener.current.isConnected) {
+              event.preventDefault()
+              opener.current.focus()
+            }
+          }}
           className="fixed left-1/2 top-1/2 z-[55] flex max-h-[min(44rem,calc(100vh-3rem))] w-[min(30rem,calc(100vw-2rem))] -translate-x-1/2 -translate-y-1/2 flex-col overflow-hidden panel-surface shadow-2xl"
         >
           <Dialog.Title className="sr-only">{isNew ? '添加端口规则' : '修改端口规则'}</Dialog.Title>
@@ -170,6 +183,9 @@ export function FirewallRuleDialog() {
           </div>
 
           <ScrollArea label="端口规则表单"><fieldset disabled={saving} className="flex min-w-0 flex-col gap-4 px-4 py-4">
+            {dockerRuleDraft && <p className="text-xs text-fg-muted">
+              规则按宿主机端口匹配，适用于同协议、同端口的其他绑定。来源留空时覆盖所有来源以及 UFW 已启用的地址族。
+            </p>}
             <div className="flex flex-wrap gap-4">
               <div>
                 <p className="mb-1 text-xs font-medium text-fg-muted">协议</p>
