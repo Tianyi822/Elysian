@@ -252,6 +252,7 @@ func run() (runErr error) {
 	if err != nil {
 		return fmt.Errorf("监听 %s 失败：%w", addr, err)
 	}
+	defer listener.Close()
 	var publicServer *http.Server
 	var publicListener net.Listener
 	if cfg.BareMetal {
@@ -265,6 +266,10 @@ func run() (runErr error) {
 		if err != nil {
 			listener.Close()
 			return fmt.Errorf("前端端口监听失败：%w", err)
+		}
+		defer publicListener.Close()
+		if err := firewall.StartDockerFirewall(context.Background(), cfg.DockerSocket); err != nil {
+			return fmt.Errorf("Docker 发布端口接管失败：%w", err)
 		}
 		publicServer = &http.Server{Handler: public, IdleTimeout: connectionIdleTimeout, ReadHeaderTimeout: connectionIdleTimeout}
 	}
