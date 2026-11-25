@@ -46,4 +46,8 @@ describe('任务进度', () => {
     render(<ChatPlan status="running" plan={plan} stopping />)
     expect(screen.getByRole('status')).toHaveTextContent(/^正在停止$/)
   })
+  it('折叠入口点击后不做按压压缩与回弹', () => {
+    render(<ChatPlan status="running" plan={plan} />)
+    expect(screen.getByRole('button', { name: '展开任务进度' })).not.toHaveAttribute('data-press-button')
+  })
 })

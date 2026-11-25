@@ -24,7 +24,7 @@ export function ChatPlan({ plan, status, budgetStopped = false, stopping = false
     : running ? current ? `正在${current.title}` : remaining ? '准备下一步' : '步骤已完成'
     : budgetStopped ? '本轮额度已用完，进度已保存' : RUNTIME_RUN_STATUS_LABELS[status]
   return <section className="chat-plan panel-surface" aria-label="任务进度" data-status={status}>
-    <Button unstyled type="button" className="chat-plan-toggle" aria-expanded={expanded} aria-controls={id}
+    <Button unstyled pressFeedback={false} type="button" className="chat-plan-toggle" aria-expanded={expanded} aria-controls={id}
       aria-label={`${expanded ? '收起' : '展开'}任务进度`} onClick={() => setExpanded(value => !value)}>
       <ListTodo size={16} aria-hidden />
       <span className="chat-plan-label">任务进度</span>
