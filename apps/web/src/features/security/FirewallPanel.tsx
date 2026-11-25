@@ -5,6 +5,7 @@ import { ToggleSwitch } from '../../components/ToggleSwitch'
 import { DataTable, type Id, type SortState } from '../../components/DataTable'
 import { TableBatchActions } from '../../components/TableBatchActions'
 import { TableCreateButton } from '../../components/TableCreateButton'
+import { useMessageStore } from '../../stores/messageStore'
 import { usePanelStore } from '../../stores/panelStore'
 import { isProtectedPanelRule, portRuleGroup, portTableRows, type PortTableRow } from './securityTableLogic'
 import { Badge } from '../../components/easyui/Badge'
@@ -58,6 +59,7 @@ const DOCKER_GUARD_STATUS: Record<DockerFirewallInventory['guard']['state'], [st
   unsupported: ['宿主转发状态不可核验', 'neutral'],
   unknown: ['Docker 转发状态未知', 'warning'],
 }
+const NO_PORT_RULE = '没有独立规则可删除'
 
 /** 策略配色：放行绿、拒绝红、限连黄——文字加颜色，不只靠颜色区分。 */
 function PolicyText({ policy }: { policy: FirewallRule['policy'] }) {
@@ -288,16 +290,24 @@ export function FirewallPanel() {
   )
 }
 
-function RowActions({ kind, id, label, onEdit }: { kind: 'port' | 'ip' | 'forward'; id: string; label: string; onEdit: () => void }) {
+function RowActions({ kind, id, label, onEdit, editLabel = '修改', editDisabled = false }: {
+  kind: FirewallView | 'published'; id: string; label: string; onEdit?: () => void; editLabel?: string; editDisabled?: boolean
+}) {
   const openRemove = useFirewallStore((s) => s.openRemove)
   const removing = useFirewallStore(s => s.removingRuleIds.includes(id))
   return (
     <div className="flex items-center gap-1">
       {/* 图标按钮经统一出口出（带 tooltip 与 aria-label）；无障碍名保持「修改/删除」，与测试断言一致。 */}
-      <IconButton label="修改" variant="ghost" disabled={removing} onPress={onEdit}>
+      {onEdit && <IconButton label={editLabel} variant="ghost" disabled={removing || editDisabled} onPress={onEdit}>
         <Pencil aria-hidden size={14} />
-      </IconButton>
-      <IconButton label="删除" variant="ghost" tone="danger-hover" disabled={removing} onPress={() => openRemove({ kind, id, label })}>
+      </IconButton>}
+      <IconButton label="删除" variant="ghost" tone="danger-hover" disabled={removing} onPress={() => {
+        if (kind === 'published') {
+          useMessageStore.getState().notify({ tone: 'info', message: `${label} ${NO_PORT_RULE}，继续按现有防火墙策略判定。` })
+          return
+        }
+        openRemove({ kind, id, label })
+      }}>
         <Trash2 aria-hidden size={14} />
       </IconButton>
     </div>
@@ -314,6 +324,8 @@ function portStatus(row: PortTableRow, stale: boolean): [string, StatusTone] {
   return [FIREWALL_RULE_STATUS_LABELS[status], STATUS_TONES[status]]
 }
 
+const portRowLabel = (row: PortTableRow) => `${row.protocol} ${row.kind === 'rule' ? formatFirewallPort(row.rule) : row.port}`
+
 function FirewallBatch<T extends { id: string }>({ rows, kind, getLabel, onSucceeded, groupBy, eligible }: {
   rows: readonly T[]; kind: FirewallView; getLabel(row: T): string; onSucceeded(ids: (string | number)[]): void;
   groupBy?(row: T): string; eligible?(row: T): string | undefined;
@@ -325,7 +337,8 @@ function FirewallBatch<T extends { id: string }>({ rows, kind, getLabel, onSucce
   return <TableBatchActions selectedRows={rows} getRowId={row => row.id} getRowLabel={getLabel}
     onSucceeded={onSucceeded} disabled={syncing} actions={[{
       key: 'remove', label: '删除', icon: <Trash2 aria-hidden size={16} />, danger: true,
-      description: kind === 'port' ? isDockerRuntime() ? '删除所选规则；同一规则的 IPv4／IPv6 展示行由一次操作成对移除。面板入口保底规则仍受保护。' : '删除所选演示规则，逐项移除已选中的展示行。面板入口保底规则仍受保护。' : '删除所选规则，保留现有系统校验与操作边界。',
+      description: kind === 'port' ? '仅删除已配置的防火墙规则。容器和端口映射会继续运行。' : '删除所选规则，保留现有系统校验与操作边界。',
+      showSkippedResult: kind === 'port',
       eligible: row => removing.includes(row.id) ? '规则正在删除' : eligible?.(row),
       // 真实 UFW 以一条规范规则成对删除 IPv4／IPv6；演示 adapter 按精确 ID 删除。
       groupBy: isDockerRuntime() ? groupBy : row => row.id,
@@ -360,13 +373,11 @@ function FirewallRulesTable({ rows: allRows, view, query, onQueryChange, toolbar
 
   if (view === 'port') {
     const rows = allRows.rules
-    const selectableRules = rows.flatMap(row => row.kind === 'rule' ? [row.rule] : [])
     return <DataTable rows={rows} ariaLabel="端口规则表" {...common} filterMode="external"
       // 44px 选择列与九列最小宽度合计 1200px，空间不足时仅表体横向滚动。
       minWidth={1200}
       searchPlaceholder="搜索端口、来源或备注"
-      getRowId={row => row.id} getRowLabel={row => `${row.protocol} ${row.kind === 'rule' ? formatFirewallPort(row.rule) : row.port}`}
-      isRowSelectable={row => row.kind === 'rule'}
+      getRowId={row => row.id} getRowLabel={portRowLabel}
       columns={[
         { key: 'port', header: '端口', primary: true, cell: row => {
           if (row.kind === 'rule') return <PortCell rule={row.rule} label={formatFirewallPort(row.rule)} />
@@ -378,21 +389,25 @@ function FirewallRulesTable({ rows: allRows, view, query, onQueryChange, toolbar
           const [label, tone] = portStatus(row, dockerStale)
           return <StatusTag label={label} tone={tone} />
         }, width: 'minmax(96px, 11fr)' },
-        { key: 'policy', header: '策略', accessor: row => row.kind === 'rule' ? FIREWALL_POLICY_LABELS[row.rule.policy] : null,
-          cell: row => row.kind === 'rule' ? <PolicyText policy={row.rule.policy} /> : <span title="此端口的访问由防火墙现行规则和转发接管状态决定">—</span>, width: 'minmax(72px, 8fr)' },
+        { key: 'policy', header: '策略', accessor: row => row.kind === 'rule' ? FIREWALL_POLICY_LABELS[row.rule.policy] : '未单设',
+          cell: row => row.kind === 'rule' ? <PolicyText policy={row.rule.policy} /> : <span title="此端口的访问由现有防火墙策略判定">未单设</span>, width: 'minmax(72px, 8fr)' },
         { key: 'direction', header: '方向', accessor: row => FIREWALL_DIRECTION_LABELS[row.kind === 'rule' ? row.rule.direction : 'inbound'], width: 'minmax(72px, 8fr)' },
         { key: 'source', header: '来源', accessor: row => row.kind === 'rule' ? row.rule.source : null, width: 'minmax(176px, 12fr)' },
         { key: 'note', header: '备注', cell: ruleNote, width: 'minmax(176px, 17fr)' },
         { key: 'updatedAt', header: '时间', accessor: row => row.kind === 'rule' ? row.rule.updatedAt : null, cell: row => row.kind === 'rule' ? ruleDate(row.rule) : '—', width: 'minmax(128px, 15fr)' },
         { key: 'actions', header: '操作', sortable: false, width: 'minmax(88px, 8fr)', cell: row => {
-          if (row.kind === 'rule') return <RowActions kind="port" id={row.id} label={`${row.protocol} ${formatFirewallPort(row.rule)}`} onEdit={() => useFirewallStore.getState().openEdit(row.rule)} />
+          if (row.kind === 'rule') return <RowActions kind="port" id={row.id} label={portRowLabel(row)} onEdit={() => useFirewallStore.getState().openEdit(row.rule)} />
           const { protocol, port, family } = row
-          return protocol === 'tcp' || protocol === 'udp' ? <Button variant="outline" size="sm" className="whitespace-nowrap px-1.5" disabled={dockerStale} type="button"
-            aria-label={`为 ${port}/${protocol} 添加规则`} onClick={() => useFirewallStore.getState().openCreate({ port, protocol, family })}>添加规则</Button> : '—'
+          const edit = protocol === 'tcp' || protocol === 'udp'
+            ? () => useFirewallStore.getState().openCreate({ port, protocol, family })
+            : undefined
+          return <RowActions kind="published" id={row.id} label={portRowLabel(row)} editDisabled={dockerStale}
+            editLabel={`为 ${port}/${protocol} 配置规则`} onEdit={edit} />
         } },
       ]}
-      bulkActions={ids => <FirewallBatch key={view} rows={selectableRules.filter(rule => ids.includes(rule.id))} kind="port" groupBy={portRuleGroup}
-        getLabel={rule => `${rule.protocol} ${formatFirewallPort(rule)}`} eligible={rule => isProtectedPanelRule(rule, panelPort) ? '面板入口保底规则不允许删除' : undefined}
+      bulkActions={ids => <FirewallBatch key={view} rows={rows.filter(row => ids.includes(row.id))} kind="port"
+        groupBy={row => row.kind === 'rule' ? portRuleGroup(row.rule) : row.id} getLabel={portRowLabel}
+        eligible={row => row.kind === 'published' ? NO_PORT_RULE : isProtectedPanelRule(row.rule, panelPort) ? '面板入口保底规则不允许删除' : undefined}
         onSucceeded={ids => setSelected(current => current.filter(id => !ids.includes(id)))} />}
     />
   }

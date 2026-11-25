@@ -16,6 +16,8 @@ export function FirewallRuleRemoveDialog() {
   return (
     <ConfirmDialog
       title={`确认删除${kindLabel}「${removeTarget.label}」？`}
+      description={removeTarget.kind === 'port' ? <p className="mt-2 text-sm text-fg-muted">此操作仅删除防火墙规则。容器和端口映射会继续运行。</p> : undefined}
+      describe={removeTarget.kind === 'port'}
       danger busy={removingRuleIds.includes(removeTarget.id)} confirmLabel="确认删除"
       onClose={closeRemove}
       onConfirm={() => {

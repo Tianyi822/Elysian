@@ -78,7 +78,7 @@ type FirewallState = TabMemoryState<FirewallView> & {
   removingRuleIds: readonly string[]
   clearDisplay: () => void
   load: (gateway: ElysianGateway) => Promise<void>
-  refreshDockerPorts: (gateway: ElysianGateway) => Promise<void>
+  refreshDockerPorts: (gateway: ElysianGateway, options?: { afterWrite: boolean }) => Promise<void>
   /** 变更成功后的静默重拉：不动 status，面板不闪加载态。 */
   refreshLists: (gateway: ElysianGateway) => Promise<void>
   setSearch: (search: string) => void
@@ -195,9 +195,9 @@ export const useFirewallStore = create<FirewallState>((set, get, store) => {
     return operation.promise
   },
 
-  refreshDockerPorts(gateway) {
+  refreshDockerPorts(gateway, options) {
     const auth = captureAuthGeneration()
-    if (pendingDockerPorts?.auth === auth && pendingDockerPorts.gateway === gateway) return pendingDockerPorts.promise
+    if (!options?.afterWrite && pendingDockerPorts?.auth === auth && pendingDockerPorts.gateway === gateway) return pendingDockerPorts.promise
     const operation = { auth, gateway, promise: Promise.resolve() }
     pendingDockerPorts = operation
     if (dockerPortsOwner !== gateway) {
@@ -425,6 +425,10 @@ export const useFirewallStore = create<FirewallState>((set, get, store) => {
               return rule ? `端口转发 ${rule.protocol} ${rule.port} → ${rule.targetHost}:${rule.targetPort}` : '端口转发'
             })()
     set((current) => ({ removingRuleIds: [...current.removingRuleIds, ruleId] }))
+    const readBack = () => Promise.all([
+      get().refreshLists(gateway),
+      kind === 'port' ? get().refreshDockerPorts(gateway, { afterWrite: true }) : undefined,
+    ])
     try {
       if (kind === 'port') {
         await gateway.firewall.remove(ruleId)
@@ -434,19 +438,28 @@ export const useFirewallStore = create<FirewallState>((set, get, store) => {
         await gateway.firewall.removeForward(ruleId)
       }
       if (auth !== captureAuthGeneration()) return securitySessionChanged()
-      set((current) => ({ removingRuleIds: current.removingRuleIds.filter((id) => id !== ruleId) }))
-      notify(`${label} 已删除${REAL_ACTION_LABEL}`)
       // 删除同样按规范成对移除 v4/v6 双生行，重拉才能反映完整后果。
-      await get().refreshLists(gateway)
+      await readBack()
+      if (auth !== captureAuthGeneration()) return securitySessionChanged()
+      notify(`${label} 已删除${REAL_ACTION_LABEL}`)
       return { status: 'succeeded' }
     } catch (error) {
       if (auth !== captureAuthGeneration()) return securitySessionChanged()
-      set((current) => ({
-        removingRuleIds: current.removingRuleIds.filter((id) => id !== ruleId),
-      }))
-      notify(error instanceof Error ? `删除失败：${error.message}` : '删除失败', 'danger')
-      if (hasUncertainOutcome(error)) await get().refreshLists(gateway)
-      return securityActionFailure(error, '删除失败')
+      const result = securityActionFailure(error, '删除失败')
+      if (kind === 'port' && result.status === 'unknown') {
+        await readBack()
+        if (auth !== captureAuthGeneration()) return securitySessionChanged()
+        const readError = get().operationError
+        const message = `删除结果未确认：${result.error}。请核对当前规则和转发状态。`
+        set({ operationError: readError ? `${message} ${readError}` : message })
+        notify(message, 'danger')
+      } else {
+        notify(error instanceof Error ? `删除失败：${error.message}` : '删除失败', 'danger')
+        if (hasUncertainOutcome(error)) await get().refreshLists(gateway)
+      }
+      return result
+    } finally {
+      if (auth === captureAuthGeneration()) set(current => ({ removingRuleIds: current.removingRuleIds.filter(id => id !== ruleId) }))
     }
   },
 
