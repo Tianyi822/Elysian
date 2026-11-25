@@ -1,12 +1,16 @@
 import { securityActionFailure, securitySessionChanged, type SecurityActionResult } from './securityActionResult'
 import { captureAuthGeneration } from '../utils/authGeneration'
 import type {
+  DockerFirewallInventory,
+  DockerPublishedPort,
+  FirewallAddressFamily,
   FirewallForwardInput,
   FirewallForwardRule,
   FirewallIpRule,
   FirewallIpRuleInput,
   FirewallRule,
   FirewallRuleInput,
+  FirewallProtocol,
   FirewallScanConfig,
   FirewallScanProtection,
   FirewallToggles,
@@ -30,6 +34,14 @@ const REAL_ACTION_LABEL = demoNoticeSuffix(isDockerRuntime(), MOCK_ACTION_NOTE)
 export type FirewallView = 'port' | 'ip' | 'forward'
 
 type FirewallStatus = 'idle' | 'loading' | 'ready' | 'error'
+type DockerRuleDraft = { port: number; protocol: FirewallProtocol; family: FirewallAddressFamily }
+type DockerPortsState = {
+  ports: readonly DockerPublishedPort[]
+  guard?: DockerFirewallInventory['guard']
+  checkedAt?: number
+  loading: boolean
+  error?: string
+}
 
 type FirewallState = TabMemoryState<FirewallView> & {
   status: FirewallStatus
@@ -38,12 +50,14 @@ type FirewallState = TabMemoryState<FirewallView> & {
   rules: readonly FirewallRule[]
   ipRules: readonly FirewallIpRule[]
   forwards: readonly FirewallForwardRule[]
+  dockerPorts: DockerPortsState
   toggles: FirewallToggles
   /** 搜索按当前视图的端口/IP/目标与备注匹配；变化时回到第一页。 */
   search: string
   page: number
   /** 端口规则弹窗状态：editing 为 null 表示新建，非 null 表示在改这条规则。 */
   dialogRule: FirewallRule | 'new' | undefined
+  dockerRuleDraft?: DockerRuleDraft
   /** IP 规则弹窗状态。 */
   dialogIpRule: FirewallIpRule | 'new' | undefined
   /** 端口转发弹窗状态。 */
@@ -64,12 +78,13 @@ type FirewallState = TabMemoryState<FirewallView> & {
   removingRuleIds: readonly string[]
   clearDisplay: () => void
   load: (gateway: ElysianGateway) => Promise<void>
+  refreshDockerPorts: (gateway: ElysianGateway) => Promise<void>
   /** 变更成功后的静默重拉：不动 status，面板不闪加载态。 */
   refreshLists: (gateway: ElysianGateway) => Promise<void>
   setSearch: (search: string) => void
   setPage: (page: number) => void
   toggle: (gateway: ElysianGateway, next: FirewallToggles) => Promise<void>
-  openCreate: () => void
+  openCreate: (draft?: DockerRuleDraft) => void
   openCreateIp: () => void
   openCreateForward: () => void
   openEdit: (rule: FirewallRule) => void
@@ -108,6 +123,8 @@ export const useFirewallStore = create<FirewallState>((set, get, store) => {
   let actionAuth = captureAuthGeneration()
   let scanRevision = 0
   let pendingScan: { auth: number; gateway: ElysianGateway; promise: Promise<void> } | undefined
+  let pendingDockerPorts: { auth: number; gateway: ElysianGateway; promise: Promise<void> } | undefined
+  let dockerPortsOwner: ElysianGateway | undefined
   const syncActionGeneration = () => {
     const auth = captureAuthGeneration()
     if (auth !== actionAuth) {
@@ -123,12 +140,14 @@ export const useFirewallStore = create<FirewallState>((set, get, store) => {
   rules: [],
   ipRules: [],
   forwards: [],
+  dockerPorts: { ports: [], loading: false },
   // 三类规则不共用搜索词和页码，与页签在同一次更新中复位。
   ...createTabMemorySlice<FirewallView>('port', (selection) => set({ ...selection, search: '', page: 1 })),
   toggles: { firewallEnabled: true, pingBlocked: true, defaultIncoming: 'deny', defaultOutgoing: 'allow' },
   search: '',
   page: 1,
   dialogRule: undefined,
+  dockerRuleDraft: undefined,
   dialogIpRule: undefined,
   dialogForward: undefined,
   removeTarget: undefined,
@@ -151,6 +170,8 @@ export const useFirewallStore = create<FirewallState>((set, get, store) => {
     actionAuth = captureAuthGeneration()
     pendingLoad = undefined
     pendingScan = undefined
+    pendingDockerPorts = undefined
+    dockerPortsOwner = undefined
     scanRevision += 1
     set({ ...store.getInitialState(), tab: get().tab })
   },
@@ -170,6 +191,38 @@ export const useFirewallStore = create<FirewallState>((set, get, store) => {
       } catch (error) {
         if (current()) set({ status: hadData ? 'ready' : 'error', errorMessage: messageOf(error, '防火墙数据加载失败') })
       } finally { if (pendingLoad === operation) pendingLoad = undefined }
+    })()
+    return operation.promise
+  },
+
+  refreshDockerPorts(gateway) {
+    const auth = captureAuthGeneration()
+    if (pendingDockerPorts?.auth === auth && pendingDockerPorts.gateway === gateway) return pendingDockerPorts.promise
+    const operation = { auth, gateway, promise: Promise.resolve() }
+    pendingDockerPorts = operation
+    if (dockerPortsOwner !== gateway) {
+      dockerPortsOwner = gateway
+      set({ dockerPorts: { ports: [], loading: true } })
+    } else {
+      set(state => ({ dockerPorts: { ...state.dockerPorts, loading: true } }))
+    }
+    const current = () => pendingDockerPorts === operation && auth === captureAuthGeneration()
+    operation.promise = (async () => {
+      try {
+        const result = await gateway.firewall.dockerPorts()
+        if (!current()) return
+        if (result.inventory === 'ready') {
+          set({ dockerPorts: { ports: result.ports, guard: result.guard, checkedAt: Date.now(), loading: false } })
+        } else {
+          set(state => ({ dockerPorts: { ...state.dockerPorts, guard: result.guard, loading: false, error: 'Docker Engine 当前不可用' } }))
+        }
+      } catch (error) {
+        if (current()) set(state => ({
+          dockerPorts: { ...state.dockerPorts, guard: undefined, loading: false, error: messageOf(error, '读取 Docker 发布端口失败') },
+        }))
+      } finally {
+        if (pendingDockerPorts === operation) pendingDockerPorts = undefined
+      }
     })()
     return operation.promise
   },
@@ -230,8 +283,8 @@ export const useFirewallStore = create<FirewallState>((set, get, store) => {
     }
   },
 
-  openCreate() {
-    set({ dialogRule: 'new', operationError: undefined })
+  openCreate(dockerRuleDraft) {
+    set({ dialogRule: 'new', dockerRuleDraft, operationError: undefined })
   },
 
   openCreateIp() {
@@ -243,7 +296,7 @@ export const useFirewallStore = create<FirewallState>((set, get, store) => {
   },
 
   openEdit(rule) {
-    set({ dialogRule: rule, operationError: undefined })
+    set({ dialogRule: rule, dockerRuleDraft: undefined, operationError: undefined })
   },
 
   openEditIp(rule) {
@@ -255,7 +308,7 @@ export const useFirewallStore = create<FirewallState>((set, get, store) => {
   },
 
   closeDialog() {
-    set({ dialogRule: undefined, dialogIpRule: undefined, dialogForward: undefined })
+    set({ dialogRule: undefined, dockerRuleDraft: undefined, dialogIpRule: undefined, dialogForward: undefined })
   },
 
   openRemove(target) {
@@ -292,7 +345,7 @@ export const useFirewallStore = create<FirewallState>((set, get, store) => {
           return false
         }
       }
-      set({ dialogRule: undefined })
+      set({ dialogRule: undefined, dockerRuleDraft: undefined })
       notify(`端口规则 ${saved.protocol} ${saved.port}${saved.portTo ? `:${saved.portTo}` : ''} 已${editing === 'new' ? '添加' : '修改'}${REAL_ACTION_LABEL}`)
       await get().refreshLists(gateway)
       return auth === captureAuthGeneration()
