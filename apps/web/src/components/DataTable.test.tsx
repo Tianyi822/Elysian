@@ -42,6 +42,23 @@ it('稳定排序循环，空值始终在末尾，排序后Shift使用稳定身�
   await user.click(within(header).getByRole('button'))
   expect(header).toHaveAttribute('aria-sort', 'none')
 })
+
+it('单选、范围和全选均跳过只读行', async () => {
+  const user = userEvent.setup()
+  render(<DataTable rows={rows.slice(0, 3)} columns={columns} getRowId={getRowId} getRowLabel={getRowLabel}
+    isRowSelectable={row => row.key !== '1'} />)
+  expect(screen.queryByRole('checkbox', { name: '选择 条目1' })).not.toBeInTheDocument()
+  await user.click(screen.getByRole('checkbox', { name: '选择 条目0' }))
+  await user.keyboard('{Shift>}')
+  await user.click(screen.getByRole('checkbox', { name: '选择 条目2' }))
+  await user.keyboard('{/Shift}')
+  expect(await screen.findByText('已选 2 项')).toBeInTheDocument()
+  const all = screen.getByRole('checkbox', { name: '全选已加载的匹配行' })
+  expect(all).toBeChecked()
+  await user.click(all)
+  await user.click(all)
+  expect(await screen.findByText('已选 2 项')).toBeInTheDocument()
+})
 it('外部过滤不二次筛选，目标变化清除选择', async () => {
   const onSelectionChange = vi.fn()
   const { rerender } = render(<DataTable rows={rows} columns={columns} getRowId={getRowId} filterMode="external" query="服务端专用关键词" selected={['0']} onSelectionChange={onSelectionChange} selectionKey="a" />)

@@ -74,6 +74,8 @@ export interface DataTableProps<T> {
   /** Readable name for a row, used by checkboxes and screen readers */
   getRowLabel?: (row: T) => string;
   selectable?: boolean;
+  /** Whether a row participates in individual, range and select-all operations. */
+  isRowSelectable?: (row: T) => boolean;
   searchable?: boolean;
   searchPlaceholder?: string;
   /** Extra text to match when searching */
@@ -241,6 +243,7 @@ export function DataTable<T>({
   getRowId = (r) => (r as { id: Id }).id,
   getRowLabel = (r) => String(getRowId(r)),
   selectable = true,
+  isRowSelectable,
   searchable = true,
   searchPlaceholder = "搜索…",
   searchText,
@@ -305,7 +308,7 @@ export function DataTable<T>({
   const lastClicked = useRef<Id | null>(null);
 
   const sort = controlledSort !== undefined ? controlledSort : innerSort;
-  const rowIds = useMemo(() => new Set(rows.map(getRowId)), [rows, getRowId]);
+  const rowIds = useMemo(() => new Set((isRowSelectable ? rows.filter(isRowSelectable) : rows).map(getRowId)), [rows, getRowId, isRowSelectable]);
   const rawSelected = controlledSelected ?? innerSel;
   const selectedIds = useMemo(() => rawSelected.filter(id => rowIds.has(id)), [rawSelected, rowIds]);
   const selected = useMemo(() => new Set(selectedIds), [selectedIds]);
@@ -432,13 +435,14 @@ export function DataTable<T>({
     .join(" ");
 
   /* ------------------------------- selection ------------------------------- */
-  const allSelected = processed.length > 0 && processed.every((r) => selected.has(getRowId(r)));
-  const someSelected = processed.some((r) => selected.has(getRowId(r)));
+  const selectableRows = isRowSelectable ? processed.filter(isRowSelectable) : processed;
+  const allSelected = selectableRows.length > 0 && selectableRows.every((r) => selected.has(getRowId(r)));
+  const someSelected = selectableRows.some((r) => selected.has(getRowId(r)));
 
   const toggleAll = () => {
     const ids = new Set(selected);
-    if (allSelected) processed.forEach((r) => ids.delete(getRowId(r)));
-    else processed.forEach((r) => ids.add(getRowId(r)));
+    if (allSelected) selectableRows.forEach((r) => ids.delete(getRowId(r)));
+    else selectableRows.forEach((r) => ids.add(getRowId(r)));
     setSelected([...ids]);
     lastClicked.current = null;
   };
@@ -449,8 +453,10 @@ export function DataTable<T>({
       const [a, b] = [Math.min(anchor, index), Math.max(anchor, index)];
       const turnOn = !selected.has(id);
       for (let i = a; i <= b; i++) {
-        if (turnOn) ids.add(getRowId(visible[i]!));
-        else ids.delete(getRowId(visible[i]!));
+        const rangeId = getRowId(visible[i]!);
+        if (!rowIds.has(rangeId)) continue;
+        if (turnOn) ids.add(rangeId);
+        else ids.delete(rangeId);
       }
     } else if (ids.has(id)) ids.delete(id);
     else ids.add(id);
@@ -547,7 +553,7 @@ export function DataTable<T>({
   /* ------------------------------ render: header ---------------------------- */
   const header = cards ? (
     <div className={cx("flex items-center gap-3 px-1 pb-3")}>
-      {selectable && <Checkbox checked={allSelected} indeterminate={!allSelected && someSelected} onToggle={toggleAll} label="全选已加载的匹配行" />}
+      {selectable && (!isRowSelectable || selectableRows.length > 0) && <Checkbox checked={allSelected} indeterminate={!allSelected && someSelected} onToggle={toggleAll} label="全选已加载的匹配行" />}
       <div className="ml-1 min-w-0 flex-1">
         <SelectDropdown ariaLabel="排序依据" value={sort?.key ?? ""}
           items={[{ value: "", label: "排序：默认顺序" }, ...sortable.map(c => ({ value: c.key, label: `排序：${c.header}` }))]}
@@ -576,7 +582,7 @@ export function DataTable<T>({
     >
       {selectable && (
         <div role="columnheader" className="grid h-11 place-items-center">
-          <Checkbox checked={allSelected} indeterminate={!allSelected && someSelected} onToggle={toggleAll} label="全选已加载的匹配行" />
+          {(!isRowSelectable || selectableRows.length > 0) && <Checkbox checked={allSelected} indeterminate={!allSelected && someSelected} onToggle={toggleAll} label="全选已加载的匹配行" />}
         </div>
       )}
       {cols.map((c) => {
@@ -615,10 +621,11 @@ export function DataTable<T>({
   /* ------------------------------- render: rows ------------------------------ */
   const rowEls = visible.map((row, index) => {
     const isSel = selected.has(getRowId(row));
+    const canSelect = selectable && rowIds.has(getRowId(row));
     const label = getRowLabel(row);
     const common = {
       role: "row" as const,
-      "aria-selected": selectable ? isSel : undefined,
+      "aria-selected": canSelect ? isSel : undefined,
       "aria-rowindex": index + 2,
     };
     const interactive = onRowClick || onRowActivate || onRowDoubleClick || rowKeyboardNav
@@ -671,7 +678,7 @@ export function DataTable<T>({
           )}
         >
           <div className="flex items-start gap-3">
-            {selectable && (
+            {canSelect && (
               <div className="pt-0.5">
                 <Checkbox checked={isSel} onToggle={(e) => toggleRow(getRowId(row), index, e)} label={`选择 ${label}`} />
               </div>
@@ -716,7 +723,7 @@ export function DataTable<T>({
       >
         {selectable && (
           <div role="cell" className="grid place-items-center">
-            <Checkbox checked={isSel} onToggle={(e) => toggleRow(getRowId(row), index, e)} label={`选择 ${label}`} />
+            {canSelect && <Checkbox checked={isSel} onToggle={(e) => toggleRow(getRowId(row), index, e)} label={`选择 ${label}`} />}
           </div>
         )}
         {cols.map((c) => (
