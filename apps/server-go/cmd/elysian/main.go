@@ -35,6 +35,7 @@ import (
 	"elysian/server/internal/cli"
 	"elysian/server/internal/config"
 	"elysian/server/internal/database"
+	"elysian/server/internal/firewall"
 	"elysian/server/internal/gateway"
 	"elysian/server/internal/logs"
 	"elysian/server/internal/panel"
@@ -79,11 +80,36 @@ func cliExit(code int) error {
 }
 
 func run() (runErr error) {
+	if len(os.Args) > 1 {
+		switch os.Args[1] {
+		case "docker-firewall-check":
+			if len(os.Args) > 3 || runtime.GOOS != "linux" || os.Geteuid() != 0 {
+				return errors.New("Docker 防火墙预检需要 Linux root，可附带本机 Docker socket 路径")
+			}
+			socket := config.Load().DockerSocket
+			if len(os.Args) == 3 && os.Args[2] != "" {
+				socket = os.Args[2]
+			}
+			ctx, cancel := context.WithTimeout(context.Background(), 25*time.Second)
+			defer cancel()
+			return firewall.CheckDockerFirewall(ctx, socket)
+		case "docker-firewall-sync", "docker-firewall-watch", "docker-firewall-remove":
+			if len(os.Args) != 2 || runtime.GOOS != "linux" || os.Geteuid() != 0 {
+				return errors.New("Docker 防火墙维护命令需要 Linux root 且不接受额外参数")
+			}
+			ctx, cancel := signal.NotifyContext(context.Background(), syscall.SIGTERM, os.Interrupt)
+			defer cancel()
+			if os.Args[1] == "docker-firewall-remove" {
+				return firewall.RemoveDockerFirewall(ctx)
+			}
+			return firewall.RunDockerFirewall(ctx, os.Args[1] == "docker-firewall-watch", os.Stderr)
+		}
+	}
 	if len(os.Args) > 1 && os.Args[1] == "release-info" {
 		if len(os.Args) != 2 {
 			return errors.New("发布信息命令不接受参数")
 		}
-		return json.NewEncoder(os.Stdout).Encode(map[string]string{"commit": panel.Commit, "buildTime": panel.BuildTime, "os": runtime.GOOS, "arch": runtime.GOARCH})
+		return json.NewEncoder(os.Stdout).Encode(map[string]string{"commit": panel.Commit, "buildTime": panel.BuildTime, "os": runtime.GOOS, "arch": runtime.GOARCH, "dockerFirewall": "v1"})
 	}
 
 	if len(os.Args) > 1 && os.Args[1] == "agent-exec-supervisor" {
