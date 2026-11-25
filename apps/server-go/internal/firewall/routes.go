@@ -10,6 +10,7 @@ import (
 	"github.com/go-chi/chi/v5"
 
 	"elysian/server/internal/config"
+	"elysian/server/internal/contract"
 	"elysian/server/internal/middleware"
 	"elysian/server/internal/seam"
 	"elysian/server/internal/shared"
@@ -46,6 +47,7 @@ type Service interface {
 // Deps 路由工厂的注入形状（go-plan §3.8 跨域字段 + 域内测试注入口）。
 type Deps struct {
 	AgentAuthorize func(context.Context) error
+	PublishedPorts func(context.Context) ([]contract.DockerPublishedPort, error)
 	Ports          config.PanelNetwork
 	Mode           config.RuntimeMode
 
@@ -93,7 +95,7 @@ func NewRouterChecked(deps Deps) (chi.Router, error) {
 			}
 		}
 	}
-	return newRouterWithService(svc), nil
+	return newRouterWithService(svc, deps), nil
 }
 
 // NewPortOpener 构造端口自动开放接缝（供 websites/database 域创建时联动）。
@@ -155,12 +157,15 @@ type totalBody struct {
 	Total int `json:"total"`
 }
 
-func newRouterWithService(svc Service) chi.Router {
+func newRouterWithService(svc Service, deps Deps) chi.Router {
 	r := chi.NewRouter()
 	// panic 兜底走同一条错误映射路径（go-plan §3.3）。
 	r.Use(middleware.EndpointErrorHandler)
 	// 同源守卫先于读体：跨源写请求在解析任何请求体之前就被拒绝（未知路径同样先过守卫）。
 	r.Use(middleware.SameOriginGuard())
+	r.Get("/docker-ports", func(w http.ResponseWriter, req *http.Request) {
+		shared.SendJSON(w, http.StatusOK, deps.dockerPorts(req.Context()))
+	})
 
 	r.Get("/", middleware.HandleError(func(w http.ResponseWriter, req *http.Request) error {
 		toggles, err := svc.Toggles()

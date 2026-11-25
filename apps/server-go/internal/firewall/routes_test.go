@@ -2,6 +2,7 @@ package firewall
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -9,6 +10,8 @@ import (
 	"strings"
 	"testing"
 
+	"elysian/server/internal/config"
+	"elysian/server/internal/contract"
 	"elysian/server/internal/shared"
 	"elysian/server/internal/testutil"
 )
@@ -275,6 +278,23 @@ func TestRouterRoot(t *testing.T) {
 	toggles := body["toggles"].(map[string]any)
 	if toggles["firewallEnabled"] != false || toggles["defaultIncoming"] != "deny" {
 		t.Errorf("toggles 内容错误：%v", toggles)
+	}
+}
+
+func TestDockerPortsRouteKeepsInventoryIndependentOfHostGuard(t *testing.T) {
+	deps := Deps{Available: true, Mode: config.ModeDocker, service: &fakeService{}}
+	deps.PublishedPorts = func(context.Context) ([]contract.DockerPublishedPort, error) {
+		return []contract.DockerPublishedPort{{ContainerName: "derper", HostPort: 12080, ContainerPort: 80}}, nil
+	}
+	code, body := doJSON(t, mountApp(deps), requestOf("GET", "/docker-ports", "", nil))
+	if code != 200 || body["inventory"] != "ready" || len(body["ports"].([]any)) != 1 ||
+		body["guard"].(map[string]any)["state"] != "unsupported" {
+		t.Fatalf("unexpected firewall inventory: %d %v", code, body)
+	}
+	deps.PublishedPorts = nil
+	code, body = doJSON(t, mountApp(deps), requestOf("GET", "/docker-ports", "", nil))
+	if code != 200 || body["inventory"] != "unavailable" || len(body["ports"].([]any)) != 0 {
+		t.Fatalf("unavailable inventory was reported as ready: %d %v", code, body)
 	}
 }
 

@@ -48,6 +48,7 @@ import (
 	"elysian/server/internal/auth"
 	"elysian/server/internal/config"
 	"elysian/server/internal/containerapps"
+	"elysian/server/internal/contract"
 	"elysian/server/internal/database"
 	"elysian/server/internal/docker"
 	"elysian/server/internal/files"
@@ -127,18 +128,13 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 
 	// 防火墙片：可用性统一取 cfg.HostOpsAvailable()；端口自动开放接缝与防火墙片
 	// 同源（防火墙不可用时恒 skipped，行为与装配层注入 NoopPortOpener 一致）。
-	// firewallDeps 只依赖 cfg 与 agentAuthorize，构造先于 docker.Assemble，
-	// 容器 Agent 的服务容器创建与 websites/database 共用同一端口开放接缝。
+	// 先提供写入接缝，再将 Docker 的实时绑定查询注入防火墙。
 	firewallDeps := firewall.Deps{
 		AgentAuthorize: agentAuthorize,
 		Available:      cfg.HostOpsAvailable(),
 		Ports:          cfg.PanelPorts(),
 		Mode:           cfg.Mode(),
 		DBPath:         paths.Default.FirewallSqlite,
-	}
-	firewallRouter, firewallAgent, err := firewall.AssembleAgent(firewallDeps)
-	if err != nil {
-		return nil, fmt.Errorf("防火墙入口恢复失败：%w", err)
 	}
 	portOpener := firewall.NewPortOpener(firewallDeps)
 
@@ -157,6 +153,13 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 	})
 	if err != nil {
 		return nil, fmt.Errorf("装配容器管理片失败：%w", err)
+	}
+	firewallDeps.PublishedPorts = func(ctx context.Context) ([]contract.DockerPublishedPort, error) {
+		return docker.ReadPublishedPorts(ctx, stack.Engine)
+	}
+	firewallRouter, firewallAgent, err := firewall.AssembleAgent(firewallDeps)
+	if err != nil {
+		return nil, fmt.Errorf("防火墙入口恢复失败：%w", err)
 	}
 
 	securityDeps := security.Deps{Available: cfg.HostOpsAvailable(), Mode: cfg.Mode(), SshPorts: firewall.NewSshPortOpener(firewallDeps), AgentAuthorize: agentAuthorize}
