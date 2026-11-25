@@ -154,7 +154,7 @@ Docker 与 Caddy 通道分别按安装环境变量 `ELYSIAN_DOCKER_SOCKET`／`EL
 
 裸机版本启用 UFW 时，Docker bridge 通过宿主机发布的端口默认拒绝新的转发连接。面板「安全 → 端口规则」和原生 UFW 入站规则按宿主机发布端口生效。以 `12080:80` 为例，规则使用 `12080/tcp`。入站规则的地址族、来源、目标地址、协议及顺序会应用到 Docker 转发。Docker 用户态代理和 host 网络监听继续由宿主机 INPUT 规则处理。
 
-首次在线更新会在候选面板通过健康检查前启用接管。新安装、以及由支持该功能的面板发起的后续更新会额外在切换前预检。已完成接管后，`elysian-docker-firewall.service` 独立维持规则，原生 UFW 修改由服务每两秒检查，面板写入则在响应前核验。每次策略变更对新连接生效。UFW 总开关同时控制 Docker 接管。支持 Docker iptables bridge，原生 nftables、Swarm、直接路由以及冲突的第三方 DNAT 或已有 ufw-docker 集成需要在升级前处理。预检失败的细节可在面板系统日志或 `journalctl -u elysian` 中查看。
+首次在线更新会在候选面板通过健康检查前启用接管。新安装和后续更新会在切换前预检。Docker 每次启动前同步并核验规则，持续同步由独立的 `elysian-docker-firewall-watch.service` 执行。原生 UFW 修改每两秒检查，面板写入在响应前核验。每次策略变更对新连接生效。UFW 总开关同时控制 Docker 接管。安全页的端口规则视图直接显示 Docker 实际发布的绑定，清单读取故障和转发接管故障各有状态。支持 Docker iptables bridge，原生 nftables、Swarm、直接路由以及冲突的第三方 DNAT 或已有 ufw-docker 集成需要在升级前处理。故障可查看 `journalctl -u docker -u elysian-docker-firewall-watch`。
 
 升级当前已有 `derper` 和 `frp` 的服务器前，先核对实际发布地址和缺少的授权：
 
@@ -172,7 +172,7 @@ sudo ufw status numbered
 | frp | 26755/tcp | 以 inspect 中的 HostPort 为准 |
 | frp | 40223/tcp | 以 inspect 中的 HostPort 为准 |
 
-按实际绑定的地址族、地址及批准的来源补齐普通入站 allow 规则。已在 UFW 中匹配的授权直接复用。通过 FRP 管理服务器时，在切换前确认对应的隧道端口已加入规则，并保留一条可用的 SSH 或控制台连接。升级后用 `systemctl status elysian-docker-firewall` 核对服务，再从另一台机器检查允许和拒绝的端口。宿主机回环探测经过自己的网络路径。
+按实际绑定的地址族、地址及批准的来源补齐普通入站 allow 规则。已在 UFW 中匹配的授权直接复用。通过 FRP 管理服务器时，在切换前确认对应的隧道端口已加入规则，并保留一条可用的 SSH 或控制台连接。升级后用 `systemctl status elysian-docker-firewall-watch` 核对服务，再从另一台机器检查允许和拒绝的端口。宿主机回环探测经过自己的网络路径。
 
 ## 卸载与验证
 
