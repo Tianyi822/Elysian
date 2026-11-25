@@ -490,6 +490,7 @@ func (s *service) SetToggles(next FirewallToggles) (FirewallToggles, error) {
 type portOpenerService struct {
 	host        hostDeps
 	backendPort int
+	policy      *dockerFirewall
 }
 
 // EnsurePortRule 幂等补 ufw 放行；一切结果以 contract.FirewallPortSync 带回。
@@ -498,5 +499,13 @@ func (p portOpenerService) EnsurePortRule(_ context.Context, port int, note stri
 		detail := "面板后端端口不能对外开放"
 		return contract.FirewallPortSync{State: contract.FirewallPortSyncFailed, Port: port, Detail: &detail}
 	}
-	return ensurePortRule(p.host, port, note)
+	var result contract.FirewallPortSync
+	if err := p.policy.withDockerChange(func() error {
+		result = ensurePortRule(p.host, port, note)
+		return nil
+	}); err != nil {
+		detail := err.Error()
+		return contract.FirewallPortSync{State: contract.FirewallPortSyncFailed, Port: port, Detail: &detail}
+	}
+	return result
 }

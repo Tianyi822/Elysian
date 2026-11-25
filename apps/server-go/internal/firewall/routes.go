@@ -108,7 +108,12 @@ func NewPortOpener(deps Deps) seam.PortOpener {
 	if ports == (config.PanelNetwork{}) {
 		ports = config.DefaultPanelNetwork()
 	}
-	return portOpenerService{host: newExecHostDeps("", deps.Now), backendPort: ports.BackendPort}
+	host := newExecHostDeps("", deps.Now)
+	opener := portOpenerService{host: host, backendPort: ports.BackendPort}
+	if deps.Mode == config.ModeBareMetal {
+		opener.policy = newDockerFirewall()
+	}
+	return opener
 }
 
 // ---------- 路由装配 ----------
