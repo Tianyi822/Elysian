@@ -63,8 +63,9 @@ for arch in amd64 arm64; do
   else
     # Both binaries are static Go ELF; QEMU needs no ARM libc or privileged binfmt.
     python3 scripts/release-download.py verify "$output/$arch/elysian-linux-$arch" "$arch" "$commit"
-    [ "$(qemu-aarch64-static "$output/$arch/elysian" release-info | jq -r .commit)" = "$commit" ]
-    [ "$(qemu-aarch64-static "$output/$arch/platform-helper" socket /run/caddy/admin.sock)" = /run/caddy/admin.sock ]
+    # Avoid the MADV_DONTNEED issue in older QEMU (golang/go#77572).
+    [ "$(qemu-aarch64-static -E GODEBUG=madvdontneed=0 "$output/$arch/elysian" release-info | jq -r .commit)" = "$commit" ]
+    [ "$(qemu-aarch64-static -E GODEBUG=madvdontneed=0 "$output/$arch/platform-helper" socket /run/caddy/admin.sock)" = /run/caddy/admin.sock ]
   fi
   cp "$output/$arch/elysian-linux-$arch.tar.gz" "$output/$arch/elysian-linux-$arch.tar.gz.sha256" "$output/"
 done
