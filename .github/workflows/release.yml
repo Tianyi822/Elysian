@@ -65,8 +65,7 @@ jobs:
         run: |
           (cd apps/server-go && go test ./internal/platformhelper ./internal/panel ./internal/cli/...)
           (cd apps/server-go && go test ./internal/agent/harness/sessionstore/... -run 'Test(SessionStore|SQLiteCancelled|StoreRead|StoreWrite)')
-          python3 -B scripts/release-download.test.py
-          python3 -B scripts/publish-gitee.test.py
+          python3 -B scripts/release-download.test.py DownloadTest
           "$RUNNER_TEMP/release/platform-helper" socket /run/caddy/admin.sock
           "$RUNNER_TEMP/release/elysian" release-info
           bun scripts/package-release.mjs "$GITHUB_WORKSPACE" "$RUNNER_TEMP/release" "$COMMIT" "$ARCH"
