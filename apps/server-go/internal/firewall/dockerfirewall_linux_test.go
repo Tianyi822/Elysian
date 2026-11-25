@@ -74,7 +74,7 @@ func TestDockerFirewallKernel(t *testing.T) {
 	server := namespace("testlan", "backend0", [4]string{"198.51.100.1/24", "2001:db8:2::1/64", "198.51.100.2/24", "2001:db8:2::2/64"})
 	run("nsenter", "-t", client, "-n", "ip", "addr", "add", "192.0.2.3/24", "dev", "client0")
 	run("nsenter", "-t", server, "-n", "ip", "addr", "add", "198.51.100.3/24", "dev", "backend0")
-	start("nsenter", "-t", server, "-n", "python3", "-u", "-c", `
+	listener := start("nsenter", "-t", server, "-n", "python3", "-u", "-c", `
 import socket, select
 sockets = []
 for family, bind in ((socket.AF_INET, "0.0.0.0"), (socket.AF_INET6, "2001:db8:2::2")):
@@ -208,10 +208,19 @@ except (TimeoutError, ConnectionRefusedError):
 			t.Fatalf("UFW limit verdict at attempt %d: %v", i+1, open)
 		}
 	}
+	published4 := run("iptables", "-t", "nat", "-S", "DOCKER")
+	published6 := run("ip6tables", "-t", "nat", "-S", "DOCKER")
 	run("ufw", "--force", "delete", "allow", "13478/udp")
 	syncPolicy()
 	if isOpen("6", "2001:db8:1::2", "udp", "13478") {
 		t.Fatal("deleted UFW rule remained effective on a new flow")
+	}
+	if run("iptables", "-t", "nat", "-S", "DOCKER") != published4 || run("ip6tables", "-t", "nat", "-S", "DOCKER") != published6 {
+		t.Fatal("deleting the authorization changed a published port mapping")
+	}
+	run("kill", "-0", strconv.Itoa(listener.Process.Pid))
+	if !isOpen("6", "2001:db8:1::2", "tcp", "12080") {
+		t.Fatal("deleting the authorization disrupted another published port on the same listener")
 	}
 	scan, err := setScanSection(string(beforeV4), true, ScanConfig{
 		Ports: []float64{12080}, WindowSeconds: 30, HitCount: 3, BanSeconds: 60,
