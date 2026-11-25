@@ -90,6 +90,31 @@ beforeEach(() => {
 })
 
 describe('防火墙面板', () => {
+  it('Docker 发布清单与 UFW 规则独立，支持预填并标记引擎中断后的旧绑定', async () => {
+    const user = userEvent.setup()
+    const dockerPorts = vi.fn<ElysianGateway['firewall']['dockerPorts']>()
+      .mockResolvedValueOnce({
+        inventory: 'ready',
+        ports: [{ containerId: 'ctr', containerName: 'derper', hostIp: '::', hostPort: 12080, containerPort: 80, protocol: 'tcp' }],
+        guard: { state: 'verified', kernelVerified: true },
+      })
+      .mockResolvedValue({ inventory: 'unavailable', ports: [], guard: { state: 'degraded', kernelVerified: true } })
+    await openFirewallPage(sessionGateway({ list: async () => [], dockerPorts }))
+    const inventory = await screen.findByRole('region', { name: 'Docker 发布端口' })
+    const add = await within(inventory).findByRole('button', { name: '为 derper :: 12080/tcp 添加规则' })
+    expect(within(inventory).getByText('转发接管已核验')).toBeInTheDocument()
+    await user.click(add)
+    const dialog = await screen.findByRole('dialog', { name: '添加端口规则' })
+    expect(within(dialog).getByDisplayValue('12080')).toBeInTheDocument()
+    expect(within(dialog).getByText(/来源留空时覆盖所有来源/)).toBeInTheDocument()
+    await user.keyboard('{Escape}')
+    await waitFor(() => expect(add).toHaveFocus())
+    await user.click(within(inventory).getByRole('button', { name: '刷新 Docker 发布端口' }))
+    expect(await within(inventory).findByText(/显示上次读取的绑定/)).toBeInTheDocument()
+    expect(within(inventory).getByText('转发接管异常')).toBeInTheDocument()
+    expect(add).toBeDisabled()
+  })
+
   it('校验提示只留在表单，真实保存失败同时保留行内原因和消息', async () => {
     const user = userEvent.setup()
     const create = vi.fn().mockRejectedValue(new Error('防火墙暂不可写'))

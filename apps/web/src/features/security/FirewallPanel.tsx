@@ -33,6 +33,7 @@ import { useFirewallStore, type FirewallView } from '../../stores/firewallStore'
 import { FirewallForwardDialog } from './FirewallForwardDialog'
 import { FirewallIpRuleDialog } from './FirewallIpRuleDialog'
 import { FirewallRuleDialog } from './FirewallRuleDialog'
+import { DockerPublishedPorts } from './DockerPublishedPorts'
 import { FirewallRuleRemoveDialog } from './FirewallRuleRemoveDialog'
 import { isDockerRuntime } from '../../utils/isDockerRuntime'
 import { Button } from '../../components/Button'
@@ -189,7 +190,11 @@ export function FirewallPanel() {
   }
 
   if (status === 'error') {
-    return <ErrorState title="防火墙数据加载失败" description={errorMessage} onRetry={() => void load(gateway)} />
+    return <div>
+      {view === 'port' && <DockerPublishedPorts />}
+      <ErrorState title="防火墙数据加载失败" description={errorMessage} onRetry={() => void load(gateway)} />
+      {dialogRule !== undefined && <FirewallRuleDialog />}
+    </div>
   }
 
   const toolbar = VIEW_TOOLBAR[view]
@@ -209,7 +214,9 @@ export function FirewallPanel() {
       />
       <RefreshButton
         className="dt-toolbar-control-icon"
-        onPress={() => void syncFromSystem(gateway)}
+        onPress={() => {
+          void syncFromSystem(gateway).then(() => view === 'port' ? useFirewallStore.getState().refreshDockerPorts(gateway) : undefined)
+        }}
         busy={syncing}
         label={syncing ? '同步中…' : '同步规则'}
       />
@@ -243,6 +250,7 @@ export function FirewallPanel() {
         <StatChip label="IP 规则" count={ipRules.length} />
         <StatChip label="端口转发" count={forwards.length} />
       </div>
+      {view === 'port' && <DockerPublishedPorts />}
       <FirewallRulesTable rows={filtered} view={view} query={search} onQueryChange={setSearch} toolbar={tableToolbar} toolbarNavigation={tableNavigation} />
 
       {dialogRule !== undefined ? <FirewallRuleDialog /> : null}

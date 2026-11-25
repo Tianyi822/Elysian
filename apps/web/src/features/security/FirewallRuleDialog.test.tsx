@@ -74,7 +74,7 @@ describe('端口规则弹窗', () => {
     expect(savedConfig).toMatchObject({ windowSeconds: 120, hitCount: 6, banSeconds: 7200 })
     expect(savedConfig.ports).toContain(8443)
     expect(savedConfig.ports).toContain(22)
-    await user.type(screen.getByRole('searchbox'), '8443')
+    await user.type(within(screen.getByRole('region', { name: '端口规则表' })).getByRole('searchbox'), '8443')
     const row = screen.getByRole('row', { name: /选择 tcp 8443/ })
     expect(within(row).queryByRole('switch')).not.toBeInTheDocument()
     await user.click(within(row).getByRole('button', { name: '修改' }))
