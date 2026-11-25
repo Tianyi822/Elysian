@@ -1706,6 +1706,10 @@ main() {
     section "检测并安装平台依赖"
     acquire_install_locks || die "无法取得平台依赖安装维护锁。"
     install_platform_deps
+    if "$BUILD_DIR/elysian" release-info | python3 -c 'import json,sys; sys.exit(json.load(sys.stdin).get("dockerFirewall") != "v1")'; then
+      "$BUILD_DIR/elysian" docker-firewall-check "$DOCKER_ENGINE_SOCKET" \
+        || die "Docker 发布端口防火墙预检未通过，保留正在运行的面板版本。"
+    fi
     section "安装并切换版本"
     prepare_install_switch
     install_binary

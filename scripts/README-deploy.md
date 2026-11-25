@@ -150,6 +150,30 @@ Docker 与 Caddy 通道分别按安装环境变量 `ELYSIAN_DOCKER_SOCKET`／`EL
 
 安装阶段头只显示编号与名称；双 TTY 且终端支持刷新时，在终端底部维护一条总体进度条，显示当前动作、转圈与实测耗时，输出行会覆盖并重绘这条状态行，不在滚动历史里留下多条进度条。curl 下载不输出独立进度条，详细输出保存在私有任务日志，失败回显末 40 行并保留完整日志。`NO_COLOR` 只关闭颜色，`TERM=dumb` 与输出重定向降级为纯文本；收尾摘要使用自适应终端宽度的分区横线与对齐键值，全部取实测值。
 
+## Docker 发布端口与 UFW
+
+裸机版本启用 UFW 时，Docker bridge 通过宿主机发布的端口默认拒绝新的转发连接。面板「安全 → 端口规则」和原生 UFW 入站规则按宿主机发布端口生效。以 `12080:80` 为例，规则使用 `12080/tcp`。入站规则的地址族、来源、目标地址、协议及顺序会应用到 Docker 转发。Docker 用户态代理和 host 网络监听继续由宿主机 INPUT 规则处理。
+
+首次在线更新会在候选面板通过健康检查前启用接管。新安装、以及由支持该功能的面板发起的后续更新会额外在切换前预检。已完成接管后，`elysian-docker-firewall.service` 独立维持规则，原生 UFW 修改由服务每两秒检查，面板写入则在响应前核验。每次策略变更对新连接生效。UFW 总开关同时控制 Docker 接管。支持 Docker iptables bridge，原生 nftables、Swarm、直接路由以及冲突的第三方 DNAT 或已有 ufw-docker 集成需要在升级前处理。预检失败的细节可在面板系统日志或 `journalctl -u elysian` 中查看。
+
+升级当前已有 `derper` 和 `frp` 的服务器前，先核对实际发布地址和缺少的授权：
+
+```sh
+sudo docker inspect --format '{{.Name}} {{json .NetworkSettings.Ports}}' derper frp
+sudo ufw status numbered
+```
+
+| 容器 | 容器内端口 | UFW 使用的宿主机发布端口 |
+| --- | --- | --- |
+| derper | 80/tcp | 12080/tcp |
+| derper | 443/tcp | 12443/tcp |
+| derper | 3478/udp | 以 inspect 中的 HostPort 为准 |
+| frp | 7500/tcp | 以 inspect 中的 HostPort 为准，保留已配置的来源范围 |
+| frp | 26755/tcp | 以 inspect 中的 HostPort 为准 |
+| frp | 40223/tcp | 以 inspect 中的 HostPort 为准 |
+
+按实际绑定的地址族、地址及批准的来源补齐普通入站 allow 规则。已在 UFW 中匹配的授权直接复用。通过 FRP 管理服务器时，在切换前确认对应的隧道端口已加入规则，并保留一条可用的 SSH 或控制台连接。升级后用 `systemctl status elysian-docker-firewall` 核对服务，再从另一台机器检查允许和拒绝的端口。宿主机回环探测经过自己的网络路径。
+
 ## 卸载与验证
 
 `sudo ely uninstall` 是唯一卸载入口（等价于 `sudo bash /opt/elysian/current/scripts/uninstall.sh`，预编译安装随面板放置该脚本），默认彻底清理：先展示程序、四类数据、凭据、日志、缓存、账号及依赖清单，确认后执行；`--yes` 按该清单免交互执行，包含删除全部面板数据。需要保留时显式使用 `--keep-data`、`--keep-dependencies`、`--keep-tools`、`--keep-caddy-config`；`--purge-data` 是默认数据清理行为的兼容参数，`--dry-run` 只预览，全部选项见 `ely help uninstall`。命令需 root，先核对脚本随安装存在再转交执行；脚本接管终端与信号，中途删除 `/opt/elysian` 不影响执行。安装和卸载通过固定生命周期锁串行，卸载同时取得 worker→operations 维护锁；无法确认面板服务停止时，在删除程序与数据前中止。保留数据时保留对应的 `elysian`／`elysian-sqlite` 账号，全部删除才清理三个账号与组。
