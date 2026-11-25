@@ -130,7 +130,7 @@ describe('表格使用窗口剩余高度', () => {
   })
 
   it('显式弹窗高度保持不变，640px以下卡片交回页面滚动', async () => {
-    render(<DataTable rows={rows} columns={columns} getRowId={getRowId} maxHeight={288} />)
+    const { rerender } = render(<DataTable rows={rows} columns={columns} getRowId={getRowId} maxHeight={288} />)
     const viewport = screen.getByRole('region', { name: '数据表格（可滚动）' })
     const root = screen.getByRole('region', { name: '数据表格' })
     expect(viewport).toHaveStyle({ maxHeight: '288px' })
@@ -141,6 +141,10 @@ describe('表格使用窗口剩余高度', () => {
     expect(screen.queryByRole('region', { name: '数据表格（可滚动）' })).not.toBeInTheDocument()
     expect(viewport.style.maxHeight).toBe('')
     expect(viewport).not.toHaveClass('overflow-auto')
+    rerender(<DataTable rows={rows} columns={columns} getRowId={getRowId} maxHeight={288} maxCardHeight={240} />)
+    expect(screen.getByRole('region', { name: '数据表格（可滚动）' })).toHaveStyle({ maxHeight: '240px' })
+    await scrollTablesToEnd()
+    expect(screen.getByText('条目24')).toBeInTheDocument()
   })
 })
 
