@@ -91,7 +91,7 @@ function PortCell({ rule, label }: { rule: Parameters<typeof firewallRuleScanEna
 /** EasyUI 中性 Badge：端口/IP/转发沿用真实计数，标签与数字紧凑呈现。 */
 function StatChip({ label, count }: { label: string; count: number }) {
   return (
-    <Badge variant="soft" tone="neutral" animateChanges={false}>
+    <Badge variant="soft" tone="neutral" animateChanges={false} className="firewall-status-count">
       <span>{label}</span>
       <span className="tabular-nums text-fg">{count}</span>
     </Badge>
@@ -112,10 +112,10 @@ function ToggleRow({
 }) {
   return (
     <label
-      className={`inline-flex h-8 items-center gap-2 text-sm text-fg ${disabled ? 'opacity-50' : 'cursor-pointer'}`}
+      className={`firewall-status-control text-fg ${disabled ? 'opacity-50' : 'cursor-pointer'}`}
     >
       {label}
-      <ToggleSwitch label={label} checked={checked} disabled={disabled} busy={disabled} onCheckedChange={onCheckedChange} />
+      <ToggleSwitch compact label={label} checked={checked} disabled={disabled} busy={disabled} onCheckedChange={onCheckedChange} />
     </label>
   )
 }
@@ -217,6 +217,8 @@ export function FirewallPanel() {
   }
   const firewallError = status === 'error'
   const [guardLabel, guardTone] = DOCKER_GUARD_STATUS[guard?.state ?? 'unknown']
+  const showGuard = portView && (guard || dockerError) && guard?.state !== 'disabled'
+  const demo = !isDockerRuntime()
 
   const toolbar = VIEW_TOOLBAR[view]
   const tableNavigation = <div className={`${CTL_TOOLBAR} firewall-toolbar flex max-w-full`}>
@@ -248,30 +250,26 @@ export function FirewallPanel() {
     <div>
       {firewallError ? <ErrorState title="防火墙数据加载失败" description={errorMessage} onRetry={retry} />
         : errorMessage ? <StaleDataBanner className="mb-3" error={errorMessage} onRetry={retry} /> : null}
-      {operationError ? <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-danger/40 p-3 text-xs text-danger"><p className="min-w-0 flex-1">{operationError}</p><Button variant="outline" type="button" className="rounded border border-line px-3 py-1.5 text-fg" onClick={() => void load(gateway)}>重新读取状态</Button></div> : null}
+      {operationError ? <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-danger/40 p-3 text-xs text-danger"><p className="min-w-0 flex-1">{operationError}</p><Button variant="outline" type="button" className="rounded border border-line px-3 py-1.5 text-fg" onClick={retry}>重新读取状态</Button></div> : null}
       {scanError ? <p role="alert" className="mb-3 text-xs text-danger">防扫描：{scanError}<Button variant="link" type="button" className="ml-2 underline" onClick={() => void useFirewallStore.getState().refreshScan(gateway)}>重新读取状态</Button></p> : null}
-      {!firewallError && <div className={`${CTL_TOOLBAR} firewall-toolbar mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 panel-surface px-4 py-1`}>
-        {/* 防火墙动作只在容器内真实执行 ufw；宿主机本地开发是内存演示，明示出来。 */}
-        {!isDockerRuntime() ? <DemoBadge /> : null}
-        <ToggleRow
-          label="防火墙开关"
-          checked={toggles.firewallEnabled}
-          disabled={toggling}
-          onCheckedChange={(checked) => void toggle(gateway, { ...toggles, firewallEnabled: checked })}
-        />
-        <span aria-hidden className="hidden h-5 w-px bg-line sm:block" />
-        <ToggleRow
-          label="禁ping"
-          checked={toggles.pingBlocked}
-          disabled={toggling}
-          onCheckedChange={(checked) => void toggle(gateway, { ...toggles, pingBlocked: checked })}
-        />
-        {/* 三类规则的条数并进开关这条：它们是同一份防火墙状态读数，不该自己占一行。 */}
-        <span aria-hidden className="hidden h-5 w-px bg-line sm:block" />
-        <StatChip label="端口规则" count={rules.length} />
-        <StatChip label="IP 规则" count={ipRules.length} />
-        <StatChip label="端口转发" count={forwards.length} />
-        {portView && (guard || dockerError) && guard?.state !== 'disabled' && <StatusTag label={guardLabel} tone={guardTone} />}
+      {!firewallError && <div className={`${CTL_TOOLBAR} firewall-toolbar firewall-status-bar mb-4 panel-surface`}>
+        <div className="firewall-status-layout">
+          <div role="group" aria-label="防火墙开关设置" className="firewall-status-controls">
+            <ToggleRow label="防火墙开关" checked={toggles.firewallEnabled} disabled={toggling}
+              onCheckedChange={(checked) => void toggle(gateway, { ...toggles, firewallEnabled: checked })} />
+            <ToggleRow label="禁ping" checked={toggles.pingBlocked} disabled={toggling}
+              onCheckedChange={(checked) => void toggle(gateway, { ...toggles, pingBlocked: checked })} />
+          </div>
+          <div role="group" aria-label="规则计数" className="firewall-status-counts">
+            <StatChip label="端口规则" count={rules.length} />
+            <StatChip label="IP 规则" count={ipRules.length} />
+            <StatChip label="端口转发" count={forwards.length} />
+          </div>
+          {(showGuard || demo) && <div className="firewall-status-indicators">
+            {showGuard && <StatusTag label={guardLabel} tone={guardTone} />}
+            {demo && <DemoBadge className="text-fg-muted" />}
+          </div>}
+        </div>
       </div>}
       {portView && guard?.state === 'degraded' && <p role="status" className="mb-3 text-xs text-danger">
         {guard.kernelVerified ? 'Docker 转发规则已核验，自动同步服务异常。' : '无法核验当前生效的 Docker 转发规则。'}

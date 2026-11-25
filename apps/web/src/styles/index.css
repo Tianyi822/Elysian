@@ -569,6 +569,64 @@
     --ctl-height: 2rem;
   }
 
+  .firewall-status-bar {
+    container: firewall-status / inline-size;
+    font-size: 13px;
+  }
+
+  .firewall-status-layout {
+    display: grid;
+    gap: 6px;
+    padding: 6px 12px 8px;
+  }
+
+  .firewall-status-controls,
+  .firewall-status-counts {
+    display: grid;
+    gap: 8px;
+  }
+
+  .firewall-status-controls { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .firewall-status-counts { grid-template-columns: repeat(3, minmax(0, 1fr)); }
+
+  .firewall-status-control,
+  .firewall-status-indicators {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+  }
+
+  .firewall-status-control {
+    justify-content: space-between;
+    min-block-size: 32px;
+    white-space: nowrap;
+  }
+
+  .firewall-status-count {
+    justify-content: center;
+    padding-inline: 4px;
+    gap: 4px;
+  }
+
+  .firewall-status-count,
+  .firewall-status-indicators .status-tag { font-size: inherit; }
+  .firewall-status-indicators { flex-wrap: wrap; }
+
+  @container firewall-status (width < 330px) {
+    .firewall-status-layout { padding-inline: 8px; font-size: 12px; }
+    .firewall-status-counts { gap: 4px; }
+  }
+
+  @container firewall-status (width >= 760px) {
+    .firewall-status-layout,
+    .firewall-status-controls,
+    .firewall-status-counts { display: flex; align-items: center; }
+    .firewall-status-layout { gap: 16px; padding-block: 4px; }
+    .firewall-status-controls { gap: 12px; }
+    .firewall-status-count { padding-inline: 8px; }
+    .firewall-status-indicators { flex-wrap: nowrap; }
+  }
+
   /* 卡片内的信息格：标签加读数，或一行事实说明。 */
   .tile {
     border-radius: var(--radius-lg);
