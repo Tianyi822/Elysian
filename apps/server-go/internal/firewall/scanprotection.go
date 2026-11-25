@@ -56,6 +56,14 @@ func (s *service) readScanProtection() (FirewallScanProtection, error) {
 				return err
 			}
 			dropCounter = parseDropCounter(v4Count) + parseDropCounter(v6Count)
+			if s.dockerFirewall != nil {
+				if raw, err := s.deps.RunIptables([]string{"-w", "5", "-L", dockerInputChain, "-nvx"}); err == nil {
+					dropCounter += parseDropCounter(raw)
+				}
+				if raw, err := s.deps.RunIp6tables([]string{"-w", "5", "-L", dockerInputChain, "-nvx"}); err == nil {
+					dropCounter += parseDropCounter(raw)
+				}
+			}
 			return nil
 		}(); err != nil {
 			return FirewallScanProtection{}, fmt.Errorf("防扫描内核数据不可读：%v", err)
