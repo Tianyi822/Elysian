@@ -66,6 +66,12 @@ func dockerFirewallInstalled() (bool, error) {
 func StartDockerFirewall(ctx context.Context, socket string) error {
 	ctx, cancel := context.WithTimeout(ctx, dockerFirewallTimeout)
 	defer cancel()
+	return withFirewallLock(ctx, dockerLifecycleLock, func() error {
+		return startDockerFirewall(ctx, socket)
+	})
+}
+
+func startDockerFirewall(ctx context.Context, socket string) error {
 	d := newDockerFirewall()
 	owned, err := dockerFirewallInstalled()
 	if err != nil {
@@ -87,11 +93,7 @@ func StartDockerFirewall(ctx context.Context, socket string) error {
 		return err
 	}
 	if owned {
-		unit := filepath.Join(dockerFirewallRoot, dockerFirewallService)
-		if _, err := d.run(ctx, "", "systemctl", "enable", "--now", unit); err != nil {
-			return err
-		}
-		return withDockerFirewallLock(ctx, func() error { return d.reconcile(ctx, false) })
+		return d.installSystemd(ctx, true)
 	}
 	if err := withDockerFirewallLock(ctx, func() error {
 		if err := d.testDockerPlans(ctx, true); err != nil {
@@ -101,11 +103,10 @@ func StartDockerFirewall(ctx context.Context, socket string) error {
 	}); err != nil {
 		return err
 	}
-	unit := filepath.Join(dockerFirewallRoot, dockerFirewallService)
-	if _, err := d.run(ctx, "", "systemctl", "enable", "--now", unit); err != nil {
+	if err := d.installSystemd(ctx, false); err != nil {
 		recoverCtx, cancel := context.WithTimeout(context.Background(), dockerFirewallTimeout)
 		defer cancel()
-		return errors.Join(err, RemoveDockerFirewall(recoverCtx))
+		return errors.Join(err, removeDockerFirewall(recoverCtx))
 	}
 	return nil
 }
@@ -119,6 +120,9 @@ func CheckDockerFirewall(ctx context.Context, socket string) error {
 	}
 	owned, err := dockerFirewallInstalled()
 	if err != nil {
+		return err
+	}
+	if _, err := missingDockerSystemdFiles(); err != nil {
 		return err
 	}
 	return withDockerFirewallLock(ctx, func() error { return d.testDockerPlans(ctx, !owned) })
@@ -148,25 +152,7 @@ func stageDockerFirewall() error {
 		return err
 	}
 	defer os.RemoveAll(dir)
-	binary, err := os.Executable()
-	if err != nil {
-		return err
-	}
-	source, err := os.Open(binary)
-	if err != nil {
-		return err
-	}
-	defer source.Close()
-	target, err := os.OpenFile(filepath.Join(dir, "elysian"), os.O_CREATE|os.O_EXCL|os.O_WRONLY, 0o700)
-	if err != nil {
-		return err
-	}
-	if err := target.Chmod(0o700); err != nil {
-		_ = target.Close()
-		return err
-	}
-	_, copyErr := io.Copy(target, source)
-	if err := errors.Join(copyErr, target.Sync(), target.Close()); err != nil {
+	if err := copyDockerFirewallHelper(dir); err != nil {
 		return err
 	}
 	if err := atomicfile.WriteFile(filepath.Join(dir, dockerFirewallService), []byte(dockerFirewallUnit),
@@ -179,24 +165,50 @@ func stageDockerFirewall() error {
 	return atomicfile.SyncDirectory(parent)
 }
 
+func copyDockerFirewallHelper(dir string) error {
+	binary, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	source, err := os.Open(binary)
+	if err != nil {
+		return err
+	}
+	defer source.Close()
+	target, err := os.CreateTemp(dir, ".elysian-helper-")
+	if err != nil {
+		return err
+	}
+	defer os.Remove(target.Name())
+	if err := target.Chmod(0o700); err != nil {
+		_ = target.Close()
+		return err
+	}
+	_, copyErr := io.Copy(target, source)
+	if err := errors.Join(copyErr, target.Sync(), target.Close()); err != nil {
+		return err
+	}
+	if err := os.Rename(target.Name(), filepath.Join(dir, "elysian")); err != nil {
+		return err
+	}
+	return atomicfile.SyncDirectory(dir)
+}
+
 func dockerFirewallUnitLinked() (bool, error) {
 	unit := filepath.Join(dockerFirewallRoot, dockerFirewallService)
 	primary := filepath.Join("/etc/systemd/system", dockerFirewallService)
 	linked := false
 	for _, parent := range []string{"/etc/systemd/system", "/etc/systemd/system/docker.service.requires", "/etc/systemd/system/multi-user.target.wants"} {
 		link := filepath.Join(parent, dockerFirewallService)
-		target, err := os.Readlink(link)
-		if errors.Is(err, os.ErrNotExist) {
-			continue
+		targets := []string{unit}
+		if link != primary {
+			targets = append(targets, primary)
 		}
-		if !filepath.IsAbs(target) {
-			target = filepath.Join(parent, target)
+		found, err := dockerSystemdLink(link, targets...)
+		if err != nil {
+			return false, err
 		}
-		target = filepath.Clean(target)
-		if err != nil || (target != unit && (link == primary || target != primary)) {
-			return false, fmt.Errorf("Docker 防火墙 systemd 链接归属无法确认：%s", link)
-		}
-		linked = true
+		linked = linked || found
 	}
 	return linked, nil
 }
@@ -205,6 +217,12 @@ func dockerFirewallUnitLinked() (bool, error) {
 // Unlink the dependency and reload systemd before stopping the unit so that a
 // Docker daemon retained by the uninstaller stays up.
 func RemoveDockerFirewall(ctx context.Context) error {
+	ctx, cancel := context.WithTimeout(ctx, dockerFirewallTimeout)
+	defer cancel()
+	return withFirewallLock(ctx, dockerLifecycleLock, func() error { return removeDockerFirewall(ctx) })
+}
+
+func removeDockerFirewall(ctx context.Context) error {
 	owned, err := dockerFirewallInstalled()
 	if err != nil || !owned {
 		return err
@@ -215,6 +233,9 @@ func RemoveDockerFirewall(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
+	if err := d.removeSystemd(ctx); err != nil {
+		return err
+	}
 	if linked {
 		if _, err := d.run(ctx, "", "systemctl", "disable", dockerFirewallService); err != nil {
 			return err
@@ -222,11 +243,7 @@ func RemoveDockerFirewall(ctx context.Context) error {
 	}
 	// disable can remove the primary link. Stopping by the name of an
 	// unloaded unit after that is unnecessary.
-	state, err := d.run(ctx, "", "systemctl", "show", "--property=ActiveState", "--value", dockerFirewallService)
-	if err != nil {
-		return err
-	}
-	if strings.TrimSpace(state) != "inactive" {
+	if linked {
 		if _, err := d.run(ctx, "", "systemctl", "stop", dockerFirewallService); err != nil {
 			return err
 		}
@@ -330,6 +347,12 @@ func (d *dockerFirewall) checkDockerSetup(ctx context.Context, socket string) er
 	}
 	if err != nil || info.Mode()&os.ModeSocket == 0 {
 		return errors.Join(err, errors.New("无法确认 Docker Engine 的本机 Unix socket"))
+	}
+	// Avoid activating Docker through its socket while the existing guard
+	// dependency is failed or the administrator has stopped the daemon.
+	state, stateErr := d.systemctl(ctx, "show", "--property=ActiveState", "--value", "docker.service")
+	if stateErr == nil && (strings.TrimSpace(state) == "inactive" || strings.TrimSpace(state) == "failed") {
+		return nil
 	}
 	docker := func(args ...string) (string, error) {
 		return d.run(ctx, "", "docker", append([]string{"--host", "unix://" + socket}, args...)...)

@@ -14,6 +14,7 @@ import (
 const (
 	dockerFirewallRoot    = "/opt/elysian/docker-firewall"
 	dockerFirewallLock    = "/run/elysian-docker-firewall.lock"
+	dockerLifecycleLock   = "/run/elysian-docker-firewall-lifecycle.lock"
 	dockerFirewallService = "elysian-docker-firewall.service"
 	dockerFirewallTimeout = 25 * time.Second
 )
@@ -36,7 +37,11 @@ func newDockerFirewall() *dockerFirewall {
 }
 
 func withDockerFirewallLock(ctx context.Context, operate func() error) error {
-	file, err := os.OpenFile(dockerFirewallLock, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
+	return withFirewallLock(ctx, dockerFirewallLock, operate)
+}
+
+func withFirewallLock(ctx context.Context, path string, operate func() error) error {
+	file, err := os.OpenFile(path, os.O_CREATE|os.O_RDWR|syscall.O_NOFOLLOW, 0o600)
 	if err != nil {
 		return err
 	}
