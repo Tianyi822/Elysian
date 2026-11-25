@@ -9,7 +9,7 @@ export function ResourceStatsSection({ resources, refreshing, range }: {
   const metricKeys = Object.keys(RESOURCE_METRIC_LABELS) as ResourceMetricKey[]
   return (
     <section aria-label="服务器状态" aria-busy={refreshing} className="@container">
-      <div aria-label="当前资源读数" className="grid grid-cols-1 gap-4 @xs:grid-cols-2 @4xl:grid-cols-4">
+      <div aria-label="当前资源读数" className="grid grid-cols-1 gap-4 md:@xs:grid-cols-2 md:@4xl:grid-cols-4">
         {metricKeys.map(metricKey => <ResourceStatCard key={metricKey} metricKey={metricKey} points={resources} range={range} />)}
       </div>
     </section>
