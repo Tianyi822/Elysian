@@ -641,6 +641,9 @@ print_plan() {
   else
     tui_kv "防火墙" "未发现面板前端规则"
   fi
+  if [ -e "$INSTALL_ROOT/docker-firewall" ] || [ -L "$INSTALL_ROOT/docker-firewall" ]; then
+    tui_kv "Docker 防火墙" "Elysian 的 Docker 发布端口接管服务和内核规则"
+  fi
   tui_kv "系统账号" "elysian-build 总是删除；elysian/elysian-sqlite 视数据保留情况"
   if [ "$KEEP_TOOLS" = 0 ]; then
     if platform_explicit_legacy go || platform_explicit_legacy bun; then
@@ -1300,10 +1303,21 @@ EOF
 }
 
 run_uninstall() {
+  local guard_dir="$INSTALL_ROOT/docker-firewall"
   STAGE=0
   usection "停止并注销服务"
   if ! stop_service; then tui_finish_stage; return 0; fi
   usection "移除面板 UFW 规则"
+  if [ -e "$guard_dir" ] || [ -L "$guard_dir" ]; then
+    if [ -L "$guard_dir" ] || [ "$(stat -c '%u:%a' "$guard_dir" 2>/dev/null)" != '0:700' ] ||
+       [ -L "$guard_dir/elysian" ] || [ ! -f "$guard_dir/elysian" ] ||
+       [ "$(stat -c '%u:%a' "$guard_dir/elysian" 2>/dev/null)" != '0:700' ] ||
+       ! "$guard_dir/elysian" docker-firewall-remove; then
+      unfinished "Docker 发布端口防火墙清理失败，保留安装文件供恢复"
+      tui_finish_stage
+      return 0
+    fi
+  fi
   remove_ufw
   usection "清理未使用的安装依赖"
   remove_dependencies
