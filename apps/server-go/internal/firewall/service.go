@@ -66,6 +66,7 @@ type service struct {
 	panelCanonical string
 	deps           hostDeps
 	paths          FirewallPaths
+	dockerFirewall *dockerFirewall
 	// rulesWriteMu 规则文件读-改-写的互斥队列：before.rules/before6.rules 的并发变更
 	// 排队执行，每次都基于最新落盘内容计算，杜绝「两个请求读同一份原文、后写覆盖
 	// 前写」。覆盖面与 TS 版 serializeRulesWrite 一致：setToggles、转发三写、
@@ -113,5 +114,5 @@ func newServiceForMode(deps hostDeps, network config.PanelNetwork, mode config.R
 func (s *service) serialize(critical func() error) error {
 	s.rulesWriteMu.Lock()
 	defer s.rulesWriteMu.Unlock()
-	return critical()
+	return s.dockerFirewall.withDockerChange(critical)
 }

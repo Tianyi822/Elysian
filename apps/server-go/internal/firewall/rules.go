@@ -158,27 +158,37 @@ func commentArgs(comment *string) []string {
 }
 
 func (s *service) addUserRule(args []string, note *string) error {
-	_, err := s.runUfw(append(args, commentArgs(note)...))
-	return err
+	return s.dockerFirewall.withDockerChange(func() error {
+		_, err := s.runUfw(append(args, commentArgs(note)...))
+		return err
+	})
 }
 
 func (s *service) deleteUserRule(args []string) error {
-	_, err := s.runUfw(append([]string{"delete"}, args...))
-	return err
+	return s.dockerFirewall.withDockerChange(func() error {
+		_, err := s.runUfw(append([]string{"delete"}, args...))
+		return err
+	})
 }
 
 // 只改备注先删后建；其余先建后删，避免新建失败时丢失旧规则。
 func (s *service) replaceUserRule(old, next []string, note *string, sameRule bool) error {
-	if sameRule {
-		if err := s.deleteUserRule(old); err != nil {
+	return s.dockerFirewall.withDockerChange(func() error {
+		remove := append([]string{"delete"}, old...)
+		add := append(next, commentArgs(note)...)
+		if sameRule {
+			if _, err := s.runUfw(remove); err != nil {
+				return err
+			}
+			_, err := s.runUfw(add)
 			return err
 		}
-		return s.addUserRule(next, note)
-	}
-	if err := s.addUserRule(next, note); err != nil {
+		if _, err := s.runUfw(add); err != nil {
+			return err
+		}
+		_, err := s.runUfw(remove)
 		return err
-	}
-	return s.deleteUserRule(old)
+	})
 }
 
 func firstRow(rows []FirewallRule) (FirewallRule, error) {
@@ -500,6 +510,9 @@ func (s *service) RemoveForward(ruleId string) error {
 
 // SyncFromSystem 从承载本面板的操作系统同步防火墙规则：返回三类规则行总数。
 func (s *service) SyncFromSystem() (int, error) {
+	if err := s.dockerFirewall.withDockerChange(func() error { return nil }); err != nil {
+		return 0, err
+	}
 	state, err := s.readState()
 	if err != nil {
 		return 0, err

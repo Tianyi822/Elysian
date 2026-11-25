@@ -130,7 +130,13 @@ func (h *execHostDeps) RuleTimes() ruleTimes { return h.times }
 func assembleRealService(dbPath string, now func() time.Time, network config.PanelNetwork, mode config.RuntimeMode) (Service, error) {
 	host := newExecHostDeps(dbPath, now)
 	svc := newServiceForMode(host, network, mode).(*service)
+	if mode == config.ModeBareMetal {
+		svc.dockerFirewall = newDockerFirewall()
+	}
 	if err := restoreIfNeeded(host, svc.entryPort); err != nil {
+		if times := host.RuleTimes(); times != nil {
+			times.Close()
+		}
 		return nil, err
 	}
 	return svc, nil
