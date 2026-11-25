@@ -9,6 +9,7 @@ import type {
   FirewallScanProtection,
   FirewallToggles,
 } from '@elysian/contracts'
+import type { Container, DockerFirewallInventory } from '@elysian/contracts'
 import type { FirewallAdapter } from '../../contracts/adapters'
 import {
   addFirewallForward,
@@ -37,6 +38,14 @@ import {
 import { MOCK_SYSTEM_SYNC_DELAY_MS } from './mockSyncDelay'
 
 export class MockFirewallAdapter implements FirewallAdapter {
+  constructor(private readonly containers: () => readonly Container[] = () => []) {}
+
+  async dockerPorts(): Promise<DockerFirewallInventory> {
+    const ports = this.containers().filter(container => container.status === 'running').flatMap(container =>
+      container.ports.map(port => ({ ...port, hostIp: port.hostIp || '0.0.0.0', containerId: container.id, containerName: container.name })))
+    return { inventory: 'ready', ports, guard: { state: 'unsupported', kernelVerified: false } }
+  }
+
   async list(): Promise<readonly FirewallRule[]> {
     return getFirewallRules()
   }

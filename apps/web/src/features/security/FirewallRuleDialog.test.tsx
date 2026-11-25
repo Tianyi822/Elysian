@@ -145,6 +145,7 @@ describe('端口规则弹窗', () => {
       ...base,
       // 适配器方法在原型上，展开会丢；显式委托再叠加覆盖项。
       firewall: {
+        dockerPorts: () => firewall.dockerPorts(),
         list: () => firewall.list(),
         toggles: () => firewall.toggles(),
         setToggles: (next) => firewall.setToggles(next),

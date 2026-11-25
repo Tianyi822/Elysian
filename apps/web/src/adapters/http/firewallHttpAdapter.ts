@@ -1,5 +1,7 @@
 import { createDomainJsonClient } from './domainJson'
 import type {
+  DockerFirewallInventory,
+  DockerPublishedPort,
   FirewallForwardRule,
   FirewallIpRule,
   FirewallPortSync,
@@ -10,6 +12,7 @@ import type {
   FirewallToggles,
 } from '@elysian/contracts'
 import {
+  DOCKER_FIREWALL_GUARD_STATES,
   FIREWALL_ADDRESS_FAMILIES,
   FIREWALL_DIRECTIONS,
   FIREWALL_POLICIES,
@@ -225,6 +228,25 @@ export function parseScanResponse(body: unknown): FirewallScanProtection {
 
 const { requestJson } = createDomainJsonClient('防火墙')
 
+export function parseDockerFirewallInventory(body: unknown): DockerFirewallInventory {
+  const row = asObject(body)
+  const guard = asObject(row.guard)
+  if ((row.inventory !== 'ready' && row.inventory !== 'unavailable') || !Array.isArray(row.ports)
+    || !isEnumValue(DOCKER_FIREWALL_GUARD_STATES, guard.state) || typeof guard.kernelVerified !== 'boolean') {
+    throw new Error('Docker 发布端口响应无效')
+  }
+  const validPort = (value: unknown) => typeof value === 'number' && Number.isInteger(value) && value >= 1 && value <= 65535
+  const ports = row.ports.map((binding: unknown) => {
+    const port = asObject(binding)
+    if (typeof port.containerId !== 'string' || typeof port.containerName !== 'string' || typeof port.hostIp !== 'string'
+      || typeof port.protocol !== 'string' || !validPort(port.hostPort) || !validPort(port.containerPort)) {
+      throw new Error('Docker 发布端口绑定无效')
+    }
+    return port as DockerPublishedPort
+  })
+  return { inventory: row.inventory, ports, guard: { state: guard.state, kernelVerified: guard.kernelVerified } }
+}
+
 function ruleInputBody(input: FirewallRuleInput): string {
   return JSON.stringify(input)
 }
@@ -232,6 +254,10 @@ function ruleInputBody(input: FirewallRuleInput): string {
 /** Docker 运行时的防火墙 adapter：全部动作落到 /api/security/firewall/*。 */
 export function createHttpFirewallAdapter(baseUrl = '/api/security/firewall'): FirewallAdapter {
   return {
+    async dockerPorts() {
+      return parseDockerFirewallInventory(await requestJson(`${baseUrl}/docker-ports`))
+    },
+
     async list() {
       const overview = parseFirewallOverviewResponse(await requestJson(baseUrl))
       return overview.rules

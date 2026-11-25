@@ -25,6 +25,7 @@ function sessionGateway(overrides: Partial<ElysianGateway['firewall']> = {}): El
     ...base,
     // 适配器方法在原型上，展开会丢；显式委托再叠加覆盖项。
     firewall: {
+      dockerPorts: () => firewall.dockerPorts(),
       list: () => firewall.list(),
       toggles: () => firewall.toggles(),
       setToggles: (next) => firewall.setToggles(next),

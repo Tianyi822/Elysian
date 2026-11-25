@@ -86,7 +86,7 @@ export function createGateway(
       ? new MockResourceHistoryAdapter()
       : createHttpResourceHistoryAdapter()
   const firewall =
-    options.firewall === 'http' ? createHttpFirewallAdapter() : new MockFirewallAdapter()
+    options.firewall === 'http' ? createHttpFirewallAdapter() : new MockFirewallAdapter(() => read().containers)
   const ssh = options.ssh === 'http' ? createHttpSshAdapter() : new MockSshAdapter()
   const users = options.users === 'http' ? createHttpUsersAdapter() : new MockUserAdapter()
   const files = options.files === 'http' ? createHttpFilesAdapter() : new MockFilesAdapter()

@@ -243,8 +243,26 @@ export function firewallRuleScanEnabled(rule: ScanRule, scan: FirewallScanProtec
  * 防火墙区适配接口。演示态由 mock 实现；Docker 运行时由 HTTP adapter 接通容器内 ufw，
  * server 侧服务层与 web 侧 adapter 共用这一接口定义，页面不改。
  */
+export type DockerPublishedPort = {
+  containerId: string
+  containerName: string
+  hostIp: string
+  hostPort: number
+  containerPort: number
+  protocol: string
+}
+
+export const DOCKER_FIREWALL_GUARD_STATES = ['verified', 'degraded', 'disabled', 'unsupported', 'unknown'] as const
+
+export type DockerFirewallInventory = {
+  inventory: 'ready' | 'unavailable'
+  ports: readonly DockerPublishedPort[]
+  guard: { state: typeof DOCKER_FIREWALL_GUARD_STATES[number]; kernelVerified: boolean }
+}
+
 export interface FirewallAdapter {
   list(): Promise<readonly FirewallRule[]>
+  dockerPorts(): Promise<DockerFirewallInventory>
   toggles(): Promise<FirewallToggles>
   /** 切换防火墙总开关或禁 ping：演示态只改内存；Docker 真实态执行 ufw enable/disable 与 before.rules 切换。 */
   setToggles(toggles: FirewallToggles): Promise<FirewallToggles>
