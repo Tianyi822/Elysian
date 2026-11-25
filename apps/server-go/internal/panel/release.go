@@ -274,8 +274,22 @@ func (h SystemHost) PrepareRelease(ctx context.Context, directory, sha, id strin
 		return "", err
 	}
 	candidate, err := stageRelease(directory, installRoot, sha, id)
-	if err == nil {
-		h.Store.appendLog(id, "预编译安装包校验完成；服务器无需 Go／Bun 编译\n")
+	if err != nil {
+		return "", err
 	}
-	return candidate, err
+	raw, err := h.command(ctx, candidate, "release-info")
+	if err != nil {
+		return "", err
+	}
+	var info struct{ DockerFirewall string }
+	if err := json.Unmarshal([]byte(raw), &info); err != nil {
+		return "", fmt.Errorf("读取候选版本发布信息：%w", err)
+	}
+	if info.DockerFirewall == "v1" {
+		if _, err := h.command(ctx, candidate, "docker-firewall-check", h.DockerSocket); err != nil {
+			return "", fmt.Errorf("候选版本 Docker 防火墙预检未通过：%w", err)
+		}
+	}
+	h.Store.appendLog(id, "预编译安装包校验完成；服务器无需 Go／Bun 编译\n")
+	return candidate, nil
 }
