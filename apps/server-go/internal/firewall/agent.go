@@ -3,6 +3,7 @@ package firewall
 import (
 	"context"
 	"errors"
+	"fmt"
 	"net/netip"
 	"strconv"
 	"strings"
@@ -90,8 +91,12 @@ func (f *AgentFacade) Snapshot(ctx context.Context) (any, error) {
 	return map[string]any{"rules": rules, "ipRules": ips, "toggles": toggles}, ctx.Err()
 }
 
-// EnsureRule only adds an exact inbound rule for one IP and one unprivileged
-// business port. Its complete identity is the grant target, e.g. tcp:8080:10.1.2.3.
+// agentAnySource is the id token of a rule that admits any source address.
+const agentAnySource = "any"
+
+// EnsureRule only adds an inbound allow rule for one unprivileged business
+// port, from one IP or from any address. Its complete identity is the grant
+// target, e.g. tcp:8080:10.1.2.3 or tcp:8080:any.
 func (f *AgentFacade) EnsureRule(ctx context.Context, id string) (any, error) {
 	if err := f.check(ctx); err != nil {
 		return nil, err
@@ -109,9 +114,17 @@ func (f *AgentFacade) EnsureRule(ctx context.Context, id string) (any, error) {
 			return nil, errors.New("不能变更系统入口规则")
 		}
 	}
-	ip, err := netip.ParseAddr(parts[2])
-	if err != nil || !ip.IsGlobalUnicast() || ip.IsLoopback() || ip.String() != parts[2] {
-		return nil, errors.New("规则必须指定一个规范业务 IP")
+	// Any source reuses the rule row's source label; one IP stays canonical as the grant target.
+	source, family := SourceAllIPs, ""
+	if parts[2] != agentAnySource {
+		ip, err := netip.ParseAddr(parts[2])
+		if err != nil || !ip.IsGlobalUnicast() || ip.IsLoopback() || ip.String() != parts[2] {
+			return nil, errors.New("规则来源必须是一个规范业务 IP 或 any（所有 IP）")
+		}
+		source, family = parts[2], "ipv4"
+		if ip.Is6() {
+			family = "ipv6"
+		}
 	}
 	f.mu.Lock()
 	defer f.mu.Unlock()
@@ -120,19 +133,37 @@ func (f *AgentFacade) EnsureRule(ctx context.Context, id string) (any, error) {
 		return nil, errors.New("读取防火墙规则失败")
 	}
 	for _, row := range rows {
-		if row.Protocol == parts[0] && row.Port == port && row.PortTo == nil && row.Policy == "allow" && row.Source == parts[2] && row.Direction == "inbound" {
+		if row.Protocol == parts[0] && row.Port == port && row.PortTo == nil && row.Policy == "allow" && row.Source == source && row.Direction == "inbound" {
 			return map[string]any{"id": id, "changed": false}, nil
 		}
 	}
-	family := "ipv4"
-	if ip.Is6() {
-		family = "ipv6"
+	// One inbound rule per protocol and port: reject before writing when the
+	// existing scope differs, never stack over it or rewrite it.
+	for _, row := range rows {
+		if row.Protocol == parts[0] && row.Port == port && row.Direction == "inbound" {
+			return nil, errors.New(existingRuleReason(row))
+		}
 	}
-	_, err = f.service.Create(RuleInput{Protocol: parts[0], Port: float64(port), Family: family, Policy: "allow", Direction: "inbound", Source: parts[2]})
+	_, err = f.service.Create(RuleInput{Protocol: parts[0], Port: float64(port), Family: family, Policy: "allow", Direction: "inbound", Source: source})
 	if err != nil {
 		return nil, errors.New("添加业务放行规则失败，请回读确认实际状态")
 	}
 	return map[string]any{"id": id, "changed": true}, nil
+}
+
+// existingRuleReason names the inbound rule that already owns the port.
+func existingRuleReason(row FirewallRule) string {
+	ports := strconv.Itoa(row.Port)
+	if row.PortTo != nil {
+		ports = fmt.Sprintf("%s–%d", ports, *row.PortTo)
+	}
+	policy := "放行"
+	if row.Policy == "deny" {
+		policy = "拒绝"
+	} else if row.Policy == "limit" {
+		policy = "限连"
+	}
+	return fmt.Sprintf("端口 %s/%s 已有规则（入站%s，来源 %s）；同一协议的同一端口只能有一条规则，放行工具不改动已有规则，请到安全页调整", ports, row.Protocol, policy, row.Source)
 }
 
 func (f *AgentFacade) UnblockIP(ctx context.Context, id string) (any, error) {

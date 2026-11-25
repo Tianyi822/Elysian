@@ -12,7 +12,7 @@ func (s *Service) agentDescriptors() []tools.Descriptor {
 		write                     bool
 	}{
 		{"firewall_snapshot", "snapshot", "读取防火墙状态与规则，不含用户备注", false},
-		{"firewall_rule_ensure", "rule-ensure", "审批后为一个业务 IP 和非特权端口补精确入站放行；id 格式为 tcp:8080:10.0.0.2，禁止 SSH 与面板入口", true},
+		{"firewall_rule_ensure", "rule-ensure", "审批后为业务端口补入站放行，来源为一个业务 IP 或所有 IP；id 格式为 tcp:8080:10.0.0.2 或 tcp:8080:any（对所有来源开放），禁止 SSH 与面板入口；同端口已有规则时不改动", true},
 		{"firewall_ip_unblock", "ip-unblock", "审批后解封一个规范业务 IP，不关闭防火墙或扫描保护", true},
 	} {
 		spec := spec
