@@ -14,7 +14,7 @@ jobs:
       commit: ${{ steps.version.outputs.commit }}
       tag: ${{ steps.version.outputs.tag }}
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ github.sha }}
           persist-credentials: false
@@ -40,11 +40,11 @@ jobs:
     runs-on: ${{ matrix.runner }}
     timeout-minutes: 30
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ needs.version.outputs.commit }}
           persist-credentials: false
-      - uses: actions/setup-go@v5
+      - uses: actions/setup-go@v6
         with:
           go-version: '1.27.4'
           cache-dependency-path: apps/server-go/go.sum
@@ -71,7 +71,7 @@ jobs:
           "$RUNNER_TEMP/release/elysian" release-info
           bun scripts/package-release.mjs "$GITHUB_WORKSPACE" "$RUNNER_TEMP/release" "$COMMIT" "$ARCH"
           bash scripts/test-release-package.sh "$RUNNER_TEMP/release/elysian-linux-$ARCH"
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v6
         with:
           name: linux-${{ matrix.arch }}
           path: |
@@ -88,11 +88,11 @@ jobs:
       group: release-${{ needs.version.outputs.commit }}
       cancel-in-progress: false
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
         with:
           ref: ${{ needs.version.outputs.commit }}
           persist-credentials: false
-      - uses: actions/download-artifact@v4
+      - uses: actions/download-artifact@v7
         with:
           pattern: linux-*
           path: release
