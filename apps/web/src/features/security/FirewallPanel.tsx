@@ -6,7 +6,7 @@ import { DataTable, type Id, type SortState } from '../../components/DataTable'
 import { TableBatchActions } from '../../components/TableBatchActions'
 import { TableCreateButton } from '../../components/TableCreateButton'
 import { usePanelStore } from '../../stores/panelStore'
-import { isProtectedPanelRule, portRuleGroup } from './securityTableLogic'
+import { isProtectedPanelRule, portRuleGroup, portTableRows, type PortTableRow } from './securityTableLogic'
 import { Badge } from '../../components/easyui/Badge'
 import { RefreshButton } from '../../components/RefreshState'
 import {
@@ -17,8 +17,9 @@ import {
   firewallRuleScanEnabled,
   formatFirewallPort,
 } from '@elysian/contracts'
-import type { FirewallForwardRule, FirewallIpRule, FirewallRule } from '@elysian/contracts'
+import type { DockerFirewallInventory, FirewallForwardRule, FirewallIpRule, FirewallRule } from '@elysian/contracts'
 import { useGateway } from '../../adapters/GatewayProvider'
+import { subscribeWhileVisible } from '../../adapters/subscribeWhileVisible'
 import { IconButton } from '../../components/IconButton'
 import { ErrorState, LoadingState } from '../../components/states/StateViews'
 import { StaleDataBanner } from '../../components/states/StaleDataBanner'
@@ -33,7 +34,6 @@ import { useFirewallStore, type FirewallView } from '../../stores/firewallStore'
 import { FirewallForwardDialog } from './FirewallForwardDialog'
 import { FirewallIpRuleDialog } from './FirewallIpRuleDialog'
 import { FirewallRuleDialog } from './FirewallRuleDialog'
-import { DockerPublishedPorts } from './DockerPublishedPorts'
 import { FirewallRuleRemoveDialog } from './FirewallRuleRemoveDialog'
 import { isDockerRuntime } from '../../utils/isDockerRuntime'
 import { Button } from '../../components/Button'
@@ -51,6 +51,14 @@ const STATUS_TONES: Record<FirewallRule['status'], StatusTone> = {
   unused: 'neutral',
 }
 
+const DOCKER_GUARD_STATUS: Record<DockerFirewallInventory['guard']['state'], [string, StatusTone]> = {
+  verified: ['Docker 转发已核验', 'success'],
+  degraded: ['Docker 转发接管异常', 'danger'],
+  disabled: ['UFW 已停用', 'warning'],
+  unsupported: ['宿主转发状态不可核验', 'neutral'],
+  unknown: ['Docker 转发状态未知', 'warning'],
+}
+
 /** 策略配色：放行绿、拒绝红、限连黄——文字加颜色，不只靠颜色区分。 */
 function PolicyText({ policy }: { policy: FirewallRule['policy'] }) {
   const tone = policy === 'allow' ? 'text-success' : policy === 'deny' ? 'text-danger' : 'text-warning'
@@ -58,11 +66,11 @@ function PolicyText({ policy }: { policy: FirewallRule['policy'] }) {
 }
 
 /** 端口旁的只读标记与表单共用防扫描判据，未知状态不显示已开启。 */
-function PortCell({ rule }: { rule: FirewallRule }) {
+function PortCell({ rule, label }: { rule: Parameters<typeof firewallRuleScanEnabled>[0]; label: string }) {
   const scan = useFirewallStore(s => s.scanProtection)
   const scanStatus = useFirewallStore(s => s.scanStatus)
   return <span className="inline-flex items-center gap-1.5 whitespace-nowrap tabular-nums">
-    <span>{formatFirewallPort(rule)}</span>
+    <span>{label}</span>
     {scanStatus === 'ready' && firewallRuleScanEnabled(rule, scan) && <Tooltip.Root>
       <Tooltip.Trigger asChild>
         <span role="img" aria-label="已开启防扫描" tabIndex={0} className="inline-flex shrink-0 rounded-sm text-success">
@@ -144,6 +152,8 @@ export function FirewallPanel() {
   const errorMessage = useFirewallStore((s) => s.errorMessage)
   const operationError = useFirewallStore((s) => s.operationError)
   const rules = useFirewallStore((s) => s.rules)
+  const { ports, guard, error: dockerError, checkedAt, loading: dockerLoading } = useFirewallStore((s) => s.dockerPorts)
+  const refreshDockerPorts = useFirewallStore((s) => s.refreshDockerPorts)
   const ipRules = useFirewallStore((s) => s.ipRules)
   const forwards = useFirewallStore((s) => s.forwards)
   const view = useFirewallStore((s) => s.tab)
@@ -169,33 +179,44 @@ export function FirewallPanel() {
     void usePanelStore.getState().load(gateway)
   }, [gateway, load])
 
+  useEffect(() => {
+    if (view !== 'port') return
+    return subscribeWhileVisible(() => {
+      const read = () => void refreshDockerPorts(gateway)
+      read()
+      const timer = window.setInterval(read, 10_000)
+      return () => window.clearInterval(timer)
+    })
+  }, [gateway, refreshDockerPorts, view])
+
+  const portRows = useMemo(() => portTableRows(rules, ports), [rules, ports])
   const filtered = useMemo(() => {
     const keyword = search.trim().toLowerCase()
-    if (!keyword) return { rules, ipRules, forwards }
+    if (!keyword) return { rules: portRows, ipRules, forwards }
     const match = (...parts: (string | number | null | undefined)[]) =>
       parts.some((part) => part !== null && part !== undefined && `${part}`.toLowerCase().includes(keyword))
     return {
-      rules: rules.filter((rule) =>
-        match(rule.port, rule.portTo, rule.source, rule.note),
+      rules: portRows.filter((row) =>
+        match(row.port, row.note, row.kind === 'rule' ? row.rule.portTo : null, row.kind === 'rule' ? row.rule.source : null),
       ),
       ipRules: ipRules.filter((rule) => match(rule.source, rule.note)),
       forwards: forwards.filter((rule) =>
         match(rule.port, rule.portTo, rule.targetHost, rule.targetPort, rule.note),
       ),
     }
-  }, [rules, ipRules, forwards, search])
+  }, [portRows, ipRules, forwards, search])
 
   if (status === 'loading' || status === 'idle') {
     return <LoadingState label="正在加载防火墙规则…" />
   }
 
-  if (status === 'error') {
-    return <div>
-      {view === 'port' && <DockerPublishedPorts />}
-      <ErrorState title="防火墙数据加载失败" description={errorMessage} onRetry={() => void load(gateway)} />
-      {dialogRule !== undefined && <FirewallRuleDialog />}
-    </div>
+  const portView = view === 'port'
+  const retry = () => {
+    void load(gateway)
+    if (portView) void refreshDockerPorts(gateway)
   }
+  const firewallError = status === 'error'
+  const [guardLabel, guardTone] = DOCKER_GUARD_STATUS[guard?.state ?? 'unknown']
 
   const toolbar = VIEW_TOOLBAR[view]
   const tableNavigation = <div className={`${CTL_TOOLBAR} firewall-toolbar flex max-w-full`}>
@@ -215,20 +236,21 @@ export function FirewallPanel() {
       <RefreshButton
         className="dt-toolbar-control-icon"
         onPress={() => {
-          void syncFromSystem(gateway).then(() => view === 'port' ? useFirewallStore.getState().refreshDockerPorts(gateway) : undefined)
+          void syncFromSystem(gateway).then(() => portView ? refreshDockerPorts(gateway) : undefined)
         }}
-        busy={syncing}
-        label={syncing ? '同步中…' : '同步规则'}
+        busy={syncing || portView && dockerLoading}
+        label={syncing || portView && dockerLoading ? '同步中…' : '同步规则'}
       />
     </div>
   )
 
   return (
     <div>
-      {errorMessage ? <StaleDataBanner className="mb-3" error={errorMessage} onRetry={() => void load(gateway)} /> : null}
+      {firewallError ? <ErrorState title="防火墙数据加载失败" description={errorMessage} onRetry={retry} />
+        : errorMessage ? <StaleDataBanner className="mb-3" error={errorMessage} onRetry={retry} /> : null}
       {operationError ? <div role="alert" className="mb-4 flex flex-wrap items-center gap-3 rounded-lg border border-danger/40 p-3 text-xs text-danger"><p className="min-w-0 flex-1">{operationError}</p><Button variant="outline" type="button" className="rounded border border-line px-3 py-1.5 text-fg" onClick={() => void load(gateway)}>重新读取状态</Button></div> : null}
       {scanError ? <p role="alert" className="mb-3 text-xs text-danger">防扫描：{scanError}<Button variant="link" type="button" className="ml-2 underline" onClick={() => void useFirewallStore.getState().refreshScan(gateway)}>重新读取状态</Button></p> : null}
-      <div className={`${CTL_TOOLBAR} firewall-toolbar mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 panel-surface px-4 py-1`}>
+      {!firewallError && <div className={`${CTL_TOOLBAR} firewall-toolbar mb-4 flex flex-wrap items-center gap-x-4 gap-y-1 panel-surface px-4 py-1`}>
         {/* 防火墙动作只在容器内真实执行 ufw；宿主机本地开发是内存演示，明示出来。 */}
         {!isDockerRuntime() ? <DemoBadge /> : null}
         <ToggleRow
@@ -249,9 +271,16 @@ export function FirewallPanel() {
         <StatChip label="端口规则" count={rules.length} />
         <StatChip label="IP 规则" count={ipRules.length} />
         <StatChip label="端口转发" count={forwards.length} />
-      </div>
-      {view === 'port' && <DockerPublishedPorts />}
-      <FirewallRulesTable rows={filtered} view={view} query={search} onQueryChange={setSearch} toolbar={tableToolbar} toolbarNavigation={tableNavigation} />
+        {portView && (guard || dockerError) && guard?.state !== 'disabled' && <StatusTag label={guardLabel} tone={guardTone} />}
+      </div>}
+      {portView && guard?.state === 'degraded' && <p role="status" className="mb-3 text-xs text-danger">
+        {guard.kernelVerified ? 'Docker 转发规则已核验，自动同步服务异常。' : '无法核验当前生效的 Docker 转发规则。'}
+      </p>}
+      {portView && dockerError && <p role="alert" className="mb-3 text-xs text-danger">
+        {dockerError}。{checkedAt !== undefined ? `容器信息更新于 ${formatDateTime(new Date(checkedAt).toISOString())}。` : '暂无法显示容器信息。'}
+      </p>}
+      {(!firewallError || portView && portRows.length > 0) && <FirewallRulesTable rows={filtered} view={view} query={search} onQueryChange={setSearch}
+        toolbar={tableToolbar} toolbarNavigation={tableNavigation} dockerStale={Boolean(dockerError)} />}
 
       {dialogRule !== undefined ? <FirewallRuleDialog /> : null}
       {dialogIpRule !== undefined ? <FirewallIpRuleDialog /> : null}
@@ -281,6 +310,12 @@ type TableQuery = { query: string; onQueryChange(value: string): void; toolbar: 
 const ruleDate = (rule: { updatedAt: string | null }) => rule.updatedAt ? formatDateTime(rule.updatedAt) : '—'
 const ruleNote = (rule: { note: string | null }) => <span title={rule.note || undefined}>{rule.note || '—'}</span>
 
+function portStatus(row: PortTableRow, stale: boolean): [string, StatusTone] {
+  if (row.kind === 'published' || row.published) return stale ? ['发布待核验', 'warning'] : ['已发布', 'neutral']
+  const { status } = row.rule
+  return [FIREWALL_RULE_STATUS_LABELS[status], STATUS_TONES[status]]
+}
+
 function FirewallBatch<T extends { id: string }>({ rows, kind, getLabel, onSucceeded, groupBy, eligible }: {
   rows: readonly T[]; kind: FirewallView; getLabel(row: T): string; onSucceeded(ids: (string | number)[]): void;
   groupBy?(row: T): string; eligible?(row: T): string | undefined;
@@ -301,9 +336,10 @@ function FirewallBatch<T extends { id: string }>({ rows, kind, getLabel, onSucce
 }
 
 /** Keep the official toolbar and shared-layout indicator mounted across rule views. */
-function FirewallRulesTable({ rows: allRows, view, query, onQueryChange, toolbar, toolbarNavigation }: TableQuery & {
+function FirewallRulesTable({ rows: allRows, view, query, onQueryChange, toolbar, toolbarNavigation, dockerStale }: TableQuery & {
   view: FirewallView
-  rows: { rules: readonly FirewallRule[]; ipRules: readonly FirewallIpRule[]; forwards: readonly FirewallForwardRule[] }
+  rows: { rules: readonly PortTableRow[]; ipRules: readonly FirewallIpRule[]; forwards: readonly FirewallForwardRule[] }
+  dockerStale: boolean
 }) {
   const [selection, setSelection] = useState<{ view: FirewallView; ids: Id[] }>({ view, ids: [] })
   const [sorting, setSorting] = useState<{ view: FirewallView; value: SortState }>({ view, value: null })
@@ -326,23 +362,38 @@ function FirewallRulesTable({ rows: allRows, view, query, onQueryChange, toolbar
 
   if (view === 'port') {
     const rows = allRows.rules
+    const selectableRules = rows.flatMap(row => row.kind === 'rule' ? [row.rule] : [])
     return <DataTable rows={rows} ariaLabel="端口规则表" {...common} filterMode="external"
       // 44px 选择列与九列最小宽度合计 1200px，空间不足时仅表体横向滚动。
       minWidth={1200}
       searchPlaceholder="搜索端口、来源或备注"
-      getRowId={rule => rule.id} getRowLabel={rule => `${rule.protocol} ${formatFirewallPort(rule)}`}
+      getRowId={row => row.id} getRowLabel={row => `${row.protocol} ${row.kind === 'rule' ? formatFirewallPort(row.rule) : row.port}`}
+      isRowSelectable={row => row.kind === 'rule'}
       columns={[
-        { key: 'port', header: '端口', primary: true, accessor: rule => rule.port, cell: rule => <PortCell rule={rule} />, width: 'minmax(176px, 13fr)' },
-        { key: 'protocol', header: '协议', accessor: rule => rule.protocol, width: 'minmax(72px, 8fr)' },
-        { key: 'status', header: '使用状态', accessor: rule => FIREWALL_RULE_STATUS_LABELS[rule.status], cell: rule => <StatusTag label={FIREWALL_RULE_STATUS_LABELS[rule.status]} tone={STATUS_TONES[rule.status]} />, width: 'minmax(96px, 11fr)' },
-        { key: 'policy', header: '策略', accessor: rule => FIREWALL_POLICY_LABELS[rule.policy], cell: rule => <PolicyText policy={rule.policy} />, width: 'minmax(72px, 8fr)' },
-        { key: 'direction', header: '方向', accessor: rule => FIREWALL_DIRECTION_LABELS[rule.direction], width: 'minmax(72px, 8fr)' },
-        { key: 'source', header: '来源', accessor: rule => rule.source, width: 'minmax(176px, 12fr)' },
-        { key: 'note', header: '备注', accessor: rule => rule.note, cell: ruleNote, width: 'minmax(176px, 17fr)' },
-        { key: 'updatedAt', header: '时间', accessor: rule => rule.updatedAt, cell: ruleDate, width: 'minmax(128px, 15fr)' },
-        { key: 'actions', header: '操作', sortable: false, width: 'minmax(88px, 8fr)', cell: rule => <RowActions kind="port" id={rule.id} label={`${rule.protocol} ${formatFirewallPort(rule)}`} onEdit={() => useFirewallStore.getState().openEdit(rule)} /> },
+        { key: 'port', header: '端口', primary: true, cell: row => {
+          if (row.kind === 'rule') return <PortCell rule={row.rule} label={formatFirewallPort(row.rule)} />
+          if (row.protocol !== 'tcp') return <span className="tabular-nums">{row.port}</span>
+          return <PortCell rule={{ protocol: row.protocol, port: row.port, direction: 'inbound' }} label={String(row.port)} />
+        }, width: 'minmax(176px, 13fr)' },
+        { key: 'protocol', header: '协议', width: 'minmax(72px, 8fr)' },
+        { key: 'status', header: '使用状态', accessor: row => portStatus(row, dockerStale)[0], cell: row => {
+          const [label, tone] = portStatus(row, dockerStale)
+          return <StatusTag label={label} tone={tone} />
+        }, width: 'minmax(96px, 11fr)' },
+        { key: 'policy', header: '策略', accessor: row => row.kind === 'rule' ? FIREWALL_POLICY_LABELS[row.rule.policy] : null,
+          cell: row => row.kind === 'rule' ? <PolicyText policy={row.rule.policy} /> : <span title="此端口的访问由防火墙现行规则和转发接管状态决定">—</span>, width: 'minmax(72px, 8fr)' },
+        { key: 'direction', header: '方向', accessor: row => FIREWALL_DIRECTION_LABELS[row.kind === 'rule' ? row.rule.direction : 'inbound'], width: 'minmax(72px, 8fr)' },
+        { key: 'source', header: '来源', accessor: row => row.kind === 'rule' ? row.rule.source : null, width: 'minmax(176px, 12fr)' },
+        { key: 'note', header: '备注', cell: ruleNote, width: 'minmax(176px, 17fr)' },
+        { key: 'updatedAt', header: '时间', accessor: row => row.kind === 'rule' ? row.rule.updatedAt : null, cell: row => row.kind === 'rule' ? ruleDate(row.rule) : '—', width: 'minmax(128px, 15fr)' },
+        { key: 'actions', header: '操作', sortable: false, width: 'minmax(88px, 8fr)', cell: row => {
+          if (row.kind === 'rule') return <RowActions kind="port" id={row.id} label={`${row.protocol} ${formatFirewallPort(row.rule)}`} onEdit={() => useFirewallStore.getState().openEdit(row.rule)} />
+          const { protocol, port, family } = row
+          return protocol === 'tcp' || protocol === 'udp' ? <Button variant="outline" size="sm" className="whitespace-nowrap px-1.5" disabled={dockerStale} type="button"
+            aria-label={`为 ${port}/${protocol} 添加规则`} onClick={() => useFirewallStore.getState().openCreate({ port, protocol, family })}>添加规则</Button> : '—'
+        } },
       ]}
-      bulkActions={ids => <FirewallBatch key={view} rows={rows.filter(rule => ids.includes(rule.id))} kind="port" groupBy={portRuleGroup}
+      bulkActions={ids => <FirewallBatch key={view} rows={selectableRules.filter(rule => ids.includes(rule.id))} kind="port" groupBy={portRuleGroup}
         getLabel={rule => `${rule.protocol} ${formatFirewallPort(rule)}`} eligible={rule => isProtectedPanelRule(rule, panelPort) ? '面板入口保底规则不允许删除' : undefined}
         onSucceeded={ids => setSelected(current => current.filter(id => !ids.includes(id)))} />}
     />

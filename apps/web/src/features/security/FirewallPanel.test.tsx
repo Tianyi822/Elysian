@@ -25,7 +25,7 @@ function sessionGateway(overrides: Partial<ElysianGateway['firewall']> = {}): El
     ...base,
     // 适配器方法在原型上，展开会丢；显式委托再叠加覆盖项。
     firewall: {
-      dockerPorts: () => firewall.dockerPorts(),
+      dockerPorts: async () => ({ inventory: 'ready', ports: [], guard: { state: 'unsupported', kernelVerified: false } }),
       list: () => firewall.list(),
       toggles: () => firewall.toggles(),
       setToggles: (next) => firewall.setToggles(next),
@@ -90,29 +90,64 @@ beforeEach(() => {
 })
 
 describe('防火墙面板', () => {
-  it('Docker 发布清单与 UFW 规则独立，支持预填并标记引擎中断后的旧绑定', async () => {
+  it('Docker 双栈发布并入端口规则，合并未配置端口并从行内预填', async () => {
     const user = userEvent.setup()
+    const binding = { containerId: 'ctr', containerName: 'derper', hostIp: '::', hostPort: 12080, containerPort: 80, protocol: 'tcp' }
     const dockerPorts = vi.fn<ElysianGateway['firewall']['dockerPorts']>()
       .mockResolvedValueOnce({
         inventory: 'ready',
-        ports: [{ containerId: 'ctr', containerName: 'derper', hostIp: '::', hostPort: 12080, containerPort: 80, protocol: 'tcp' }],
+        ports: [binding, { ...binding, hostIp: '0.0.0.0' }],
         guard: { state: 'verified', kernelVerified: true },
       })
       .mockResolvedValue({ inventory: 'unavailable', ports: [], guard: { state: 'degraded', kernelVerified: true } })
     await openFirewallPage(sessionGateway({ list: async () => [], dockerPorts }))
-    const inventory = await screen.findByRole('region', { name: 'Docker 发布端口' })
-    const add = await within(inventory).findByRole('button', { name: '为 derper :: 12080/tcp 添加规则' })
-    expect(within(inventory).getByText('转发接管已核验')).toBeInTheDocument()
+    const table = screen.getByRole('table', { name: '端口规则表' })
+    const add = await within(table).findByRole('button', { name: '为 12080/tcp 添加规则' })
+    const row = add.closest('[role="row"]')!
+    expect(within(table).getAllByRole('row')).toHaveLength(2)
+    expect(within(row as HTMLElement).getByRole('cell', { name: 'derper' })).toBeInTheDocument()
+    expect(within(table).queryByRole('cell', { name: /^(80|0\.0\.0\.0|::)$/ })).not.toBeInTheDocument()
+    expect(within(table).queryByRole('checkbox')).not.toBeInTheDocument()
+    expect(screen.queryByRole('region', { name: 'Docker 发布端口' })).not.toBeInTheDocument()
+    expect(screen.getByText('Docker 转发已核验')).toBeInTheDocument()
     await user.click(add)
     const dialog = await screen.findByRole('dialog', { name: '添加端口规则' })
     expect(within(dialog).getByDisplayValue('12080')).toBeInTheDocument()
     expect(within(dialog).getByText(/来源留空时覆盖所有来源/)).toBeInTheDocument()
     await user.keyboard('{Escape}')
     await waitFor(() => expect(add).toHaveFocus())
-    await user.click(within(inventory).getByRole('button', { name: '刷新 Docker 发布端口' }))
-    expect(await within(inventory).findByText(/显示上次读取的绑定/)).toBeInTheDocument()
-    expect(within(inventory).getByText('转发接管异常')).toBeInTheDocument()
+    await user.click(screen.getByRole('button', { name: '同步规则' }))
+    expect(await screen.findByText(/容器信息更新于/)).toBeInTheDocument()
+    expect(screen.getByText('Docker 转发接管异常')).toBeInTheDocument()
     expect(add).toBeDisabled()
+  })
+
+  it('已有单端口规则追加容器名，保留真实策略与可编辑的原备注', async () => {
+    const user = userEvent.setup()
+    const rule = { ...SEED_RULES[0]!, id: 'derper-rule', port: 12080, portTo: null, family: 'ipv4', protocol: 'tcp',
+      direction: 'inbound', policy: 'deny', source: '192.0.2.0/24', note: '原备注' } as const
+    const binding = { containerId: 'ctr', containerName: 'derper', hostIp: '0.0.0.0', hostPort: 12080, containerPort: 80, protocol: 'tcp' }
+    await openFirewallPage(sessionGateway({
+      list: async () => [rule],
+      dockerPorts: async () => ({ inventory: 'ready', guard: { state: 'verified', kernelVerified: true }, ports: [
+        binding, { ...binding, hostIp: '::', containerName: 'derper-v6' },
+        { ...binding, containerId: 'frp', containerName: 'frp', hostPort: 3478, containerPort: 3478, protocol: 'udp' },
+      ] }),
+    }))
+    const table = screen.getByRole('table', { name: '端口规则表' })
+    const note = await within(table).findByText('原备注 · derper')
+    const savedRow = within(note.closest<HTMLElement>('[role="row"]')!)
+    expect(savedRow.getByText('拒绝')).toBeInTheDocument()
+    expect(savedRow.getByText('192.0.2.0/24')).toBeInTheDocument()
+    expect(within(table).getByText('derper-v6')).toBeInTheDocument()
+    expect(within(table).getByRole('button', { name: '为 3478/udp 添加规则' })).toBeInTheDocument()
+    await user.type(screen.getByLabelText('搜索端口、来源或备注'), 'derper')
+    await waitFor(() => expect(within(table).queryByText('frp')).not.toBeInTheDocument())
+    await user.click(within(table).getByRole('checkbox', { name: '全选已加载的匹配行' }))
+    expect(await screen.findByText('已选 1 项')).toBeInTheDocument()
+    await user.click(savedRow.getByRole('button', { name: '修改' }))
+    const dialog = await screen.findByRole('dialog', { name: '修改端口规则' })
+    expect(within(dialog).getByRole('textbox', { name: '备注' })).toHaveValue('原备注')
   })
 
   it('校验提示只留在表单，真实保存失败同时保留行内原因和消息', async () => {

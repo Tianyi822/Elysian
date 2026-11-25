@@ -101,8 +101,6 @@ export interface DataTableProps<T> {
   pageSize?: number;
   /** Desktop scroll height in px, or the remaining main/window height (default "viewport"). */
   maxHeight?: number | "viewport";
-  /** Optional card list scroll height in px. By default, cards scroll with the page. */
-  maxCardHeight?: number;
   /** Minimum desktop table width in px; overflow scrolls inside the table. Cards stay fluid. */
   minWidth?: number;
   density?: "comfortable" | "compact";
@@ -259,7 +257,6 @@ export function DataTable<T>({
   toolbarNavigation,
   pageSize = 20,
   maxHeight = "viewport",
-  maxCardHeight,
   minWidth = 560,
   density = "comfortable",
   cardBreakpoint = 640,
@@ -274,8 +271,6 @@ export function DataTable<T>({
   const reduce = useReducedMotion();
   const [rootRef, width] = useElementWidth<HTMLDivElement>(960);
   const cards = width < cardBreakpoint;
-  const bodyScrolls = !cards || maxCardHeight !== undefined;
-  const bodyMaxHeight = cards ? maxCardHeight : maxHeight === "viewport" ? undefined : maxHeight;
   const scrollRef = useRef<HTMLDivElement>(null);
   const sentinelRef = useRef<HTMLDivElement>(null);
   const [viewportMaxHeight, setViewportMaxHeight] = useState<number>();
@@ -364,11 +359,11 @@ export function DataTable<T>({
     if (!hasMore || !active || !sentinel) return;
     const observer = new IntersectionObserver(
       (entries) => { if (entries.some(entry => entry.isIntersecting)) setLimit(current => current + pageSize); },
-      { root: bodyScrolls ? scrollRef.current : null, rootMargin: "240px" },
+      { root: cards ? null : scrollRef.current, rootMargin: "240px" },
     );
     observer.observe(sentinel);
     return () => observer.disconnect();
-  }, [hasMore, active, bodyScrolls, pageSize, limit]);
+  }, [hasMore, active, cards, pageSize, limit]);
 
   useLayoutEffect(() => {
     if (cards || maxHeight !== "viewport" || !active) return;
@@ -794,11 +789,11 @@ export function DataTable<T>({
           ref={scrollRef}
           layoutScroll
           onScroll={(e) => setScrolled(e.currentTarget.scrollTop > 2)}
-          className={cx(bodyScrolls && "table-scrollbar overflow-auto", !cards && "overscroll-contain")}
-          style={bodyScrolls ? { maxHeight: bodyMaxHeight ?? viewportMaxHeight } : undefined}
-          tabIndex={bodyScrolls ? 0 : undefined}
-          role={bodyScrolls ? "region" : undefined}
-          aria-label={bodyScrolls ? `${ariaLabel}（可滚动）` : undefined}
+          className={cx(!cards && "table-scrollbar overflow-auto overscroll-contain")}
+          style={!cards ? { maxHeight: maxHeight === "viewport" ? viewportMaxHeight : maxHeight } : undefined}
+          tabIndex={!cards ? 0 : undefined}
+          role={!cards ? "region" : undefined}
+          aria-label={!cards ? `${ariaLabel}（可滚动）` : undefined}
         >
           <div
             role="table"
