@@ -20,6 +20,8 @@ export interface TableBatchAction<T> {
   description?: ReactNode
   /** Returning a reason skips the row. No return value means eligible. */
   eligible?: (row: T) => string | undefined
+  /** Display a read-only result when every selected row is skipped. */
+  showSkippedResult?: boolean
   groupBy?: (row: T) => string
   execute: (rows: readonly T[]) => Promise<TableBatchOutcome>
 }
@@ -56,7 +58,8 @@ export function TableBatchActions<T>({ selectedRows, getRowId, getRowLabel, acti
       const key = action.groupBy?.(row) ?? String(index)
       groups.set(key, [...(groups.get(key) ?? []), row])
     })
-    setDraft({ action, jobs: [...groups.values()], skipped, generation: captureAuthGeneration(), scope: activity.current.revision })
+    setDraft({ action, jobs: [...groups.values()], skipped, generation: captureAuthGeneration(), scope: activity.current.revision,
+      report: action.showSkippedResult && groups.size === 0 ? skipped : undefined })
   }
   const execute = async () => {
     if (!draft || runningRef.current || draft.report) return
