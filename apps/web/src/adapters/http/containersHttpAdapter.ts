@@ -11,6 +11,8 @@ import type {
   ContainerBuildState,
   ContainerBuildTask,
   ContainerCreateInput,
+  ContainerCreateResult,
+  ContainerFirewallResult,
   ContainerRecreateConfig,
   ContainerRecreatePreview,
   ContainerRecreateTask,
@@ -388,6 +390,24 @@ export function parseContainerListResponse(body: unknown): readonly Container[] 
     throw new Error('容器列表响应无效')
   }
   return containers.map((entry) => parseContainer(entry))
+}
+
+export function parseContainerCreateResult(value: unknown, input: ContainerCreateInput): ContainerCreateResult {
+  const container = parseContainer(value)
+  const results = asObject(value, '容器创建响应无效').firewallResults
+  const states = new Set(['added', 'existing', 'skipped', 'failed', 'unknown'])
+  const firewallResults = input.ports.filter(port => port.allowFirewall).map<ContainerFirewallResult>(({ hostPort, protocol }) => {
+    const matches = Array.isArray(results) ? results.filter((result): result is Record<string, unknown> =>
+      result && typeof result === 'object' && result.port === hostPort && result.protocol === protocol) : []
+    const [result] = matches
+    if (matches.length !== 1 || typeof result?.state !== 'string' || !states.has(result.state) ||
+      (result.detail !== undefined && typeof result.detail !== 'string')) {
+      return { port: hostPort, protocol, state: 'unknown', detail: '服务端未确认放行结果' }
+    }
+    return { port: hostPort, protocol, state: result.state as ContainerFirewallResult['state'],
+      ...(result.detail !== undefined ? { detail: result.detail } : {}) }
+  })
+  return firewallResults.length ? { ...container, firewallResults } : container
 }
 
 function parseContainerImage(value: unknown): ContainerImage {
@@ -866,12 +886,13 @@ export function createHttpContainersAdapter(
     },
 
     async create(input: ContainerCreateInput) {
-      return parseContainer(
+      return parseContainerCreateResult(
         await requestJson(`${baseUrl}/containers`, {
           method: 'POST',
           headers: { 'content-type': 'application/json' },
           body: JSON.stringify(input),
         }),
+        input,
       )
     },
     /**

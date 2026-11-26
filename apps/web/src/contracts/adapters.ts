@@ -39,6 +39,7 @@ import type {
   ContainerBuildSubmitInput,
   ContainerBuildTask,
   ContainerCreateInput,
+  ContainerCreateResult,
   ContainerRecreateConfig,
   ContainerRecreateInput,
   ContainerRecreatePatch,
@@ -165,7 +166,7 @@ export interface ContainerAdapter {
   /** 仅删除符合条件的停止态容器，不删除镜像或挂载卷。 */
   removeContainer(containerId: string): Promise<void>
   /** 创建容器：Docker 运行时创建真实容器，本地演示追加内存数据集并推 container/created。 */
-  create(input: ContainerCreateInput): Promise<Container>
+  create(input: ContainerCreateInput): Promise<ContainerCreateResult>
   recreateConfig?(id: string, signal?: AbortSignal): Promise<ContainerRecreateConfig>
   previewRecreate?(id: string, patch: ContainerRecreatePatch): Promise<ContainerRecreatePreview>
   submitRecreate?(input: ContainerRecreateInput): Promise<ContainerRecreateTask>

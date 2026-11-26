@@ -108,13 +108,22 @@ export type ContainerSample = {
 export type ContainerCreateInput = {
   name?: string
   imageId: string
-  ports: readonly PortMapping[]
+  ports: readonly (PortMapping & { allowFirewall?: boolean })[]
   env: readonly EnvPair[]
   volumes: readonly VolumeMount[]
   /** 启动命令；留空表示沿用镜像默认入口。 */
   command?: string
   restartPolicy: RestartPolicy
 }
+
+export type ContainerFirewallResult = {
+  port: number
+  protocol: PortProtocol
+  state: 'added' | 'existing' | 'skipped' | 'failed' | 'unknown'
+  detail?: string
+}
+
+export type ContainerCreateResult = Container & { firewallResults?: readonly ContainerFirewallResult[] }
 
 /** 容器动作：启动、停止、重启。 */
 export type ContainerAction = 'start' | 'stop' | 'restart'

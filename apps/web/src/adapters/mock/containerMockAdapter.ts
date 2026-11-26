@@ -18,6 +18,7 @@ import type {
   ContainerBuildSubmitInput,
   ContainerBuildTask,
   ContainerCreateInput,
+  ContainerCreateResult,
   ComposeCheckResult,
   ContainerImage,
   ImagePullProgress,
@@ -161,7 +162,7 @@ export class MockContainerAdapter implements ContainerAdapter {
     this.hooks.onRemove?.(containerId)
   }
 
-  async create(input: ContainerCreateInput): Promise<Container> {
+  async create(input: ContainerCreateInput): Promise<ContainerCreateResult> {
     const dataset = this.dataset()
     const image = dataset.images.find((i) => i.id === input.imageId)
     if (!image) throw new Error('镜像不存在，无法创建容器')
@@ -199,7 +200,7 @@ export class MockContainerAdapter implements ContainerAdapter {
       name,
       status: 'running',
       imageId: input.imageId,
-      ports: input.ports.map((p) => ({ ...p })),
+      ports: input.ports.map(({ allowFirewall: _allowFirewall, ...port }) => port),
       createdAt: now,
       startedAt: now,
       command: input.command?.trim() ?? '',
@@ -209,7 +210,10 @@ export class MockContainerAdapter implements ContainerAdapter {
     }
     dataset.containers.push(container)
     this.hooks.onCreate(container.id)
-    return { ...container }
+    const firewallResults = input.ports.filter(port => port.allowFirewall).map(({ hostPort, protocol }) => ({
+      port: hostPort, protocol, state: 'skipped' as const, detail: '演示模式未启用宿主防火墙',
+    }))
+    return firewallResults.length ? { ...container, firewallResults } : { ...container }
   }
 
   listApps(): Promise<readonly ContainerApp[]> {
