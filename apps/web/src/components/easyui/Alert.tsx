@@ -15,28 +15,28 @@ export type AlertTone = 'neutral' | 'info' | 'success' | 'warning' | 'danger'
 
 const tones: Record<AlertTone, { box: string; icon: string; Icon: LucideIcon }> = {
   neutral: {
-    box: 'border-neutral-200 bg-neutral-50/70 dark:border-neutral-800 dark:bg-neutral-900/60',
-    icon: 'text-neutral-500 dark:text-neutral-400',
+    box: 'border-line bg-surface-raised',
+    icon: 'text-fg-muted',
     Icon: Info,
   },
   info: {
-    box: 'border-sky-200 bg-sky-50/70 dark:border-sky-500/30 dark:bg-sky-500/12',
-    icon: 'text-sky-600 dark:text-sky-400',
+    box: 'border-info/30 bg-info/10',
+    icon: 'text-info',
     Icon: Info,
   },
   success: {
-    box: 'border-emerald-200 bg-emerald-50/70 dark:border-emerald-500/30 dark:bg-emerald-500/12',
-    icon: 'text-emerald-600 dark:text-emerald-400',
+    box: 'border-success/30 bg-success/10',
+    icon: 'text-success',
     Icon: CircleCheck,
   },
   warning: {
-    box: 'border-amber-200 bg-amber-50/70 dark:border-amber-500/30 dark:bg-amber-500/12',
-    icon: 'text-amber-600 dark:text-amber-400',
+    box: 'border-warning/30 bg-warning/10',
+    icon: 'text-warning',
     Icon: TriangleAlert,
   },
   danger: {
-    box: 'border-red-200 bg-red-50/70 dark:border-red-500/30 dark:bg-red-500/12',
-    icon: 'text-red-600 dark:text-red-400',
+    box: 'border-danger/30 bg-danger/10',
+    icon: 'text-danger',
     Icon: CircleAlert,
   },
 }
@@ -91,7 +91,7 @@ export function Alert({
                 type="button"
                 aria-label="Dismiss"
                 onClick={() => setVisible(false)}
-                className="-mr-1 -mt-1 grid size-7 shrink-0 place-items-center rounded-lg text-neutral-400 outline-none transition hover:bg-black/5 hover:text-neutral-900 focus-visible:ring-2 focus-visible:ring-neutral-400/50 active:scale-95 dark:hover:bg-white/10 dark:hover:text-white dark:focus-visible:ring-neutral-600/60"
+                className="-mr-1 -mt-1 grid size-7 shrink-0 place-items-center rounded-lg text-fg-subtle outline-none transition hover:bg-surface-raised hover:text-fg focus-visible:ring-2 focus-visible:ring-focus active:scale-95"
               >
                 <X className="size-4" />
               </button>
@@ -104,9 +104,9 @@ export function Alert({
 }
 
 export function AlertTitle({ className, ...props }: React.ComponentProps<'p'>) {
-  return <p className={cn('font-medium text-neutral-900 dark:text-neutral-100', className)} {...props} />
+  return <p className={cn('font-medium text-fg', className)} {...props} />
 }
 
 export function AlertDescription({ className, ...props }: React.ComponentProps<'p'>) {
-  return <p className={cn('mt-0.5 text-neutral-600 dark:text-neutral-400', className)} {...props} />
+  return <p className={cn('mt-0.5 text-fg-muted', className)} {...props} />
 }

@@ -48,6 +48,8 @@ describe('系统负载徽标', () => {
 
     const dialog = await screen.findByRole('dialog', { name: '系统负载明细' })
     expect(dialog).toHaveAttribute('data-easyui', 'peek-card')
+    expect(dialog).toHaveClass('bg-surface-raised', 'border-line', 'text-fg')
+    expect(dialog).not.toHaveClass('bg-[#0E0E0E]')
     expect(within(dialog).getByText('后端进程内存读取失败，稍后会再试。')).toBeInTheDocument()
     expect(dialog.querySelector('polygon')).not.toBeInTheDocument()
     await user.keyboard('{Escape}')

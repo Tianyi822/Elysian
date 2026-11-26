@@ -1,7 +1,18 @@
 import { describe, expect, it } from 'vitest'
-import { readFileSync } from 'node:fs'
+import { readFileSync, readdirSync } from 'node:fs'
+import { join } from 'node:path'
 
 const css = readFileSync('src/styles/index.css', 'utf8')
+
+function collectUiSourceFiles(directory: string): string[] {
+  return readdirSync(directory, { withFileTypes: true }).flatMap((entry) => {
+    const path = join(directory, entry.name)
+    if (entry.isDirectory()) return collectUiSourceFiles(path)
+    return entry.isFile() && entry.name.endsWith('.tsx') && !entry.name.endsWith('.test.tsx') ? [path] : []
+  })
+}
+
+const uiSources = ['src/app', 'src/components', 'src/features'].flatMap(collectUiSourceFiles)
 
 type Rgb = readonly [number, number, number]
 
@@ -126,3 +137,16 @@ for (const theme of ['dark', 'light'] as const) {
     })
   })
 }
+
+describe('全局主题颜色出口', () => {
+  it('业务界面不绕过语义令牌使用主题分支或固定 Tailwind 色板', () => {
+    const fixedColorUtility = /(?:^|[\s"'`])(?:[a-z-]+:)*(?:bg|text|border|ring|outline|fill|stroke)-(?:black|white|(?:neutral|stone|slate|gray|zinc|red|orange|amber|yellow|lime|green|emerald|teal|cyan|sky|blue|indigo|violet|purple|fuchsia|pink|rose)-\d{2,3})(?:\/[\d.]+)?(?=[\s"'`]|$)|(?:^|[\s"'`])(?:[a-z-]+:)*(?:bg|text|border|ring|outline|fill|stroke)-\[(?:#|rgba?\(|hsla?\()/i
+    const violations = uiSources.flatMap((file) => {
+      const source = readFileSync(file, 'utf8')
+      const themeBranchUtility = /\bdark:(?:[a-z-]+:)*(?:bg|text|border|ring|outline|fill|stroke)-/
+      return themeBranchUtility.test(source) || fixedColorUtility.test(source) ? [file] : []
+    })
+
+    expect(violations).toEqual([])
+  })
+})

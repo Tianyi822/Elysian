@@ -48,7 +48,7 @@ function PeekCardContent({ ariaLabel, placement, align, appearance = 'upstream',
           className={`easyui-peek-card z-50 w-72 sm:w-80 cursor-default rounded-[19.6px] border p-4 text-left ${
             appearance === 'login'
               ? 'border-login-line bg-login-card text-login-fg shadow-[0_16px_40px_var(--t-panel-shadow)]'
-              : 'border-[#1F1F1F] bg-[#0E0E0E] shadow-[0_16px_40px_rgba(0,0,0,0.6)]'
+              : 'border-line bg-surface-raised text-fg shadow-[0_16px_40px_var(--t-panel-shadow)]'
           }`}
         >
           {renderContent()}

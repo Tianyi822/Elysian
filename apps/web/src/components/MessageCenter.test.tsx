@@ -35,17 +35,17 @@ describe('全局消息组件', () => {
   it('打开列表直接显示已加载的记录，并保留 EasyUI Alert 色调和原文', async () => {
     renderCenter()
     const messages = [
-      { tone: 'success', message: '保存成功\n配置已更新。', border: 'border-emerald-200' },
-      { tone: 'info', message: '正在检查服务状态', border: 'border-sky-200' },
-      { tone: 'warning', message: '部分服务暂不可用', border: 'border-amber-200' },
-      { tone: 'danger', message: '连接失败：请重试', border: 'border-red-200' },
+      { tone: 'success', message: '保存成功\n配置已更新。', colors: 'border-success/30 bg-success/10' },
+      { tone: 'info', message: '正在检查服务状态', colors: 'border-info/30 bg-info/10' },
+      { tone: 'warning', message: '部分服务暂不可用', colors: 'border-warning/30 bg-warning/10' },
+      { tone: 'danger', message: '连接失败：请重试', colors: 'border-danger/30 bg-danger/10' },
     ] as const
     act(() => messages.forEach(({ tone, message }) => useMessageStore.getState().notify({ tone, message })))
     await act(async () => { await useMessageStore.getState().flush() })
     const panel = await openCenter()
     const list = within(panel).getByRole('list', { name: '消息记录' })
     expect(within(list).getAllByRole('listitem')).toHaveLength(messages.length)
-    for (const { message, border } of messages) {
+    for (const { message, colors } of messages) {
       const title = [...list.querySelectorAll('li p')].find(element =>
         [...element.childNodes].some(node => node.nodeType === Node.TEXT_NODE && node.textContent === message),
       )
@@ -53,7 +53,7 @@ describe('全局消息组件', () => {
       const row = title?.closest('li')
       const alert = row?.querySelector('[role="none"]')
       expect(alert).not.toBeNull()
-      expect(alert).toHaveClass(border)
+      expect(alert).toHaveClass(...colors.split(' '))
     }
     expect(within(list).queryByRole('alert')).not.toBeInTheDocument()
   })

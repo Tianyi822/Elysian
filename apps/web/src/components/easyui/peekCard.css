@@ -1,10 +1,3 @@
-.easyui-peek-card[data-appearance="upstream"] {
-  /* Upstream uses the same dark surface regardless of the surrounding theme. */
-  --t-fg: #fafafa;
-  --t-fg-muted: #a1a1a1;
-  --t-fg-subtle: #a1a1a1;
-  --t-line: #1f1f1f;
-}
 .easyui-peek-card {
   max-width: min(calc(100vw - 16px), var(--radix-popover-content-available-width, 100vw));
   max-height: var(--radix-popover-content-available-height, calc(100dvh - 16px));
