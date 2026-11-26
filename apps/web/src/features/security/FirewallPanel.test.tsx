@@ -94,7 +94,7 @@ beforeEach(() => {
 afterEach(() => vi.unstubAllEnvs())
 
 describe('防火墙面板', () => {
-  it('Docker 双栈发布并入端口规则，合并未配置端口并从行内预填', async () => {
+  it('Docker 双栈发布分地址族登记并从行内预填', async () => {
     const user = userEvent.setup()
     const binding = { containerId: 'ctr', containerName: 'derper', hostIp: '::', hostPort: 12080, containerPort: 80, protocol: 'tcp' }
     const dockerPorts = vi.fn<ElysianGateway['firewall']['dockerPorts']>()
@@ -107,11 +107,12 @@ describe('防火墙面板', () => {
     const remove = vi.fn()
     await openFirewallPage(sessionGateway({ list: async () => [], dockerPorts, remove }))
     const table = screen.getByRole('table', { name: '端口规则表' })
-    const add = await within(table).findByRole('button', { name: '为 12080/tcp 配置规则' })
-    const row = within(add.closest<HTMLElement>('[role="row"]')!)
-    expect(within(table).getAllByRole('row')).toHaveLength(2)
-    expect(row.getByRole('cell', { name: 'derper' })).toBeInTheDocument()
-    expect(row.getByRole('cell', { name: '未单设' })).toBeInTheDocument()
+    const [add] = await within(table).findAllByRole('button', { name: '为 12080/tcp 配置规则' })
+    expect(add).toBeDefined()
+    const row = within(add!.closest<HTMLElement>('[role="row"]')!)
+    expect(within(table).getAllByRole('row')).toHaveLength(3)
+    expect(row.getByRole('cell', { name: 'derper · ::' })).toBeInTheDocument()
+    expect(row.getByRole('cell', { name: '沿用防火墙' })).toBeInTheDocument()
     expect(within(table).queryByRole('cell', { name: /^(80|0\.0\.0\.0|::)$/ })).not.toBeInTheDocument()
     expect(screen.queryByRole('region', { name: 'Docker 发布端口' })).not.toBeInTheDocument()
     expect(screen.getByText('Docker 转发已核验')).toBeInTheDocument()
@@ -127,7 +128,7 @@ describe('防火墙面板', () => {
     expect(remove).not.toHaveBeenCalled()
     await user.click(within(skipped).getByRole('button', { name: '关闭' }))
     await user.click(checkbox)
-    await user.click(add)
+    await user.click(add!)
     const dialog = await screen.findByRole('dialog', { name: '添加端口规则' })
     expect(within(dialog).getByDisplayValue('12080')).toBeInTheDocument()
     expect(within(dialog).getByText(/来源留空时覆盖所有来源/)).toBeInTheDocument()
@@ -137,12 +138,13 @@ describe('防火墙面板', () => {
     expect(await screen.findByText(/容器信息更新于/)).toBeInTheDocument()
     expect(screen.getByText('Docker 转发接管异常')).toBeInTheDocument()
     expect(add).toBeDisabled()
+    expect(row.getByRole('cell', { name: '发布待核验' })).toBeInTheDocument()
   })
 
-  it('已有单端口规则追加容器名，保留真实策略与可编辑的原备注', async () => {
+  it('Docker 当前绑定显示规则端口正常使用，保留真实策略与可编辑的原备注', async () => {
     const user = userEvent.setup()
     const rule = { ...SEED_RULES[0]!, id: 'derper-rule', port: 12080, portTo: null, family: 'ipv4', protocol: 'tcp',
-      direction: 'inbound', policy: 'deny', source: '192.0.2.0/24', note: '原备注' } as const
+      status: 'unused', direction: 'inbound', policy: 'deny', source: '192.0.2.0/24', note: '原备注' } as const
     const binding = { containerId: 'ctr', containerName: 'derper', hostIp: '0.0.0.0', hostPort: 12080, containerPort: 80, protocol: 'tcp' }
     await openFirewallPage(sessionGateway({
       list: async () => [rule],
@@ -154,12 +156,16 @@ describe('防火墙面板', () => {
     const table = screen.getByRole('table', { name: '端口规则表' })
     const note = await within(table).findByText('原备注 · derper')
     const savedRow = within(note.closest<HTMLElement>('[role="row"]')!)
+    expect(savedRow.getByRole('cell', { name: '正常' })).toBeInTheDocument()
     expect(savedRow.getByText('拒绝')).toBeInTheDocument()
     expect(savedRow.getByText('192.0.2.0/24')).toBeInTheDocument()
-    expect(within(table).getByText('derper-v6')).toBeInTheDocument()
-    expect(within(table).getByRole('button', { name: '为 3478/udp 配置规则' })).toBeInTheDocument()
+    expect(within(table).getByText('derper-v6 · ::')).toBeInTheDocument()
+    const configure = within(table).getByRole('button', { name: '为 3478/udp 配置规则' })
+    const publishedOnly = within(configure.closest<HTMLElement>('[role="row"]')!)
+    expect(publishedOnly.getByRole('cell', { name: '正常' })).toBeInTheDocument()
+    expect(publishedOnly.getByRole('cell', { name: '沿用防火墙' })).toBeInTheDocument()
     await user.type(screen.getByLabelText('搜索端口、来源或备注'), 'derper')
-    await waitFor(() => expect(within(table).queryByText('frp')).not.toBeInTheDocument())
+    await waitFor(() => expect(within(table).queryByText(/^frp/)).not.toBeInTheDocument())
     await user.click(within(table).getByRole('checkbox', { name: '全选已加载的匹配行' }))
     expect(await screen.findByText('已选 2 项')).toBeInTheDocument()
     await user.click(savedRow.getByRole('button', { name: '修改' }))
@@ -167,7 +173,7 @@ describe('防火墙面板', () => {
     expect(within(dialog).getByRole('textbox', { name: '备注' })).toHaveValue('原备注')
   })
 
-  it('从未单设的 IPv6 发布行保存 UDP 宿主端口规则', async () => {
+  it('从 IPv6 发布行保存 UDP 宿主端口规则', async () => {
     const user = userEvent.setup()
     let rules: FirewallRule[] = []
     const create = vi.fn<ElysianGateway['firewall']['create']>(async input => {
@@ -217,9 +223,8 @@ describe('防火墙面板', () => {
     await user.click(within(result).getByRole('button', { name: '关闭' }))
     expect(remove.mock.calls).toEqual([['allowed-v4']])
     expect(dockerPorts).toHaveBeenCalledTimes(2)
-    const remaining = within((await within(table).findByRole('checkbox', { name: /^选择 tcp 12080$/ })).closest<HTMLElement>('[role="row"]')!)
-    expect(remaining.getByText('未单设')).toBeInTheDocument()
-    expect(remaining.getByText('derper')).toBeInTheDocument()
+    const remaining = within((await within(table).findByText('derper · ::')).closest<HTMLElement>('[role="row"]')!)
+    expect(remaining.getByText('沿用防火墙')).toBeInTheDocument()
   })
 
   it('转发同步未确认时回读已经删除的规则并留下核对入口', async () => {
@@ -239,8 +244,8 @@ describe('防火墙面板', () => {
     const alert = await screen.findByRole('alert')
     expect(alert).toHaveTextContent('删除结果未确认')
     expect(within(alert).getByRole('button', { name: '重新读取状态' })).toBeEnabled()
-    expect(await within(table).findByText('未单设')).toBeInTheDocument()
-    expect(within(table).getByText('frp')).toBeInTheDocument()
+    expect(await within(table).findByText('策略待核验')).toBeInTheDocument()
+    expect(within(table).getByText('frp · 0.0.0.0')).toBeInTheDocument()
     expect(screen.getByText('Docker 转发接管异常')).toBeInTheDocument()
     expect(remove.mock.calls).toEqual([['saved']])
   })

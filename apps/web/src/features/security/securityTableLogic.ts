@@ -9,31 +9,35 @@ export const isProtectedPanelRule = (rule: FirewallRule, frontendPort: number): 
 
 export type PortTableRow = { id: string; port: number; protocol: string; note: string | null } & (
   | { kind: 'rule'; rule: FirewallRule; published: boolean }
-  | { kind: 'published'; family: FirewallAddressFamily }
+  | { kind: 'published'; family: FirewallAddressFamily; addresses: string[] }
 )
 
-const hostPortKey = (port: number, protocol: string) => `${port}/${protocol}`
+const hostPortKey = (port: number, protocol: string, family: FirewallAddressFamily) => `${port}/${protocol}/${family}`
 
 export function portTableRows(rules: readonly FirewallRule[], ports: readonly DockerPublishedPort[]): PortTableRow[] {
-  const bindings = new Map<string, { port: number; protocol: string; ipv4: Set<string>; ipv6: Set<string> }>()
+  const bindings = new Map<string, {
+    port: number; protocol: string; family: FirewallAddressFamily; names: Set<string>; addresses: Set<string>
+  }>()
   for (const { hostPort, protocol, hostIp, containerName } of ports) {
-    const key = hostPortKey(hostPort, protocol)
+    const family = hostIp.includes(':') ? 'ipv6' : 'ipv4'
+    const key = hostPortKey(hostPort, protocol, family)
     let binding = bindings.get(key)
     if (!binding) {
-      binding = { port: hostPort, protocol, ipv4: new Set(), ipv6: new Set() }
+      binding = { port: hostPort, protocol, family, names: new Set(), addresses: new Set() }
       bindings.set(key, binding)
     }
-    binding[hostIp.includes(':') ? 'ipv6' : 'ipv4'].add(containerName)
+    binding.names.add(containerName)
+    binding.addresses.add(hostIp)
   }
 
   const matched = new Set<string>()
   const rows = rules.map<PortTableRow>(rule => {
-    const key = hostPortKey(rule.port, rule.protocol)
+    const key = hostPortKey(rule.port, rule.protocol, rule.family)
     const names = rule.direction === 'inbound' && (rule.portTo === null || rule.portTo === rule.port)
-      ? bindings.get(key)?.[rule.family]
+      ? bindings.get(key)?.names
       : undefined
     if (!names?.size) return { ...rule, kind: 'rule', rule, published: false }
-    matched.add(`${key}/${rule.family}`)
+    matched.add(key)
     const namesNote = [...names].sort().join('、')
     const note = rule.note && !names.has(rule.note) ? `${rule.note} · ${namesNote}` : namesNote
     return { ...rule, kind: 'rule', rule, published: true, note }
@@ -41,13 +45,10 @@ export function portTableRows(rules: readonly FirewallRule[], ports: readonly Do
 
   // A matching range or opposite address family can have a different verdict.
   // Keep the concrete host port visible without inventing a firewall policy.
-  for (const [key, { port, protocol, ipv4, ipv6 }] of bindings) {
-    const unmatched4 = matched.has(`${key}/ipv4`) ? [] : [...ipv4]
-    const unmatched6 = matched.has(`${key}/ipv6`) ? [] : [...ipv6]
-    const names = [...new Set([...unmatched4, ...unmatched6])].sort()
-    if (names.length > 0) rows.push({
+  for (const [key, { port, protocol, family, names, addresses }] of bindings) {
+    if (!matched.has(key)) rows.push({
       kind: 'published', id: `published:${key}`, port, protocol,
-      family: unmatched4.length > 0 ? 'ipv4' : 'ipv6', note: names.join('、'),
+      family, addresses: [...addresses].sort(), note: [...names].sort().join('、'),
     })
   }
   return rows

@@ -199,7 +199,7 @@ export function FirewallPanel() {
       parts.some((part) => part !== null && part !== undefined && `${part}`.toLowerCase().includes(keyword))
     return {
       rules: portRows.filter((row) =>
-        match(row.port, row.note, row.kind === 'rule' ? row.rule.portTo : null, row.kind === 'rule' ? row.rule.source : null),
+        match(row.port, row.note, ...(row.kind === 'rule' ? [row.rule.portTo, row.rule.source] : row.addresses)),
       ),
       ipRules: ipRules.filter((rule) => match(rule.source, rule.note)),
       forwards: forwards.filter((rule) =>
@@ -280,7 +280,8 @@ export function FirewallPanel() {
         {dockerError}。{checkedAt !== undefined ? `容器信息更新于 ${formatDateTime(new Date(checkedAt).toISOString())}。` : '暂无法显示容器信息。'}
       </p>}
       {(!firewallError || portView && portRows.length > 0) && <FirewallRulesTable rows={filtered} view={view} query={search} onQueryChange={setSearch}
-        toolbar={tableToolbar} toolbarNavigation={tableNavigation} dockerStale={Boolean(dockerError)} />}
+        toolbar={tableToolbar} toolbarNavigation={tableNavigation} dockerStale={Boolean(dockerError)}
+        dockerGuard={guard} />}
 
       {dialogRule !== undefined ? <FirewallRuleDialog /> : null}
       {dialogIpRule !== undefined ? <FirewallIpRuleDialog /> : null}
@@ -319,9 +320,18 @@ const ruleDate = (rule: { updatedAt: string | null }) => rule.updatedAt ? format
 const ruleNote = (rule: { note: string | null }) => <span title={rule.note || undefined}>{rule.note || '—'}</span>
 
 function portStatus(row: PortTableRow, stale: boolean): [string, StatusTone] {
-  if (row.kind === 'published' || row.published) return stale ? ['发布待核验', 'warning'] : ['已发布', 'neutral']
-  const { status } = row.rule
-  return [FIREWALL_RULE_STATUS_LABELS[status], STATUS_TONES[status]]
+  if (row.kind === 'rule') {
+    // Docker 转发端口可能没有宿主监听套接字，当前绑定也是正在使用的依据。
+    const status = row.published && !stale ? 'normal' : row.rule.status
+    if (status === 'normal' || !row.published) return [FIREWALL_RULE_STATUS_LABELS[status], STATUS_TONES[status]]
+  }
+  return stale ? ['发布待核验', 'warning'] : [FIREWALL_RULE_STATUS_LABELS.normal, STATUS_TONES.normal]
+}
+
+function publishedPolicy(guard: DockerFirewallInventory['guard'] | undefined, stale: boolean): string {
+  if (stale) return '策略待核验'
+  if (guard?.state === 'disabled') return '防火墙已关闭'
+  return guard?.kernelVerified ? '沿用防火墙' : '策略待核验'
 }
 
 const portRowLabel = (row: PortTableRow) => `${row.protocol} ${row.kind === 'rule' ? formatFirewallPort(row.rule) : row.port}`
@@ -347,10 +357,11 @@ function FirewallBatch<T extends { id: string }>({ rows, kind, getLabel, onSucce
 }
 
 /** Keep the official toolbar and shared-layout indicator mounted across rule views. */
-function FirewallRulesTable({ rows: allRows, view, query, onQueryChange, toolbar, toolbarNavigation, dockerStale }: TableQuery & {
+function FirewallRulesTable({ rows: allRows, view, query, onQueryChange, toolbar, toolbarNavigation, dockerStale, dockerGuard }: TableQuery & {
   view: FirewallView
   rows: { rules: readonly PortTableRow[]; ipRules: readonly FirewallIpRule[]; forwards: readonly FirewallForwardRule[] }
   dockerStale: boolean
+  dockerGuard?: DockerFirewallInventory['guard']
 }) {
   const [selection, setSelection] = useState<{ view: FirewallView; ids: Id[] }>({ view, ids: [] })
   const [sorting, setSorting] = useState<{ view: FirewallView; value: SortState }>({ view, value: null })
@@ -373,6 +384,7 @@ function FirewallRulesTable({ rows: allRows, view, query, onQueryChange, toolbar
 
   if (view === 'port') {
     const rows = allRows.rules
+    const observedPolicy = publishedPolicy(dockerGuard, dockerStale)
     return <DataTable rows={rows} ariaLabel="端口规则表" {...common} filterMode="external"
       // 44px 选择列与九列最小宽度合计 1200px，空间不足时仅表体横向滚动。
       minWidth={1200}
@@ -389,11 +401,12 @@ function FirewallRulesTable({ rows: allRows, view, query, onQueryChange, toolbar
           const [label, tone] = portStatus(row, dockerStale)
           return <StatusTag label={label} tone={tone} />
         }, width: 'minmax(96px, 11fr)' },
-        { key: 'policy', header: '策略', accessor: row => row.kind === 'rule' ? FIREWALL_POLICY_LABELS[row.rule.policy] : '未单设',
-          cell: row => row.kind === 'rule' ? <PolicyText policy={row.rule.policy} /> : <span title="此端口的访问由现有防火墙策略判定">未单设</span>, width: 'minmax(72px, 8fr)' },
+        { key: 'policy', header: '策略', accessor: row => row.kind === 'rule' ? FIREWALL_POLICY_LABELS[row.rule.policy] : observedPolicy,
+          cell: row => row.kind === 'rule' ? <PolicyText policy={row.rule.policy} /> : observedPolicy, width: 'minmax(72px, 8fr)' },
         { key: 'direction', header: '方向', accessor: row => FIREWALL_DIRECTION_LABELS[row.kind === 'rule' ? row.rule.direction : 'inbound'], width: 'minmax(72px, 8fr)' },
         { key: 'source', header: '来源', accessor: row => row.kind === 'rule' ? row.rule.source : null, width: 'minmax(176px, 12fr)' },
-        { key: 'note', header: '备注', cell: ruleNote, width: 'minmax(176px, 17fr)' },
+        { key: 'note', header: '备注', cell: row => row.kind === 'rule' ? ruleNote(row) :
+          ruleNote({ note: `${row.note} · ${row.addresses.join('、')}` }), width: 'minmax(176px, 17fr)' },
         { key: 'updatedAt', header: '时间', accessor: row => row.kind === 'rule' ? row.rule.updatedAt : null, cell: row => row.kind === 'rule' ? ruleDate(row.rule) : '—', width: 'minmax(128px, 15fr)' },
         { key: 'actions', header: '操作', sortable: false, width: 'minmax(88px, 8fr)', cell: row => {
           if (row.kind === 'rule') return <RowActions kind="port" id={row.id} label={portRowLabel(row)} onEdit={() => useFirewallStore.getState().openEdit(row.rule)} />
