@@ -145,8 +145,6 @@ export const PillNavigation: React.FC<PillNavigationProps> = ({
     <motion.div
       data-easyui="pill-navigation"
       ref={containerRef}
-      layout={!reducedMotion}
-      transition={motionTransitions.springGentle}
       className={cn('inline-flex min-w-0 max-w-full flex-col items-center gap-2 select-none', className)}
       role="group"
       aria-label={ariaLabel}
