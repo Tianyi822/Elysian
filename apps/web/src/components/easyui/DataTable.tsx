@@ -17,7 +17,7 @@ import React, {
   useState,
 } from "react";
 import { AnimatePresence, motion, useReducedMotion } from "framer-motion";
-import { Button } from "../Button";
+import { Button, ButtonPressFeedback } from "../Button";
 import { IconButton } from "../IconButton";
 import { X } from "../icons";
 import { SelectDropdown } from "../SelectDropdown";
@@ -549,21 +549,23 @@ export function DataTable<T>({
   const header = cards ? (
     <div className={cx("flex items-center gap-3 px-1 pb-3")}>
       {selectable && (!isRowSelectable || selectableRows.length > 0) && <Checkbox checked={allSelected} indeterminate={!allSelected && someSelected} onToggle={toggleAll} label="全选已加载的匹配行" />}
-      <div className="ml-1 min-w-0 flex-1">
-        <SelectDropdown ariaLabel="排序依据" value={sort?.key ?? ""}
-          items={[{ value: "", label: "排序：默认顺序" }, ...sortable.map(c => ({ value: c.key, label: `排序：${c.header}` }))]}
-          onSelect={key => setSort(key ? { key, dir: sort?.dir ?? "desc" } : null)}
-          triggerClassName={`flex h-10 w-full items-center justify-between rounded-xl bg-surface-raised px-3 text-[16px] text-fg ${focus}`} />
-      </div>
-      <Button unstyled
-        type="button"
-        disabled={!sort}
-        aria-label={sort?.dir === "asc" ? "当前升序，切换降序" : "当前降序，切换升序"}
-        onClick={() => sort && setSort({ key: sort.key, dir: sort.dir === "asc" ? "desc" : "asc" })}
-        className={`grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-surface-raised text-fg-muted transition-opacity active:scale-[0.96] disabled:opacity-40   ${focus}`}
-      >
-        <SortIcon state={sort?.dir ?? null} />
-      </Button>
+      <ButtonPressFeedback.Provider value={false}>
+        <div className="ml-1 min-w-0 flex-1">
+          <SelectDropdown ariaLabel="排序依据" value={sort?.key ?? ""}
+            items={[{ value: "", label: "排序：默认顺序" }, ...sortable.map(c => ({ value: c.key, label: `排序：${c.header}` }))]}
+            onSelect={key => setSort(key ? { key, dir: sort?.dir ?? "desc" } : null)}
+            triggerClassName={`dt-sort-trigger flex h-10 w-full items-center justify-between rounded-xl bg-surface-raised px-3 text-[16px] text-fg ${focus}`} />
+        </div>
+        <Button unstyled
+          type="button"
+          disabled={!sort}
+          aria-label={sort?.dir === "asc" ? "当前升序，切换降序" : "当前降序，切换升序"}
+          onClick={() => sort && setSort({ key: sort.key, dir: sort.dir === "asc" ? "desc" : "asc" })}
+          className={`dt-sort-direction grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-surface-raised text-fg-muted transition-opacity disabled:opacity-40 ${focus}`}
+        >
+          <SortIcon state={sort?.dir ?? null} />
+        </Button>
+      </ButtonPressFeedback.Provider>
     </div>
   ) : (
     <div
@@ -591,7 +593,7 @@ export function DataTable<T>({
             className={cx("flex h-11 min-w-0 items-center px-3", alignClass[c.align ?? "left"])}
           >
             {can ? (
-              <Button unstyled
+              <Button unstyled pressFeedback={false}
                 type="button"
                 onClick={() => clickHeader(c)}
                 className={cx(

@@ -3,6 +3,11 @@
 @media (width < 640px) {
   .easyui-data-table { --dt-control-height: 40px; }
 }
+.easyui-data-table.firewall-data-table { --dt-control-height: var(--message-button-size, 2rem); }
+.firewall-data-table :is(.dt-toolbar-search input, .dt-sort-trigger, .dt-sort-direction) {
+  height: var(--dt-control-height);
+}
+.firewall-data-table .dt-sort-direction { width: var(--dt-control-height); }
 .easyui-data-table .rounded-2xl { border-radius: 25.2px; }
 .easyui-data-table .rounded-xl { border-radius: 19.6px; }
 .easyui-data-table .rounded-lg { border-radius: 14px; }

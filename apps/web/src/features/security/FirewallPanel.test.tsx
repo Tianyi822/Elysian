@@ -1,4 +1,5 @@
 import { messageHistoryText } from '../../test/messageHistory'
+import { readFileSync } from 'node:fs'
 import { fireEvent, screen, waitFor, within } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
@@ -432,7 +433,7 @@ describe('防火墙面板', () => {
     expect(result).toHaveTextContent('跳过')
   })
 
-  it('规则工具合入表格搜索栏，保持控件尺寸和连续方向键切换', async () => {
+  it('规则工具共用消息按钮高度并保留滑块和连续方向键切换', async () => {
     const user = userEvent.setup()
     await openFirewallPage()
 
@@ -440,17 +441,31 @@ describe('防火墙面板', () => {
     const controls = within(table).getByRole('group', { name: '规则操作' })
     const tabs = within(table).getByRole('group', { name: '规则类型' })
     const add = within(controls).getByRole('button', { name: '添加端口规则' })
+    const refresh = within(controls).getByRole('button', { name: '同步规则' })
+    const portTab = within(tabs).getByRole('button', { name: '端口规则' })
+    // jsdom 不计算容器查询或实际尺寸，验证共享令牌与对应控件的样式接缝。
+    const css = readFileSync('src/components/easyui/data-table.css', 'utf8')
+    expect(css).toContain('.easyui-data-table.firewall-data-table { --dt-control-height: var(--message-button-size, 2rem); }')
+    expect(table).toHaveClass('firewall-data-table')
+    expect(within(table).getByRole('searchbox').closest('.dt-toolbar-search')).not.toBeNull()
+    expect(tabs.closest('.firewall-toolbar')).not.toBeNull()
+    expect(portTab.querySelector('[data-easyui-indicator]')).not.toBeNull()
     // EasyUI 工具按钮沿用原来的不收缩、不拆标签约束。
-    expect(add).toHaveClass('shrink-0', 'whitespace-nowrap')
+    expect(add).toHaveClass('dt-create-button', 'shrink-0', 'whitespace-nowrap')
+    expect(add.querySelector('.dt-create-icon')).not.toBeNull()
     expect(add).toHaveTextContent(/^添加规则$/)
     expect(tabs).toHaveClass('shrink-0')
     expect(within(controls).queryByRole('button', { name: '端口防扫描' })).not.toBeInTheDocument()
-    expect(within(controls).getByRole('button', { name: '同步规则' })).toBeEnabled()
+    expect(refresh).toHaveClass('dt-toolbar-control-icon')
+    expect(refresh).toBeEnabled()
     expect(within(table).queryByText(/^\d+ 行$/)).not.toBeInTheDocument()
 
-    await user.click(within(tabs).getByRole('button', { name: '端口规则' }))
+    await user.click(portTab)
     await user.keyboard('{ArrowRight}')
-    expect(screen.getByRole('button', { name: 'IP 规则' })).toHaveFocus()
+    const ipTab = within(tabs).getByRole('button', { name: 'IP 规则' })
+    expect(ipTab).toHaveFocus()
+    expect(ipTab.querySelector('[data-easyui-indicator]')).not.toBeNull()
+    expect(portTab.querySelector('[data-easyui-indicator]')).toBeNull()
     expect(screen.getByRole('group', { name: '规则操作' })).toBe(controls)
     expect(screen.getByRole('group', { name: '规则类型' })).toBe(tabs)
     expect(screen.getByRole('button', { name: '添加 IP 规则' })).toHaveTextContent(/^添加规则$/)
