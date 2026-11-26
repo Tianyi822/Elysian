@@ -3,7 +3,6 @@ import {
   type Container,
   type ContainerCreateInput,
   type EnvPair,
-  type PortMapping,
   type PortProtocol,
   type RestartPolicy,
   type VolumeMount,
@@ -20,6 +19,7 @@ export type PortDraftRow = {
   protocol: PortProtocol
   /** 勾选后绑定 0.0.0.0（对外可达）；缺省只绑回环。 */
   public: boolean
+  allowFirewall?: boolean
 }
 export type EnvDraftRow = { key: string; value: string }
 export type VolumeDraftRow = { hostPath: string; containerPath: string }
@@ -174,13 +174,14 @@ export function hasCreateErrors(errors: CreateFormErrors): boolean {
 
 /** 草稿转提交输入：全空行直接丢弃，名称与命令去空白后为空则转 undefined。 */
 export function toCreateInput(draft: ContainerCreateDraft): ContainerCreateInput {
-  const ports: PortMapping[] = draft.ports
+  const ports: ContainerCreateInput['ports'] = draft.ports
     .filter((row) => row.containerPort && row.hostPort)
     .map((row) => ({
       containerPort: Number(row.containerPort),
       hostPort: Number(row.hostPort),
       protocol: row.protocol,
       hostIp: draftPortHostIp(row),
+      ...(row.public && row.allowFirewall ? { allowFirewall: true } : {}),
     }))
   const env: EnvPair[] = draft.env
     .filter((row) => row.key)

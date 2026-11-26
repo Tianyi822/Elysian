@@ -49,9 +49,12 @@ describe('创建表单校验', () => {
     const draft = {
       ...emptyDraft(),
       imageId: 'img-redis',
-      ports: [{ containerPort: '80', hostPort: '18080', protocol: 'tcp' as const, public: true }],
+      ports: [{ containerPort: '80', hostPort: '18080', protocol: 'tcp' as const, public: true, allowFirewall: true }],
     }
     expect(toCreateInput(draft).ports[0]?.hostIp).toBe('0.0.0.0')
+    expect(toCreateInput(draft).ports[0]?.allowFirewall).toBe(true)
+    expect(toCreateInput({ ...draft, ports: [{ ...draft.ports[0]!, allowFirewall: false }] }).ports[0]?.allowFirewall).toBeUndefined()
+    expect(toCreateInput({ ...draft, ports: [{ ...draft.ports[0]!, public: false }] }).ports[0]?.allowFirewall).toBeUndefined()
     expect(draftPortHostIp({ public: false })).toBe('127.0.0.1')
   })
 

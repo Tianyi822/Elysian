@@ -3,6 +3,7 @@ import { Button } from '../../components/Button'
 import { FORM_CONTROL_HEIGHT_CLASS } from '../../components/formControl'
 import { ChevronDown, Plus, Trash2 } from '../../components/icons'
 import { SelectDropdown } from '../../components/SelectDropdown'
+import { ToggleSwitch } from '../../components/ToggleSwitch'
 import type { useContainerCreateForm } from './useContainerCreateForm'
 
 const INPUT_CLASS =
@@ -151,13 +152,18 @@ export function ContainerCreateFields({
                           id={`create-port-public-${index}`}
                           type="checkbox"
                           checked={row.public}
-                          onChange={(event) => updatePorts(index, { public: event.target.checked })}
+                          onChange={(event) => updatePorts(index, { public: event.target.checked, allowFirewall: event.target.checked })}
                           className="size-3.5 rounded border border-line"
                         />
-                        对外开放
+                        对外绑定
                       </label>
                       {row.public ? (
-                        <p className="mt-1 text-xs text-warning">该端口不受防火墙规则约束</p>
+                        <label className="flex items-center gap-1.5 text-xs text-fg-muted">
+                          <ToggleSwitch compact label={`创建后放行，端口映射 ${index + 1}`}
+                            checked={row.allowFirewall === true}
+                            onCheckedChange={allowFirewall => updatePorts(index, { allowFirewall })} />
+                          创建后放行
+                        </label>
                       ) : null}
                     </div>
                     <Button variant="destructive"

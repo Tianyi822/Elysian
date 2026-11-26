@@ -170,7 +170,7 @@ export const useContainersStore = create<TabMemoryState<ContainerView> & Contain
     const current = containerMutationCurrent(gateway)
     set({ creating: true, createError: undefined })
     try {
-      const created = await gateway.containers.create(input)
+      const { firewallResults, ...created } = await gateway.containers.create(input)
       if (!current()) return
       useMessageStore
         .getState()
@@ -178,6 +178,14 @@ export const useContainersStore = create<TabMemoryState<ContainerView> & Contain
           tone: 'success',
           message: `容器 ${created.name} 已创建${demoNoticeSuffix(isDockerRuntime(), MOCK_ACTION_NOTE)}`,
         })
+      for (const result of firewallResults ?? []) {
+        const label = `${result.port}/${result.protocol}`
+        const states = { added: '已添加放行规则', existing: '沿用已有放行规则', skipped: '未自动放行', failed: '放行失败', unknown: '放行结果待核验' }
+        useMessageStore.getState().notify({
+          tone: result.state === 'added' || result.state === 'existing' ? 'success' : 'warning',
+          message: `容器 ${created.name} 的 ${label} ${states[result.state]}${result.detail ? `（${result.detail}）` : ''}`,
+        })
+      }
       set((state) => ({
         // 事件回灌通常已追加过；按 id 去重，返回值只做兜底。
         containers: state.containers.some((c) => c.id === created.id)

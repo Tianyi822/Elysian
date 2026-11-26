@@ -39,13 +39,23 @@ describe('ContainerCreateDialog', () => {
     expect(screen.getByRole('dialog', { name: '创建容器' }).textContent).toContain('演示 · 待接入真实执行')
   })
 
-  it('勾选对外开放时显示防火墙提示', () => {
+  it('允许逐条取消放行，切回本机后重置选择', () => {
     renderDialog()
     const dialog = screen.getByRole('dialog', { name: '创建容器' })
     fireEvent.click(within(dialog).getByRole('button', { name: /可选设置/ }))
     fireEvent.click(within(dialog).getByRole('button', { name: '添加端口映射' }))
-    fireEvent.click(within(dialog).getByLabelText('对外开放'))
-    expect(within(dialog).getByText('该端口不受防火墙规则约束')).toBeInTheDocument()
+    const external = within(dialog).getByLabelText('对外绑定')
+    const name = '创建后放行，端口映射 1'
+    expect(within(dialog).queryByRole('switch', { name })).not.toBeInTheDocument()
+    fireEvent.click(external)
+    const allow = within(dialog).getByRole('switch', { name })
+    expect(allow).toBeChecked()
+    fireEvent.click(allow)
+    expect(allow).not.toBeChecked()
+    fireEvent.click(external)
+    expect(within(dialog).queryByRole('switch', { name })).not.toBeInTheDocument()
+    fireEvent.click(external)
+    expect(within(dialog).getByRole('switch', { name })).toBeChecked()
   })
 
   it('createPolicy 成功时卷路径 placeholder 使用 mountRoot', async () => {
