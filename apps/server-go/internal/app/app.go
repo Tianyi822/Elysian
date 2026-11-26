@@ -129,14 +129,22 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 	// 防火墙片：可用性统一取 cfg.HostOpsAvailable()；端口自动开放接缝与防火墙片
 	// 同源（防火墙不可用时恒 skipped，行为与装配层注入 NoopPortOpener 一致）。
 	// 先提供写入接缝，再将 Docker 的实时绑定查询注入防火墙。
+	var dockerEngine seam.DockerTransport
 	firewallDeps := firewall.Deps{
 		AgentAuthorize: agentAuthorize,
-		Available:      cfg.HostOpsAvailable(),
-		Ports:          cfg.PanelPorts(),
-		Mode:           cfg.Mode(),
-		DBPath:         paths.Default.FirewallSqlite,
+		PublishedPorts: func(ctx context.Context) ([]contract.DockerPublishedPort, error) {
+			return docker.ReadPublishedPorts(ctx, dockerEngine)
+		},
+		Available: cfg.HostOpsAvailable(),
+		Ports:     cfg.PanelPorts(),
+		Mode:      cfg.Mode(),
+		DBPath:    paths.Default.FirewallSqlite,
 	}
 	portOpener := firewall.NewPortOpener(firewallDeps)
+	containerFirewall := firewall.NewContainerFirewall(firewallDeps, filepath.Join(paths.DataDir, "docker-firewall-ownership.json"),
+		func(ctx context.Context, withBindings bool) (map[string]bool, []contract.DockerPublishedPort, error) {
+			return docker.ReadContainerFirewallInventory(ctx, dockerEngine, withBindings)
+		})
 
 	// 容器管理片在依赖它的域（database/websites）之前装配：可用性与引擎事实由它分发。
 	stack, err := docker.Assemble(docker.Deps{
@@ -149,14 +157,13 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 		Kit:                  terminals.NewKit(),
 		SessionConns:         sessionConns,
 		PortOpener:           portOpener,
+		ContainerFirewall:    containerFirewall,
 		AgentCredentialsPath: filepath.Join(paths.ConfigDir, "agent-service-containers.json"),
 	})
 	if err != nil {
 		return nil, fmt.Errorf("装配容器管理片失败：%w", err)
 	}
-	firewallDeps.PublishedPorts = func(ctx context.Context) ([]contract.DockerPublishedPort, error) {
-		return docker.ReadPublishedPorts(ctx, stack.Engine)
-	}
+	dockerEngine = stack.Engine
 	firewallRouter, firewallAgent, err := firewall.AssembleAgent(firewallDeps)
 	if err != nil {
 		return nil, fmt.Errorf("防火墙入口恢复失败：%w", err)
@@ -306,6 +313,11 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 	}
 	if closeAgent != nil {
 		runtime.closeFuncs = append(runtime.closeFuncs, closeAgent)
+	}
+	if containerFirewall != nil {
+		runtime.closeFuncs = append(runtime.closeFuncs, firewall.WatchContainerFirewall(containerFirewall, func(err error) {
+			appLogs.Runtime("warn", "server.firewall", "Docker 放行规则清理未确认："+err.Error())
+		}))
 	}
 	runtime.closeFuncs = append(runtime.closeFuncs, appBuilds.Close)
 	if websiteDeps.AgentFacade != nil {
