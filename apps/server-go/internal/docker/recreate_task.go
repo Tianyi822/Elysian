@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"time"
 
+	"elysian/server/internal/contract"
 	"elysian/server/internal/seam"
 	"elysian/server/internal/shared"
 )
@@ -334,7 +335,39 @@ func (a *AgentFacade) executeRecreate(ctx context.Context, taskID, requestID str
 	if source.running && !recreateHealthy(next) {
 		return rollback("新容器健康状态未通过最终核验")
 	}
+	if policy := a.service.deps.containerFirewall; policy != nil {
+		previous, beforeErr := recreateFirewallBindings(source)
+		current, afterErr := recreateFirewallBindings(next)
+		if err := errors.Join(beforeErr, afterErr); err != nil {
+			return nil, err
+		}
+		unchanged := current[:0]
+		for _, binding := range current {
+			for _, original := range previous {
+				original.ContainerID = candidate
+				if original == binding {
+					unchanged = append(unchanged, binding)
+					break
+				}
+			}
+		}
+		if err := policy.Transfer(id, candidate, unchanged); err != nil {
+			return nil, err
+		}
+	}
 	return map[string]any{"originalId": id, "containerId": candidate, "backupName": meta.BackupName, "running": next.running, "changes": meta.Changes}, nil
+}
+
+func recreateFirewallBindings(source recreateSource) ([]contract.DockerPublishedPort, error) {
+	raw, err := json.Marshal(source.raw)
+	if err != nil {
+		return nil, err
+	}
+	value, err := decodeOrderedJSON(raw)
+	if err != nil {
+		return nil, err
+	}
+	return inspectPortBindings(source.id, value, true)
 }
 
 func sameRecreatePolicy(a, b json.RawMessage) bool {
