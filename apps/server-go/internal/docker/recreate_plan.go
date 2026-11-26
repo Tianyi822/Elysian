@@ -465,7 +465,7 @@ func (a *AgentFacade) buildRecreate(ctx context.Context, s recreateSource, p Rec
 		if err != nil {
 			return nil, nil, err
 		}
-		ports, err := parsePorts(v)
+		ports, err := parsePorts(v, false)
 		if err != nil {
 			return nil, nil, err
 		}

@@ -74,6 +74,7 @@ type buildCreateSpecResult struct {
 	name       string
 	createBody []byte
 	mkdirPaths []string
+	ports      []portMappingInput
 }
 
 // normalizeImageId 校验 64 位 hex（可带 sha256: 前缀）并小写归一。
@@ -191,9 +192,10 @@ type portMappingInput struct {
 	hostPort      int
 	protocol      string
 	hostIP        string
+	allowFirewall bool
 }
 
-func parsePorts(raw any) ([]portMappingInput, error) {
+func parsePorts(raw any, creating bool) ([]portMappingInput, error) {
 	rows, ok := asArray(raw)
 	if !ok {
 		return nil, shared.InvalidRequest("ports 须为数组")
@@ -230,7 +232,15 @@ func parsePorts(raw any) ([]portMappingInput, error) {
 		if err != nil {
 			return nil, err
 		}
-		result = append(result, portMappingInput{containerPort: containerPort, hostPort: hostPort, protocol: protocol, hostIP: hostIP})
+		port := portMappingInput{containerPort: containerPort, hostPort: hostPort, protocol: protocol, hostIP: hostIP}
+		if value, has := record.get("allowFirewall"); has && creating {
+			allow, valid := value.(bool)
+			if !valid || allow && (hostIP != "0.0.0.0" || (protocol != "tcp" && protocol != "udp")) {
+				return nil, shared.InvalidRequest("创建后放行仅适用于对外绑定的 TCP 或 UDP 端口")
+			}
+			port.allowFirewall = allow
+		}
+		result = append(result, port)
 	}
 	return result, nil
 }
@@ -374,7 +384,7 @@ func parseCreateInput(body any) (createInput, error) {
 			input.nameProvided = true
 		}
 	}
-	ports, err := parsePorts(defaultArray(record, "ports"))
+	ports, err := parsePorts(defaultArray(record, "ports"), true)
 	if err != nil {
 		return createInput{}, err
 	}
@@ -685,7 +695,7 @@ func buildCreateSpec(input buildCreateSpecInput) (buildCreateSpecResult, error) 
 	if err != nil {
 		return buildCreateSpecResult{}, err
 	}
-	return buildCreateSpecResult{name: name, createBody: encoded, mkdirPaths: mkdirPaths}, nil
+	return buildCreateSpecResult{name: name, createBody: encoded, mkdirPaths: mkdirPaths, ports: createInputParsed.ports}, nil
 }
 
 type resolvedMount struct {
