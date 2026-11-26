@@ -229,9 +229,15 @@ func parseShowAddedLine(line string) *parsedUfwLine {
 
 	// 短形式：22/tcp 或 1000:2000/udp。
 	if m := reShortForm.FindStringSubmatch(rest[0]); m != nil && len(rest) == 1 {
+		from := "any"
+		if action == "allow" && direction == "in" && comment != nil && dockerAllowMarker.MatchString(*comment) {
+			from = "0.0.0.0/0"
+			description := "Docker 自动放行"
+			comment = &description
+		}
 		return &parsedUfwLine{
 			Kind:    "port",
-			Spec:    ufwRuleSpec{Action: action, Direction: direction, Port: m[1], Proto: m[2], From: "any"},
+			Spec:    ufwRuleSpec{Action: action, Direction: direction, Port: m[1], Proto: m[2], From: from},
 			Comment: comment,
 		}
 	}
