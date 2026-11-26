@@ -102,20 +102,25 @@ function PasswordResetHelp() {
  * app-canvas 与共享面板提供双主题中性表面。
  */
 function CenteredShell({ children }: { children: ReactNode }) {
+  return (
+    <main className="app-canvas grid min-h-dvh place-items-center p-4 text-fg sm:p-6">
+      <div className="flex w-full min-w-0 items-center justify-center py-4">{children}</div>
+    </main>
+  )
+}
+
+function LoginThemeButton() {
   const { theme, toggleTheme } = useTheme()
   const light = theme === 'light'
   return (
-    <main className="app-canvas grid min-h-dvh grid-rows-[2.5rem_1fr_2.5rem] p-4 text-fg sm:p-6">
-      <IconButton
-        label={light ? '切换到深色主题' : '切换到浅色主题'}
-        className="size-10 justify-self-end [--icon-button-radius:9999px]"
-        tooltipSide="bottom"
-        onPress={toggleTheme}
-      >
-        {light ? <Moon aria-hidden size={18} /> : <Sun aria-hidden size={18} />}
-      </IconButton>
-      <div className="flex min-w-0 items-center justify-center py-4">{children}</div>
-    </main>
+    <IconButton
+      label={light ? '切换到深色主题' : '切换到浅色主题'}
+      variant="ghost"
+      className="absolute end-3 top-3 size-10 cursor-pointer [--icon-button-radius:9999px]"
+      onPress={toggleTheme}
+    >
+      {light ? <Moon aria-hidden size={18} /> : <Sun aria-hidden size={18} />}
+    </IconButton>
   )
 }
 
@@ -274,6 +279,7 @@ export function LoginPage() {
   return (
     <CenteredShell>
       <Login title="登录 Elysian" logo={<Bot size={24} />}>
+        <LoginThemeButton />
         {devAccount ? (
           <Notice role="note" tone="warning">
             开发模式已启用固定账号：dev / dev-elysian（仅开发环境可用，生产打包不含此账号）

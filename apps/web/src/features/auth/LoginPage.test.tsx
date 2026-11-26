@@ -144,6 +144,8 @@ describe('LoginPage', () => {
     const user = userEvent.setup()
     try {
       const toggle = await screen.findByRole('button', { name: '切换到浅色主题' })
+      const card = screen.getByRole('heading', { name: '登录 Elysian' }).closest('section')
+      expect(card).toContainElement(toggle)
       expect(document.documentElement.dataset.theme).toBe('dark')
       await user.type(screen.getByLabelText('用户名'), 'admin')
       await user.type(screen.getByLabelText('密码'), 'demo-password')
