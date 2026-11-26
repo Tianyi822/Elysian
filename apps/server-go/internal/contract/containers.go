@@ -31,6 +31,18 @@ type VolumeMount struct {
 }
 
 // Container 容器视图（TS Container 的 Go 版）。
+type ContainerFirewallResult struct {
+	Port     int    `json:"port"`
+	Protocol string `json:"protocol"`
+	State    string `json:"state"`
+	Detail   string `json:"detail,omitempty"`
+}
+
+type ContainerCreateResult struct {
+	Container
+	FirewallResults []ContainerFirewallResult `json:"firewallResults,omitempty"`
+}
+
 type Container struct {
 	ID            string            `json:"id"`
 	Name          string            `json:"name"`
