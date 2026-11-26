@@ -686,16 +686,29 @@ textarea {
   display: none;
 }
 
-/* 登录密码仍由文本框原生编辑；独立显示层与其字体、字距、内边距一致。 */
+/* IBM Plex Mono Regular Latin 1, IBM/plex@ba3013d72a8419a22c758cc51c44e04ac7ea565b. */
+@font-face {
+  font-family: "Elysian Password Mono";
+  src: url("./fonts/ibm-plex-mono-regular-latin1.woff2") format("woff2");
+  font-style: normal;
+  font-weight: 400;
+  font-display: swap;
+}
+
+/* 输入框与遮罩共用字形宽度和缩放，原生光标才能和圆点对应。 */
 .login-password-field {
   --login-password-padding: 2.25rem;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
 }
 .login-password-input {
   padding-inline: var(--login-password-padding);
 }
 .login-password-input,
 .login-password-mask {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-family: "Elysian Password Mono", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  font-size: 0.875rem;
+  line-height: 1.25rem;
   font-kerning: none;
   font-variant-ligatures: none;
   letter-spacing: 0;
@@ -713,8 +726,6 @@ textarea {
   align-items: center;
   overflow: hidden;
   pointer-events: none;
-  font-size: 0.875rem;
-  line-height: 1.25rem;
 }
 .login-password-mask-content {
   flex-shrink: 0;
@@ -727,11 +738,15 @@ textarea {
   min-width: 1px;
 }
 .login-password-mask-character::after {
-  content: '•';
+  content: '';
   position: absolute;
-  inset: 0;
-  color: var(--t-fg);
-  text-align: center;
+  top: 50%;
+  left: 50%;
+  width: 0.25rem;
+  height: 0.25rem;
+  transform: translate(-50%, -50%);
+  border-radius: 50%;
+  background-color: var(--t-fg);
 }
 .login-password-mask-character[data-selected] {
   background: var(--t-nav-selected);
