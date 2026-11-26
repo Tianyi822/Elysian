@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"sync"
+	"time"
 
 	"elysian/server/internal/contract"
 	"elysian/server/internal/seam"
@@ -207,12 +208,18 @@ func (s *dockerService) removeWithGuard(ctx context.Context, id string, guard se
 	if status != http.StatusOK && status != http.StatusNoContent {
 		return fmt.Errorf("容器删除失败（HTTP %d）：%s", status, engineErrorMessage(value, "未知错误"))
 	}
+	if s.deps.containerFirewall != nil {
+		cleanupCtx, cancel := context.WithTimeout(context.WithoutCancel(ctx), 5*time.Second)
+		defer cancel()
+		// The runtime also reconciles after external deletions and transient failures.
+		_ = s.deps.containerFirewall.Reconcile(cleanupCtx)
+	}
 	return nil
 }
 
 // Create 创建并启动容器：全局串行 → 并发列表 → buildCreateSpec → 逐级 mkdir →
 // create → start（失败撤销，撤销也失败时附容器 ID）→ inspect。
-func (s *dockerService) Create(ctx context.Context, body any) (contract.Container, error) {
+func (s *dockerService) Create(ctx context.Context, body any) (contract.ContainerCreateResult, error) {
 	s.createMu.Lock()
 	defer s.createMu.Unlock()
 
@@ -221,18 +228,18 @@ func (s *dockerService) Create(ctx context.Context, body any) (contract.Containe
 		"容器",
 		func(_, inspect any) (any, error) { return mapContainer(inspect) })
 	if err != nil {
-		return contract.Container{}, err
+		return contract.ContainerCreateResult{}, err
 	}
 	images, err := s.imagesFromList(ctx)
 	if err != nil {
-		return contract.Container{}, err
+		return contract.ContainerCreateResult{}, err
 	}
 
 	containers := make([]containerBrief, 0, len(containersValues))
 	for _, value := range containersValues {
 		container, ok := value.(contract.Container)
 		if !ok {
-			return contract.Container{}, errors.New("容器详情格式无效：根对象必须是对象")
+			return contract.ContainerCreateResult{}, errors.New("容器详情格式无效：根对象必须是对象")
 		}
 		brief := containerBrief{name: container.Name}
 		for _, port := range container.Ports {
@@ -254,31 +261,31 @@ func (s *dockerService) Create(ctx context.Context, body any) (contract.Containe
 		realpath:      s.deps.realpath,
 	})
 	if err != nil {
-		return contract.Container{}, err
+		return contract.ContainerCreateResult{}, err
 	}
 
 	for _, dir := range spec.mkdirPaths {
 		if err := s.deps.mkdir(dir, 0o755); err != nil {
-			return contract.Container{}, err
+			return contract.ContainerCreateResult{}, err
 		}
 	}
 
 	createStatus, createValue, err := s.engineJSON(ctx, http.MethodPost, "/containers/create", url.Values{"name": {spec.name}}, spec.createBody, actionTimeout)
 	if err != nil {
-		return contract.Container{}, err
+		return contract.ContainerCreateResult{}, err
 	}
 	if createStatus < 200 || createStatus >= 300 {
-		return contract.Container{}, fmt.Errorf("创建容器失败（HTTP %d）：%s", createStatus, engineErrorMessage(createValue, "未知错误"))
+		return contract.ContainerCreateResult{}, fmt.Errorf("创建容器失败（HTTP %d）：%s", createStatus, engineErrorMessage(createValue, "未知错误"))
 	}
 
 	containerID, err := requireCreateID(createValue)
 	if err != nil {
-		return contract.Container{}, err
+		return contract.ContainerCreateResult{}, err
 	}
 
 	startStatus, startValue, err := s.engineJSON(ctx, http.MethodPost, "/containers/"+encodeEngineID(containerID)+"/start", nil, nil, actionTimeout)
 	if err != nil {
-		return contract.Container{}, err
+		return contract.ContainerCreateResult{}, err
 	}
 	if startStatus != http.StatusOK && startStatus != http.StatusNoContent && startStatus != http.StatusNotModified {
 		reason := engineErrorMessage(startValue, fmt.Sprintf("HTTP %d", startStatus))
@@ -288,14 +295,45 @@ func (s *dockerService) Create(ctx context.Context, body any) (contract.Containe
 		if !deleted {
 			message += fmt.Sprintf("且撤销失败，容器 ID 为 %s", containerID)
 		}
-		return contract.Container{}, &shared.InvalidRequestError{Status: http.StatusBadRequest, Message: message}
+		return contract.ContainerCreateResult{}, &shared.InvalidRequestError{Status: http.StatusBadRequest, Message: message}
 	}
 
 	inspect, err := s.inspectContainerByID(ctx, containerID, actionTimeout)
 	if err != nil {
-		return contract.Container{}, err
+		return contract.ContainerCreateResult{}, err
 	}
-	return mapContainer(inspect)
+	container, err := mapContainer(inspect)
+	if err != nil {
+		return contract.ContainerCreateResult{}, err
+	}
+	created := contract.ContainerCreateResult{Container: container}
+	var bindings []contract.DockerPublishedPort
+	var bindingErr error
+	if s.deps.containerFirewall != nil {
+		bindings, bindingErr = inspectPortBindings(container.ID, inspect, false)
+	}
+	for _, port := range spec.ports {
+		if !port.allowFirewall {
+			continue
+		}
+		result := contract.ContainerFirewallResult{Port: port.hostPort, Protocol: port.protocol}
+		switch {
+		case bindingErr != nil || container.ID != containerID || container.Status != "running":
+			result.State, result.Detail = "unknown", "无法确认容器正在发布此端口"
+		case s.deps.containerFirewall == nil:
+			result.State, result.Detail = "skipped", "当前运行模式不支持宿主防火墙联动"
+		default:
+			result.State, result.Detail = "unknown", "Docker 未确认请求中的宿主端口绑定"
+			for _, binding := range bindings {
+				if binding.HostPort == port.hostPort && binding.ContainerPort == port.containerPort && binding.Protocol == port.protocol && binding.HostIP == port.hostIP {
+					result.State, result.Detail = s.deps.containerFirewall.Allow(ctx, binding)
+					break
+				}
+			}
+		}
+		created.FirewallResults = append(created.FirewallResults, result)
+	}
+	return created, nil
 }
 
 // Pull 拉取镜像：单飞 → 已存在拒 → 镜像源校验（内嵌/显式互斥）→ Engine 拉取

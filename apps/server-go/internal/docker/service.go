@@ -59,14 +59,15 @@ var (
 
 // serviceDeps service 的注入依赖（真实装配与测试替身共用一套形状）。
 type serviceDeps struct {
-	transport       seam.DockerTransport
-	mountRoot       string
-	reservedPorts   []int
-	selfContainerID string
-	panelRuntime    string
-	onRestarting    func(containerID string)
-	mkdir           func(path string, mode os.FileMode) error
-	realpath        func(path string) (string, error)
+	containerFirewall seam.ContainerFirewall
+	transport         seam.DockerTransport
+	mountRoot         string
+	reservedPorts     []int
+	selfContainerID   string
+	panelRuntime      string
+	onRestarting      func(containerID string)
+	mkdir             func(path string, mode os.FileMode) error
+	realpath          func(path string) (string, error)
 	// resolveRegistry 返回 hostname 的全部解析地址；真实实现带 3s 超时包裹。
 	resolveRegistry      func(ctx context.Context, hostname string) ([]string, error)
 	fetchCatalog         catalogFetcher

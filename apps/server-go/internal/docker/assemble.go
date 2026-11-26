@@ -27,7 +27,8 @@ type Deps struct {
 	Now          func() time.Time
 
 	// PortOpener 幂等开口接缝；nil 时 any-host 档回执标 skipped（与 NoopPortOpener 同语义）。
-	PortOpener seam.PortOpener
+	PortOpener        seam.PortOpener
+	ContainerFirewall seam.ContainerFirewall
 	// AgentCredentialsPath 是 service-v1 凭据登记文件；空串时服务容器创建报未装配。
 	AgentCredentialsPath string
 	AgentOperationRoot   string
@@ -84,12 +85,13 @@ func Assemble(deps Deps) (Stack, error) {
 	selfID := resolveSelfContainerIDFromEngine(transport)
 	hub := newEventsHub(eventsHubConfig{transport: transport, selfID: selfID, now: now})
 	service := newDockerService(serviceDeps{
-		transport:       transport,
-		mountRoot:       mountRoot,
-		reservedPorts:   assemblyReservedPorts(deps.ReservedPorts),
-		selfContainerID: selfID,
-		panelRuntime:    detectPanelRuntime(selfID, deps.Mode == config.ModeDocker),
-		onRestarting:    func(containerID string) { hub.NotifyRestarting(containerID) },
+		transport:         transport,
+		containerFirewall: deps.ContainerFirewall,
+		mountRoot:         mountRoot,
+		reservedPorts:     assemblyReservedPorts(deps.ReservedPorts),
+		selfContainerID:   selfID,
+		panelRuntime:      detectPanelRuntime(selfID, deps.Mode == config.ModeDocker),
+		onRestarting:      func(containerID string) { hub.NotifyRestarting(containerID) },
 		mkdir: func(path string, mode os.FileMode) error {
 			return os.Mkdir(path, mode)
 		},

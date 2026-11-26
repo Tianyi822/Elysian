@@ -9,6 +9,7 @@ import (
 	"testing"
 	"time"
 
+	"elysian/server/internal/contract"
 	"elysian/server/internal/seam"
 	"elysian/server/internal/shared"
 )
@@ -377,6 +378,50 @@ func TestCreateOrderAndBody(t *testing.T) {
 	}
 	if !sawCreate {
 		t.Fatal("未发 create")
+	}
+}
+
+type recordingContainerFirewall struct {
+	seam.ContainerFirewall
+	allowed []contract.DockerPublishedPort
+}
+
+func (p *recordingContainerFirewall) Allow(_ context.Context, binding contract.DockerPublishedPort) (string, string) {
+	p.allowed = append(p.allowed, binding)
+	return "failed", "放行未确认"
+}
+
+func TestCreateChecksPublishedBindingBeforeOpeningFirewall(t *testing.T) {
+	id := strings.Repeat("e", 64)
+	base := createScript(201, 204)
+	engine := newFakeEngine(func(call engineCall) (int, string, bool) {
+		if call.Path == "/containers/"+id+"/json" {
+			inspect := strings.Replace(containerInspectForStatus("running"), strings.Repeat("c", 64), id, 1)
+			inspect = strings.Replace(inspect, `"HostConfig":{}`, `"HostConfig":{},
+				"NetworkSettings":{"Ports":{"80/tcp":[{"HostIp":"0.0.0.0","HostPort":"18080"}]}}`, 1)
+			return 200, inspect, true
+		}
+		return base(call)
+	})
+	policy := &recordingContainerFirewall{}
+	service := newService(engine, nil)
+	service.deps.containerFirewall = policy
+	input := mustDecode(t, `{"imageId":"sha256:`+imageIDConst+`","ports":[
+		{"containerPort":80,"hostPort":18080,"hostIp":"0.0.0.0","allowFirewall":true},
+		{"containerPort":81,"hostPort":18081,"hostIp":"0.0.0.0","allowFirewall":true}
+	]}`)
+	created, err := service.Create(context.Background(), input)
+	if err != nil || created.ID != id || len(created.FirewallResults) != 2 {
+		t.Fatalf("created: %+v, %v", created, err)
+	}
+	if len(policy.allowed) != 1 || policy.allowed[0].HostPort != 18080 || created.FirewallResults[0].State != "failed" ||
+		created.FirewallResults[1].State != "unknown" {
+		t.Fatalf("allowed: %+v, results: %+v", policy.allowed, created.FirewallResults)
+	}
+	for _, call := range engine.Requests() {
+		if call.Path == "/containers/create" && strings.Contains(call.Body, "allowFirewall") {
+			t.Fatal("panel-only option forwarded to Docker")
+		}
 	}
 }
 
