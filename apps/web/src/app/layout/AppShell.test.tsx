@@ -87,6 +87,10 @@ describe('模板外壳', () => {
           },
           async removeSqlite() {},
           async removeContainer() {},
+          async adopt() {
+            throw new Error('本用例不接管数据库')
+          },
+          async releaseAdoption() {},
           async reveal() {
             throw new Error('本用例不读取凭据')
           },

@@ -70,10 +70,19 @@ export function createHttpDatabaseAdapter(): DatabaseAdapter {
     async removeSqlite(id) {
       await request(`/sqlite/${encodeURIComponent(id)}`, { method: 'DELETE', body: JSON.stringify({ confirm: 'DELETE_SQLITE_FILE' }) })
     },
+    adopt: (id, credentials) => request<DatabaseContainerInstance>(`/${encodeURIComponent(id)}/adopt`, { method: 'POST', body: JSON.stringify(credentials) }),
+    async releaseAdoption(id) {
+      await request(`/${encodeURIComponent(id)}/adoption`, { method: 'DELETE' })
+    },
     async removeContainer(id) {
       await request(`/${encodeURIComponent(id)}/container`, { method: 'DELETE', body: JSON.stringify({ confirm: 'DELETE_CONTAINER_AND_DATA' }) })
     },
-    reveal: (id) => request(`/${encodeURIComponent(id)}/reveal`, { method: 'POST' }),
+    reveal: (id, target) => {
+      const query = target
+        ? `?${new URLSearchParams({ database: target.database, username: target.username }).toString()}`
+        : ''
+      return request(`/${encodeURIComponent(id)}/reveal${query}`, { method: 'POST' })
+    },
     reconcile: (id) => request(`/${encodeURIComponent(id)}/reconcile`, { method: 'POST' }),
     reconcileSqlite: (id) => request(`/sqlite/${encodeURIComponent(id)}/reconcile`, { method: 'POST' }),
     async forget(id) { await request(`/${encodeURIComponent(id)}/registration`, { method: 'DELETE' }) },

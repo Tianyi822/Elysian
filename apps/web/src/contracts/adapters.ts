@@ -270,8 +270,18 @@ export interface DatabaseAdapter {
   removeSqlite(fileId: string): Promise<void>
   /** 删除数据库容器及其专属卷，并清整组登记；服务端核验容器与卷五元标签、镜像与挂载。 */
   removeContainer(containerId: string): Promise<void>
-  /** 读取面板创建容器时初始化的管理员凭据；只直读登记，不做任何登录验证。 */
-  reveal(containerId: string): Promise<{ username: string; password: string }>
+  /**
+   * 读取面板登记的凭据；只直读登记，不做任何登录验证。省略 target 时返回实例的管理员凭据，
+   * 给出时返回 Agent 在该实例里创建的某个逻辑库用户的凭据。
+   */
+  reveal(containerId: string, target?: { database: string; username: string }): Promise<{ username: string; password: string }>
+  /**
+   * 用用户填写的管理员凭据核验后接管自装容器：只登记，不改容器与数据。
+   * 核验失败时抛中文错误，不留下登记。
+   */
+  adopt(containerId: string, credentials: { username: string; password: string }): Promise<DatabaseContainerInstance>
+  /** 解除接管：只删登记，不动容器与数据；受管实例拒绝。 */
+  releaseAdoption(containerId: string): Promise<void>
   /** 纯 Docker 事实核对容器行（容器存在、运行中、镜像匹配、专属卷挂载）；通过后清除 needs-attention。 */
   reconcile(containerId: string): Promise<DatabaseContainerInstance>
   /** 核对 SQLite 文件行。 */

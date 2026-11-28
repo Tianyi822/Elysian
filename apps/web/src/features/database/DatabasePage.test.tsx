@@ -203,6 +203,22 @@ function pageGateway(overrides: Partial<ElysianGateway['databases']> = {}): {
       const index = sqliteRows.findIndex((row) => row.id === fileId)
       if (index >= 0) sqliteRows.splice(index, 1)
     },
+    async adopt(containerId, credentials) {
+      const row = containerRows.find((item) => item.id === containerId)
+      if (!row) throw new Error('数据库容器已不存在')
+      row.source = 'adopted'
+      row.credentialUsername = credentials.username
+      row.credentialsVerified = true
+      return structuredClone(row)
+    },
+    async releaseAdoption(containerId) {
+      const row = containerRows.find((item) => item.id === containerId)
+      if (row) {
+        row.source = undefined
+        row.credentialUsername = undefined
+        row.credentialsVerified = false
+      }
+    },
     async removeContainer(containerId) {
       const index = containerRows.findIndex((row) => row.id === containerId)
       if (index >= 0) containerRows.splice(index, 1)

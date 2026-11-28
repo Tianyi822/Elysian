@@ -12,6 +12,7 @@ import { useDatabaseStore } from '../../stores/databaseStore'
 import { useMessageStore } from '../../stores/messageStore'
 import { captureAuthGeneration } from '../../utils/authGeneration'
 import { messageOf } from '../../utils/errorMessage'
+import { DatabaseAdoptDialog } from './DatabaseAdoptDialog'
 import { DatabaseMark, FileStat } from './databaseCardParts'
 import type { DatabaseCardView } from './projectDatabaseCard'
 
@@ -40,6 +41,8 @@ export function DatabaseContainerCard({
 }) {
   const gateway = useGateway()
   const [confirmRemove, setConfirmRemove] = useState(false)
+  const [adopting, setAdopting] = useState(false)
+  const [confirmRelease, setConfirmRelease] = useState(false)
   const [actionError, setActionError] = useState('')
   const [powerBusy, setPowerBusy] = useState(false)
   useFeedbackMessage(actionError)
@@ -70,6 +73,19 @@ export function DatabaseContainerCard({
     }
   }
 
+  // 逻辑库用户的凭据按「库 + 用户」读取：与管理员凭据分开登记，不能拿管理员密码顶替。
+  const copyLogicalCredential = async (database: string, username: string, field: 'username' | 'password') => {
+    const auth = captureAuthGeneration()
+    try {
+      const secret = await gateway.databases.reveal(row.id, { database, username })
+      if (auth !== captureAuthGeneration()) return
+      await copyCredential(secret[field], `${database} 的用户 ${username} 的${field === 'username' ? '用户名' : '密码'}`)
+      if (auth === captureAuthGeneration()) setActionError('')
+    } catch (error) {
+      if (auth === captureAuthGeneration()) setActionError(`读取数据库用户凭据失败：${messageOf(error, '未知原因')}`)
+    }
+  }
+
   const powerAction: 'start' | 'stop' = row.status === 'running' ? 'stop' : 'start'
   const togglePower = async () => {
     const auth = captureAuthGeneration()
@@ -84,6 +100,22 @@ export function DatabaseContainerCard({
       if (auth === captureAuthGeneration()) setActionError(messageOf(error, '容器操作失败'))
     } finally {
       if (auth === captureAuthGeneration()) setPowerBusy(false)
+    }
+  }
+
+  // 接管只对未登记但凭据未知的运行中容器开放；已接管的可解除；受管实例两者都不需要。
+  const canAdopt = row.source === undefined && !row.credentialsVerified && row.status === 'running'
+  const canRelease = row.source === 'adopted'
+  const releaseAdoption = async () => {
+    const auth = captureAuthGeneration()
+    setActionError('')
+    try {
+      await gateway.databases.releaseAdoption(row.id)
+      if (auth !== captureAuthGeneration()) return
+      useMessageStore.getState().notify({ tone: 'success', message: `已解除接管容器 ${row.name}，容器与数据未改动` })
+      await useDatabaseStore.getState().refreshAfterMutation(gateway, 'container')
+    } catch (error) {
+      if (auth === captureAuthGeneration()) setActionError(messageOf(error, '解除接管失败'))
     }
   }
 
@@ -171,6 +203,33 @@ export function DatabaseContainerCard({
               </dd>
             </div>
           </dl>
+          {/* 逻辑库与专属用户来自面板登记；用户名直接显示，密码只在点击复制时按需读取。 */}
+          {row.databases && row.databases.length > 0 ? (
+            <section aria-label="数据库" className="rounded-lg border border-line p-2.5">
+              <h4 className="text-xs text-fg-subtle">数据库</h4>
+              <ul className="mt-1.5 space-y-2">
+                {row.databases.map((database) => (
+                  <li key={database.id}>
+                    <div role="group" aria-label={`数据库 ${database.name}`} className="space-y-1">
+                      <div className="flex min-w-0 items-center gap-2">
+                        <span className="truncate font-mono text-xs text-fg">{database.name}</span>
+                        {database.state === 'pending' ? <StatusTag label="待确认" tone="warning" /> : null}
+                      </div>
+                      <ul className="space-y-1">
+                        {database.users.map((username) => (
+                          <li key={username} className="flex flex-wrap items-center gap-1.5">
+                            <span className="text-xs text-fg-muted">{username}</span>
+                            <Button variant="outline" type="button" onClick={() => void copyLogicalCredential(database.name, username, 'username')} title="从服务端读取并复制该数据库用户的用户名" className="rounded border border-line px-2 py-0.5 text-xs">复制用户名</Button>
+                            <Button variant="outline" type="button" onClick={() => void copyLogicalCredential(database.name, username, 'password')} title="从服务端读取并复制该数据库用户的密码" className="rounded border border-line px-2 py-0.5 text-xs">复制密码</Button>
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  </li>
+                ))}
+              </ul>
+            </section>
+          ) : null}
           {row.needsAttention ? <div className="rounded-lg border border-warning/40 p-2 text-xs text-warning"><p>容器尚未核对完成。修复容器后可重新核对；不再使用时可删除容器及数据。</p><div className="mt-2 flex gap-2"><Button variant="outline" type="button" onClick={() => void performAction(() => gateway.databases.reconcile(row.id), `数据库容器 ${row.name} 已重新核对`)} className="rounded border border-line px-2 py-1">重新核对</Button></div></div> : null}
         </>
       )}
@@ -185,6 +244,8 @@ export function DatabaseContainerCard({
           </>
         ) : null}
         <div className="ml-auto flex shrink-0 items-center gap-2">
+          {canAdopt ? <Button variant="outline" type="button" onClick={() => setAdopting(true)} title="填写容器里的管理员凭据并核验后接管，Agent 才能复用它建库" className="rounded border border-line px-2 py-1.5 text-xs">接管</Button> : null}
+          {canRelease ? <Button variant="outline" type="button" onClick={() => setConfirmRelease(true)} title="只解除面板登记，容器与数据保持原样" className="rounded border border-line px-2 py-1.5 text-xs">解除接管</Button> : null}
           {!missing ? <Button variant="outline"
             type="button"
             onClick={() => void togglePower()}
@@ -196,6 +257,17 @@ export function DatabaseContainerCard({
           {missing || hasManagedVolume ? <Button variant="destructive" type="button" onClick={() => setConfirmRemove(true)} disabled={removing} className="rounded-lg border border-danger/40 px-2 py-1.5 text-xs text-danger">{removeLabel}</Button> : null}
         </div>
       </div>
+      {adopting ? <DatabaseAdoptDialog containerId={row.id} name={row.name} engine={row.engine} onClose={() => setAdopting(false)} /> : null}
+      {confirmRelease ? (
+        <ConfirmDialog
+          title="解除接管？"
+          description={<p className="mt-2 text-xs text-fg-muted">将删除面板对该容器的登记与凭据，容器与数据保持原样。Agent 之后不能再复用它建库，需要时可在数据库页重新接管。</p>}
+          confirmLabel="确认解除接管"
+          cancelClassName="rounded border border-line px-3 py-1.5 text-xs"
+          onClose={() => setConfirmRelease(false)}
+          onConfirm={() => { setConfirmRelease(false); void releaseAdoption() }}
+        />
+      ) : null}
       {confirmRemove ? (
         <ConfirmDialog
           title={missing ? `${removeLabel}？` : '删除容器及全部数据？'}
