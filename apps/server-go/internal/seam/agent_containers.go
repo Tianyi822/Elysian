@@ -37,12 +37,16 @@ type AgentWebsiteContainers interface {
 // mutation. Only the accepted worker may exclude its own immutable request ID.
 type ContainerOperationGuard func(ctx context.Context, containerID, containerName, ownRequestID string) error
 
+// ContainerMutationLease reserves a canonical target until its caller completes the mutation.
+type ContainerMutationLease func(ctx context.Context, containerID, containerName string) (release func(), err error)
+
 // AgentContainerError carries only reviewed local error text across domains.
 type AgentContainerError struct {
 	Code          string
 	Message       string
 	NotDispatched bool
-	// NoBusinessEffect means an accepted task failed before its first mutation.
+	// NoBusinessEffect means the accepted task left no business change: it either
+	// failed before its first mutation or rolled back and the rollback was verified.
 	NoBusinessEffect bool
 }
 
