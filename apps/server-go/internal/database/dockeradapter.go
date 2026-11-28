@@ -85,11 +85,13 @@ func databaseImageHasTag(image contract.ContainerImage, engine, tag string) bool
 
 func stripSha256Prefix(id string) string { return strings.TrimPrefix(id, "sha256:") }
 
-// dockerAPI 是 Engine 适配器。
+// dockerAPI 是 Engine 适配器。now 与 sleep 只服务于实例就绪等待，测试注入虚拟时钟。
 type dockerAPI struct {
 	transport     seam.DockerTransport
 	listImages    func(ctx context.Context) ([]contract.ContainerImage, error)
 	reservedPorts []int
+	now           func() time.Time
+	sleep         func(context.Context, time.Duration) error
 }
 
 func newDockerAPI(transport seam.DockerTransport, listImages func(ctx context.Context) ([]contract.ContainerImage, error), ports ...[]int) *dockerAPI {
@@ -97,7 +99,19 @@ func newDockerAPI(transport seam.DockerTransport, listImages func(ctx context.Co
 	if len(ports) > 0 && len(ports[0]) > 0 {
 		reserved = ports[0]
 	}
-	return &dockerAPI{transport: transport, listImages: listImages, reservedPorts: reserved}
+	return &dockerAPI{transport: transport, listImages: listImages, reservedPorts: reserved, now: time.Now, sleep: sleepContext}
+}
+
+// sleepContext 等待一段时间或直到上下文结束。
+func sleepContext(ctx context.Context, d time.Duration) error {
+	timer := time.NewTimer(d)
+	defer timer.Stop()
+	select {
+	case <-ctx.Done():
+		return ctx.Err()
+	case <-timer.C:
+		return nil
+	}
 }
 
 // request 发一次 Engine 请求并返回响应。
@@ -212,15 +226,15 @@ func (d *dockerAPI) ensureNetwork(ctx context.Context, network string) error {
 	}
 	response, err := d.request(ctx, "GET", "/networks/"+url.PathEscape(network), nil, nil)
 	if err != nil {
-		return err
+		return &instanceCreatePreflightError{errors.New("读取面板数据库网络失败，未创建实例")}
 	}
 	if response.Status == 200 {
 		return nil
 	}
 	if response.Status != 404 {
-		return errors.New("读取面板数据库网络失败")
+		return &instanceCreatePreflightError{errors.New("读取面板数据库网络失败，未创建实例")}
 	}
-	created, err := d.request(ctx, "POST", "/networks/create", nil, map[string]any{"Name": network, "Driver": "bridge"})
+	created, err := d.provisionRequest(ctx, provisionWrite{Stage: "create-network"}, "POST", "/networks/create", nil, map[string]any{"Name": network, "Driver": "bridge"})
 	if err != nil {
 		return err
 	}
@@ -229,6 +243,8 @@ func (d *dockerAPI) ensureNetwork(ctx context.Context, network string) error {
 	}
 	return nil
 }
+
+type instanceCreatePreflightError struct{ error }
 
 // createInput 创建数据库容器的全部入参。
 type createInput struct {
@@ -239,6 +255,12 @@ type createInput struct {
 	accessScope   string
 	hostPort      *int
 	bootstrapPwd  string
+	onCreated     func(id, volume string) error
+	// 资源档位：零值表示不设上限（页面创建路径），Agent 部署路径按 shared.ResourceTiers 传入。
+	memoryBytes int64
+	nanoCpus    int64
+	pidsLimit   int
+	tier        string
 }
 
 // createResult 容器与专属卷的创建产物。
@@ -297,6 +319,23 @@ type containerCreateSpec struct {
 	Env              []string                  `json:"Env,omitempty"`
 }
 
+// provisionRequest journals an Engine write for the Agent path. The page path
+// uses the same transport with no provision journal attached.
+func (d *dockerAPI) provisionRequest(ctx context.Context, write provisionWrite, method, path string, query url.Values, body any) (seam.EngineResponse, error) {
+	if err := ctx.Err(); err != nil {
+		return seam.EngineResponse{}, err
+	}
+	if err := recordProvisionWrite(ctx, write); err != nil {
+		return seam.EngineResponse{}, err
+	}
+	reply, err := d.request(ctx, method, path, query, body)
+	if err != nil {
+		return reply, err
+	}
+	write.Finished = true
+	return reply, recordProvisionWrite(ctx, write)
+}
+
 // create 建卷、建容器并启动；容器创建失败回滚删卷。
 func (d *dockerAPI) create(ctx context.Context, input createInput) (createResult, error) {
 	engine, versionTag, imageID, containerName, accessScope := input.engine, input.versionTag, input.imageID, input.containerName, input.accessScope
@@ -323,7 +362,7 @@ func (d *dockerAPI) create(ctx context.Context, input createInput) (createResult
 	}
 	images, err := d.listImages(ctx)
 	if err != nil {
-		return createResult{}, err
+		return createResult{}, &instanceCreatePreflightError{errors.New("读取本机镜像清单失败，未创建实例")}
 	}
 	found := false
 	for _, image := range images {
@@ -343,7 +382,7 @@ func (d *dockerAPI) create(ctx context.Context, input createInput) (createResult
 	if err := d.ensureNetwork(ctx, network); err != nil {
 		return createResult{}, err
 	}
-	volume, err := d.request(ctx, "POST", "/volumes/create", nil, map[string]any{
+	volume, err := d.provisionRequest(ctx, provisionWrite{Stage: "create-volume", Volume: volumeName}, "POST", "/volumes/create", nil, map[string]any{
 		"Name": volumeName,
 		"Labels": map[string]string{
 			"elysian.database":         "true",
@@ -372,6 +411,9 @@ func (d *dockerAPI) create(ctx context.Context, input createInput) (createResult
 		}},
 		RestartPolicy: restartPolicySpec{Name: "unless-stopped"},
 		NetworkMode:   network,
+		Memory:        input.memoryBytes,
+		NanoCpus:      input.nanoCpus,
+		PidsLimit:     input.pidsLimit,
 	}
 	if accessScope != scopeContainerNet {
 		hostIP := "0.0.0.0"
@@ -386,15 +428,19 @@ func (d *dockerAPI) create(ctx context.Context, input createInput) (createResult
 			portKey: {{HostIP: hostIP, HostPort: hostPortValue}},
 		}
 	}
+	labels := map[string]string{
+		"elysian.managed":          "true",
+		"elysian.database":         "true",
+		"elysian.database.engine":  engine,
+		"elysian.database.version": versionTag,
+		"elysian.database.volume":  volumeName,
+	}
+	if input.tier != "" {
+		labels["elysian.database.tier"] = input.tier
+	}
 	spec := containerCreateSpec{
-		Image: engineRepository[engine] + ":" + versionTag,
-		Labels: map[string]string{
-			"elysian.managed":          "true",
-			"elysian.database":         "true",
-			"elysian.database.engine":  engine,
-			"elysian.database.version": versionTag,
-			"elysian.database.volume":  volumeName,
-		},
+		Image:            engineRepository[engine] + ":" + versionTag,
+		Labels:           labels,
 		HostConfig:       hostConfig,
 		NetworkingConfig: networkingConfigSpec{EndpointsConfig: map[string]networkEndpointSpec{network: {}}},
 		ExposedPorts:     map[string]map[string]any{portKey: {}},
@@ -410,7 +456,7 @@ func (d *dockerAPI) create(ctx context.Context, input createInput) (createResult
 	}
 	query := url.Values{}
 	query.Set("name", containerName)
-	created, err := d.request(ctx, "POST", "/containers/create", query, spec)
+	created, err := d.provisionRequest(ctx, provisionWrite{Stage: "create-container", Volume: volumeName}, "POST", "/containers/create", query, spec)
 	if err != nil {
 		return createResult{}, err
 	}
@@ -424,9 +470,17 @@ func (d *dockerAPI) create(ctx context.Context, input createInput) (createResult
 		_, _ = d.request(ctx, "DELETE", "/volumes/"+url.PathEscape(volumeName), nil, nil)
 		return createResult{}, errors.New("创建数据库容器失败")
 	}
-	startResp, err := d.request(ctx, "POST", "/containers/"+url.PathEscape(containerID)+"/start", nil, nil)
+	if !containerIDPattern.MatchString(containerID) {
+		return createResult{}, errors.New("数据库容器身份未得到确认")
+	}
+	if input.onCreated != nil {
+		if err := input.onCreated(containerID, volumeName); err != nil {
+			return createResult{containerID: containerID, volumeName: volumeName}, err
+		}
+	}
+	startResp, err := d.provisionRequest(ctx, provisionWrite{Stage: "start-container", Volume: volumeName, InstanceID: containerID}, "POST", "/containers/"+url.PathEscape(containerID)+"/start", nil, nil)
 	if err != nil {
-		return createResult{}, err
+		return createResult{containerID: containerID, volumeName: volumeName}, err
 	}
 	started := startResp.Status == 204 || startResp.Status == 200
 	failure := ""
@@ -453,11 +507,14 @@ func startFailureReason(body []byte, network string) string {
 
 // redisACLCommand 生成 Redis 启动命令：ACL 文件先写进持久卷再启动服务。
 // ACL 里 default 用户密码为 sha256 hex（#hash 形态），容器配置不含明文。
+// 容器每次启动都会重新执行这条命令，所以初始 ACL 文件只在缺失时写入：否则一次重启就会
+// 抹掉之后在该实例里创建的全部用户（ACL SAVE 落盘的内容），而面板登记仍声称它们存在。
+// 已存在非空文件时跳过写入；缺失时写入失败则不启动服务（与原先的 && 语义一致）。
 func redisACLCommand(bootstrapPassword string) []string {
 	adminHash := sha256.Sum256([]byte(bootstrapPassword))
 	acl := "user default on #" + hex.EncodeToString(adminHash[:]) + " ~* &* +@all\n"
 	encoded := base64.StdEncoding.EncodeToString([]byte(acl))
-	return []string{"sh", "-c", fmt.Sprintf("printf '%%s' '%s' | base64 -d > /data/users.acl && exec redis-server --appendonly yes --aclfile /data/users.acl", encoded)}
+	return []string{"sh", "-c", fmt.Sprintf("[ -s /data/users.acl ] || printf '%%s' '%s' | base64 -d > /data/users.acl && exec redis-server --appendonly yes --aclfile /data/users.acl", encoded)}
 }
 
 // removeManaged 停止并删除面板受管容器与专属卷；容器与卷都已消失时幂等返回。
@@ -495,7 +552,7 @@ func (d *dockerAPI) removeManaged(ctx context.Context, containerID, volumeName, 
 		return shared.Conflict("数据库持久卷身份核对失败")
 	}
 	if info == nil {
-		removedVolume, err := d.request(ctx, "DELETE", "/volumes/"+url.PathEscape(volumeName), nil, nil)
+		removedVolume, err := d.provisionRequest(ctx, provisionWrite{Stage: "rollback-remove-volume", InstanceID: containerID, Volume: volumeName}, "DELETE", "/volumes/"+url.PathEscape(volumeName), nil, nil)
 		if err != nil {
 			return err
 		}
@@ -546,7 +603,7 @@ func (d *dockerAPI) removeManaged(ctx context.Context, containerID, volumeName, 
 	if inspectRunning(info) {
 		query := url.Values{}
 		query.Set("t", "10")
-		stopped, err := d.request(ctx, "POST", "/containers/"+url.PathEscape(containerID)+"/stop", query, nil)
+		stopped, err := d.provisionRequest(ctx, provisionWrite{Stage: "rollback-stop-container", InstanceID: containerID, Volume: volumeName}, "POST", "/containers/"+url.PathEscape(containerID)+"/stop", query, nil)
 		if err != nil {
 			return err
 		}
@@ -556,19 +613,70 @@ func (d *dockerAPI) removeManaged(ctx context.Context, containerID, volumeName, 
 	}
 	query := url.Values{}
 	query.Set("v", "false")
-	removed, err := d.request(ctx, "DELETE", "/containers/"+url.PathEscape(containerID), query, nil)
+	removed, err := d.provisionRequest(ctx, provisionWrite{Stage: "rollback-remove-container", InstanceID: containerID, Volume: volumeName}, "DELETE", "/containers/"+url.PathEscape(containerID), query, nil)
 	if err != nil {
 		return err
 	}
 	if removed.Status != 204 {
 		return errors.New("删除数据库容器失败")
 	}
-	removedVolume, err := d.request(ctx, "DELETE", "/volumes/"+url.PathEscape(volumeName), nil, nil)
+	removedVolume, err := d.provisionRequest(ctx, provisionWrite{Stage: "rollback-remove-volume", InstanceID: containerID, Volume: volumeName}, "DELETE", "/volumes/"+url.PathEscape(volumeName), nil, nil)
 	if err != nil {
 		return err
 	}
 	if removedVolume.Status != 204 {
 		return errors.New("数据库容器已删除，但持久卷删除失败")
+	}
+	return nil
+}
+
+// assertHostPortFree 核对宿主 TCP 端口没有被运行中的容器占用（Any-host 实例受理前）。
+func (d *dockerAPI) assertHostPortFree(ctx context.Context, port int) error {
+	response, err := d.request(ctx, "GET", "/containers/json", nil, nil)
+	if err != nil {
+		return err
+	}
+	if response.Status != 200 {
+		return errors.New("查询宿主端口占用失败")
+	}
+	var entries []map[string]any
+	if json.Unmarshal(response.Body, &entries) != nil {
+		return errors.New("容器清单格式无效")
+	}
+	for _, entry := range entries {
+		ports, _ := entry["Ports"].([]any)
+		for _, item := range ports {
+			binding, _ := item.(map[string]any)
+			if binding == nil || binding["Type"] != "tcp" {
+				continue
+			}
+			if public, ok := asFloat(field(obj(binding), "PublicPort")); ok && int(public) == port {
+				return shared.InvalidRequest("宿主端口已被占用：" + strconv.Itoa(port) + "/tcp，未创建实例；请与用户确认更换端口或释放该端口")
+			}
+		}
+	}
+	return nil
+}
+
+// verifyRemoved 回读确认容器与卷都已消失（404）。卷名缺省时只核对容器。
+func (d *dockerAPI) verifyRemoved(ctx context.Context, containerID, volumeName string) error {
+	if _, err := d.inspect(ctx, containerID); err == nil {
+		return errors.New("容器回读仍然存在，回滚未确认")
+	} else {
+		var invalid *shared.InvalidRequestError
+		if !errors.As(err, &invalid) || invalid.Status != 404 {
+			return err
+		}
+	}
+	if volumeName == "" {
+		return nil
+	}
+	response, err := d.request(ctx, "GET", "/volumes/"+url.PathEscape(volumeName), nil, nil)
+	if err != nil {
+		return err
+	}
+	if response.Status != 404 {
+		return errors.New("持久卷回读仍然存在，回滚未确认")
 	}
 	return nil
 }

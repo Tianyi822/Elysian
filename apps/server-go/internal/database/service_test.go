@@ -6,6 +6,7 @@ import (
 	"errors"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 	"sync"
 	"testing"
@@ -19,16 +20,19 @@ import (
 
 // fakeDocker 实现 dockerBackend 的假件（纯 Docker 事实，无任何协议方法）。
 type fakeDocker struct {
-	mu             sync.Mutex
-	inspectFn      func(ctx context.Context, id string) (map[string]any, error)
-	assertEngineFn func(ctx context.Context, id, engine, versionTag string) (map[string]any, error)
-	memoryFn       func(ctx context.Context, id string) (*memoryView, error)
-	createCalls    []createInput
-	createResult   createResult
-	createErr      error
-	createFn       func(createInput) (createResult, error)
-	removeCalls    []string
-	removeErr      error
+	mu               sync.Mutex
+	inspectFn        func(ctx context.Context, id string) (map[string]any, error)
+	assertEngineFn   func(ctx context.Context, id, engine, versionTag string) (map[string]any, error)
+	memoryFn         func(ctx context.Context, id string) (*memoryView, error)
+	createCalls      []createInput
+	createResult     createResult
+	createErr        error
+	createFn         func(createInput) (createResult, error)
+	removeCalls      []string
+	removeErr        error
+	verifyRemovedErr error
+	containersFn     func(context.Context) ([]contract.Container, error)
+	portFreeErr      error
 }
 
 func (f *fakeDocker) inspect(ctx context.Context, id string) (map[string]any, error) {
@@ -69,6 +73,35 @@ func (f *fakeDocker) removeManaged(_ context.Context, containerID, volumeName, e
 	defer f.mu.Unlock()
 	f.removeCalls = append(f.removeCalls, containerID+"|"+volumeName+"|"+engine+"|"+versionTag)
 	return f.removeErr
+}
+
+func (f *fakeDocker) assertHostPortFree(_ context.Context, port int) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	if f.portFreeErr != nil {
+		return f.portFreeErr
+	}
+	if f.containersFn == nil {
+		return nil
+	}
+	rows, err := f.containersFn(context.Background())
+	if err != nil {
+		return err
+	}
+	for _, container := range rows {
+		for _, binding := range container.Ports {
+			if binding.HostPort == port {
+				return shared.InvalidRequest("宿主端口已被占用：" + strconv.Itoa(port) + "/tcp，未创建实例")
+			}
+		}
+	}
+	return nil
+}
+
+func (f *fakeDocker) verifyRemoved(_ context.Context, _, _ string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	return f.verifyRemovedErr
 }
 
 func (f *fakeDocker) memory(ctx context.Context, id string) (*memoryView, error) {

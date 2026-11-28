@@ -53,6 +53,10 @@ type dockerBackend interface {
 	assertEngine(ctx context.Context, id, engine, versionTag string) (map[string]any, error)
 	create(ctx context.Context, input createInput) (createResult, error)
 	removeManaged(ctx context.Context, containerID, volumeName, engine, versionTag string) error
+	// verifyRemoved 回读确认容器与卷都已消失；已消失返回 nil。
+	verifyRemoved(ctx context.Context, containerID, volumeName string) error
+	// assertHostPortFree 核对宿主 TCP 端口没有被运行中的容器占用。
+	assertHostPortFree(ctx context.Context, port int) error
 	memory(ctx context.Context, id string) (*memoryView, error)
 }
 
@@ -65,6 +69,14 @@ type serviceDeps struct {
 	selfContainerID string
 	portOpener      seam.PortOpener // 可为 nil：恒 skipped
 	now             func() time.Time
+	// hostCapacity 读取宿主容量（Agent 部署新建实例前核对）；nil 表示读数不可得。
+	hostCapacity seam.HostCapacity
+	// admin 是实例内管理操作的执行面（就绪等待、建库建用户）；nil 表示未装配。
+	admin adminBackend
+	// reservedPorts 是面板保留的宿主端口，Agent 部署 any-host 实例时在受理前核对。
+	reservedPorts []int
+	// provisionMutation keeps the target reserved until the change and its readback finish.
+	provisionMutation seam.ContainerMutationLease
 }
 
 // databaseService 服务实现。
@@ -352,6 +364,16 @@ func (s *databaseService) projectContainer(ctx context.Context, info map[string]
 		if row.CreatedAt > instance.UpdatedAt {
 			instance.UpdatedAt = row.CreatedAt
 		}
+		if instance.ResourceTier == "" {
+			instance.ResourceTier = row.ResourceTier
+		}
+		for _, logical := range row.Logical {
+			view := logicalDatabaseView{ID: logical.ID, Kind: logical.Kind, Name: logical.Name, Users: []string{}, KeyPrefix: logical.KeyPrefix, State: logical.State, CreatedAt: logical.CreatedAt}
+			for _, user := range logical.Users {
+				view.Users = append(view.Users, user.Username)
+			}
+			instance.Databases = append(instance.Databases, view)
+		}
 	}
 	if instance.VolumeName == "" {
 		if labeled, _ := labels["elysian.database.volume"].(string); labeled != "" {
@@ -497,6 +519,11 @@ func (s *databaseService) create(ctx context.Context, input createRequest) (crea
 			return createResponse{}, shared.Conflict("数据库容器已登记")
 		}
 	}
+	release, err := s.beginProvisionMutation(ctx, "", input.ContainerName)
+	if err != nil {
+		return createResponse{}, err
+	}
+	defer release()
 	if err := s.checkContainerMutation(ctx, "", input.ContainerName); err != nil {
 		return createResponse{}, err
 	}
@@ -628,6 +655,11 @@ func (s *databaseService) Forget(ctx context.Context, id string) error {
 	if err != nil {
 		return err
 	}
+	release, err := s.beginProvisionMutation(ctx, rows[0].ContainerID, rows[0].ContainerName)
+	if err != nil {
+		return err
+	}
+	defer release()
 	if err := s.checkContainerMutation(ctx, rows[0].ContainerID, rows[0].ContainerName); err != nil {
 		return err
 	}
@@ -647,6 +679,13 @@ func (s *databaseService) Forget(ctx context.Context, id string) error {
 	return nil
 }
 
+func (s *databaseService) beginProvisionMutation(ctx context.Context, id, name string) (func(), error) {
+	if s.deps.provisionMutation == nil {
+		return func() {}, nil
+	}
+	return s.deps.provisionMutation(ctx, id, name)
+}
+
 // RemoveContainer 删除面板创建的数据库容器与专属卷；成功后移除该容器全部登记行。
 func (s *databaseService) RemoveContainer(ctx context.Context, id string) error {
 	s.mutationMu.Lock()
@@ -660,6 +699,11 @@ func (s *databaseService) removeContainer(ctx context.Context, id string) error 
 	if err != nil {
 		return err
 	}
+	release, err := s.beginProvisionMutation(ctx, rows[0].ContainerID, rows[0].ContainerName)
+	if err != nil {
+		return err
+	}
+	defer release()
 	if err := s.checkContainerMutation(ctx, rows[0].ContainerID, rows[0].ContainerName); err != nil {
 		return err
 	}

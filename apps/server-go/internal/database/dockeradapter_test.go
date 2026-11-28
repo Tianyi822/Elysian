@@ -4,6 +4,9 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -482,5 +485,70 @@ func TestRemoveManagedRejectsForeignVolumeWhenStopped(t *testing.T) {
 		if call.Method == "DELETE" {
 			t.Fatalf("身份核对失败不得派发删除：%v", callPaths(transport.calls))
 		}
+	}
+}
+
+// 容器每次启动都会重新执行启动命令：初始 ACL 文件只能在缺失时写入，否则一次重启就会抹掉
+// 之后在该实例里创建的全部用户，而面板登记仍声称它们存在（真实镜像联调发现）。
+func TestRedisStartupKeepsExistingACLFileAcrossRestarts(t *testing.T) {
+	transport := &scriptedTransport{responder: func(req seam.EngineRequest) seam.EngineResponse {
+		if response, ok := existingDatabaseNetwork(req); ok {
+			return response
+		}
+		if strings.HasSuffix(req.Path, "/volumes/create") {
+			return seam.EngineResponse{Status: 201}
+		}
+		if strings.Contains(req.Path, "/containers/create") {
+			return seam.EngineResponse{Status: 201, Body: []byte(`{"Id":"` + testContainerID + `"}`)}
+		}
+		return seam.EngineResponse{Status: 204}
+	}}
+	docker := newDockerAPI(transport, func(context.Context) ([]contract.ContainerImage, error) {
+		return []contract.ContainerImage{{ID: testImageID, Name: "redis", Tag: "7.4", SizeMB: 100}}, nil
+	})
+	if _, err := docker.create(context.Background(), createInput{
+		engine: engineRedis, versionTag: "7.4", imageID: testImageID, containerName: "redis-db",
+		accessScope: scopeContainerNet, bootstrapPwd: "admin-secret",
+	}); err != nil {
+		t.Fatalf("create 失败：%v", err)
+	}
+	var script string
+	for _, call := range transport.calls {
+		if !strings.Contains(call.Path, "/containers/create") {
+			continue
+		}
+		var body struct {
+			Cmd []string `json:"Cmd"`
+		}
+		if json.Unmarshal(call.Body, &body) == nil && len(body.Cmd) == 3 {
+			script = body.Cmd[2]
+		}
+	}
+	if script == "" {
+		t.Fatal("未取到 Redis 启动命令")
+	}
+	// 只在临时目录里执行「写初始 ACL 文件」那一段：把数据目录换到临时目录，并去掉启动服务。
+	data := t.TempDir()
+	script = strings.ReplaceAll(script, "/data", data)
+	script, _, _ = strings.Cut(script, "&& exec ")
+	run := func() {
+		if output, err := exec.Command("sh", "-c", script).CombinedOutput(); err != nil {
+			t.Fatalf("启动命令的写文件阶段失败：%v %s", err, output)
+		}
+	}
+	run()
+	acl := filepath.Join(data, "users.acl")
+	original, err := os.ReadFile(acl)
+	if err != nil || !strings.Contains(string(original), "user default on #") {
+		t.Fatalf("首次启动应写入只含 default 用户的 ACL 文件：%v %q", err, original)
+	}
+	added := append(append([]byte{}, original...), []byte("user shop_user on ~shop:* -@all +@read\n")...)
+	if err := os.WriteFile(acl, added, 0o600); err != nil {
+		t.Fatal(err)
+	}
+	run() // 重启
+	afterRestart, err := os.ReadFile(acl)
+	if err != nil || string(afterRestart) != string(added) {
+		t.Fatalf("重启不得抹掉已存在的 ACL 用户：%v %q", err, afterRestart)
 	}
 }

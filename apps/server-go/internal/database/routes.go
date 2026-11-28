@@ -1,6 +1,7 @@
 package database
 
 import (
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -31,6 +32,9 @@ type Deps struct {
 	Views           seam.DockerViews
 	SelfID          string
 	PortOpener      seam.PortOpener
+	// AgentAuthorize 核验 Agent 派发票据；HostCapacity 读取宿主容量。两者只供 Agent 部署入口使用。
+	AgentAuthorize func(context.Context) error
+	HostCapacity   seam.HostCapacity
 }
 
 // sqliteWorkerUID 生产 SQLite worker 的降权身份（容器与 go-dev 镜像均建 2001 账号）。
