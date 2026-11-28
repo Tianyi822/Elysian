@@ -4,9 +4,11 @@
  *   行主键就是容器 ID；连接地址、端口、网络与卷直接取 Docker inspect 事实，不补造；
  * - 文件行（SQLite）：就是一个本地数据库文件，没有容器、没有服务端账号与连接上限，
  *   实例记文件路径与大小。
- * 服务型数据库不再有逻辑库与 SQL 会话概念，容器操作只经 Docker Engine；
- * 面板创建容器时初始化的管理员凭据保存在服务端登记里，列表只带凭据状态，
- * 明文只在用户点击复制时经 reveal 端点按需读取；外部容器的凭据状态恒为未核验。
+ * 服务型数据库没有 SQL 会话概念，容器操作只经 Docker Engine；Agent 部署时会在实例里
+ * 创建逻辑库（Redis 为按 key 前缀隔离的 ACL 用户）与专属用户，并登记到实例行。
+ * 面板创建容器时初始化的管理员凭据与这些专属用户的凭据都保存在服务端登记里，
+ * 列表只带用户名与状态，明文只在用户点击复制时经 reveal 端点按需读取；
+ * 外部（未接管）容器的凭据状态恒为未核验。
  * 引擎清单按需增长：暂未使用的引擎（MongoDB、PgSQL 等）等真正接入时再加回。
  */
 
@@ -119,6 +121,29 @@ export type DatabaseContainerInstance = {
   /** 创建尚未核对完成（容器已产生、登记待核对）。 */
   needsAttention: boolean
   updatedAt: string
+  /** 实例里由面板登记的数据库与专属用户；不含密码。没有登记时缺省。 */
+  databases?: readonly DatabaseLogicalDatabase[]
+  /** 实例创建时选定的资源档位；页面创建的实例不带。 */
+  resourceTier?: DatabaseResourceTier
+}
+
+export type DatabaseResourceTier = 'small' | 'medium' | 'large'
+
+/**
+ * 面板在实例内创建的一条登记：MySQL/MariaDB 是一个逻辑库加只授权该库的专属用户，
+ * Redis 是一个按 key 前缀隔离的 ACL 用户。只带用户名，密码经 reveal 按需读取。
+ */
+export type DatabaseLogicalDatabase = {
+  id: string
+  kind: 'database' | 'acl-user'
+  /** 逻辑库名；ACL 用户登记里是用户名对应的登记名。 */
+  name: string
+  users: readonly string[]
+  /** Redis ACL 用户的 key 前缀。 */
+  keyPrefix?: string
+  /** pending 表示已登记但创建尚未得到确认（部署被打断）。 */
+  state: 'pending' | 'active'
+  createdAt: string
 }
 
 /**
