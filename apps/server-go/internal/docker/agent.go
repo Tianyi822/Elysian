@@ -23,6 +23,7 @@ type AgentFacade struct {
 	authorize          func(context.Context) error
 	credentials        *agentCredentialStore
 	portOpener         seam.PortOpener
+	hostCapacity       seam.HostCapacity
 	taskMu             sync.Mutex
 	pullTasks          map[string]*AgentPullTask
 	taskRoot           string
@@ -55,6 +56,9 @@ type AgentCreateInput struct {
 }
 
 var agentDigestImage = regexp.MustCompile(`^[a-z0-9][a-z0-9._:/-]*@sha256:[a-f0-9]{64}$`)
+
+// agentRestrictedMemory 是 restricted-v1 模板的固定内存上限，容量核对与创建体共用。
+const agentRestrictedMemory = 512 << 20
 
 func (a *AgentFacade) check(ctx context.Context) error {
 	if a == nil || a.service == nil || a.authorize == nil {
@@ -374,6 +378,9 @@ func (a *AgentFacade) createRestricted(ctx context.Context, input AgentCreateInp
 	if status != http.StatusNotFound {
 		return contract.Container{}, errors.New("查询容器名称占用失败")
 	}
+	if err := a.requireCapacity(ctx, " 该容器", agentRestrictedMemory); err != nil {
+		return contract.Container{}, agentRejected(err)
+	}
 	imageID, err := a.resolveAgentImage(ctx, input.Image)
 	if err != nil {
 		return contract.Container{}, err
@@ -394,7 +401,7 @@ func (a *AgentFacade) createRestricted(ctx context.Context, input AgentCreateInp
 	if volumes != nil && len(volumes.orderedKeys()) != 0 {
 		return contract.Container{}, shared.InvalidRequest("安全模板不允许镜像声明匿名卷")
 	}
-	body, _ := json.Marshal(map[string]any{"Image": imageID, "User": "65532:65532", "Healthcheck": map[string]any{"Test": []string{"NONE"}}, "Labels": map[string]string{labelManaged: labelTrueValue, "elysian.agent.template": "restricted-v1", "elysian.agent.create-digest": want}, "HostConfig": map[string]any{"NetworkMode": "none", "ReadonlyRootfs": true, "CapDrop": []string{"ALL"}, "SecurityOpt": []string{"no-new-privileges:true"}, "PidsLimit": 128, "Memory": 512 << 20, "NanoCpus": 1000000000, "Tmpfs": map[string]string{"/tmp": "rw,nosuid,nodev,noexec,size=64m,mode=1777"}, "RestartPolicy": map[string]string{"Name": "no"}}})
+	body, _ := json.Marshal(map[string]any{"Image": imageID, "User": "65532:65532", "Healthcheck": map[string]any{"Test": []string{"NONE"}}, "Labels": map[string]string{labelManaged: labelTrueValue, "elysian.agent.template": "restricted-v1", "elysian.agent.create-digest": want}, "HostConfig": map[string]any{"NetworkMode": "none", "ReadonlyRootfs": true, "CapDrop": []string{"ALL"}, "SecurityOpt": []string{"no-new-privileges:true"}, "PidsLimit": 128, "Memory": agentRestrictedMemory, "NanoCpus": 1000000000, "Tmpfs": map[string]string{"/tmp": "rw,nosuid,nodev,noexec,size=64m,mode=1777"}, "RestartPolicy": map[string]string{"Name": "no"}}})
 	status, value, err := s.engineJSON(ctx, http.MethodPost, "/containers/create", url.Values{"name": {input.Name}}, body, actionTimeout)
 	if err != nil {
 		return contract.Container{}, err

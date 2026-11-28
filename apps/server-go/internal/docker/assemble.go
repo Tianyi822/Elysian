@@ -32,6 +32,8 @@ type Deps struct {
 	// AgentCredentialsPath 是 service-v1 凭据登记文件；空串时服务容器创建报未装配。
 	AgentCredentialsPath string
 	AgentOperationRoot   string
+	// HostCapacity 宿主容量读取接缝（platform 域实现）；nil 时 Agent 创建容器一律按读数不可得拒绝。
+	HostCapacity seam.HostCapacity
 }
 
 // Stack 装配产出：路由器与向 database/websites 分发的事实。
@@ -112,7 +114,7 @@ func Assemble(deps Deps) (Stack, error) {
 		})
 	}
 
-	agent := &AgentFacade{service: service, authorize: deps.AgentAuthorize, portOpener: deps.PortOpener, operationRoot: deps.AgentOperationRoot}
+	agent := &AgentFacade{service: service, authorize: deps.AgentAuthorize, portOpener: deps.PortOpener, operationRoot: deps.AgentOperationRoot, hostCapacity: deps.HostCapacity}
 	if deps.AgentCredentialsPath != "" {
 		agent.credentials = newAgentCredentialStore(deps.AgentCredentialsPath)
 	}
