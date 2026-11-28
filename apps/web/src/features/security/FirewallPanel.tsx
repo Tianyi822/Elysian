@@ -223,7 +223,7 @@ export function FirewallPanel() {
   const demo = !isDockerRuntime()
 
   const toolbar = VIEW_TOOLBAR[view]
-  const tableNavigation = <div className={`${CTL_TOOLBAR} firewall-toolbar flex max-w-full`}>
+  const tableNavigation = <div className={`${CTL_TOOLBAR} firewall-toolbar flex min-w-0 max-w-full`}>
     <ViewSwitch view={view} onChange={setTab} />
   </div>
   const tableToolbar = (

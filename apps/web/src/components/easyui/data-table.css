@@ -32,12 +32,28 @@
    tab bar or positioning over the search field. Breakpoints use table width. */
 .dt-toolbar-navigation-layout {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) max-content max-content;
+  grid-template-columns: minmax(0, 320px) max-content minmax(0, 1fr);
   grid-template-rows: minmax(44px, auto);
   gap: 12px;
   align-items: center;
 }
-.dt-toolbar-navigation-layout > .dt-toolbar-navigation { position: relative; z-index: 1; grid-column: 2; grid-row: 1; min-width: 0; }
+.dt-toolbar-navigation-layout > .dt-toolbar-navigation {
+  position: relative;
+  z-index: 1;
+  grid-column: 2;
+  grid-row: 1;
+  justify-self: start;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  max-width: 100%;
+}
+@container (width >= 52rem) {
+  .dt-toolbar-navigation-layout.dt-toolbar-selection-active {
+    grid-template-columns: max-content minmax(0, 1fr) max-content;
+  }
+}
 .dt-toolbar-navigation-layout .firewall-toolbar { --ctl-height: var(--dt-control-height); }
 .dt-toolbar-navigation-layout :is(.dt-selection-clear button, .dt-action) { height: var(--dt-control-height); }
 .dt-toolbar-navigation-layout > :is(.dt-toolbar-normal, .dt-toolbar-selection) {
@@ -53,10 +69,8 @@
 .dt-toolbar-navigation-layout :is(.dt-toolbar-search, .dt-toolbar-search-group, .dt-selection-count) { grid-column: 1; grid-row: 1; }
 .dt-toolbar-navigation-layout :is(.dt-toolbar-actions, .dt-selection-clear) { grid-column: 3; grid-row: 1; margin-left: 0; justify-self: end; }
 .dt-toolbar-navigation-actions {
-  position: absolute;
-  left: calc(100% + 8px);
-  top: 0;
   display: flex;
+  flex-shrink: 0;
   align-items: center;
   gap: 8px;
 }
@@ -77,7 +91,7 @@
     grid-template-columns: minmax(0, 1fr) max-content;
     grid-template-rows: var(--dt-control-height) minmax(44px, auto);
   }
-  .dt-toolbar-navigation-layout > .dt-toolbar-navigation { grid-column: 1 / -1; justify-self: start; }
+  .dt-toolbar-navigation-layout > .dt-toolbar-navigation { grid-column: 1 / -1; }
   .dt-toolbar-navigation-layout > :is(.dt-toolbar-normal, .dt-toolbar-selection) { grid-row: 2; }
   .dt-toolbar-navigation-layout :is(.dt-toolbar-actions, .dt-selection-clear) { grid-column: 2; }
 }
@@ -93,9 +107,6 @@
   .dt-toolbar-navigation-layout .dt-toolbar-search { width: 100%; max-width: none; }
   .dt-toolbar-navigation-layout.dt-toolbar-selection-active {
     grid-template-rows: var(--dt-control-height) minmax(44px, auto);
-  }
-  .dt-toolbar-navigation-layout.dt-toolbar-selection-active > .dt-toolbar-navigation {
-    max-width: calc(100% - 2 * var(--dt-control-height) - 16px);
   }
   .dt-toolbar-navigation-layout.dt-toolbar-selection-active > .dt-toolbar-selection { grid-row: 2; }
   .dt-toolbar-navigation-layout.dt-toolbar-selection-active .dt-selection-count { grid-row: 1; }
