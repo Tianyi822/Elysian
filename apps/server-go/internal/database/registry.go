@@ -116,10 +116,14 @@ func (r *fileDatabaseRegistry) remove(id string) error {
 	})
 }
 
-// memoryDatabaseRegistry 内存实现（测试用）。
+// registryRows 暴露内存行切片（测试专用）。
+func (r *memoryDatabaseRegistry) registryRows() *[]databaseRecord { return &r.rows }
+
+// memoryDatabaseRegistry 内存实现（测试用）。broken 非空时 list 失败，模拟登记故障。
 type memoryDatabaseRegistry struct {
-	mu   sync.Mutex
-	rows []databaseRecord
+	mu     sync.Mutex
+	broken error
+	rows   []databaseRecord
 }
 
 func newMemoryDatabaseRegistry(seed []databaseRecord) *memoryDatabaseRegistry {
@@ -131,6 +135,9 @@ func newMemoryDatabaseRegistry(seed []databaseRecord) *memoryDatabaseRegistry {
 func (r *memoryDatabaseRegistry) list() ([]databaseRecord, error) {
 	r.mu.Lock()
 	defer r.mu.Unlock()
+	if r.broken != nil {
+		return nil, r.broken
+	}
 	rows := make([]databaseRecord, len(r.rows))
 	copy(rows, r.rows)
 	return rows, nil

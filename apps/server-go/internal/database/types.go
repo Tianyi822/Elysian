@@ -69,6 +69,51 @@ type databaseRecord struct {
 	CreatedAt     string         `json:"createdAt"`
 	State         string         `json:"state"`
 	ContainerName string         `json:"containerName,omitempty"`
+	// Logical 是面板在该实例内创建的逻辑库或 ACL 用户；ResourceTier 是创建时的资源档位。
+	// 两者只在末尾追加，旧登记文件没有这两项时照常读取。
+	Logical      []logicalDatabaseRecord `json:"logical,omitempty"`
+	ResourceTier string                  `json:"resourceTier,omitempty"`
+}
+
+// 逻辑库登记的类别、状态与创建来源。
+const (
+	logicalKindDatabase   = "database" // MySQL/MariaDB：库加仅授权该库的专属用户
+	logicalKindACLUser    = "acl-user" // Redis：按 key 前缀隔离的 ACL 用户
+	logicalStatePending   = "pending"  // 已登记、尚未确认执行完成
+	logicalStateActive    = "active"
+	logicalCreatedByAgent = "agent"
+)
+
+// logicalUser 是面板为某个逻辑库生成的专属用户；密码只保存在登记里。
+type logicalUser struct {
+	Username string `json:"username"`
+	Password string `json:"password"`
+	Host     string `json:"host"`
+}
+
+// logicalDatabaseRecord 是面板在实例内创建的逻辑库或 ACL 用户登记。登记先于执行写入
+// （pending），确认完成后置 active，重试因此可以幂等；密码不进入任何投影。
+type logicalDatabaseRecord struct {
+	ID        string        `json:"id"`
+	Kind      string        `json:"kind"`
+	Name      string        `json:"name"`
+	Users     []logicalUser `json:"users"`
+	KeyPrefix string        `json:"keyPrefix,omitempty"`
+	State     string        `json:"state"`
+	RequestID string        `json:"requestId"`
+	CreatedBy string        `json:"createdBy"`
+	CreatedAt string        `json:"createdAt"`
+}
+
+// logicalDatabaseView 是逻辑库投影：只含用户名，不含密码。
+type logicalDatabaseView struct {
+	ID        string   `json:"id"`
+	Kind      string   `json:"kind"`
+	Name      string   `json:"name"`
+	Users     []string `json:"users"`
+	KeyPrefix string   `json:"keyPrefix,omitempty"`
+	State     string   `json:"state"`
+	CreatedAt string   `json:"createdAt"`
 }
 
 // memoryView 容器内存投影。
@@ -113,6 +158,9 @@ type containerInstance struct {
 	Memory              *memoryView           `json:"memory,omitempty"`
 	NeedsAttention      bool                  `json:"needsAttention"`
 	UpdatedAt           string                `json:"updatedAt"`
+	// Databases 与 ResourceTier 只在末尾追加：逻辑库投影不含密码，旧响应键序不变。
+	Databases    []logicalDatabaseView `json:"databases,omitempty"`
+	ResourceTier string                `json:"resourceTier,omitempty"`
 }
 
 // sqliteInstance SQLite 托管投影；键序与 TS 版 sqliteService.project 的插入序一致。
