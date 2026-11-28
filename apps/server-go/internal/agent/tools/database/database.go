@@ -11,9 +11,12 @@ import (
 
 const ServiceName = "database"
 
-// Deps 数据库工具不再消费域 Facade：13 个 database_* 描述符逐字保留供旧 Run
-// 按固定 CatalogDigest 派发，处理器统一返回固定退役业务错误（不派发任务、不触协议）。
-type Deps struct{}
+// Deps.Facade 注入数据库域的 Agent 入口：有它时额外登记当前聊天的两个数据库工具
+// （实例发现与部署）。13 个 database_* 旧描述符无论如何都逐字保留供旧 Run 按固定
+// CatalogDigest 派发，处理器统一返回固定退役业务错误（不派发任务、不触协议）。
+type Deps struct {
+	Facade *domain.AgentFacade
+}
 type Config struct{}
 type Service struct {
 	kardia.Service
@@ -113,6 +116,9 @@ func New(c *kardia.Context, deps Deps, _ Config) (*Service, error) {
 		descriptors = append(descriptors, tools.Descriptor{Name: "database_task_" + action, Description: description, Parameters: tools.Schema{Type: tools.SchemaObject, Required: []string{"id", "taskId"}, Properties: properties}, Metadata: metadata, Handler: func(c *kardia.Context, args tools.Arguments) (any, error) {
 			return nil, retiredDatabaseError()
 		}})
+	}
+	if deps.Facade != nil {
+		descriptors = append(descriptors, s.agentDescriptors()...)
 	}
 	if err := tools.RegisterAll(c, descriptors...); err != nil {
 		return nil, errors.Join(err, s.Close(context.Background()))
