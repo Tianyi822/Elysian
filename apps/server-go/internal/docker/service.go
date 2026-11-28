@@ -140,7 +140,8 @@ func defaultRegistryResolver(ctx context.Context, hostname string) ([]string, er
 
 // dockerService 容器管理只读服务；实现 seam.DockerViews。
 type dockerService struct {
-	deps serviceDeps
+	deps             serviceDeps
+	databaseMutation seam.ContainerMutationLease
 
 	actionMu    sync.Mutex
 	actionLocks map[string]struct{}

@@ -2,7 +2,6 @@ package docker
 
 import (
 	"context"
-	"encoding/binary"
 	"encoding/json"
 	"errors"
 	"net/http"
@@ -10,63 +9,8 @@ import (
 	"time"
 
 	"elysian/server/internal/seam"
+	"elysian/server/internal/shared"
 )
-
-// execOutput decodes Docker's non-TTY multiplexed stream without retaining an
-// unbounded frame. Truncated output is still drained until execution ends.
-type execOutput struct {
-	header             []byte
-	remaining          uint32
-	stream             byte
-	stdout, stderr     []byte
-	truncated, invalid bool
-}
-
-func (o *execOutput) consume(chunk []byte) {
-	if o.invalid {
-		return
-	}
-	for len(chunk) > 0 {
-		if o.remaining == 0 {
-			n := 8 - len(o.header)
-			if n > len(chunk) {
-				n = len(chunk)
-			}
-			o.header = append(o.header, chunk[:n]...)
-			chunk = chunk[n:]
-			if len(o.header) < 8 {
-				return
-			}
-			o.stream = o.header[0]
-			if (o.stream != 1 && o.stream != 2) || o.header[1] != 0 || o.header[2] != 0 || o.header[3] != 0 {
-				o.invalid = true
-				return
-			}
-			o.remaining = binary.BigEndian.Uint32(o.header[4:])
-			o.header = nil
-			if o.remaining == 0 {
-				continue
-			}
-		}
-		n := len(chunk)
-		if uint32(n) > o.remaining {
-			n = int(o.remaining)
-		}
-		keep := n
-		room := (65 << 10) - len(o.stdout) - len(o.stderr)
-		if keep > room {
-			keep = room
-			o.truncated = true
-		}
-		if o.stream == 1 {
-			o.stdout = append(o.stdout, chunk[:keep]...)
-		} else {
-			o.stderr = append(o.stderr, chunk[:keep]...)
-		}
-		o.remaining -= uint32(n)
-		chunk = chunk[n:]
-	}
-}
 
 func (a *AgentFacade) executeContainerCommand(ctx context.Context, taskID string, input ContainerExecInput, scope agentScope) (any, error) {
 	// 派发前按同一冻结范围复查目标：受理与执行之间容器可能被替换。
@@ -103,9 +47,9 @@ func (a *AgentFacade) executeContainerCommand(ctx context.Context, taskID string
 	if err := a.updateContainerOperation(taskID, func(task *ContainerOperationTask) { task.Stage = "exec-start-dispatched" }); err != nil {
 		return nil, err
 	}
-	output := &execOutput{}
-	response, err = a.service.deps.transport.Stream(ctx, seam.EngineRequest{Method: http.MethodPost, Path: "/exec/" + created.ID + "/start", Body: []byte(`{"Detach":false,"Tty":false}`), Timeout: 10 * time.Minute, DiscardBody: true}, output.consume)
-	if err != nil || response.Status != http.StatusOK || output.invalid || output.remaining != 0 || len(output.header) != 0 {
+	output := shared.NewExecOutput(65 << 10)
+	response, err = a.service.deps.transport.Stream(ctx, seam.EngineRequest{Method: http.MethodPost, Path: "/exec/" + created.ID + "/start", Body: []byte(`{"Detach":false,"Tty":false}`), Timeout: 10 * time.Minute, DiscardBody: true}, output.Consume)
+	if err != nil || response.Status != http.StatusOK || output.Invalid() || output.Incomplete() {
 		return nil, errors.New("容器执行流未完整确认")
 	}
 	response, err = a.service.deps.transport.Request(ctx, seam.EngineRequest{Method: http.MethodGet, Path: "/exec/" + created.ID + "/json", Timeout: 5 * time.Second, MaxBytes: 64 << 10})
@@ -120,7 +64,8 @@ func (a *AgentFacade) executeContainerCommand(ctx context.Context, taskID string
 	if response.Status != http.StatusOK || json.Unmarshal(response.Body, &status) != nil || status.Running == nil || *status.Running || status.ExitCode == nil || status.ContainerID != input.ID {
 		return nil, errors.New("容器执行退出状态未确认")
 	}
-	stdout, stderr := string(output.stdout), string(output.stderr)
+	stdout, stderr := string(output.Stdout()), string(output.Stderr())
+	truncated := output.Truncated()
 	if a.credentials != nil {
 		records, err := a.credentials.load()
 		if err != nil {
@@ -140,12 +85,12 @@ func (a *AgentFacade) executeContainerCommand(ctx context.Context, taskID string
 	if len(stdout) > 64<<10 {
 		stdout = stdout[:64<<10]
 		stderr = ""
-		output.truncated = true
+		truncated = true
 	} else if len(stdout)+len(stderr) > 64<<10 {
 		stderr = stderr[:(64<<10)-len(stdout)]
-		output.truncated = true
+		truncated = true
 	}
-	result := map[string]any{"id": input.ID, "exitCode": *status.ExitCode, "stdout": stdout, "stderr": stderr, "truncated": output.truncated}
+	result := map[string]any{"id": input.ID, "exitCode": *status.ExitCode, "stdout": stdout, "stderr": stderr, "truncated": truncated}
 	if scope == scopeHost {
 		notes := describeAgentTarget(value, a.service.deps.selfContainerID)
 		result["ownership"], result["exposure"] = notes.Ownership, notes.Exposure

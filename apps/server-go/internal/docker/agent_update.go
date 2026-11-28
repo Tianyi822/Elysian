@@ -6,6 +6,7 @@ import (
 	"errors"
 	"math"
 	"net/http"
+	"strings"
 	"time"
 
 	"elysian/server/internal/seam"
@@ -88,6 +89,12 @@ func (a *AgentFacade) SubmitUpdate(ctx context.Context, input ContainerUpdateInp
 	if _, err := planContainerUpdate(value, input); err != nil {
 		return ContainerOperationTask{}, agentSubmitRejected(err)
 	}
+	row, _ := asRecord(value)
+	release, err := a.service.beginDatabaseMutation(ctx, input.ID, strings.TrimPrefix(agentText(row, "Name"), "/"))
+	if err != nil {
+		return ContainerOperationTask{}, agentSubmitRejected(err)
+	}
+	defer release()
 	return a.submitContainerOperation(input.RequestID, input.ID, identity, func(ctx context.Context, _ string) (any, error) {
 		return a.executeUpdate(ctx, input)
 	})

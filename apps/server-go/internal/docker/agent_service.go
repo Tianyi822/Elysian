@@ -55,16 +55,10 @@ type agentResourceTier struct {
 	NanoCpus int64
 }
 
+// agentServiceTier 取档位的内存与 CPU 上限；档位表的唯一出处是 shared.ResourceTiers。
 func agentServiceTier(tier string) (agentResourceTier, bool) {
-	switch tier {
-	case "small":
-		return agentResourceTier{Memory: 512 << 20, NanoCpus: 500_000_000}, true
-	case "medium":
-		return agentResourceTier{Memory: 1 << 30, NanoCpus: 1_000_000_000}, true
-	case "large":
-		return agentResourceTier{Memory: 2 << 30, NanoCpus: 2_000_000_000}, true
-	}
-	return agentResourceTier{}, false
+	found, ok := shared.ResourceTierByName(tier)
+	return agentResourceTier{Memory: found.MemoryBytes, NanoCpus: found.NanoCpus}, ok
 }
 
 func serviceCreateDigest(input AgentServiceCreateInput) string {

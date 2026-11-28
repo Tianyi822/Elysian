@@ -72,6 +72,11 @@ func (a *AgentFacade) submitRecreate(ctx context.Context, input RecreateInput, s
 	}
 	image, _ := body["Image"].(string)
 	meta := &RecreateRecord{Name: source.name, CandidateName: "ely-recreate-" + input.PlanID[:24], BackupName: "ely-backup-" + input.PlanID[:24], Running: source.running, ImageID: image, RestartPolicy: source.restartBody, Changes: plan.preview.Changes}
+	release, err := a.service.beginDatabaseMutation(ctx, input.ID, source.name)
+	if err != nil {
+		return ContainerOperationTask{}, err
+	}
+	defer release()
 	task, err := a.submitContainerOperationWithRecreate(input.RequestID, input.ID, identity, meta, func(ctx context.Context, taskID string) (any, error) {
 		return a.executeRecreate(ctx, taskID, input.RequestID, plan, *meta, allowSensitive)
 	})

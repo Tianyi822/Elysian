@@ -95,6 +95,13 @@ func (s *dockerService) actionWithGuard(ctx context.Context, id, action string, 
 	return mapContainer(postInspect)
 }
 
+func (s *dockerService) beginDatabaseMutation(ctx context.Context, id, name string) (func(), error) {
+	if s.databaseMutation == nil {
+		return func() {}, nil
+	}
+	return s.databaseMutation(ctx, id, name)
+}
+
 // lockMutationTarget uses the real ID for the operation ledger and shares the
 // update worker's lock even when the HTTP caller addressed a container by name.
 func (s *dockerService) lockMutationTarget(ctx context.Context, requested string, value any, guard seam.ContainerOperationGuard) (string, func(), error) {
@@ -117,11 +124,17 @@ func (s *dockerService) lockMutationTarget(ctx context.Context, requested string
 			return "", nil, err
 		}
 	}
-	if err := guard(ctx, id, name, ""); err != nil {
+	releaseDatabase, err := s.beginDatabaseMutation(ctx, id, name)
+	if err != nil {
 		release()
 		return "", nil, err
 	}
-	return id, release, nil
+	if err := guard(ctx, id, name, ""); err != nil {
+		releaseDatabase()
+		release()
+		return "", nil, err
+	}
+	return id, func() { releaseDatabase(); release() }, nil
 }
 
 // containerRemovalProtection 与 Docker 页展示共用归属保护，不暴露原始标签。
@@ -263,6 +276,12 @@ func (s *dockerService) Create(ctx context.Context, body any) (contract.Containe
 	if err != nil {
 		return contract.ContainerCreateResult{}, err
 	}
+
+	release, err := s.beginDatabaseMutation(ctx, "", spec.name)
+	if err != nil {
+		return contract.ContainerCreateResult{}, err
+	}
+	defer release()
 
 	for _, dir := range spec.mkdirPaths {
 		if err := s.deps.mkdir(dir, 0o755); err != nil {

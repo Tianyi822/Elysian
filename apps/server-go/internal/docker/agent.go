@@ -41,6 +41,11 @@ type AgentFacade struct {
 	operationWG        sync.WaitGroup
 }
 
+// SetDatabaseMutationLease wires the database-owned mutation reservation at startup.
+func (a *AgentFacade) SetDatabaseMutationLease(lease seam.ContainerMutationLease) {
+	a.service.databaseMutation = lease
+}
+
 func (a *AgentFacade) Authorize(ctx context.Context) error { return a.check(ctx) }
 
 type AgentCreateInput struct {
@@ -331,6 +336,11 @@ func (a *AgentFacade) createRestricted(ctx context.Context, input AgentCreateInp
 	s := a.service
 	s.createMu.Lock()
 	defer s.createMu.Unlock()
+	release, err := s.beginDatabaseMutation(ctx, "", input.Name)
+	if err != nil {
+		return contract.Container{}, err
+	}
+	defer release()
 	// A retry can only adopt the exact previously accepted creation.
 	status, existing, err := s.engineJSON(ctx, http.MethodGet, "/containers/"+url.PathEscape(input.Name)+"/json", nil, nil, actionTimeout)
 	if err != nil {
