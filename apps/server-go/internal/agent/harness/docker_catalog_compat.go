@@ -22,7 +22,46 @@ func legacyDockerContainerCatalogCompatible(operation Operation, current tools.P
 		}
 		current = previous
 	}
-	return legacyDockerContainerCatalogCore(operation, current) || legacyDockerRetiredDatabaseCatalogCompatible(operation, current)
+	return legacyDockerContainerCatalogCore(operation, current) || legacyDockerRetiredDatabaseCatalogCompatible(operation, current) || legacyServiceCapacityCatalogCompatible(operation, current)
+}
+
+// create_service v4（容量核对与数据库引导说明）与它之前的 v3 描述；升级只改了这一段文字。
+const (
+	serviceCapacityDescription = "审批后用 service-v1 模板创建并启动服务容器：本机已存在摘要镜像、可写根、专属卷与声明式凭据（只传变量名，值由后端生成且不出现在参数与回执）。提交前自动核对宿主容量，不足时不创建并把读数交回。resourceTier(small/medium/large) 与 networkScope(container-net/localhost/any-host) 先经 docker_host_capacity 核对可容纳的档位，再经 request_user_input 由用户选定后提交；any-host 必填 hostPort 并联动防火墙，localhost/any-host 必填容器端口 port。部署 MySQL/MariaDB/Redis 请改用 database_provision，它会优先复用现有实例。相同参数重试复用原 requestId"
+	servicePreviousDescription = "审批后用 service-v1 模板创建并启动服务容器：本机已存在摘要镜像、可写根、专属卷与声明式凭据（只传变量名，值由后端生成且不出现在参数与回执）。resourceTier(small/medium/large) 与 networkScope(container-net/localhost/any-host) 先经 request_user_input 由用户选定再提交；any-host 必填 hostPort 并联动防火墙，localhost/any-host 必填容器端口 port。相同参数重试复用原 requestId"
+)
+
+// previousServiceCapacitySchema 把当前的 create_service v4 精确还原为 v3；形状不符
+// （未来再演化）时返回 false，绝不错配历史快照。
+func previousServiceCapacitySchema(current tools.PublicSchema) (tools.PublicSchema, bool) {
+	if current.Name != "docker_container_create_service" || current.Metadata.Version != "4" || current.Description != serviceCapacityDescription {
+		return current, false
+	}
+	previous := current
+	previous.Description, previous.Metadata.Version = servicePreviousDescription, "3"
+	return previous, true
+}
+
+// legacyServiceCapacityCatalogCompatible 把当前目录还原为容量核对说明加入前的 v3 形状，
+// 再按既有版本链核对。只还原已审核的描述文字，不放宽参数校验、元数据与审批约束。
+func legacyServiceCapacityCatalogCompatible(operation Operation, current tools.PublicSchema) bool {
+	c := operation.Capability
+	restored, ok := previousServiceCapacitySchema(current)
+	if !ok || c.Source != "builtin" || current.Name != c.Name {
+		return false
+	}
+	var parameters map[string]any
+	if json.Unmarshal(c.Parameters, &parameters) != nil || mcp.Validate(c.Parameters, json.RawMessage(operation.ArgumentsJSON)) != nil {
+		return false
+	}
+	frozen := tools.PublicSchema{Name: c.Name, Description: c.Description, Parameters: parameters, Metadata: c.Metadata}
+	if hstate.DigestJSON(frozen) != c.CatalogDigest {
+		return false
+	}
+	if hstate.DigestJSON(restored) == c.CatalogDigest {
+		return true
+	}
+	return legacyDockerContainerCatalogCore(operation, restored) || legacyDockerRetiredDatabaseCatalogCompatible(operation, restored)
 }
 
 // 逻辑库退役前的冻结文案（升 v3／v4 与 env 说明回退之前的目录）。

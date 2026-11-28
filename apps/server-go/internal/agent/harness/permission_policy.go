@@ -47,9 +47,9 @@ func confirmedPlatformRead(c Capability) bool {
 	}
 	switch c.Name {
 	case "file_list", "file_read", "security_snapshot", "security_users", "security_login_records",
-		"firewall_snapshot", "firewall_connections", "firewall_stats", "database_list", "database_metadata", "database_discover", "database_metrics", "database_task_status", "database_task_logs",
+		"firewall_snapshot", "firewall_connections", "firewall_stats", "database_list", "database_instances", "database_metadata", "database_discover", "database_metrics", "database_task_status", "database_task_logs",
 		"logs_read", "platform_memory", "platform_metrics", "platform_sample", "platform_dependencies", "panel_info", "panel_update_check", "panel_update_history", "web_fetch",
-		"registry_host_check", "docker_registry_list", "docker_registry_probe", "docker_context_view", "docker_container_inspect", "docker_image_inspect", "docker_image_search", "docker_image_tags", "docker_image_pull_get", "docker_image_pull_logs", "docker_container_logs", "docker_container_stats", "docker_container_recreate_preview", "docker_networks_list", "docker_volumes_list", "website_list", "caddy_config_current", "website_runtimes", "website_source_get", "website_source_analysis",
+		"registry_host_check", "docker_host_capacity", "docker_registry_list", "docker_registry_probe", "docker_context_view", "docker_container_inspect", "docker_image_inspect", "docker_image_search", "docker_image_tags", "docker_image_pull_get", "docker_image_pull_logs", "docker_container_logs", "docker_container_stats", "docker_container_recreate_preview", "docker_networks_list", "docker_volumes_list", "website_list", "caddy_config_current", "website_runtimes", "website_source_get", "website_source_analysis",
 		"website_deployments_list", "website_deployment_get", "website_deployment_logs", "website_logs",
 		"app_list", "app_lookup", "app_directory", "workspace_list_files", "workspace_read_file", "compose_check",
 		"app_workspace_snapshot", "app_build_logs", "app_build_preview", "build_list", "build_get":

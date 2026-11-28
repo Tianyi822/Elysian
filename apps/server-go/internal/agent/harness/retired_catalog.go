@@ -59,6 +59,7 @@ func retiredFromNewChats(name string) bool {
 // withCurrentAgentTools 在环境副本中承接退役工具；新 Run 与目录共用派生，
 // 旧环境和已接受快照保持不变。旧只读信任不迁移到承接工具。
 func (m *Manager) withCurrentAgentTools(env Environment) Environment {
+	env = m.withDatabaseTools(env)
 	env = m.withDockerTools(env)
 	available := map[string]bool{}
 	if m.deps.Tools != nil {

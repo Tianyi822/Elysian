@@ -10,6 +10,9 @@ import (
 )
 
 func dockerLegacyOperation(schema tools.PublicSchema) Operation {
+	if previous, ok := previousServiceCapacitySchema(schema); ok {
+		schema = previous
+	}
 	if previous, ok := restoreHostScopeSchema(schema); ok {
 		schema = previous
 	}
@@ -150,6 +153,15 @@ func retiredServiceLongEnvSchema() tools.PublicSchema {
 	}}.JSONSchema(), Metadata: tools.Metadata{Domain: "docker", Backend: "domain", Action: "create_service", Effect: "write", Exposure: "agent", ResourceType: "docker-container", ResourceKeyArgument: "name", Version: "3", Async: true, TaskDomain: "docker-container-operation", TaskRequestArgument: "requestId"}}
 }
 
+// retiredServiceV3Schema 是容量核对说明加入前（v3）的已发布 create_service 目录：
+// 与退役前长 env 说明的目录只差 env 说明这一句。
+func retiredServiceV3Schema() tools.PublicSchema {
+	schema := retiredServiceLongEnvSchema()
+	properties := schema.Parameters["properties"].(map[string]any)
+	properties["env"].(map[string]any)["description"] = "非凭据环境变量 KEY=VALUE 列表，最多 16 项、每项不超过 512 字节，完整进入审批展示"
+	return schema
+}
+
 func frozenOperation(schema tools.PublicSchema, arguments string) Operation {
 	parameters, _ := json.Marshal(schema.Parameters)
 	return Operation{ArgumentsJSON: arguments, Capability: Capability{
@@ -203,6 +215,28 @@ func TestRetiredDatabaseEraDockerCatalogsStayCompatible(t *testing.T) {
 	tampered := frozenOperation(retiredInspectSchema("3"), `{"id":"`+strings.Repeat("c", 64)+`","unapproved":true}`)
 	if legacyDockerContainerCatalogCompatible(tampered, inspect) {
 		t.Fatal("越权参数不得通过退役还原")
+	}
+}
+
+// create_service 升 v4（容量核对与数据库引导说明）后，v3 及更早的冻结目录仍须可派发；
+// 还原只认已审核的那一段描述文字。
+func TestServiceCapacityEraCatalogStaysCompatible(t *testing.T) {
+	current := currentSchemaByName(t, "docker_container_create_service")
+	if current.Metadata.Version != "4" {
+		t.Fatalf("create_service 当前版本应为 v4：%s", current.Metadata.Version)
+	}
+	arguments := `{"name":"web","image":"nginx:1.27@sha256:` + strings.Repeat("a", 64) + `","requestId":"` + strings.Repeat("b", 64) + `","resourceTier":"small","networkScope":"container-net"}`
+	for name, frozen := range map[string]tools.PublicSchema{"v3": retiredServiceV3Schema(), "v3 长环境变量说明": retiredServiceLongEnvSchema()} {
+		if !legacyDockerContainerCatalogCompatible(frozenOperation(frozen, arguments), current) {
+			t.Fatalf("create_service %s 冻结目录在升 v4 后应仍可派发", name)
+		}
+	}
+	var changed tools.PublicSchema
+	raw, _ := json.Marshal(current)
+	_ = json.Unmarshal(raw, &changed)
+	changed.Description += "异动"
+	if legacyDockerContainerCatalogCompatible(frozenOperation(retiredServiceV3Schema(), arguments), changed) {
+		t.Fatal("与已审核 v4 文字不符的当前描述不得经还原放行")
 	}
 }
 

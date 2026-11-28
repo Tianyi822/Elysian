@@ -315,7 +315,7 @@ func (m *Manager) verifyMissingTask(ctx context.Context, expected Operation) (to
 		if o.Status != "unknown" || o.DispatchID != expected.DispatchID || o.Task == nil || o.Task.ID != "" || o.Task.RequestID == "" {
 			return bad("verification-changed", "操作不再满足未受理核实条件")
 		}
-		if o.Task.Domain != "docker-container-operation" || !supportsMissingTaskVerification(o.Capability) {
+		if (o.Task.Domain != "docker-container-operation" && o.Task.Domain != "database-provision") || !supportsMissingTaskVerification(o.Capability) {
 			return bad("verification-unsupported", "旧工具没有经过审核的提交前无变更契约")
 		}
 		v = tools.TaskVerification{OperationID: o.ID, DispatchID: o.DispatchID, Task: *o.Task, Tool: o.Capability.Name, ToolVersion: o.Capability.Metadata.Version, ArgumentsJSON: o.ArgumentsJSON}
