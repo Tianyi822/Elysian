@@ -270,7 +270,7 @@ func (s *Service) descriptors() []tools.Descriptor {
 	}})
 	descriptors = append(descriptors, tools.Descriptor{
 		Name:        "docker_container_create_service",
-		Description: "审批后用 service-v1 模板创建并启动服务容器：本机已存在摘要镜像、可写根、专属卷与声明式凭据（只传变量名，值由后端生成且不出现在参数与回执）。resourceTier(small/medium/large) 与 networkScope(container-net/localhost/any-host) 先经 request_user_input 由用户选定再提交；any-host 必填 hostPort 并联动防火墙，localhost/any-host 必填容器端口 port。相同参数重试复用原 requestId",
+		Description: "审批后用 service-v1 模板创建并启动服务容器：本机已存在摘要镜像、可写根、专属卷与声明式凭据（只传变量名，值由后端生成且不出现在参数与回执）。提交前自动核对宿主容量，不足时不创建并把读数交回。resourceTier(small/medium/large) 与 networkScope(container-net/localhost/any-host) 先经 docker_host_capacity 核对可容纳的档位，再经 request_user_input 由用户选定后提交；any-host 必填 hostPort 并联动防火墙，localhost/any-host 必填容器端口 port。部署 MySQL/MariaDB/Redis 请改用 database_provision，它会优先复用现有实例。相同参数重试复用原 requestId",
 		Parameters: tools.Schema{Type: tools.SchemaObject, Required: []string{"name", "image", "requestId", "resourceTier", "networkScope"}, Properties: map[string]tools.Schema{
 			"name":         {Type: tools.SchemaString, Description: "容器名称"},
 			"image":        {Type: tools.SchemaString, Description: "本机已存在的镜像完整引用，名称:标签@sha256:64 位摘要"},
@@ -283,7 +283,7 @@ func (s *Service) descriptors() []tools.Descriptor {
 			"env":          {Type: tools.SchemaArray, Items: &tools.Schema{Type: tools.SchemaString}, Description: "非凭据环境变量 KEY=VALUE 列表，最多 16 项、每项不超过 512 字节，完整进入审批展示"},
 			"volumes":      {Type: tools.SchemaArray, Items: &tools.Schema{Type: tools.SchemaString, Pattern: "^/[A-Za-z0-9._/-]{0,127}$"}, Description: "容器内持久卷挂载点（如 /var/lib/mysql），最多 2 个；卷由面板托管"},
 		}},
-		Metadata:    tools.Metadata{Domain: "docker", Action: "create_service", Effect: "write", Exposure: "agent", ResourceType: "docker-container", ResourceKeyArgument: "name", Version: "3", Async: true, TaskDomain: domaindocker.ContainerOperationDomain, TaskRequestArgument: "requestId"},
+		Metadata:    tools.Metadata{Domain: "docker", Action: "create_service", Effect: "write", Exposure: "agent", ResourceType: "docker-container", ResourceKeyArgument: "name", Version: "4", Async: true, TaskDomain: domaindocker.ContainerOperationDomain, TaskRequestArgument: "requestId"},
 		SearchNames: []string{"部署服务", "新建服务容器", "创建容器", "service container"},
 		Handler: func(c *kardia.Context, args tools.Arguments) (any, error) {
 			input := domaindocker.AgentServiceCreateInput{}
@@ -335,6 +335,7 @@ func (s *Service) descriptors() []tools.Descriptor {
 	descriptors = append(descriptors, s.imageDescriptors()...)
 	descriptors = append(descriptors, s.registryDescriptors()...)
 	descriptors = append(descriptors, s.powerDescriptor())
+	descriptors = append(descriptors, s.capacityDescriptor())
 	descriptors = append(descriptors, s.hostContainerDescriptors()...)
 	return append(descriptors, s.recreateDescriptors()...)
 }
@@ -474,7 +475,7 @@ func limitList[T any](values []T, limit int) []T {
 
 func (s *Service) execDescriptor() tools.Descriptor {
 	text := tools.Schema{Type: tools.SchemaString}
-	return tools.Descriptor{Name: "docker_container_exec", Description: "按本轮授权在指定本机容器中执行 argv，含用户自装容器；面板自身、内部容器、受管数据库和网站拒绝。回执标注目标风险；相同请求复用 requestId，异步等待真实终态", SearchNames: []string{"执行容器命令", "数据库", "逻辑库", "MySQL 建库", "MariaDB 建库", "Redis 清空", "建库", "删库", "容器exec"}, Parameters: tools.Schema{Type: tools.SchemaObject, Required: []string{"id", "requestId"}, Properties: map[string]tools.Schema{"id": text, "requestId": {Type: tools.SchemaString, Pattern: "^[a-f0-9]{64}$", Description: "64 位小写十六进制稳定请求标识；精确重试复用原值与完整参数"}, "argv": {Type: tools.SchemaArray, Items: &text}, "workdir": text}}, Metadata: tools.Metadata{Domain: "docker", Backend: "domain", Action: "exec", Effect: "execute", Exposure: "agent", ResourceType: "docker-container", ResourceKeyArgument: "id", Version: "4", Async: true, TaskDomain: domaindocker.ContainerOperationDomain, TaskRequestArgument: "requestId"}, Handler: func(c *kardia.Context, args tools.Arguments) (any, error) {
+	return tools.Descriptor{Name: "docker_container_exec", Description: "按本轮授权在指定本机容器中执行 argv，含用户自装容器；面板自身、内部容器、受管数据库和网站拒绝。回执标注目标风险；相同请求复用 requestId，异步等待真实终态", SearchNames: []string{"执行容器命令", "容器内命令", "容器exec"}, Parameters: tools.Schema{Type: tools.SchemaObject, Required: []string{"id", "requestId"}, Properties: map[string]tools.Schema{"id": text, "requestId": {Type: tools.SchemaString, Pattern: "^[a-f0-9]{64}$", Description: "64 位小写十六进制稳定请求标识；精确重试复用原值与完整参数"}, "argv": {Type: tools.SchemaArray, Items: &text}, "workdir": text}}, Metadata: tools.Metadata{Domain: "docker", Backend: "domain", Action: "exec", Effect: "execute", Exposure: "agent", ResourceType: "docker-container", ResourceKeyArgument: "id", Version: "4", Async: true, TaskDomain: domaindocker.ContainerOperationDomain, TaskRequestArgument: "requestId"}, Handler: func(c *kardia.Context, args tools.Arguments) (any, error) {
 		raw, err := json.Marshal(args)
 		if err != nil {
 			return nil, err
