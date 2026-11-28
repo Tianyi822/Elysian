@@ -17,7 +17,7 @@ const planTool = "update_plan"
 
 func planCapability() Capability {
 	return Capability{Name: planTool, Source: planSource, ReadOnly: true,
-		Description: "规划并更新当前轮复杂任务的进度。提交完整的有序步骤列表，保留仍属同一步骤的稳定 ID；状态为 pending、in_progress 或 completed，最多一个进行中。简单问答无需计划。根据新发现可增删或调整步骤，开始执行及确认完成时更新；只有结果已确认才标记完成，最终答复前核对。计划不授予执行权限。",
+		Description: "规划并更新当前轮复杂任务的进度。提交完整的有序步骤列表，保留仍属同一步骤的稳定 ID；状态为 pending、in_progress 或 completed，最多一个进行中。问答、只读查询和单一交付目标的简单任务无需计划；只有 3 个及以上可独立检查的步骤、跨多个领域或要依据中间结果决策时才使用。根据新发现可增删或调整步骤，开始执行及确认完成时更新；只有结果已确认才标记完成，最终答复前核对。计划不授予执行权限。",
 		Parameters:  json.RawMessage(`{"type":"object","properties":{"steps":{"type":"array","minItems":1,"maxItems":20,"items":{"type":"object","properties":{"id":{"type":"string","minLength":1,"maxLength":64},"title":{"type":"string","minLength":1,"maxLength":200},"status":{"type":"string","enum":["pending","in_progress","completed"]}},"required":["id","title","status"],"additionalProperties":false}}},"required":["steps"],"additionalProperties":false}`),
 		Metadata:    tools.Metadata{Domain: "agent", Action: "update-plan", Effect: "read", ReadOnly: true, Exposure: "agent", Version: "1"}}
 }

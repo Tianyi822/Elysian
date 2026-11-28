@@ -335,6 +335,22 @@ func TestProactiveCompactionEligibility(t *testing.T) {
 	}
 }
 
+// firstInferenceEstimate 读取一次运行里首个推理请求的 token 估算，即该轮固定上下文的实测规模。
+func firstInferenceEstimate(t *testing.T, m *Manager, runID string) int {
+	t.Helper()
+	records, err := m.ModelRequests(context.Background(), runID, "", 50)
+	if err != nil {
+		t.Fatal(err)
+	}
+	for _, record := range records.Items {
+		if record.Purpose == "inference" {
+			return record.EstimatedTokens
+		}
+	}
+	t.Fatal("运行没有推理请求记录")
+	return 0
+}
+
 // 原始目标独自超过阈值时，小工具事实不能触发每轮一次的无效 checkpoint。
 func TestAgentDoesNotRepeatCompactionForFixedContext(t *testing.T) {
 	var inferences atomic.Int32
@@ -372,10 +388,13 @@ func TestAgentDoesNotRepeatCompactionForFixedContext(t *testing.T) {
 	if got := runtimeFinished(t, m, initial.ID); got.Status != StateSucceeded {
 		t.Fatalf("首轮失败：%+v", got)
 	}
-	// 固定上下文（原始目标 30000 字节约 17.5k token）自身达到 22000 容量的 80% 阈值；
-	// contextPressure 在模型容量成为约束时计入 MaxTokens，因此容量需低于原始目标的字节数。
+	// 第二轮容量按首轮实测的固定上下文推导：固定部分（原始目标 30000 字节约 17.5k token 加系统
+	// 提示等）加输出预留须达到 80% 阈值，主动整理因此无用；同时给 5 次工具往返（每次约 321 token）
+	// 与 512 输出预留留出余量，避免请求装不下而多出一次被动 checkpoint。容量仍低于原始目标的字节数。
+	// 系统提示词会随版本变长，写死容量会让夹具在提示词变化后悄悄越界。
+	capacity := firstInferenceEstimate(t, m, initial.ID) + 2800
 	second, err := m.UpdateModelProfile(profile.ID, first.Revision, model.Input{Provider: profile.Provider, APIFormat: profile.APIFormat,
-		BaseURL: profile.BaseURL, Model: profile.Model, ContextTokens: 22000, OutputTokens: 512,
+		BaseURL: profile.BaseURL, Model: profile.Model, ContextTokens: capacity, OutputTokens: 512,
 		Capabilities: profile.Capabilities, Active: true})
 	if err != nil {
 		t.Fatal(err)
