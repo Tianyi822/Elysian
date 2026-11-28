@@ -18,6 +18,7 @@ import (
 	"elysian/server/internal/applog"
 	"elysian/server/internal/config"
 	"elysian/server/internal/seam"
+	"elysian/server/internal/shared"
 )
 
 func awaitContainerTask(t *testing.T, a *AgentFacade, id string) ContainerOperationTask {
@@ -196,16 +197,16 @@ func TestExecOutputDrainsFragmentedOversizedFrames(t *testing.T) {
 	header[0] = 1
 	binary.BigEndian.PutUint32(header[4:], uint32(len(body)))
 	wire := append(header, body...)
-	output := &execOutput{}
+	output := shared.NewExecOutput(65 << 10)
 	for len(wire) > 0 {
 		n := 19
 		if n > len(wire) {
 			n = len(wire)
 		}
-		output.consume(wire[:n])
+		output.Consume(wire[:n])
 		wire = wire[n:]
 	}
-	if output.invalid || output.remaining != 0 || len(output.header) != 0 || !output.truncated || len(output.stdout) > 65<<10 {
+	if output.Invalid() || output.Incomplete() || !output.Truncated() || len(output.Stdout()) > 65<<10 {
 		t.Fatalf("decoder failed: %+v", output)
 	}
 }
@@ -242,7 +243,7 @@ func TestContainerExecRejectsManagedDatabaseContainers(t *testing.T) {
 	bridge := &registeredDatabaseBridge{}
 	facade.SetDatabaseContainers(bridge)
 	input := ContainerExecInput{ID: strings.Repeat("c", 64), RequestID: strings.Repeat("a", 64), Argv: []string{"true"}}
-	if _, err := facade.SubmitExec(context.Background(), input); err == nil || !strings.Contains(err.Error(), "受管数据库容器不支持执行任意命令") {
+	if _, err := facade.SubmitExec(context.Background(), input); err == nil || !strings.Contains(err.Error(), "数据库容器不支持执行任意命令") {
 		t.Fatalf("受管数据库容器应被固定文案拒绝: %v", err)
 	}
 	if bridge.calls != 1 {

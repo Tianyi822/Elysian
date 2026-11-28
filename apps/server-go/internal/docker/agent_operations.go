@@ -51,6 +51,7 @@ type ContainerOperationTask struct {
 	Message             string                         `json:"message,omitempty"`
 	ErrorCode           string                         `json:"errorCode,omitempty"`
 	ExecID              string                         `json:"execId,omitempty"`
+	AttemptedVolumes    []string                       `json:"attemptedVolumes,omitempty"`
 	Resolution          *ContainerOperationResolution  `json:"resolution,omitempty"`
 }
 
@@ -67,6 +68,7 @@ type ContainerOperationResolution struct {
 // AgentOperationReceipt excludes private administrative reconciliation evidence.
 func AgentOperationReceipt(task ContainerOperationTask) ContainerOperationTask {
 	task.Resolution = nil
+	task.AttemptedVolumes = nil
 	return task
 }
 
@@ -258,15 +260,37 @@ func (a *AgentFacade) SubmitService(ctx context.Context, input AgentServiceCreat
 	if prior, found, err := a.existingContainerOperation(input.RequestID, "name:"+input.Name, input); found || err != nil {
 		return prior, agentSubmitRejected(err)
 	}
-	if _, err := a.validateServiceInput(input); err != nil {
+	tier, err := a.validateServiceInput(input)
+	if err != nil {
 		return ContainerOperationTask{}, agentSubmitRejected(err)
 	}
-	// 数据库镜像不再经接缝拦截为受管数据库容器；镜像解析保留为提交前预检，
-	// 失败仍是未派发拒绝，不进入异步任务的未知屏障。
-	if _, err := a.resolveAgentImage(ctx, input.Image); err != nil {
+	// 受理前核对宿主容量与 any-host 宿主端口：不满足时不建任务，原因与读数交回模型。
+	if err := a.requireCapacity(ctx, " "+input.ResourceTier+" 档", tier.Memory); err != nil {
 		return ContainerOperationTask{}, agentSubmitRejected(err)
 	}
-	return a.submitContainerOperation(input.RequestID, "name:"+input.Name, input, func(ctx context.Context, _ string) (any, error) { return a.createServiceAuthorized(ctx, input) })
+	if input.NetworkScope == "any-host" {
+		if err := a.assertAgentHostPortFree(ctx, input.HostPort); err != nil {
+			return ContainerOperationTask{}, agentSubmitRejected(err)
+		}
+	}
+	// 镜像解析是提交前预检：失败是未派发拒绝，不进入异步任务的未知屏障。
+	image, _, err := a.agentImageRecord(ctx, input.Image)
+	if err != nil {
+		return ContainerOperationTask{}, agentSubmitRejected(err)
+	}
+	// 官方数据库镜像不走通用服务容器模板：经 database_provision 才会复用现有实例或
+	// 新建受管实例并登记凭据。
+	if repository, ok := officialDatabaseRepository(image); ok {
+		return ContainerOperationTask{}, agentSubmitRejected(shared.InvalidRequest("官方数据库镜像 " + repository + " 的部署请使用 database_provision：它优先复用版本匹配的现有实例，没有时新建受管实例并登记凭据；不要用服务容器模板部署数据库"))
+	}
+	release, err := a.service.beginDatabaseMutation(ctx, "", input.Name)
+	if err != nil {
+		return ContainerOperationTask{}, agentSubmitRejected(err)
+	}
+	defer release()
+	return a.submitContainerOperation(input.RequestID, "name:"+input.Name, input, func(ctx context.Context, taskID string) (any, error) {
+		return a.createServiceAuthorized(ctx, input, taskID)
+	})
 }
 
 func (a *AgentFacade) SubmitExec(ctx context.Context, input ContainerExecInput) (ContainerOperationTask, error) {
@@ -319,7 +343,7 @@ func (a *AgentFacade) submitExec(ctx context.Context, input ContainerExecInput, 
 			return ContainerOperationTask{}, agentSubmitRejected(err)
 		}
 		if registered {
-			return ContainerOperationTask{}, agentSubmitRejected(shared.InvalidRequest("受管数据库容器不支持执行任意命令"))
+			return ContainerOperationTask{}, agentSubmitRejected(shared.InvalidRequest("数据库容器不支持执行任意命令；接管的容器需要任意命令时请先在数据库页解除接管"))
 		}
 	}
 	if _, err := a.targetForScope(ctx, input.ID, scope); err != nil {
@@ -394,6 +418,7 @@ func (a *AgentFacade) InspectContainerOperation(ctx context.Context, id string) 
 		return ContainerOperationTask{}, shared.InvalidRequest("容器操作任务不存在")
 	}
 	task.Result = append(json.RawMessage(nil), task.Result...)
+	task.AttemptedVolumes = append([]string(nil), task.AttemptedVolumes...)
 	if task.Observation != nil {
 		copy := *task.Observation
 		task.Observation = &copy

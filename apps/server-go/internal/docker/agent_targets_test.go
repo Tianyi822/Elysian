@@ -118,7 +118,9 @@ func TestAgentRefusesPanelOwnedContainersBeforeDispatch(t *testing.T) {
 		"unknown-panel": {id: hostScopeID, labels: map[string]string{"elysian.future.label": "x"}, message: "面板内部容器"},
 		// 数据库与网站容器不归通用入口变更，但日志可读（排查面板纳管的服务）。
 		"database": {id: hostScopeID, labels: managed(map[string]string{"elysian.database": "true"}), message: "所属领域", logsReadable: true},
-		"website":  {id: hostScopeID, labels: managed(map[string]string{"elysian.website": "true"}), message: "所属领域", logsReadable: true},
+		// Agent 部署的受管数据库实例带档位标签，仍是数据库实例而不是内部容器。
+		"database-tier": {id: hostScopeID, labels: managed(map[string]string{"elysian.database": "true", "elysian.database.engine": "MySQL", "elysian.database.version": "8.0", "elysian.database.tier": "small"}), message: "所属领域", logsReadable: true},
+		"website":       {id: hostScopeID, labels: managed(map[string]string{"elysian.website": "true"}), message: "所属领域", logsReadable: true},
 	}
 	for name, tc := range cases {
 		t.Run(name, func(t *testing.T) {

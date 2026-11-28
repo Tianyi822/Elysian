@@ -16,7 +16,7 @@ func (a *AgentFacade) checkDomainExecOrUpdate(ctx context.Context, id string, ex
 		}
 		if registered {
 			if exec {
-				return shared.InvalidRequest("受管数据库容器不支持执行任意命令")
+				return shared.InvalidRequest("数据库容器不支持执行任意命令；接管的容器需要任意命令时请先在数据库页解除接管")
 			}
 			return shared.InvalidRequest("数据库容器配置须通过所属领域处理")
 		}

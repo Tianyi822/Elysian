@@ -83,7 +83,7 @@ func classifyAgentLabels(labels *jsonObject) agentTargetClass {
 			case key == "elysian.website.probe", key == "elysian.website.build", key == "elysian.website.deployment-owner",
 				strings.HasPrefix(key, "elysian.build."), key == "elysian.panel":
 				internal = true
-			case key == labelDatabase, key == "elysian.database.engine", key == "elysian.database.version", key == "elysian.database.volume":
+			case key == labelDatabase, key == "elysian.database.engine", key == "elysian.database.version", key == "elysian.database.volume", key == "elysian.database.tier":
 				database = true
 			case key == "elysian.website", key == "elysian.website.project", key == "elysian.website.kind", key == "elysian.website.version":
 				website = true

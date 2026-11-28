@@ -149,35 +149,42 @@ func (a *AgentFacade) ensureAgentNetwork(ctx context.Context) error {
 }
 
 // resolveAgentImage 按本机镜像清单解析固定摘要引用，返回可安全钉死的镜像 ID。
+func (a *AgentFacade) resolveAgentImage(ctx context.Context, ref string) (string, error) {
+	_, pinned, err := a.agentImageRecord(ctx, ref)
+	return pinned, err
+}
+
+// agentImageRecord 与 resolveAgentImage 相同，同时带回命中的镜像记录，供调用方核对镜像来源。
 // Engine 对「名称:标签@sha256:摘要」组合引用按 RepoDigests 名字解析：镜像源拉取
 // 后重打标签的镜像，RepoDigests 仍是源站命名，组合引用必然 404；因此核验与钉死
 // 都走面板自己的清单投影（与受管数据库同口径），不请求组合引用。
-func (a *AgentFacade) resolveAgentImage(ctx context.Context, ref string) (string, error) {
+func (a *AgentFacade) agentImageRecord(ctx context.Context, ref string) (contract.ContainerImage, string, error) {
 	digestIndex := strings.LastIndex(ref, "@")
 	if digestIndex < 0 {
-		return "", shared.InvalidRequest("服务容器镜像引用必须带 sha256 摘要")
+		return contract.ContainerImage{}, "", shared.InvalidRequest("服务容器镜像引用必须带 sha256 摘要")
 	}
 	digest := strings.TrimSpace(ref[digestIndex+1:])
 	const digestPrefix = "sha256:"
 	hexPart := strings.TrimPrefix(digest, digestPrefix)
 	if !strings.HasPrefix(digest, digestPrefix) || len(hexPart) != 64 {
-		return "", shared.InvalidRequest("服务容器镜像摘要必须是 sha256: 加 64 位十六进制")
+		return contract.ContainerImage{}, "", shared.InvalidRequest("服务容器镜像摘要必须是 sha256: 加 64 位十六进制")
 	}
 	if _, err := hex.DecodeString(hexPart); err != nil {
-		return "", shared.InvalidRequest("服务容器镜像摘要必须是 sha256: 加 64 位十六进制")
+		return contract.ContainerImage{}, "", shared.InvalidRequest("服务容器镜像摘要必须是 sha256: 加 64 位十六进制")
 	}
 	name, tag := "", ""
 	if refPart := strings.TrimSpace(ref[:digestIndex]); refPart != "" {
 		parsed, err := parseImageReference(refPart)
 		if err != nil {
-			return "", shared.InvalidRequest("服务容器镜像引用无效：" + err.Error())
+			return contract.ContainerImage{}, "", shared.InvalidRequest("服务容器镜像引用无效：" + err.Error())
 		}
 		name, tag = parsed.name, parsed.tag
 	}
 	images, err := a.service.imagesFromList(ctx)
 	if err != nil {
-		return "", err
+		return contract.ContainerImage{}, "", err
 	}
+	var matched contract.ContainerImage
 	pinned := ""
 	for _, image := range images {
 		if !agentDigestMatches(image, hexPart) {
@@ -187,14 +194,28 @@ func (a *AgentFacade) resolveAgentImage(ctx context.Context, ref string) (string
 			continue
 		}
 		if pinned != "" {
-			return "", shared.InvalidRequest("本机存在多个匹配该摘要的镜像，无法唯一钉死")
+			return contract.ContainerImage{}, "", shared.InvalidRequest("本机存在多个匹配该摘要的镜像，无法唯一钉死")
 		}
-		pinned = "sha256:" + image.ID
+		matched, pinned = image, "sha256:"+image.ID
 	}
 	if pinned == "" {
-		return "", shared.InvalidRequest("服务容器只使用本机已存在的固定摘要镜像；请先用 docker_image_pull 拉取后重试")
+		return contract.ContainerImage{}, "", shared.InvalidRequest("服务容器只使用本机已存在的固定摘要镜像；请先用 docker_image_pull 拉取后重试")
 	}
-	return pinned, nil
+	return matched, pinned, nil
+}
+
+// officialDatabaseRepository 判断镜像是否是官方数据库镜像；这类部署必须经 database_provision
+// 才能复用现有实例并让面板持有凭据。
+func officialDatabaseRepository(image contract.ContainerImage) (string, bool) {
+	for _, ref := range append([]string{image.Name + ":" + image.Tag}, image.OtherTags...) {
+		if index := strings.LastIndex(ref, ":"); index > 0 {
+			ref = ref[:index]
+		}
+		if repository, ok := shared.OfficialDatabaseRepository(ref); ok {
+			return repository, true
+		}
+	}
+	return "", false
 }
 
 // agentDigestMatches 摘要命中：清单投影的 Digest 是 RepoDigests 首项（可带源站
@@ -229,16 +250,21 @@ func (a *AgentFacade) createService(ctx context.Context, input AgentServiceCreat
 	if err := a.check(ctx); err != nil {
 		return nil, err
 	}
-	return a.createServiceAuthorized(ctx, input)
-}
-
-func (a *AgentFacade) createServiceAuthorized(ctx context.Context, input AgentServiceCreateInput) (map[string]any, error) {
-	if a.credentials == nil {
-		return nil, errors.New("服务容器凭据登记未装配")
-	}
-	tier, err := a.validateServiceInput(input)
+	release, err := a.service.beginDatabaseMutation(ctx, "", input.Name)
 	if err != nil {
 		return nil, err
+	}
+	defer release()
+	return a.createServiceAuthorized(ctx, input, "")
+}
+
+// createServiceAuthorized 在已受理的任务里创建并启动服务容器。首个变更之前的失败一律
+// 声明 NotDispatched；变更之后的失败先回滚，只有回读确认本次创建的容器与卷都已消失才
+// 声明 NoBusinessEffect，回读不确认时保留结果未知。
+func (a *AgentFacade) createServiceAuthorized(ctx context.Context, input AgentServiceCreateInput, taskID string) (map[string]any, error) {
+	tier, err := a.validateServiceInput(input)
+	if err != nil {
+		return nil, createRejected("docker-container-create-rejected", err, "服务容器参数无效，未创建容器")
 	}
 	digest := serviceCreateDigest(input)
 	s := a.service
@@ -247,22 +273,42 @@ func (a *AgentFacade) createServiceAuthorized(ctx context.Context, input AgentSe
 	// 重试只认领完全相同的既有创建。
 	status, existing, err := s.engineJSON(ctx, http.MethodGet, "/containers/"+url.PathEscape(input.Name)+"/json", nil, nil, actionTimeout)
 	if err != nil {
-		return nil, err
+		return nil, createRejected("docker-container-create-rejected", nil, "查询容器名称占用失败，未创建容器")
 	}
 	if status == http.StatusOK {
-		return a.adoptService(ctx, input, digest, existing)
+		value, err := a.adoptService(ctx, input, digest, existing)
+		if err == nil || ctx.Err() != nil {
+			return value, err
+		}
+		return nil, createRejected("docker-container-create-rejected", err, "容器名称已被其他请求使用，未创建容器")
 	}
 	if status != http.StatusNotFound {
-		return nil, errors.New("查询容器名称占用失败")
+		return nil, createRejected("docker-container-create-rejected", nil, "查询容器名称占用失败，未创建容器")
+	}
+	// 受理与执行之间宿主内存可能被占满：变更前按同一口径复核。
+	if err := a.requireCapacity(ctx, " "+input.ResourceTier+" 档", tier.Memory); err != nil {
+		if ctx.Err() != nil {
+			return nil, err
+		}
+		return nil, createRejected("docker-resource-insufficient", err, shared.HostCapacityUnavailable)
+	}
+	if a.credentials == nil {
+		return nil, createRejected("docker-container-create-rejected", nil, "服务容器凭据登记未装配，未创建容器")
 	}
 	imageID, err := a.resolveAgentImage(ctx, input.Image)
 	if err != nil {
-		return nil, err
+		if ctx.Err() != nil {
+			return nil, err
+		}
+		return nil, createRejected("docker-container-create-rejected", err, "读取本机镜像清单失败，未创建容器")
 	}
 	// 凭据：按变量名逐项沿用同名既有登记（失败重试与 adopt 稳定），缺失的逐名补生成。
 	record, err := a.credentials.find(input.Name)
 	if err != nil {
-		return nil, err
+		if ctx.Err() != nil {
+			return nil, err
+		}
+		return nil, createRejected("docker-container-create-rejected", nil, "读取服务容器凭据登记失败，未创建容器")
 	}
 	if record == nil {
 		record = &agentServiceCredentialRecord{Name: input.Name, Credentials: map[string]string{}}
@@ -273,20 +319,27 @@ func (a *AgentFacade) createServiceAuthorized(ctx context.Context, input AgentSe
 		}
 	}
 	createdVolumes := []string{}
+	attemptedVolumes := []string{}
 	for range input.Volumes {
 		volumeName := agentVolumePrefix + strconv.Itoa(len(createdVolumes)) + "-" + input.RequestID
-		body, _ := json.Marshal(map[string]any{"Name": volumeName, "Labels": map[string]string{labelManaged: labelTrueValue, "elysian.agent": "true"}})
+		attemptedVolumes = append(attemptedVolumes, volumeName)
+		if taskID != "" {
+			if err := a.updateContainerOperation(taskID, func(task *ContainerOperationTask) {
+				task.AttemptedVolumes = append([]string(nil), attemptedVolumes...)
+			}); err != nil {
+				return nil, err
+			}
+		}
+		body, _ := json.Marshal(map[string]any{"Name": volumeName, "Labels": map[string]string{labelManaged: labelTrueValue, "elysian.agent": "true", "elysian.agent.create-digest": digest}})
 		volumeStatus, _, volumeErr := s.engineJSON(ctx, http.MethodPost, "/volumes/create", nil, body, actionTimeout)
 		if volumeErr != nil || (volumeStatus != http.StatusCreated && volumeStatus != http.StatusOK) {
-			a.removeCreatedVolumes(ctx, createdVolumes)
-			return nil, errors.New("创建服务持久卷失败")
+			return nil, a.rolledBack(ctx, "", digest, attemptedVolumes, volumeErr != nil && volumeStatus == 0, "创建服务持久卷失败")
 		}
 		createdVolumes = append(createdVolumes, volumeName)
 	}
 	if input.NetworkScope == "container-net" {
 		if err := a.ensureAgentNetwork(ctx); err != nil {
-			a.removeCreatedVolumes(ctx, createdVolumes)
-			return nil, err
+			return nil, a.rolledBack(ctx, "", digest, attemptedVolumes, true, "创建 Agent 共享网络失败")
 		}
 	}
 	env := append([]string(nil), input.Env...)
@@ -332,21 +385,14 @@ func (a *AgentFacade) createServiceAuthorized(ctx context.Context, input AgentSe
 	body, _ := json.Marshal(spec)
 	createStatus, value, err := s.engineJSON(ctx, http.MethodPost, "/containers/create", url.Values{"name": {input.Name}}, body, actionTimeout)
 	if err != nil || createStatus != http.StatusCreated {
-		a.removeCreatedVolumes(ctx, createdVolumes)
-		if err != nil {
-			return nil, err
-		}
-		return nil, errors.New("服务容器创建失败")
+		return nil, a.rolledBack(ctx, input.Name, digest, attemptedVolumes, err != nil && createStatus == 0, "服务容器创建失败")
 	}
 	containerID, err := requireCreateID(value)
 	if err != nil {
-		a.removeCreatedVolumes(ctx, createdVolumes)
-		return nil, err
+		return nil, a.rolledBack(ctx, input.Name, digest, attemptedVolumes, false, "容器创建回执无效")
 	}
 	if _, err := s.Action(ctx, containerID, "start"); err != nil {
-		a.removeCreatedContainer(ctx, containerID)
-		a.removeCreatedVolumes(ctx, createdVolumes)
-		return nil, err
+		return nil, a.rolledBack(ctx, containerID, digest, attemptedVolumes, false, "服务容器启动失败，常见原因是宿主端口被占用或镜像入口异常")
 	}
 	record.ContainerID = containerID
 	record.VolumeNames = append([]string(nil), createdVolumes...)
@@ -360,6 +406,112 @@ func (a *AgentFacade) createServiceAuthorized(ctx context.Context, input AgentSe
 		return nil, err
 	}
 	return a.serviceReceipt(ctx, input, containerID, record)
+}
+
+// createRejected 是任务受理后、首个变更之前的确定失败：没有任何资源被创建。
+func createRejected(code string, err error, fallback string) error {
+	return &seam.AgentContainerError{Code: code, Message: rejectedMessage(err, fallback), NotDispatched: true}
+}
+
+// rejectedMessage 只保留契约文案；非参数类错误回落到调用方给定的固定原因。
+func rejectedMessage(err error, fallback string) string {
+	var invalid *shared.InvalidRequestError
+	if errors.As(err, &invalid) && invalid.Message != "" {
+		return invalid.Message
+	}
+	return fallback
+}
+
+// rolledBack cleans up the container before its volumes. A transport error on
+// creation can leave an outstanding write even when an immediate lookup is 404.
+func (a *AgentFacade) rolledBack(ctx context.Context, container, digest string, volumes []string, mayStillWrite bool, message string) error {
+	if ctx.Err() != nil {
+		return ctx.Err()
+	}
+	verified := container == "" || a.removeOwnServiceContainer(ctx, container, digest)
+	for _, name := range volumes {
+		gone := a.removeOwnServiceVolume(ctx, name, digest)
+		verified = verified && gone
+	}
+	if !verified || mayStillWrite {
+		return errors.New(message)
+	}
+	return &seam.AgentContainerError{Code: "docker-container-create-rolled-back", Message: message + "，已回滚并删除本次创建的容器与卷", NoBusinessEffect: true}
+}
+
+func (a *AgentFacade) removeOwnServiceContainer(ctx context.Context, target, digest string) bool {
+	status, value, err := a.service.engineJSON(ctx, http.MethodGet, "/containers/"+url.PathEscape(target)+"/json", nil, nil, actionTimeout)
+	if err != nil || status != http.StatusOK {
+		return err == nil && status == http.StatusNotFound
+	}
+	record, _ := asRecord(value)
+	config, _ := asRecord(mustGet(record, "Config"))
+	labels, _ := asRecord(mustGet(config, "Labels"))
+	if labels == nil || mustGet(labels, "elysian.agent.create-digest") != digest || mustGet(labels, "elysian.agent.template") != agentServiceTemplate {
+		return false
+	}
+	id, err := requireID(value, "容器")
+	if err != nil || agentOperationIDPattern.MatchString(target) && id != target {
+		return false
+	}
+	status, _, err = a.service.engineJSON(ctx, http.MethodDelete, "/containers/"+encodeEngineID(id), url.Values{"force": {"1"}, "v": {"1"}}, nil, actionTimeout)
+	if err != nil || status != http.StatusNoContent && status != http.StatusNotFound {
+		return false
+	}
+	status, _, err = a.service.engineJSON(ctx, http.MethodGet, "/containers/"+encodeEngineID(id)+"/json", nil, nil, actionTimeout)
+	return err == nil && status == http.StatusNotFound
+}
+
+func (a *AgentFacade) removeOwnServiceVolume(ctx context.Context, name, digest string) bool {
+	path := "/volumes/" + url.PathEscape(name)
+	status, value, err := a.service.engineJSON(ctx, http.MethodGet, path, nil, nil, actionTimeout)
+	if err != nil || status != http.StatusOK {
+		return err == nil && status == http.StatusNotFound
+	}
+	record, _ := asRecord(value)
+	labels, _ := asRecord(mustGet(record, "Labels"))
+	if mustGet(record, "Name") != name || mustGet(labels, "elysian.agent.create-digest") != digest {
+		return false
+	}
+	status, _, err = a.service.engineJSON(ctx, http.MethodDelete, path, nil, nil, actionTimeout)
+	if err != nil || status != http.StatusNoContent && status != http.StatusNotFound {
+		return false
+	}
+	status, _, err = a.service.engineJSON(ctx, http.MethodGet, path, nil, nil, actionTimeout)
+	return err == nil && status == http.StatusNotFound
+}
+
+// assertAgentHostPortFree 提交前核对 any-host 档要绑定的宿主 TCP 端口没有被运行中的容器
+// 占用。只读运行中容器实际发布的端口；已停止容器保留的端口绑定不阻塞新容器。
+func (a *AgentFacade) assertAgentHostPortFree(ctx context.Context, hostPort int) error {
+	status, value, err := a.service.engineJSON(ctx, http.MethodGet, "/containers/json", nil, nil, actionTimeout)
+	if err != nil {
+		return err
+	}
+	entries, ok := asArray(value)
+	if status != http.StatusOK || !ok {
+		return shared.InvalidRequest("查询宿主端口占用失败，未创建容器")
+	}
+	for _, entry := range entries {
+		record, _ := asRecord(entry)
+		if record == nil {
+			continue
+		}
+		ports, _ := mustGet(record, "Ports").([]any)
+		for _, item := range ports {
+			binding, _ := asRecord(item)
+			if binding == nil {
+				continue
+			}
+			if kind, _ := asString(mustGet(binding, "Type")); kind != "tcp" {
+				continue
+			}
+			if public, ok := asNumber(mustGet(binding, "PublicPort")); ok && int(public) == hostPort {
+				return shared.InvalidRequest("宿主端口已被占用：" + strconv.Itoa(hostPort) + "/tcp，未创建容器；请与用户确认更换端口或释放该端口")
+			}
+		}
+	}
+	return nil
 }
 
 // adoptService 只认领 create-digest 与模板完全匹配的既有容器；凭据从登记回读，不重新生成。
@@ -422,18 +574,4 @@ func (a *AgentFacade) serviceReceipt(ctx context.Context, input AgentServiceCrea
 		result["firewallPort"] = sync
 	}
 	return result, nil
-}
-
-// removeCreatedContainer 启动失败回滚：删除本次创建但未启动成功的容器（与
-// RemoveContainer 同款 Engine 调用形态、容忍 404）；回滚失败不掩盖原始错误，
-// 残留事实由重试路径的名占用检查与人工处理收敛。
-func (a *AgentFacade) removeCreatedContainer(ctx context.Context, containerID string) {
-	_, _, _ = a.service.engineJSON(ctx, http.MethodDelete, "/containers/"+encodeEngineID(containerID), nil, nil, actionTimeout)
-}
-
-// removeCreatedVolumes 失败回滚：仅删除本次创建的卷。
-func (a *AgentFacade) removeCreatedVolumes(ctx context.Context, volumes []string) {
-	for _, name := range volumes {
-		_, _, _ = a.service.engineJSON(ctx, http.MethodDelete, "/volumes/"+url.PathEscape(name), nil, nil, actionTimeout)
-	}
 }

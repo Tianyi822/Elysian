@@ -5,6 +5,7 @@ import (
 	"errors"
 	"net"
 
+	"elysian/server/internal/seam"
 	"elysian/server/internal/shared"
 )
 
@@ -24,6 +25,11 @@ func agentRejected(err error) error {
 	var invalid *shared.InvalidRequestError
 	if errors.As(err, &invalid) {
 		return &AgentError{Code: "docker-operation-rejected", Message: invalid.Message, NotDispatched: true}
+	}
+	// 创建路径在任务内表达的预检拒绝沿用其固定文案与未派发标记。
+	var container *seam.AgentContainerError
+	if errors.As(err, &container) {
+		return &AgentError{Code: container.Code, Message: container.Message, NotDispatched: container.NotDispatched}
 	}
 	return err
 }

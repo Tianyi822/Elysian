@@ -159,10 +159,11 @@ func newServiceFacadeWithStore(t *testing.T, script engineScript, path string, o
 		selfContainerID: strings.Repeat("f", 64),
 	})
 	return &AgentFacade{
-		service:     service,
-		authorize:   func(context.Context) error { return nil },
-		credentials: newAgentCredentialStore(path),
-		portOpener:  opener,
+		service:      service,
+		authorize:    func(context.Context) error { return nil },
+		credentials:  newAgentCredentialStore(path),
+		portOpener:   opener,
+		hostCapacity: ampleHostCapacity(),
 	}
 }
 
@@ -337,13 +338,21 @@ func TestCreateServiceAdoptReusesCredentialsWithoutRegeneration(t *testing.T) {
 // 启动失败必须回滚：先删已建容器、再删本次创建的卷，避免残留容器引用已删卷。
 func TestCreateServiceStartFailureRemovesContainerAndVolumes(t *testing.T) {
 	containerID := strings.Repeat("c", 64)
+	input := AgentServiceCreateInput{Name: "mysql-main", Image: agentServiceImage, RequestID: "req-1",
+		ResourceTier: "medium", NetworkScope: "container-net", Port: 3306,
+		Credentials: []string{"MYSQL_ROOT_PASSWORD"}, Volumes: []string{"/var/lib/mysql"}}
+	digest := serviceCreateDigest(input)
+	containerDeleted, volumeDeleted := false, false
 	engine := newFakeEngine(func(call engineCall) (int, string, bool) {
 		imageID := strings.Repeat("b", 64)
 		switch {
 		case call.Method == http.MethodGet && call.Path == "/containers/mysql-main/json":
 			return http.StatusNotFound, "", true
 		case call.Method == http.MethodGet && call.Path == "/containers/"+containerID+"/json":
-			return http.StatusOK, serviceContainerInspectBody(), true
+			if containerDeleted {
+				return http.StatusNotFound, "", true
+			}
+			return http.StatusOK, strings.Replace(serviceContainerInspectBody(), `"Labels":{`, `"Labels":{"elysian.agent.create-digest":"`+digest+`",`, 1), true
 		case call.Method == http.MethodGet && call.Path == "/images/json":
 			return http.StatusOK, fmt.Sprintf(`[{"Id":"sha256:%s"}]`, imageID), true
 		case call.Method == http.MethodGet && call.Path == "/images/"+encodeEngineID("sha256:"+imageID)+"/json":
@@ -358,7 +367,16 @@ func TestCreateServiceStartFailureRemovesContainerAndVolumes(t *testing.T) {
 			return http.StatusCreated, fmt.Sprintf(`{"Id":"%s","Warnings":[]}`, containerID), true
 		case call.Method == http.MethodPost && call.Path == "/containers/"+containerID+"/start":
 			return http.StatusInternalServerError, `{"message":"engine boom"}`, true
-		case call.Method == http.MethodDelete:
+		case call.Method == http.MethodGet && call.Path == "/volumes/elysian-agent-0-req-1":
+			if volumeDeleted {
+				return http.StatusNotFound, "", true
+			}
+			return http.StatusOK, `{"Name":"elysian-agent-0-req-1","Labels":{"elysian.agent.create-digest":"` + digest + `"}}`, true
+		case call.Method == http.MethodDelete && strings.HasPrefix(call.Path, "/containers/"):
+			containerDeleted = true
+			return http.StatusNoContent, "", true
+		case call.Method == http.MethodDelete && strings.HasPrefix(call.Path, "/volumes/"):
+			volumeDeleted = true
 			return http.StatusNoContent, "", true
 		default:
 			return 0, "", false
@@ -371,16 +389,13 @@ func TestCreateServiceStartFailureRemovesContainerAndVolumes(t *testing.T) {
 		selfContainerID: strings.Repeat("f", 64),
 	})
 	facade := &AgentFacade{
-		service:     service,
-		authorize:   func(context.Context) error { return nil },
-		credentials: newAgentCredentialStore(filepath.Join(t.TempDir(), "agent-service-containers.json")),
-		portOpener:  &recordingPortOpener{},
+		service:      service,
+		authorize:    func(context.Context) error { return nil },
+		credentials:  newAgentCredentialStore(filepath.Join(t.TempDir(), "agent-service-containers.json")),
+		portOpener:   &recordingPortOpener{},
+		hostCapacity: ampleHostCapacity(),
 	}
-	if _, err := facade.CreateService(context.Background(), AgentServiceCreateInput{
-		Name: "mysql-main", Image: agentServiceImage, RequestID: "req-1",
-		ResourceTier: "medium", NetworkScope: "container-net", Port: 3306,
-		Credentials: []string{"MYSQL_ROOT_PASSWORD"}, Volumes: []string{"/var/lib/mysql"},
-	}); err == nil {
+	if _, err := facade.CreateService(context.Background(), input); err == nil {
 		t.Fatal("启动失败应返回错误")
 	}
 	containerDeleteAt, volumeDeleteAt := -1, -1
@@ -393,7 +408,7 @@ func TestCreateServiceStartFailureRemovesContainerAndVolumes(t *testing.T) {
 		}
 	}
 	if containerDeleteAt < 0 {
-		t.Fatal("启动失败应回滚删除已建容器")
+		t.Fatalf("启动失败应回滚删除已建容器：%+v", engine.Requests())
 	}
 	if volumeDeleteAt < 0 {
 		t.Fatal("启动失败应回滚删除已建卷")
@@ -421,10 +436,11 @@ func TestCreateServiceFillsMissingCredentialsPerName(t *testing.T) {
 		selfContainerID: strings.Repeat("f", 64),
 	})
 	facade := &AgentFacade{
-		service:     service,
-		authorize:   func(context.Context) error { return nil },
-		credentials: store,
-		portOpener:  &recordingPortOpener{},
+		service:      service,
+		authorize:    func(context.Context) error { return nil },
+		credentials:  store,
+		portOpener:   &recordingPortOpener{},
+		hostCapacity: ampleHostCapacity(),
 	}
 	if _, err := facade.CreateService(context.Background(), AgentServiceCreateInput{
 		Name: "mysql-main", Image: agentServiceImage, RequestID: "req-1",
