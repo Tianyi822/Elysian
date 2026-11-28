@@ -140,6 +140,8 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 		Mode:      cfg.Mode(),
 		DBPath:    paths.Default.FirewallSqlite,
 	}
+	// 宿主容量读取器：docker 与 database 两个域在创建容器前共用同一份读数与判定口径。
+	capacity := platform.NewHostCapacity()
 	portOpener := firewall.NewPortOpener(firewallDeps)
 	containerFirewall := firewall.NewContainerFirewall(firewallDeps, filepath.Join(paths.DataDir, "docker-firewall-ownership.json"),
 		func(ctx context.Context, withBindings bool) (map[string]bool, []contract.DockerPublishedPort, error) {
@@ -159,6 +161,7 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 		PortOpener:           portOpener,
 		ContainerFirewall:    containerFirewall,
 		AgentCredentialsPath: filepath.Join(paths.ConfigDir, "agent-service-containers.json"),
+		HostCapacity:         capacity,
 	})
 	if err != nil {
 		return nil, fmt.Errorf("装配容器管理片失败：%w", err)
@@ -203,17 +206,19 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 	if logsAgent.Available() {
 		plugins = append(plugins, toollogs.Plugin(toollogs.Deps{Facade: logsAgent}, toollogs.Config{}))
 	}
-	databaseDeps := database.Deps{EngineAvailable: stack.Ready, SqliteAvailable: cfg.HostOpsAvailable(), Engine: stack.Engine, Views: stack.Views, SelfID: stack.SelfID, PortOpener: portOpener}
+	databaseDeps := database.Deps{EngineAvailable: stack.Ready, SqliteAvailable: cfg.HostOpsAvailable(), Engine: stack.Engine, Views: stack.Views, SelfID: stack.SelfID, PortOpener: portOpener,
+		AgentAuthorize: agentAuthorize, HostCapacity: capacity}
 	databaseDeps.AgentFacade = database.NewAgentFacade(databaseDeps)
 	if stack.Agent != nil {
 		stack.Agent.SetDatabaseContainers(databaseDeps.AgentFacade.ContainerBridge(tools.Revalidate))
+		stack.Agent.SetDatabaseMutationLease(databaseDeps.AgentFacade.BeginContainerMutation)
 		databaseDeps.AgentFacade.SetContainerOperationGuard(stack.Agent.CheckContainerMutation)
 		if websiteDeps.AgentFacade != nil {
 			stack.Agent.SetWebsiteContainers(websiteDeps.AgentFacade.WebsiteContainerBridge(tools.Revalidate))
 		}
 	}
 	if databaseDeps.AgentFacade.Available() {
-		plugins = append(plugins, tooldatabase.Plugin(tooldatabase.Deps{}, tooldatabase.Config{}))
+		plugins = append(plugins, tooldatabase.Plugin(tooldatabase.Deps{Facade: databaseDeps.AgentFacade}, tooldatabase.Config{}))
 	}
 	filesDeps := files.Deps{Available: cfg.HostOpsAvailable(), Accounts: security.NewSystemAccounts()}
 	var filesAgent *files.AgentFacade
@@ -246,7 +251,7 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 	}
 	factory := harnessFactory(func(config *config.Config, views seam.DockerViews) (http.Handler, func(context.Context) error, error) {
 		legacy := database.LegacyTaskLedger{StateDir: paths.StateDir}
-		inspect := agentTaskInspector(websiteDeps.AgentFacade, appAgent, stack.Agent, legacy)
+		inspect := agentTaskInspector(websiteDeps.AgentFacade, appAgent, stack.Agent, legacy, databaseDeps.AgentFacade)
 		var describeTarget func(context.Context, string) (harness.ApprovalTarget, error)
 		var describeRecreate func(context.Context, string, string) []string
 		if stack.Agent != nil {
@@ -293,10 +298,10 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 			DescribeTarget:   describeTarget,
 			DescribeRecreate: describeRecreate,
 			Paths:            paths.Default, Home: paths.ElysianHome, Plugins: plugins,
-			CancelTask:  agentTaskCanceller(websiteDeps.AgentFacade, appAgent, stack.Agent, legacy),
-			InspectTask: inspect, VerifyTask: agentTaskVerifier(stack.Agent),
-			LookupTask:    agentTaskLookup(websiteDeps.AgentFacade, appAgent, stack.Agent, legacy),
-			ReconcileTask: agentTaskReconciler(inspect, stack.Agent),
+			CancelTask:  agentTaskCanceller(websiteDeps.AgentFacade, appAgent, stack.Agent, legacy, databaseDeps.AgentFacade),
+			InspectTask: inspect, VerifyTask: agentTaskVerifier(stack.Agent, databaseDeps.AgentFacade),
+			LookupTask:    agentTaskLookup(websiteDeps.AgentFacade, appAgent, stack.Agent, legacy, databaseDeps.AgentFacade),
+			ReconcileTask: agentTaskReconciler(inspect, stack.Agent, databaseDeps.AgentFacade),
 		})
 	})
 	if len(factories) > 0 && factories[0] != nil {
@@ -326,6 +331,8 @@ func newAssembly(cfg *config.Config, appLogs seam.Logs, authDeps auth.Deps, fact
 	if firewallAgent != nil {
 		runtime.closeFuncs = append(runtime.closeFuncs, firewallAgent.Close)
 	}
+	// 运行服务先停（取消在途运行），再收尾各域的后台任务。
+	runtime.closeFuncs = append(runtime.closeFuncs, databaseDeps.AgentFacade.Close)
 	if stack.Agent != nil {
 		runtime.closeFuncs = append(runtime.closeFuncs, stack.Agent.Close)
 	}

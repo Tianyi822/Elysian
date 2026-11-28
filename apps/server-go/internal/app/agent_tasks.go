@@ -8,6 +8,7 @@ import (
 	"errors"
 	"math"
 
+	"elysian/server/internal/agent/jsonvalue"
 	"elysian/server/internal/agent/tools"
 	"elysian/server/internal/containerapps"
 	"elysian/server/internal/database"
@@ -50,8 +51,19 @@ func containerBuildTaskStatus(status containerapps.AgentTaskStatus) tools.TaskSt
 	return normalizedTaskStatus(outcome, status.State, status.Value, "container-app-build-"+string(outcome), status.Error, agentTaskProgress(status.State, status.Terminal, status.Stage, status.UpdatedAt, "正在构建容器镜像"))
 }
 
-func agentTaskReconciler(inspect func(context.Context, tools.TaskReference) (tools.TaskStatus, error), containers *docker.AgentFacade) func(context.Context, tools.TaskReconciliation) error {
+func agentTaskReconciler(inspect func(context.Context, tools.TaskReference) (tools.TaskStatus, error), containers *docker.AgentFacade, provisioning *database.AgentFacade) func(context.Context, tools.TaskReconciliation) error {
 	return func(ctx context.Context, intent tools.TaskReconciliation) error {
+		if intent.Task.Domain == database.ProvisionTaskDomain {
+			// 数据库部署的未知任务按登记与实例内只读核对恢复事实，不重投原请求。
+			if err := provisioningReady(provisioning); err != nil {
+				return err
+			}
+			resolution, err := provisionResolutionFromIntent(intent)
+			if err != nil {
+				return err
+			}
+			return provisioning.ReconcileProvision(ctx, resolution)
+		}
 		if intent.Task.Domain != docker.ContainerOperationDomain {
 			status, err := inspect(ctx, intent.Task)
 			if err != nil {
@@ -79,7 +91,55 @@ func agentTaskReconciler(inspect func(context.Context, tools.TaskReference) (too
 	}
 }
 
-func agentTaskInspector(sites *websites.AgentFacade, apps *containerapps.AgentFacade, containers *docker.AgentFacade, databases database.LegacyTaskLedger) func(context.Context, tools.TaskReference) (tools.TaskStatus, error) {
+func provisionResolutionFromIntent(intent tools.TaskReconciliation) (database.ProvisionResolution, error) {
+	args, err := jsonvalue.Object([]byte(intent.ArgumentsJSON))
+	if err != nil || intent.Tool != "database_provision" {
+		return database.ProvisionResolution{}, errors.New("数据库部署核实工具或原参数无效")
+	}
+	input, err := database.DecodeProvisionInput(args)
+	if err != nil || input.RequestID == "" || input.RequestID != intent.Task.RequestID {
+		return database.ProvisionResolution{}, errors.New("数据库部署核实请求身份不匹配")
+	}
+	digest, err := database.ProvisionInputDigest(input)
+	target := input.Engine + "/" + input.Version + "/" + input.Database
+	if err != nil || intent.Task.Digest != "" && intent.Task.Digest != digest || intent.Task.Target != "" && intent.Task.Target != target {
+		return database.ProvisionResolution{}, errors.New("数据库部署核实摘要不匹配")
+	}
+	// Older recovered references can omit target or digest. The domain rechecks
+	// both reconstructed values against its immutable acceptance record.
+	return database.ProvisionResolution{
+		ID: intent.ID, TaskID: intent.Task.ID, RequestID: input.RequestID, Target: target, Digest: digest,
+		Decision: intent.Decision, Evidence: intent.Evidence,
+	}, nil
+}
+
+// provisionTaskStatus 把数据库部署任务映射成运行时状态；失败任务按对业务的影响带证据，
+// 未派发与已回滚可以纠正后继续，部分完成如实说明已有变更，未知不提供任何证据。
+func provisionTaskStatus(task database.ProvisionTask) tools.TaskStatus {
+	terminal := task.State == database.ProvisionSucceeded || task.State == database.ProvisionFailed
+	outcome := taskOutcome(terminal, task.State == database.ProvisionFailed, task.State == database.ProvisionRunning)
+	status := normalizedTaskStatus(outcome, task.State, database.ProvisionAgentReceipt(task), task.ErrorCode, task.Message, agentTaskProgress(task.State, terminal, task.Message, task.UpdatedAt, "正在部署数据库"))
+	switch {
+	case task.State != database.ProvisionFailed:
+	case task.Effect == database.ProvisionEffectNotDispatched:
+		status.Evidence = &tools.ExecutionEvidence{Execution: "not-started", Changes: "none", Recovery: "correct", Stage: "preflight"}
+	case task.Effect == database.ProvisionEffectNoChange:
+		status.Evidence = &tools.ExecutionEvidence{Execution: "finished", Changes: "none", Recovery: "correct"}
+	case task.Effect == database.ProvisionEffectPartial:
+		status.Evidence = &tools.ExecutionEvidence{Execution: "finished", Changes: "confirmed", Recovery: "correct", Stage: task.Stage}
+	}
+	return status
+}
+
+// provisioningReady 判断数据库部署任务服务是否可用。
+func provisioningReady(provisioning *database.AgentFacade) error {
+	if provisioning == nil || !provisioning.Available() {
+		return errors.New("数据库部署任务服务未装配")
+	}
+	return nil
+}
+
+func agentTaskInspector(sites *websites.AgentFacade, apps *containerapps.AgentFacade, containers *docker.AgentFacade, databases database.LegacyTaskLedger, provisioning *database.AgentFacade) func(context.Context, tools.TaskReference) (tools.TaskStatus, error) {
 	return func(ctx context.Context, ref tools.TaskReference) (tools.TaskStatus, error) {
 		if ref.ID == "" || ref.RequestID == "" {
 			return tools.TaskStatus{}, errors.New("异步任务身份缺失")
@@ -135,6 +195,18 @@ func agentTaskInspector(sites *websites.AgentFacade, apps *containerapps.AgentFa
 				return normalizedTaskStatus(tools.TaskSucceeded, task.State, task, "", "", nil), nil
 			}
 			return normalizedTaskStatus(tools.TaskUnknown, task.State, task, "database-task-unknown", task.Message, nil), nil
+		case database.ProvisionTaskDomain:
+			if err := provisioningReady(provisioning); err != nil {
+				return tools.TaskStatus{}, err
+			}
+			task, err := provisioning.InspectProvision(ctx, ref.ID)
+			if err != nil {
+				return tools.TaskStatus{}, err
+			}
+			if task.RequestID != ref.RequestID || ref.Target != "" && ref.Target != task.Target || ref.Digest != "" && ref.Digest != task.Digest {
+				return tools.TaskStatus{}, errors.New("数据库部署请求身份不匹配")
+			}
+			return provisionTaskStatus(task), nil
 		case "docker-image-pull":
 			task, err := containers.InspectPull(ctx, ref.ID)
 			if err != nil {
@@ -212,7 +284,7 @@ func agentPullProgress(task docker.AgentPullTask) *tools.TaskProgress {
 	return progress
 }
 
-func agentTaskLookup(sites *websites.AgentFacade, apps *containerapps.AgentFacade, containers *docker.AgentFacade, databases database.LegacyTaskLedger) func(context.Context, tools.TaskReference) (tools.TaskReference, error) {
+func agentTaskLookup(sites *websites.AgentFacade, apps *containerapps.AgentFacade, containers *docker.AgentFacade, databases database.LegacyTaskLedger, provisioning *database.AgentFacade) func(context.Context, tools.TaskReference) (tools.TaskReference, error) {
 	return func(ctx context.Context, ref tools.TaskReference) (tools.TaskReference, error) {
 		if ref.Domain == "database" {
 			task, err := databases.Read(ctx, ref.ID, ref.RequestID)
@@ -220,6 +292,27 @@ func agentTaskLookup(sites *websites.AgentFacade, apps *containerapps.AgentFacad
 				return ref, err
 			}
 			ref.ID, ref.RequestID = task.ID, task.RequestID
+			return ref, nil
+		}
+		if ref.Domain == database.ProvisionTaskDomain {
+			if err := provisioningReady(provisioning); err != nil {
+				return ref, err
+			}
+			var task database.ProvisionTask
+			var err error
+			if ref.ID != "" {
+				task, err = provisioning.InspectProvision(ctx, ref.ID)
+			} else {
+				task, err = provisioning.LookupProvision(ctx, ref.RequestID)
+			}
+			if err != nil {
+				return ref, err
+			}
+			if ref.RequestID != "" && ref.RequestID != task.RequestID ||
+				ref.Target != "" && ref.Target != task.Target || ref.Digest != "" && ref.Digest != task.Digest {
+				return ref, errors.New("数据库部署请求身份不匹配")
+			}
+			ref.ID, ref.RequestID, ref.Target, ref.Digest = task.ID, task.RequestID, task.Target, task.Digest
 			return ref, nil
 		}
 		if ref.ID != "" {
@@ -281,7 +374,7 @@ func agentTaskLookup(sites *websites.AgentFacade, apps *containerapps.AgentFacad
 }
 
 // 仅供管理员删除会话后的宿主收尾使用，要求完整匹配持久任务身份。
-func agentTaskCanceller(sites *websites.AgentFacade, apps *containerapps.AgentFacade, containers *docker.AgentFacade, databases database.LegacyTaskLedger) func(context.Context, tools.TaskReference) error {
+func agentTaskCanceller(sites *websites.AgentFacade, apps *containerapps.AgentFacade, containers *docker.AgentFacade, databases database.LegacyTaskLedger, provisioning *database.AgentFacade) func(context.Context, tools.TaskReference) error {
 	return func(ctx context.Context, ref tools.TaskReference) error {
 		if ref.ID == "" || ref.RequestID == "" {
 			return errors.New("后台任务身份缺失")
@@ -295,6 +388,11 @@ func agentTaskCanceller(sites *websites.AgentFacade, apps *containerapps.AgentFa
 			return apps.CancelOwnedTask(ctx, ref.ID, ref.RequestID)
 		case "docker-image-pull":
 			return containers.CancelOwnedTask(ctx, ref.ID, ref.RequestID)
+		case database.ProvisionTaskDomain:
+			if err := provisioningReady(provisioning); err != nil {
+				return err
+			}
+			return provisioning.CancelProvision(ctx, ref.ID, ref.RequestID)
 		case "database":
 			// The retired worker is absent; only verify that the reference belongs to it.
 			_, err := databases.Read(ctx, ref.ID, ref.RequestID)

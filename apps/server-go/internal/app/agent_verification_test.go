@@ -57,7 +57,7 @@ func TestAgentVerifierBindsUnacceptedNumericServiceRequest(t *testing.T) {
 	containers := verificationContainerFacade(t, root)
 	requestID := strings.Repeat("a", 64)
 	v := tools.TaskVerification{OperationID: "operation", DispatchID: "dispatch", Tool: "docker_container_create_service", Task: tools.TaskReference{Domain: docker.ContainerOperationDomain, RequestID: requestID}, ArgumentsJSON: `{"name":"mysql84","port":3306.0,"hostPort":3.306e3,"requestId":"` + requestID + `"}`}
-	verify := agentTaskVerifier(containers)
+	verify := agentTaskVerifier(containers, nil)
 	ref, err := verify(context.Background(), v)
 	if err != nil || ref.ID == "" || ref.Target != "name:mysql84" || ref.Digest == "" {
 		t.Fatalf("missing bound receipt: %+v %v", ref, err)
@@ -66,7 +66,7 @@ func TestAgentVerifierBindsUnacceptedNumericServiceRequest(t *testing.T) {
 	if err != nil || again != ref {
 		t.Fatal("verification not idempotent")
 	}
-	status, err := agentTaskInspector(nil, nil, containers, database.LegacyTaskLedger{})(context.Background(), ref)
+	status, err := agentTaskInspector(nil, nil, containers, database.LegacyTaskLedger{}, nil)(context.Background(), ref)
 	if err != nil || status.EffectiveOutcome() != tools.TaskFailed || status.Evidence == nil || status.Evidence.Execution != "not-started" {
 		t.Fatalf("unsafe non-acceptance proof: %+v %v", status, err)
 	}
@@ -86,7 +86,7 @@ func TestAgentExecObservationRetainsProtectionForPossiblePartialChanges(t *testi
 			t.Fatal(err)
 		}
 		containers := verificationContainerFacade(t, root)
-		status, err := agentTaskInspector(nil, nil, containers, database.LegacyTaskLedger{})(context.Background(), tools.TaskReference{Domain: docker.ContainerOperationDomain, ID: id, RequestID: requestID, Target: target, Digest: digest})
+		status, err := agentTaskInspector(nil, nil, containers, database.LegacyTaskLedger{}, nil)(context.Background(), tools.TaskReference{Domain: docker.ContainerOperationDomain, ID: id, RequestID: requestID, Target: target, Digest: digest})
 		want := tools.TaskSucceeded
 		if exitCode != 0 {
 			want = tools.TaskUnknown
@@ -114,17 +114,17 @@ func TestLegacyDatabaseTaskRecoveryUsesPersistedReceipt(t *testing.T) {
 		t.Fatal(err)
 	}
 	ctx := context.Background()
-	lookup := agentTaskLookup(nil, nil, nil, ledger)
+	lookup := agentTaskLookup(nil, nil, nil, ledger, nil)
 	ref, err := lookup(ctx, tools.TaskReference{Domain: "database", RequestID: requestID})
 	if err != nil || ref.ID != id {
 		t.Fatalf("old task lookup: %+v %v", ref, err)
 	}
-	inspect := agentTaskInspector(nil, nil, nil, ledger)
+	inspect := agentTaskInspector(nil, nil, nil, ledger, nil)
 	status, err := inspect(ctx, ref)
 	if err != nil || status.EffectiveOutcome() != tools.TaskSucceeded {
 		t.Fatalf("old task observation: %+v %v", status, err)
 	}
-	if err := agentTaskReconciler(inspect, nil)(ctx, tools.TaskReconciliation{Task: ref}); err != nil {
+	if err := agentTaskReconciler(inspect, nil, nil)(ctx, tools.TaskReconciliation{Task: ref}); err != nil {
 		t.Fatalf("old task reconciliation: %v", err)
 	}
 	if _, err := lookup(ctx, tools.TaskReference{Domain: "database", ID: id, RequestID: strings.Repeat("b", 64)}); err == nil {
@@ -156,7 +156,7 @@ func TestLegacyDatabaseChangeKeepsOriginalDockerReceiptDigest(t *testing.T) {
 	containers := verificationContainerFacade(t, root)
 	args := `{"requestId":"` + requestID + `","databaseChange":{"charset":"utf8mb4","name":"orders","action":"create","expectedRevision":"revision"},"id":"` + target + `"}`
 	ctx := context.Background()
-	ref, err := agentTaskVerifier(containers)(ctx, tools.TaskVerification{
+	ref, err := agentTaskVerifier(containers, nil)(ctx, tools.TaskVerification{
 		OperationID: "operation", DispatchID: "dispatch", Tool: "docker_container_exec", ArgumentsJSON: args,
 		Task: tools.TaskReference{Domain: docker.ContainerOperationDomain, RequestID: requestID},
 	})
@@ -164,7 +164,7 @@ func TestLegacyDatabaseChangeKeepsOriginalDockerReceiptDigest(t *testing.T) {
 		t.Fatalf("old task verification: %+v %v", ref, err)
 	}
 	intent := tools.TaskReconciliation{ID: "decision", Task: ref, Tool: "docker_container_exec", ArgumentsJSON: args, Decision: "confirmed-stopped", Evidence: "checked actual state"}
-	if err := agentTaskReconciler(nil, containers)(ctx, intent); err != nil {
+	if err := agentTaskReconciler(nil, containers, nil)(ctx, intent); err != nil {
 		t.Fatalf("old Docker receipt reconciliation: %v", err)
 	}
 }
@@ -172,7 +172,7 @@ func TestLegacyDatabaseChangeKeepsOriginalDockerReceiptDigest(t *testing.T) {
 func TestAgentVerifierSealsCanonicalContainerUpdateIdentity(t *testing.T) {
 	containers := verificationContainerFacade(t, filepath.Join(t.TempDir(), "tasks"))
 	requestID, target := strings.Repeat("a", 64), strings.Repeat("b", 64)
-	verify := agentTaskVerifier(containers)
+	verify := agentTaskVerifier(containers, nil)
 	request := tools.TaskVerification{
 		OperationID: "operation", DispatchID: "dispatch", Tool: "docker_container_update", ToolVersion: "1",
 		Task:          tools.TaskReference{Domain: docker.ContainerOperationDomain, RequestID: requestID},

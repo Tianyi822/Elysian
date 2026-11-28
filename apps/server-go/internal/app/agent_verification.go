@@ -8,12 +8,19 @@ import (
 	"elysian/server/internal/agent/jsonvalue"
 	"elysian/server/internal/agent/tools"
 	tooldocker "elysian/server/internal/agent/tools/docker"
+	"elysian/server/internal/database"
 	"elysian/server/internal/docker"
 )
 
-func agentTaskVerifier(containers *docker.AgentFacade) func(context.Context, tools.TaskVerification) (tools.TaskReference, error) {
+func agentTaskVerifier(containers *docker.AgentFacade, provisioning *database.AgentFacade) func(context.Context, tools.TaskVerification) (tools.TaskReference, error) {
 	return func(ctx context.Context, v tools.TaskVerification) (tools.TaskReference, error) {
-		if v.OperationID == "" || v.DispatchID == "" || v.Task.Domain != docker.ContainerOperationDomain || v.Task.RequestID == "" || v.Task.ID != "" {
+		if v.OperationID == "" || v.DispatchID == "" || v.Task.RequestID == "" || v.Task.ID != "" {
+			return v.Task, errors.New("缺少可核实的原始提交身份")
+		}
+		if v.Task.Domain == database.ProvisionTaskDomain {
+			return verifyUnacceptedProvision(ctx, v, provisioning)
+		}
+		if v.Task.Domain != docker.ContainerOperationDomain {
 			return v.Task, errors.New("缺少可核实的原始提交身份")
 		}
 		input, target, err := containerOperationInputVersion(v.Tool, v.ToolVersion, v.ArgumentsJSON, v.Task.RequestID)
@@ -26,6 +33,29 @@ func agentTaskVerifier(containers *docker.AgentFacade) func(context.Context, too
 		}
 		return tools.TaskReference{Domain: v.Task.Domain, ID: task.ID, RequestID: task.RequestID, Target: task.Target, Digest: task.Digest}, nil
 	}
+}
+
+// verifyUnacceptedProvision 按工具层同一份解码取出部署意图，再由域账本封存未受理的原请求。
+func verifyUnacceptedProvision(ctx context.Context, v tools.TaskVerification, provisioning *database.AgentFacade) (tools.TaskReference, error) {
+	if err := provisioningReady(provisioning); err != nil {
+		return v.Task, err
+	}
+	if v.Tool != "database_provision" || v.ToolVersion != "1" {
+		return v.Task, errors.New("该工具没有经过审核的数据库部署核实契约")
+	}
+	args, err := jsonvalue.Object([]byte(v.ArgumentsJSON))
+	if err != nil {
+		return v.Task, err
+	}
+	input, err := database.DecodeProvisionInput(args)
+	if err != nil || input.RequestID != v.Task.RequestID {
+		return v.Task, errors.New("数据库部署原始请求身份不匹配")
+	}
+	task, err := provisioning.SealUnacceptedProvision(ctx, input)
+	if err != nil {
+		return v.Task, err
+	}
+	return tools.TaskReference{Domain: v.Task.Domain, ID: task.ID, RequestID: task.RequestID, Target: task.Target, Digest: task.Digest}, nil
 }
 
 // Keep the original JSON field order and omission rules for accepted exec v2
