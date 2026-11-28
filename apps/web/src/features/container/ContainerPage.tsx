@@ -151,7 +151,7 @@ export function ContainerPage() {
           }
         />
       ) : (
-        <ul aria-label="容器列表" className="grid grid-cols-[repeat(auto-fit,minmax(min(100%,18rem),1fr))] gap-4">
+        <ul aria-label="容器列表" className="grid grid-cols-[repeat(auto-fill,minmax(min(100%,18rem),1fr))] gap-4">
           {filtered.map((container) => (
             <li key={container.id} aria-label={container.name} className="h-full">
               <ContainerCard container={container} />
