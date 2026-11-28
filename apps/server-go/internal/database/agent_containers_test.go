@@ -188,20 +188,19 @@ func TestLifecycleForeignVolumeIdentityStillVerified(t *testing.T) {
 
 func TestLifecyclePreflightRefusalsAreNotDispatched(t *testing.T) {
 	managed := managedRow(stoppedManagedVolumeName)
-	adopted, sibling := managed, managed
-	adopted.Source = sourceAdopted
+	sibling := managed
 	sibling.ID, sibling.Name = "sibling", "archive"
 	for _, tc := range []struct {
 		name    string
 		rows    []databaseRecord
 		guard   error
 		message string
+		actions []string
 	}{
-		{"adopted", []databaseRecord{adopted}, nil, "仅允许操作面板受管数据库容器"},
-		{"sibling", []databaseRecord{managed, sibling}, nil, "容器中还有其他已登记数据库，不能执行容器级操作"},
-		{"pending-operation", []databaseRecord{managed}, shared.InvalidRequest("此容器有进行中或结果未确认的操作，请先核实实际状态"), "此容器有进行中或结果未确认的操作，请先核实实际状态"},
+		{"sibling", []databaseRecord{managed, sibling}, nil, "容器中还有其他已登记数据库，不能执行容器级操作", []string{"start", "stop", "restart", "remove"}},
+		{"pending-operation", []databaseRecord{managed}, shared.InvalidRequest("此容器有进行中或结果未确认的操作，请先核实实际状态"), "此容器有进行中或结果未确认的操作，请先核实实际状态", []string{"start", "stop", "restart", "remove"}},
 	} {
-		for _, action := range []string{"start", "stop", "restart", "remove"} {
+		for _, action := range tc.actions {
 			t.Run(tc.name+"/"+action, func(t *testing.T) {
 				fixture := newLifecycleFixture(tc.rows, func(req seam.EngineRequest) seam.EngineResponse {
 					return seam.EngineResponse{Status: 200, Body: []byte(`{}`)}

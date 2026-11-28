@@ -84,8 +84,30 @@ func (b *containerBridge) Lifecycle(ctx context.Context, id, action string) (boo
 	if err := s.checkContainerMutation(ctx, row.ContainerID, row.ContainerName); err != nil {
 		return true, bridgePreflightFailure(err)
 	}
+	// The shared removal path acquires its own reservation.
+	if action != "remove" || row.Source != sourceManaged {
+		release, err := s.beginProvisionMutation(ctx, row.ContainerID, row.ContainerName)
+		if err != nil {
+			return true, bridgePreflightFailure(err)
+		}
+		defer release()
+	}
+	// 接管的容器没有面板的五元标签与专属卷：启停只核验身份与引擎，删除须先解除接管。
 	if row.Source != sourceManaged {
-		return true, bridgePreflightFailure(shared.InvalidRequest("仅允许操作面板受管数据库容器"))
+		if action == "remove" {
+			return true, bridgePreflightFailure(shared.InvalidRequest("接管的数据库容器不能经此删除，请先在数据库页解除接管"))
+		}
+		docker, ok := s.deps.docker.(*dockerAPI)
+		if !ok {
+			return true, errors.New("数据库容器控制未接入")
+		}
+		if action == "restart" {
+			if err := docker.agentAdoptedControl(ctx, row, "stop", s.deps.selfContainerID); err != nil {
+				return true, bridgeFailure(err, false)
+			}
+			action = "start"
+		}
+		return true, bridgeFailure(docker.agentAdoptedControl(ctx, row, action, s.deps.selfContainerID), false)
 	}
 	if action == "remove" {
 		return true, bridgeFailure(s.removeContainer(ctx, row.ContainerID), false)

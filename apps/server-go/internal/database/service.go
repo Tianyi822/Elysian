@@ -42,6 +42,9 @@ type Service interface {
 	List(ctx context.Context) ([]containerInstance, error)
 	Create(ctx context.Context, input createRequest) (createResponse, error)
 	Reveal(ctx context.Context, id string) (databaseSecret, error)
+	RevealUser(ctx context.Context, id, database, username string) (databaseSecret, error)
+	Adopt(ctx context.Context, containerID, username, password string) (containerInstance, error)
+	ReleaseAdoption(ctx context.Context, containerID string) error
 	RemoveContainer(ctx context.Context, id string) error
 	Reconcile(ctx context.Context, id string) (containerInstance, error)
 	Forget(ctx context.Context, id string) error
@@ -606,6 +609,32 @@ func (s *databaseService) Reveal(ctx context.Context, id string) (databaseSecret
 		}
 	}
 	return databaseSecret{}, shared.Conflict("没有已保存的管理员凭据")
+}
+
+// RevealUser 读取面板在实例内登记的某个逻辑库用户的凭据。创建尚未确认的登记不返回密码，
+// 已确认的登记也只返回所请求的那一个用户；管理员凭据不能经这个入口取得。
+func (s *databaseService) RevealUser(ctx context.Context, id, database, username string) (databaseSecret, error) {
+	rows, err := s.rowsByContainer(id)
+	if err != nil {
+		return databaseSecret{}, err
+	}
+	for _, row := range rows {
+		for _, logical := range row.Logical {
+			if logical.Name != database {
+				continue
+			}
+			for _, user := range logical.Users {
+				if user.Username != username {
+					continue
+				}
+				if logical.State != logicalStateActive {
+					return databaseSecret{}, shared.Conflict("该数据库的创建尚未确认，凭据暂不可读取；请核实对应部署任务的结果")
+				}
+				return databaseSecret{Username: user.Username, Password: user.Password}, nil
+			}
+		}
+	}
+	return databaseSecret{}, shared.NotFound("该数据库用户不存在于面板登记")
 }
 
 // Reconcile 重新核对容器事实：存在、运行中、镜像与引擎/版本匹配、专属卷挂载；

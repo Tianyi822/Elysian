@@ -105,6 +105,8 @@ func newRouter(deps routerDeps) chi.Router {
 	r.Post("/sqlite/{id}/reconcile", middleware.HandleError(rt.sqliteReconcile))
 	r.Delete("/sqlite/{id}/registration", middleware.HandleError(rt.sqliteForget))
 	r.Post("/{id}/reveal", middleware.HandleError(rt.reveal))
+	r.Post("/{id}/adopt", middleware.HandleError(rt.adopt))
+	r.Delete("/{id}/adoption", middleware.HandleError(rt.releaseAdoption))
 	r.Delete("/{id}/container", middleware.HandleError(rt.removeContainer))
 	r.Post("/{id}/reconcile", middleware.HandleError(rt.reconcile))
 	r.Delete("/{id}/registration", middleware.HandleError(rt.forget))
@@ -185,13 +187,57 @@ func (rt *router) reveal(w http.ResponseWriter, r *http.Request) error {
 	if err != nil {
 		return err
 	}
-	secret, err := service.Reveal(r.Context(), chi.URLParam(r, "id"))
+	// database 与 username 成对出现时读取该逻辑库用户的凭据；都不给时仍是管理员凭据。
+	query, database, username := r.URL.Query(), r.URL.Query().Get("database"), r.URL.Query().Get("username")
+	if query.Has("database") != query.Has("username") {
+		return shared.InvalidRequest("按数据库用户读取凭据时必须同时提供 database 与 username")
+	}
+	var secret databaseSecret
+	if database != "" {
+		secret, err = service.RevealUser(r.Context(), chi.URLParam(r, "id"), database, username)
+	} else {
+		secret, err = service.Reveal(r.Context(), chi.URLParam(r, "id"))
+	}
 	if err != nil {
 		return err
 	}
 	w.Header().Set("Cache-Control", "no-store")
 	w.Header().Set("Pragma", "no-cache")
 	shared.SendJSON(w, http.StatusOK, secret)
+	return nil
+}
+
+// adopt POST /{id}/adopt：用用户填写的管理员凭据核验后接管自装容器。
+func (rt *router) adopt(w http.ResponseWriter, r *http.Request) error {
+	service, err := rt.requireService()
+	if err != nil {
+		return err
+	}
+	body, err := middleware.ReadJSONBody(w, r, 0)
+	if err != nil {
+		return err
+	}
+	username, _ := obj(body)["username"].(string)
+	password, _ := obj(body)["password"].(string)
+	instance, err := service.Adopt(r.Context(), chi.URLParam(r, "id"), username, password)
+	if err != nil {
+		return err
+	}
+	w.Header().Set("Cache-Control", "no-store")
+	shared.SendJSON(w, http.StatusOK, instance)
+	return nil
+}
+
+// releaseAdoption DELETE /{id}/adoption：只删接管登记，不动容器与数据。
+func (rt *router) releaseAdoption(w http.ResponseWriter, r *http.Request) error {
+	service, err := rt.requireService()
+	if err != nil {
+		return err
+	}
+	if err := service.ReleaseAdoption(r.Context(), chi.URLParam(r, "id")); err != nil {
+		return err
+	}
+	shared.SendJSON(w, http.StatusOK, okBody{OK: true})
 	return nil
 }
 

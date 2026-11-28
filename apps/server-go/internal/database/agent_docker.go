@@ -74,26 +74,57 @@ func (d *dockerAPI) agentControl(ctx context.Context, row databaseRecord, action
 	if action != "start" && action != "stop" {
 		return errors.New("容器操作未开放")
 	}
-	info, err := d.agentManaged(ctx, row, selfID)
+	if _, err := d.agentManaged(ctx, row, selfID); err != nil {
+		return err
+	}
+	return d.setContainerRunning(ctx, row.ContainerID, action == "start")
+}
+
+// agentAdoptedControl 是接管容器的启停：只核验容器身份与引擎一致（没有面板的五元标签与
+// 专属卷可核），动作与回读确认与受管实例共用。
+func (d *dockerAPI) agentAdoptedControl(ctx context.Context, row databaseRecord, action, selfID string) error {
+	if action != "start" && action != "stop" {
+		return errors.New("容器操作未开放")
+	}
+	info, err := d.inspect(ctx, row.ContainerID)
 	if err != nil {
 		return err
 	}
-	running := action == "start"
+	id := asString(info["Id"])
+	if id != row.ContainerID || seam.IsSelfContainer(selfID, id) {
+		return errors.New("数据库容器身份核验失败")
+	}
+	refName, _ := splitImageRef(inspectImageRef(info))
+	if engine := engineFromImage(obj(field(obj(field(info, "Config")), "Labels")), refName); engine != "" && engine != row.Engine {
+		return errors.New("容器镜像与登记的数据库引擎不一致")
+	}
+	return d.setContainerRunning(ctx, row.ContainerID, action == "start")
+}
+
+// setContainerRunning 变更容器运行状态并回读确认；状态已一致时幂等返回。
+func (d *dockerAPI) setContainerRunning(ctx context.Context, containerID string, running bool) error {
+	info, err := d.inspect(ctx, containerID)
+	if err != nil {
+		return err
+	}
 	if inspectRunning(info) == running {
 		return nil
 	}
+	action := "stop"
 	query := url.Values{}
-	if action == "stop" {
+	if running {
+		action = "start"
+	} else {
 		query.Set("t", "10")
 	}
-	response, err := d.request(ctx, "POST", "/containers/"+url.PathEscape(row.ContainerID)+"/"+action, query, nil)
+	response, err := d.request(ctx, "POST", "/containers/"+url.PathEscape(containerID)+"/"+action, query, nil)
 	if err != nil {
 		return err
 	}
 	if response.Status != 204 && response.Status != 304 {
 		return errors.New("数据库容器状态变更失败")
 	}
-	current, err := d.inspect(ctx, row.ContainerID)
+	current, err := d.inspect(ctx, containerID)
 	if err != nil || inspectRunning(current) != running {
 		return errors.New("数据库容器状态未确认")
 	}

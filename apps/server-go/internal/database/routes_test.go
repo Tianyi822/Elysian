@@ -31,6 +31,10 @@ type fakeService struct {
 	createCalled      bool
 	reconciled        []string
 	forgotten         []string
+	revealedUsers     [][3]string
+	userSecret        databaseSecret
+	adopted           []string
+	released          []string
 }
 
 func (f *fakeService) List(context.Context) ([]containerInstance, error) {
@@ -46,6 +50,27 @@ func (f *fakeService) Create(context.Context, createRequest) (createResponse, er
 
 func (f *fakeService) Reveal(context.Context, string) (databaseSecret, error) {
 	return f.revealed, nil
+}
+
+func (f *fakeService) Adopt(_ context.Context, containerID, _, _ string) (containerInstance, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.adopted = append(f.adopted, containerID)
+	return containerInstance{ID: containerID}, nil
+}
+
+func (f *fakeService) ReleaseAdoption(_ context.Context, containerID string) error {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.released = append(f.released, containerID)
+	return nil
+}
+
+func (f *fakeService) RevealUser(_ context.Context, id, database, username string) (databaseSecret, error) {
+	f.mu.Lock()
+	defer f.mu.Unlock()
+	f.revealedUsers = append(f.revealedUsers, [3]string{id, database, username})
+	return f.userSecret, nil
 }
 
 func (f *fakeService) RemoveContainer(_ context.Context, id string) error {
@@ -193,6 +218,43 @@ func TestRetiredEndpointsReturnNotFound(t *testing.T) {
 		if recorder.Code != http.StatusNotFound {
 			t.Fatalf("%s %s 退役端点应 404，实际 %d", method, target, recorder.Code)
 		}
+	}
+}
+
+// 带上 database 与 username 时读取该逻辑库用户的凭据；缺一个则拒绝，不带时仍是管理员凭据。
+func TestRevealRouteServesLogicalUserCredentials(t *testing.T) {
+	service := &fakeService{revealed: databaseSecret{Username: "root", Password: testSecret}, userSecret: databaseSecret{Username: "shop_user", Password: "logical-secret"}}
+	router := newRouterFixture(service, nil)
+	user := doRequest(t, router, "POST", "/container-id/reveal?database=shop&username=shop_user", sameOriginHeaders(), []byte("{}"))
+	if user.Code != 200 || user.Header().Get("Cache-Control") != "no-store" || !strings.Contains(user.Body.String(), "logical-secret") || strings.Contains(user.Body.String(), testSecret) {
+		t.Fatalf("应只返回逻辑库用户凭据：%d %s", user.Code, user.Body.String())
+	}
+	if len(service.revealedUsers) != 1 || service.revealedUsers[0] != [3]string{"container-id", "shop", "shop_user"} {
+		t.Fatalf("应按库与用户读取：%v", service.revealedUsers)
+	}
+	if half := doRequest(t, router, "POST", "/container-id/reveal?database=shop", sameOriginHeaders(), []byte("{}")); half.Code != 400 {
+		t.Fatalf("只给 database 不给 username 应 400，实际 %d", half.Code)
+	}
+}
+
+// 接管需要正文里的用户名与密码，响应禁止缓存；解除接管只删登记。
+func TestAdoptAndReleaseRoutes(t *testing.T) {
+	service := &fakeService{}
+	router := newRouterFixture(service, nil)
+	crossSite := doRequest(t, router, "POST", "/ctr-1/adopt", nil, []byte(`{"username":"root","password":"x"}`))
+	if crossSite.Code != 403 {
+		t.Fatalf("跨源接管应 403，实际 %d", crossSite.Code)
+	}
+	adopted := doRequest(t, router, "POST", "/ctr-1/adopt", sameOriginHeaders(), []byte(`{"username":"root","password":"secret"}`))
+	if adopted.Code != 200 || adopted.Header().Get("Cache-Control") != "no-store" || strings.Contains(adopted.Body.String(), "secret") {
+		t.Fatalf("接管应 200 且不回显密码：%d %s", adopted.Code, adopted.Body.String())
+	}
+	if len(service.adopted) != 1 || service.adopted[0] != "ctr-1" {
+		t.Fatalf("应按容器 ID 接管：%v", service.adopted)
+	}
+	released := doRequest(t, router, "DELETE", "/ctr-1/adoption", sameOriginHeaders(), []byte(`{}`))
+	if released.Code != 200 || len(service.released) != 1 {
+		t.Fatalf("解除接管应 200：%d %v", released.Code, service.released)
 	}
 }
 
